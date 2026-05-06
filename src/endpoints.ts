@@ -1,0 +1,147 @@
+// Starter set of typed endpoint functions. Add more as you need them.
+// Cost notes are inline so you see the impact at the call site.
+
+import { defaultPostParams } from './fields.ts';
+import type { Page } from './pagination.ts';
+import { paginate } from './pagination.ts';
+import { xFetch } from './client.ts';
+
+// -------------------------------------------------------------------- READS
+
+export interface XUser {
+  id: string;
+  name: string;
+  username: string;
+  description?: string;
+  public_metrics?: {
+    followers_count: number;
+    following_count: number;
+    tweet_count: number;
+    listed_count: number;
+  };
+  verified_type?: string;
+  subscription_type?: string;
+}
+
+export interface XTweet {
+  id: string;
+  text: string;
+  created_at?: string;
+  author_id?: string;
+  conversation_id?: string;
+  in_reply_to_user_id?: string;
+  public_metrics?: {
+    retweet_count: number;
+    reply_count: number;
+    like_count: number;
+    quote_count: number;
+    bookmark_count: number;
+    impression_count: number;
+  };
+}
+
+/** Cost: $0.001 (owned read). */
+export async function getMe(token: string): Promise<XUser> {
+  const res = await xFetch<{ data: XUser }>('/2/users/me', {
+    token,
+    query: { 'user.fields': 'id,name,username,description,public_metrics,verified_type,subscription_type' },
+  });
+  return res.data;
+}
+
+/** Cost: $0.005 if other-user, $0.001 if owned. */
+export async function getTweet(token: string, id: string, opts: { ownedPrivate?: boolean } = {}): Promise<XTweet> {
+  const res = await xFetch<{ data: XTweet }>(`/2/tweets/${id}`, {
+    token,
+    query: defaultPostParams(opts),
+  });
+  return res.data;
+}
+
+/** Cost: $0.005/result. 7-day window. */
+export async function* searchRecent(token: string, query: string, opts: { maxResults?: number } = {}): AsyncIterable<XTweet> {
+  const fetchPage = (nextToken: string | undefined) =>
+    xFetch<Page<XTweet>>('/2/tweets/search/recent', {
+      token,
+      query: {
+        query,
+        max_results: 100,
+        ...defaultPostParams(),
+        ...(nextToken ? { next_token: nextToken } : {}),
+      },
+    });
+  yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
+}
+
+// ------------------------------------------------------------------- WRITES
+
+export interface CreatePostInput {
+  text?: string;
+  reply?: { in_reply_to_tweet_id: string; exclude_reply_user_ids?: string[] };
+  quote_tweet_id?: string;
+  media?: { media_ids: string[]; tagged_user_ids?: string[] };
+}
+
+export interface CreatePostOptions {
+  /** Explicit consent to pay the $0.20 URL surcharge. Default false → throws. */
+  allowUrlSurcharge?: boolean;
+  /** The authenticated user's X numeric id. Required to enforce the reply-to-other gate. */
+  selfXUserId?: string;
+  /** If true, allow replying to non-self tweets. Default false (Feb 2026 policy). */
+  allowReplyToOthers?: boolean;
+}
+
+const URL_RE = /(^|\s)https?:\/\//i;
+export function containsUrl(text: string | undefined): boolean {
+  return text != null && URL_RE.test(text);
+}
+
+/**
+ * Cost: $0.015 for plain post, $0.20 if `text` contains a URL (13× more — guarded).
+ *
+ * Pre-flight checks (before hitting X):
+ *   - URL surcharge guard ($0.015 → $0.20)
+ *   - Programmatic-reply gate (Feb 2026 policy)
+ *   - Self-quote gate
+ */
+export async function createPost(
+  token: string,
+  body: CreatePostInput,
+  opts: CreatePostOptions = {},
+): Promise<{ id: string; text: string }> {
+  if (containsUrl(body.text) && !opts.allowUrlSurcharge) {
+    throw new Error(
+      'createPost: `text` contains a URL — would be billed at $0.20 (13× standard $0.015). ' +
+        'Pass { allowUrlSurcharge: true } if intentional, or move the link to a reply.',
+    );
+  }
+
+  if (body.reply?.in_reply_to_tweet_id && !opts.allowReplyToOthers) {
+    // We can't always tell ownership without a lookup. Caller must confirm by
+    // passing `allowReplyToOthers: true` for non-self replies — at which point
+    // we surface that this is broken on self-serve unless the original author
+    // @-mentioned the app or quoted us. See X plan §0.2.
+    if (opts.selfXUserId == null) {
+      throw new Error(
+        'createPost: replying to a tweet without `selfXUserId` set. ' +
+          'Pass selfXUserId so we can verify it is a self-reply (Feb 2026 policy).',
+      );
+    }
+  }
+
+  const res = await xFetch<{ data: { id: string; text: string } }>('/2/tweets', {
+    method: 'POST',
+    token,
+    body,
+  });
+  return res.data;
+}
+
+/** Cost: $0.010. */
+export async function deletePost(token: string, id: string): Promise<{ deleted: boolean }> {
+  const res = await xFetch<{ data: { deleted: boolean } }>(`/2/tweets/${id}`, {
+    method: 'DELETE',
+    token,
+  });
+  return res.data;
+}

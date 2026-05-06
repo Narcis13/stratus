@@ -1,0 +1,137 @@
+// xFetch — the one place all X API calls go through.
+// Adds: bearer auth, retry on 429/5xx, error parsing, optional cost log.
+
+import { XApiError, fromResponse } from './errors.ts';
+
+const X_API_BASE = 'https://api.x.com';
+
+export interface FetchOptions {
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  query?: Record<string, string | number | boolean | undefined>;
+  body?: unknown; // serialized as JSON
+  /** Bearer token — either OAuth 2.0 user token or app-only Bearer. */
+  token: string;
+  /** Max retry attempts on 429/5xx/network. Default 4. */
+  maxAttempts?: number;
+  /** Optional logger; called once per call regardless of retries. */
+  onCost?: (info: CostInfo) => void;
+  signal?: AbortSignal;
+}
+
+export interface CostInfo {
+  endpoint: string;
+  status: number;
+  durationMs: number;
+  attempts: number;
+  rateLimitRemaining: number | null;
+  rateLimitResetAt: number | null;
+}
+
+/**
+ * Call any X API endpoint. Pass the path starting with `/2/...`.
+ *
+ * Retries 429 (honoring x-rate-limit-reset), 5xx, and network errors.
+ * Throws XApiError on 4xx that aren't retried.
+ */
+export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T> {
+  const url = buildUrl(endpoint, opts.query);
+  const maxAttempts = opts.maxAttempts ?? 4;
+  const start = performance.now();
+
+  let attempt = 0;
+  let lastErr: unknown;
+  while (attempt < maxAttempts) {
+    attempt++;
+    try {
+      const init: RequestInit = {
+        method: opts.method ?? 'GET',
+        headers: {
+          authorization: `Bearer ${opts.token}`,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+      };
+      if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
+      if (opts.signal) init.signal = opts.signal;
+      const res = await fetch(url, init);
+
+      const remaining = numHeader(res.headers, 'x-rate-limit-remaining');
+      const resetAt = numHeader(res.headers, 'x-rate-limit-reset');
+
+      if (res.ok) {
+        const data = (await res.json()) as T;
+        opts.onCost?.({
+          endpoint,
+          status: res.status,
+          durationMs: performance.now() - start,
+          attempts: attempt,
+          rateLimitRemaining: remaining,
+          rateLimitResetAt: resetAt,
+        });
+        return data;
+      }
+
+      const err = await fromResponse(res);
+
+      if (shouldRetry(err) && attempt < maxAttempts) {
+        await sleep(retryDelay(err, resetAt, attempt));
+        continue;
+      }
+
+      opts.onCost?.({
+        endpoint,
+        status: res.status,
+        durationMs: performance.now() - start,
+        attempts: attempt,
+        rateLimitRemaining: remaining,
+        rateLimitResetAt: resetAt,
+      });
+      throw err;
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof XApiError) throw err; // already non-retriable above
+      if (attempt < maxAttempts) {
+        await sleep(retryDelay(null, null, attempt));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr ?? new Error('xFetch: exhausted attempts');
+}
+
+function shouldRetry(err: XApiError): boolean {
+  return err.status === 429 || (err.status >= 500 && err.status <= 504);
+}
+
+function retryDelay(err: XApiError | null, resetAt: number | null, attempt: number): number {
+  if (err?.status === 429 && resetAt) {
+    const waitMs = Math.max(0, resetAt * 1000 - Date.now()) + jitter();
+    return Math.min(waitMs, 60_000);
+  }
+  // exponential 1s, 2s, 4s, 8s + jitter
+  return Math.min(16_000, 1000 * 2 ** (attempt - 1)) + jitter();
+}
+
+function jitter(): number {
+  return Math.floor(Math.random() * 500);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function numHeader(h: Headers, k: string): number | null {
+  const v = h.get(k);
+  return v == null ? null : Number.parseInt(v, 10);
+}
+
+function buildUrl(endpoint: string, query?: Record<string, string | number | boolean | undefined>): string {
+  const url = new URL(endpoint, X_API_BASE);
+  if (query) {
+    for (const [k, v] of Object.entries(query)) {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    }
+  }
+  return url.toString();
+}
