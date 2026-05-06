@@ -60,12 +60,16 @@ export async function getTweet(token: string, id: string, opts: { ownedPrivate?:
 
 /** Cost: $0.005/result. 7-day window. */
 export async function* searchRecent(token: string, query: string, opts: { maxResults?: number } = {}): AsyncIterable<XTweet> {
+  // X bills for every result it returns in the response, not what JS iterates.
+  // If maxResults=3 and we ask the server for 100, we pay for ~98 we never use.
+  // Clamp to X's per-request range [10, 100]; default 100 only when caller wants full iteration.
+  const pageSize = Math.min(100, Math.max(10, opts.maxResults ?? 100));
   const fetchPage = (nextToken: string | undefined) =>
     xFetch<Page<XTweet>>('/2/tweets/search/recent', {
       token,
       query: {
         query,
-        max_results: 100,
+        max_results: pageSize,
         ...defaultPostParams(),
         ...(nextToken ? { next_token: nextToken } : {}),
       },

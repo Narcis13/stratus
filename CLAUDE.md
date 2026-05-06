@@ -48,6 +48,9 @@ X rotates the **refresh token on every refresh**. If we lose the new refresh tok
 ### 4. One place to call X
 Every X call goes through `xFetch` in `client.ts`. That's where retries, error parsing, and rate-limit headers live. Don't sprinkle direct `fetch('https://api.x.com/...')` around the codebase.
 
+### 5. `maxItems` does NOT cap cost — `max_results` does
+X bills for every result it returns in the response body, not what your JS iterates. A `for await (...) { if (++n >= 3) break; }` after a request asking for `max_results: 100` still costs you ~100 reads. Already burned $0.49 once on a 3-result `searchRecent` because of this. Any endpoint wrapping `paginate()` MUST clamp the URL's per-request page size to the caller's intent — see `searchRecent` in `endpoints.ts` for the pattern (`Math.min(100, Math.max(10, opts.maxResults ?? 100))`). The `maxItems` arg in `paginate()` only stops *additional* page fetches; the page already in flight is already billed.
+
 ## Cost cheat sheet (Apr 2026 prices, USD)
 
 | Surface | Cost | Notes |

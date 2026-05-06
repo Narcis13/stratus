@@ -1,4 +1,11 @@
 // Async iterator over X's `next_token` pagination.
+//
+// COST WARNING: `maxItems` is a JS-side trim, not a billing cap. X bills for
+// every result it returns in the response body — the `for` loop breaking
+// early does not unbill them. To control cost, the caller must also lower
+// the per-request `max_results` (or equivalent) on the URL itself, not just
+// rely on `maxItems` here. See `searchRecent` in endpoints.ts for the pattern.
+//
 // Hard caps you must respect (X plan §6.1):
 //   /users/:id/tweets        3,200
 //   /users/:id/mentions      800
