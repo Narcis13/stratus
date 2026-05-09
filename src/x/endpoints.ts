@@ -1,10 +1,10 @@
 // Starter set of typed endpoint functions. Add more as you need them.
 // Cost notes are inline so you see the impact at the call site.
 
+import { xFetch } from './client.ts';
 import { defaultPostParams } from './fields.ts';
 import type { Page } from './pagination.ts';
 import { paginate } from './pagination.ts';
-import { xFetch } from './client.ts';
 
 // -------------------------------------------------------------------- READS
 
@@ -60,13 +60,34 @@ export interface XTweet {
 export async function getMe(token: string): Promise<XUser> {
   const res = await xFetch<{ data: XUser }>('/2/users/me', {
     token,
-    query: { 'user.fields': 'id,name,username,description,public_metrics,verified_type,subscription_type' },
+    query: {
+      'user.fields': 'id,name,username,description,public_metrics,verified_type,subscription_type',
+    },
   });
   return res.data;
 }
 
+/** Cost: $0.010 (third-party user lookup). Used by voice/track to resolve username → id. */
+export async function getUserByUsername(token: string, username: string): Promise<XUser> {
+  const res = await xFetch<{ data: XUser }>(
+    `/2/users/by/username/${encodeURIComponent(username)}`,
+    {
+      token,
+      query: {
+        'user.fields':
+          'id,name,username,description,public_metrics,verified_type,subscription_type',
+      },
+    },
+  );
+  return res.data;
+}
+
 /** Cost: $0.005 if other-user, $0.001 if owned. */
-export async function getTweet(token: string, id: string, opts: { ownedPrivate?: boolean } = {}): Promise<XTweet> {
+export async function getTweet(
+  token: string,
+  id: string,
+  opts: { ownedPrivate?: boolean } = {},
+): Promise<XTweet> {
   const res = await xFetch<{ data: XTweet }>(`/2/tweets/${id}`, {
     token,
     query: defaultPostParams(opts),
@@ -75,7 +96,11 @@ export async function getTweet(token: string, id: string, opts: { ownedPrivate?:
 }
 
 /** Cost: $0.005/result. 7-day window. */
-export async function* searchRecent(token: string, query: string, opts: { maxResults?: number } = {}): AsyncIterable<XTweet> {
+export async function* searchRecent(
+  token: string,
+  query: string,
+  opts: { maxResults?: number } = {},
+): AsyncIterable<XTweet> {
   // X bills for every result it returns in the response, not what JS iterates.
   // If maxResults=3 and we ask the server for 100, we pay for ~98 we never use.
   // Clamp to X's per-request range [10, 100]; default 100 only when caller wants full iteration.
