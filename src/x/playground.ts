@@ -5,7 +5,6 @@ import { createPost, getMe, searchRecent } from './endpoints.ts';
 import { getValidAccessToken } from './token-store.ts';
 
 const token = await getValidAccessToken({
-  storePath: process.env.X_TOKEN_STORE ?? '.tokens.json',
   clientId: requireEnv('X_CLIENT_ID'),
   clientSecret: requireEnv('X_CLIENT_SECRET'),
 });

@@ -1,5 +1,6 @@
 // Tiny OAuth callback server. `bun run auth`, then visit /auth/x/start.
-// Persists tokens to .tokens.json so playground.ts and your scripts can use them.
+// Persists tokens to the Postgres `tokens` row (id='default') so the rest of
+// the app — playground, workers, routes — can read them.
 //
 // Single-user dev tool. Don't deploy this — multi-user needs encryption,
 // per-user storage, signed cookie state, CSRF, etc.
@@ -11,13 +12,12 @@ import {
   revokeToken,
   SCOPES,
 } from './auth.ts';
-import { readStore, writeStore } from './token-store.ts';
+import { deleteStore, readStore, writeStore } from './token-store.ts';
 
 const env = {
   clientId: requireEnv('X_CLIENT_ID'),
   clientSecret: requireEnv('X_CLIENT_SECRET'),
   redirectUri: requireEnv('X_OAUTH_REDIRECT_URI'),
-  storePath: process.env.X_TOKEN_STORE ?? '.tokens.json',
   port: Number.parseInt(process.env.PORT ?? '3000', 10),
 };
 
@@ -65,13 +65,13 @@ const server = Bun.serve({
           codeVerifier,
         });
 
-        await writeStore(env.storePath, {
+        await writeStore({
           ...tokens,
           connectedAt: Date.now(),
         });
 
         return text(
-          `✓ Connected. Tokens written to ${env.storePath}.\nScopes: ${tokens.scope}\n\nYou can close this tab and run \`bun run play\`.`,
+          `✓ Connected. Tokens written to Postgres (tokens.id='default').\nScopes: ${tokens.scope}\n\nYou can close this tab and run \`bun run play\`.`,
         );
       } catch (err) {
         console.error(err);
@@ -80,7 +80,7 @@ const server = Bun.serve({
     }
 
     if (url.pathname === '/auth/x/disconnect' && req.method === 'POST') {
-      const stored = await readStore(env.storePath);
+      const stored = await readStore();
       if (!stored) return text('no tokens stored', 404);
       await revokeToken({
         clientId: env.clientId,
@@ -88,7 +88,7 @@ const server = Bun.serve({
         token: stored.refreshToken,
         tokenTypeHint: 'refresh_token',
       });
-      await Bun.file(env.storePath).delete();
+      await deleteStore();
       return text('disconnected');
     }
 
