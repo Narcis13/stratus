@@ -390,3 +390,146 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* voice */
+.voice-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.voice-controls .field select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.voice-controls .field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.voice-toggle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.author-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.author-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.author-name {
+  font-weight: 600;
+  font-size: 13px;
+}
+.author-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.badge-auto {
+  background: rgba(255, 180, 84, 0.18);
+  color: var(--warn);
+}
+.badge-manual {
+  background: rgba(79, 140, 255, 0.18);
+  color: var(--status-pending);
+}
+.badge-tracked {
+  background: rgba(90, 209, 154, 0.18);
+  color: var(--status-posted);
+}
+.badge-paused {
+  background: rgba(139, 149, 167, 0.2);
+  color: var(--status-draft);
+}
+
+.voice-auto-list {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.voice-auto-list summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.voice-auto-list summary:hover {
+  color: var(--text);
+}
+
+.author-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.voice-tweet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.voice-tweet {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-decoration: none;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.voice-tweet:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+.voice-tweet-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.voice-tweet-author {
+  font-weight: 600;
+  font-size: 12px;
+}
+.voice-tweet-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.voice-tweet-text {
+  font-size: 13px;
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.voice-tweet-metrics {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

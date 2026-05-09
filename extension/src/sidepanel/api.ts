@@ -9,11 +9,27 @@ import {
   type PostStatus,
   type ScheduledPost,
   type UpdateBody,
+  type VoiceAuthor,
+  type VoiceAuthorPatch,
+  type VoiceAuthorSource,
+  type VoiceTweet,
+  type VoiceTweetsOpts,
 } from '../shared/types.ts';
 import type { Settings } from './storage.ts';
 
 export { ApiError };
-export type { CreateBody, ListOpts, PostStatus, ScheduledPost, UpdateBody };
+export type {
+  CreateBody,
+  ListOpts,
+  PostStatus,
+  ScheduledPost,
+  UpdateBody,
+  VoiceAuthor,
+  VoiceAuthorPatch,
+  VoiceAuthorSource,
+  VoiceTweet,
+  VoiceTweetsOpts,
+};
 
 async function request<T>(s: Settings, path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
@@ -64,5 +80,36 @@ export const api = {
 
   remove(s: Settings, id: string): Promise<void> {
     return request<void>(s, `/x/posts/scheduled/${id}`, { method: 'DELETE' });
+  },
+
+  voice: {
+    listAuthors(s: Settings, source?: VoiceAuthorSource): Promise<VoiceAuthor[]> {
+      const qs = source ? `?source=${encodeURIComponent(source)}` : '';
+      return request<VoiceAuthor[]>(s, `/x/voice/authors${qs}`);
+    },
+
+    listTweets(s: Settings, opts: VoiceTweetsOpts = {}): Promise<VoiceTweet[]> {
+      const q = new URLSearchParams();
+      if (opts.author) q.set('author', opts.author);
+      if (opts.q) q.set('q', opts.q);
+      if (opts.minLikes !== undefined) q.set('minLikes', String(opts.minLikes));
+      if (opts.includeReplies) q.set('includeReplies', 'true');
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<VoiceTweet[]>(s, `/x/voice/tweets${qs ? `?${qs}` : ''}`);
+    },
+
+    patchAuthor(s: Settings, username: string, patch: VoiceAuthorPatch): Promise<VoiceAuthor> {
+      return request<VoiceAuthor>(s, `/x/voice/authors/${encodeURIComponent(username)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(patch),
+      });
+    },
+
+    untrack(s: Settings, username: string): Promise<unknown> {
+      return request<unknown>(s, `/x/voice/track/${encodeURIComponent(username)}`, {
+        method: 'DELETE',
+      });
+    },
   },
 };

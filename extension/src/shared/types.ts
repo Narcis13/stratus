@@ -1,5 +1,5 @@
 // Shared between the side panel, content script, and background worker.
-// Mirrors the server route shapes in src/x/routes/calendar.ts.
+// Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
 export type PostStatus = 'draft' | 'pending' | 'posted' | 'failed' | 'cancelled';
 
@@ -35,6 +35,64 @@ export interface ListOpts {
   from?: string;
   to?: string;
   status?: PostStatus;
+}
+
+// ---------------------------------------------------------------- voice
+
+export type VoiceAuthorSource = 'manual' | 'auto_from_scrape';
+
+export interface VoiceAuthor {
+  xUserId: string;
+  username: string;
+  addedAt: string;
+  lastPulledAt: string | null;
+  source: VoiceAuthorSource;
+  pullEnabled: boolean;
+  metricsPollingEnabled: boolean;
+  maxPolledTweets: number;
+  tweetCount: number;
+}
+
+export interface VoicePublicMetrics {
+  retweet_count?: number;
+  reply_count?: number;
+  like_count?: number;
+  quote_count?: number;
+  bookmark_count?: number;
+  impression_count?: number;
+}
+
+export interface VoiceTweet {
+  tweetId: string;
+  authorXUserId: string;
+  authorUsername: string;
+  text: string;
+  createdAt: string;
+  isReply: boolean;
+  inReplyToTweetId: string | null;
+  conversationId: string | null;
+  source: string;
+  fetchedAt: string;
+  lastSeenAt: string | null;
+  nextPollAt: string | null;
+  pollCount: number;
+  retired: boolean;
+  latestPublicMetrics: VoicePublicMetrics | null;
+}
+
+export interface VoiceTweetsOpts {
+  author?: string;
+  q?: string;
+  minLikes?: number;
+  includeReplies?: boolean;
+  limit?: number;
+}
+
+export interface VoiceAuthorPatch {
+  pullEnabled?: boolean;
+  metricsPollingEnabled?: boolean;
+  maxPolledTweets?: number;
+  source?: VoiceAuthorSource;
 }
 
 export class ApiError extends Error {

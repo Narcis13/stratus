@@ -6,6 +6,7 @@
 //   DELETE /voice/track/:username                                      stop tracking (soft)
 //   POST   /voice/pull/:username    { fullScan?, maxResults? }         on-demand pull
 //   POST   /voice/scrape            { original, replies?, pollMetrics? } extension scrape
+//   GET    /voice/authors                                              list authors + tweet counts
 //   GET    /voice/tweets?author=&q=&minLikes=&includeReplies=&limit=   query stash
 //   GET    /voice/metrics/:tweetId                                     snapshot history
 //
@@ -93,6 +94,95 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
       .returning();
 
     return c.json(row, 201);
+  });
+
+  // -------------------------------------------------------------- authors
+
+  // Listed for the side panel's Voice tab: author filter dropdown plus the
+  // "promote to actively tracked" toggle for source='auto_from_scrape' rows.
+  // Tweet count is a left-join aggregate so authors with zero stashed tweets
+  // (e.g. just untracked, all retired) still appear.
+  router.get('/voice/authors', async (c) => {
+    const sourceFilter = c.req.query('source');
+    if (sourceFilter && sourceFilter !== 'manual' && sourceFilter !== 'auto_from_scrape') {
+      return c.json({ error: 'invalid_source' }, 400);
+    }
+
+    const tweetCount = sql<number>`count(${voiceTweets.tweetId})::int`.as('tweet_count');
+
+    const filters: SQL[] = [];
+    if (sourceFilter) filters.push(eq(trackedAuthors.source, sourceFilter));
+
+    const rows = await db
+      .select({
+        xUserId: trackedAuthors.xUserId,
+        username: trackedAuthors.username,
+        addedAt: trackedAuthors.addedAt,
+        lastPulledAt: trackedAuthors.lastPulledAt,
+        source: trackedAuthors.source,
+        pullEnabled: trackedAuthors.pullEnabled,
+        metricsPollingEnabled: trackedAuthors.metricsPollingEnabled,
+        maxPolledTweets: trackedAuthors.maxPolledTweets,
+        tweetCount,
+      })
+      .from(trackedAuthors)
+      .leftJoin(voiceTweets, eq(voiceTweets.authorXUserId, trackedAuthors.xUserId))
+      .where(filters.length ? and(...filters) : undefined)
+      .groupBy(trackedAuthors.xUserId)
+      .orderBy(asc(trackedAuthors.username));
+
+    return c.json(rows);
+  });
+
+  // Promote / demote an existing author. Used by the Voice tab's
+  // "actively tracked" toggle on auto_from_scrape rows. We don't allow
+  // creating an author here — use POST /voice/track for that (it resolves
+  // username → xUserId via the X API). PATCH only flips flags on a row that
+  // already exists, so it's a free op (no $0.010 user lookup).
+  router.patch('/voice/authors/:username', async (c) => {
+    const username = c.req.param('username').replace(/^@/, '');
+    if (!USERNAME_RE.test(username)) return c.json({ error: 'invalid_username' }, 400);
+
+    const body = await readJson(c.req.raw);
+    if (!body) return c.json({ error: 'invalid_body' }, 400);
+
+    const updates: Partial<typeof trackedAuthors.$inferInsert> = {};
+    if (body.pullEnabled !== undefined) {
+      if (typeof body.pullEnabled !== 'boolean') {
+        return c.json({ error: 'invalid_pull_enabled' }, 400);
+      }
+      updates.pullEnabled = body.pullEnabled;
+    }
+    if (body.metricsPollingEnabled !== undefined) {
+      if (typeof body.metricsPollingEnabled !== 'boolean') {
+        return c.json({ error: 'invalid_metrics_polling_enabled' }, 400);
+      }
+      updates.metricsPollingEnabled = body.metricsPollingEnabled;
+    }
+    if (body.maxPolledTweets !== undefined) {
+      const parsed = parsePositiveInt(body.maxPolledTweets);
+      if (parsed === 'invalid') return c.json({ error: 'invalid_max_polled_tweets' }, 400);
+      if (parsed !== undefined) updates.maxPolledTweets = parsed;
+    }
+    if (body.source !== undefined) {
+      if (body.source !== 'manual' && body.source !== 'auto_from_scrape') {
+        return c.json({ error: 'invalid_source' }, 400);
+      }
+      updates.source = body.source;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return c.json({ error: 'no_updates' }, 400);
+    }
+
+    const [updated] = await db
+      .update(trackedAuthors)
+      .set(updates)
+      .where(eq(trackedAuthors.username, username))
+      .returning();
+
+    if (!updated) return c.json({ error: 'not_found' }, 404);
+    return c.json(updated);
   });
 
   router.delete('/voice/track/:username', async (c) => {
@@ -398,6 +488,7 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
       .select({
         tweetId: voiceTweets.tweetId,
         authorXUserId: voiceTweets.authorXUserId,
+        authorUsername: trackedAuthors.username,
         text: voiceTweets.text,
         createdAt: voiceTweets.createdAt,
         isReply: voiceTweets.isReply,
@@ -412,6 +503,7 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
         latestPublicMetrics: latestPublic,
       })
       .from(voiceTweets)
+      .innerJoin(trackedAuthors, eq(trackedAuthors.xUserId, voiceTweets.authorXUserId))
       .where(filters.length ? and(...filters) : undefined)
       .orderBy(desc(voiceTweets.createdAt))
       .limit(limit);
@@ -462,6 +554,9 @@ interface Body {
   original?: unknown;
   replies?: unknown;
   pollMetrics?: unknown;
+  pullEnabled?: unknown;
+  metricsPollingEnabled?: unknown;
+  source?: unknown;
 }
 
 interface ScrapedTweet {
