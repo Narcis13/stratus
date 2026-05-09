@@ -77,6 +77,40 @@ export async function* searchRecent(token: string, query: string, opts: { maxRes
   yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
 }
 
+export interface GetUserTweetsOptions {
+  /** Max tweets returned across pages. Also clamps per-request page size for cost. Default 100. */
+  maxResults?: number;
+  /** Only return tweets posted after this id (incremental polling). */
+  sinceId?: string;
+  /** Pull `non_public_metrics` and `organic_metrics` (≤30d, owned only). */
+  ownedPrivate?: boolean;
+}
+
+/**
+ * Cost: $0.001/result if `xUserId` is the authenticated user, $0.005/result otherwise.
+ * Replies and retweets are included by default. Hard cap of 3,200 tweets per X.
+ */
+export async function* getUserTweets(
+  token: string,
+  xUserId: string,
+  opts: GetUserTweetsOptions = {},
+): AsyncIterable<XTweet> {
+  // Server accepts max_results in [5, 100]. Clamp page size to caller intent:
+  // X bills for every result it returns, not what JS iterates.
+  const pageSize = Math.min(100, Math.max(5, opts.maxResults ?? 100));
+  const fetchPage = (nextToken: string | undefined) =>
+    xFetch<Page<XTweet>>(`/2/users/${xUserId}/tweets`, {
+      token,
+      query: {
+        max_results: pageSize,
+        ...(opts.sinceId ? { since_id: opts.sinceId } : {}),
+        ...defaultPostParams(opts.ownedPrivate ? { ownedPrivate: true } : undefined),
+        ...(nextToken ? { pagination_token: nextToken } : {}),
+      },
+    });
+  yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
+}
+
 // ------------------------------------------------------------------- WRITES
 
 export interface CreatePostInput {

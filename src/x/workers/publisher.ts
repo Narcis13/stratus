@@ -13,7 +13,7 @@
 
 import { and, asc, eq, lte } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { scheduledPosts } from '../db/schema.ts';
+import { postsPublished, scheduledPosts } from '../db/schema.ts';
 import { createPost } from '../endpoints.ts';
 import { type ErrorClass, XApiError, classify } from '../errors.ts';
 import { getValidAccessToken } from '../token-store.ts';
@@ -86,6 +86,15 @@ async function processOne(
 
     try {
       const out = await createPost(token, { text: row.text }, { selfXUserId });
+      const now = new Date();
+      await tx.insert(postsPublished).values({
+        tweetId: out.id,
+        scheduledPostId: row.id,
+        text: out.text,
+        postedAt: now,
+        source: 'scheduled',
+        nextPollAt: now,
+      });
       await tx
         .update(scheduledPosts)
         .set({
@@ -93,7 +102,7 @@ async function processOne(
           postedTweetId: out.id,
           errorClass: null,
           errorDetail: null,
-          updatedAt: new Date(),
+          updatedAt: now,
         })
         .where(eq(scheduledPosts.id, row.id));
       console.log(`publisher: ${row.id} → ${out.id}`);
