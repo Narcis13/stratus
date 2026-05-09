@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
 import { containsUrl } from './x/endpoints.ts';
-import { defaultPostParams } from './x/fields.ts';
 import { XApiError, classify } from './x/errors.ts';
-import { generatePkcePair, buildAuthorizeUrl } from './x/auth.ts';
+import { defaultPostParams } from './x/fields.ts';
+import { priceFor } from './x/pricing.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -59,6 +60,45 @@ describe('errors.classify', () => {
   test('5xx → server_error', () => {
     const e = new XApiError({ status: 503, type: 'about:blank', detail: '', rawBody: null });
     expect(classify(e)).toBe('server_error');
+  });
+});
+
+describe('pricing.priceFor', () => {
+  test('POST /2/tweets is the $0.015 base (URL surcharge handled at call site)', () => {
+    expect(priceFor('/2/tweets', 'POST', 201, null)).toBe(0.015);
+  });
+
+  test('DELETE /2/tweets/:id is $0.010', () => {
+    expect(priceFor('/2/tweets/1234567890', 'DELETE', 200, null)).toBe(0.01);
+  });
+
+  test('GET /2/users/me is an owned read at $0.001', () => {
+    expect(priceFor('/2/users/me', 'GET', 200, null)).toBe(0.001);
+  });
+
+  test('GET /2/tweets/:id prices as other-user $0.005 (conservative)', () => {
+    expect(priceFor('/2/tweets/abc', 'GET', 200, null)).toBe(0.005);
+  });
+
+  test('search/recent multiplies $0.005 by item count', () => {
+    expect(priceFor('/2/tweets/search/recent', 'GET', 200, 10)).toBeCloseTo(0.05, 5);
+  });
+
+  test('search/recent with unknown items defaults to one result (undercount)', () => {
+    expect(priceFor('/2/tweets/search/recent', 'GET', 200, null)).toBe(0.005);
+  });
+
+  test('query string is stripped before matching', () => {
+    expect(priceFor('/2/users/me?user.fields=id', 'GET', 200, null)).toBe(0.001);
+  });
+
+  test('4xx returns 0 — X does not bill failed client requests', () => {
+    expect(priceFor('/2/tweets', 'POST', 403, null)).toBe(0);
+    expect(priceFor('/2/tweets/abc', 'GET', 429, null)).toBe(0);
+  });
+
+  test('unknown endpoint returns 0 (visible gap, not fabricated number)', () => {
+    expect(priceFor('/2/something/new', 'GET', 200, null)).toBe(0);
   });
 });
 

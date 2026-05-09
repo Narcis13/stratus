@@ -20,11 +20,20 @@ export interface FetchOptions {
 
 export interface CostInfo {
   endpoint: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   status: number;
   durationMs: number;
   attempts: number;
   rateLimitRemaining: number | null;
   rateLimitResetAt: number | null;
+}
+
+// Module-level fallback so every X call gets logged without each endpoint
+// wrapper having to thread `onCost` through. `app.ts` installs this once at
+// boot via `startXWorkers()`. Per-call `opts.onCost` still wins.
+let defaultOnCost: ((info: CostInfo) => void) | null = null;
+export function setDefaultOnCost(fn: ((info: CostInfo) => void) | null): void {
+  defaultOnCost = fn;
 }
 
 /**
@@ -36,7 +45,9 @@ export interface CostInfo {
 export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T> {
   const url = buildUrl(endpoint, opts.query);
   const maxAttempts = opts.maxAttempts ?? 4;
+  const method = opts.method ?? 'GET';
   const start = performance.now();
+  const onCost = opts.onCost ?? defaultOnCost;
 
   let attempt = 0;
   let lastErr: unknown;
@@ -44,7 +55,7 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
     attempt++;
     try {
       const init: RequestInit = {
-        method: opts.method ?? 'GET',
+        method,
         headers: {
           authorization: `Bearer ${opts.token}`,
           'content-type': 'application/json',
@@ -60,8 +71,9 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
 
       if (res.ok) {
         const data = (await res.json()) as T;
-        opts.onCost?.({
+        onCost?.({
           endpoint,
+          method,
           status: res.status,
           durationMs: performance.now() - start,
           attempts: attempt,
@@ -78,8 +90,9 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
         continue;
       }
 
-      opts.onCost?.({
+      onCost?.({
         endpoint,
+        method,
         status: res.status,
         durationMs: performance.now() - start,
         attempts: attempt,
@@ -126,7 +139,10 @@ function numHeader(h: Headers, k: string): number | null {
   return v == null ? null : Number.parseInt(v, 10);
 }
 
-function buildUrl(endpoint: string, query?: Record<string, string | number | boolean | undefined>): string {
+function buildUrl(
+  endpoint: string,
+  query?: Record<string, string | number | boolean | undefined>,
+): string {
   const url = new URL(endpoint, X_API_BASE);
   if (query) {
     for (const [k, v] of Object.entries(query)) {

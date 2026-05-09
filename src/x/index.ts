@@ -3,6 +3,8 @@
 // `startXWorkers()`. Nothing else should import from inside `src/x/`.
 
 import type { Hono } from 'hono';
+import { makeOnCost } from '../middleware/costTracker.ts';
+import { setDefaultOnCost } from './client.ts';
 import { calendar } from './routes/calendar.ts';
 import { startPublisher } from './workers/publisher.ts';
 
@@ -15,6 +17,9 @@ export interface XWorkers {
 }
 
 export function startXWorkers(): XWorkers {
+  // Install before any worker tick so the very first X call is logged.
+  setDefaultOnCost(makeOnCost('x'));
+
   const stops: Array<() => void> = [];
 
   stops.push(
@@ -28,6 +33,7 @@ export function startXWorkers(): XWorkers {
   return {
     stop() {
       for (const s of stops) s();
+      setDefaultOnCost(null);
     },
   };
 }
