@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { matchOrigin } from './middleware/cors.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
 import { containsUrl } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
@@ -163,6 +164,30 @@ describe('voiceMetricsPoll cadence', () => {
   test('≥ 7 d → retired (null)', () => {
     expect(nextVoicePollDelay(7 * DAY)).toBeNull();
     expect(nextVoicePollDelay(30 * DAY)).toBeNull();
+  });
+});
+
+describe('cors.matchOrigin', () => {
+  const NONE = new Set<string>();
+
+  test('any chrome-extension://* origin is allowed', () => {
+    expect(matchOrigin('chrome-extension://abc123', NONE)).toBe(true);
+    expect(matchOrigin('chrome-extension://different-id', NONE)).toBe(true);
+  });
+
+  test('static set allows exact matches only', () => {
+    const allowed = new Set(['https://stratus.fly.dev']);
+    expect(matchOrigin('https://stratus.fly.dev', allowed)).toBe(true);
+    expect(matchOrigin('https://stratus.fly.dev/', allowed)).toBe(false);
+    expect(matchOrigin('https://evil.com', allowed)).toBe(false);
+  });
+
+  test('empty origin is rejected', () => {
+    expect(matchOrigin('', NONE)).toBe(false);
+  });
+
+  test('chrome-extension prefix must be the scheme — no smuggling', () => {
+    expect(matchOrigin('https://chrome-extension://abc', NONE)).toBe(false);
   });
 });
 

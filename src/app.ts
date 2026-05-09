@@ -7,11 +7,15 @@
 
 import { Hono } from 'hono';
 import { bearerAuth } from './middleware/auth.ts';
+import { corsMiddleware } from './middleware/cors.ts';
 import { cost } from './routes/cost.ts';
 import { healthz } from './routes/healthz.ts';
 import { mountX, startXWorkers } from './x/index.ts';
 
 export const app = new Hono();
+
+// CORS first — preflight OPTIONS must short-circuit before bearerAuth.
+app.use('*', corsMiddleware());
 
 app.route('/', healthz);
 
