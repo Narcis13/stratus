@@ -5,6 +5,7 @@
 //   POST   /voice/track             { username, maxPolledTweets? }    enroll author
 //   DELETE /voice/track/:username                                      stop tracking (soft)
 //   POST   /voice/pull/:username    { fullScan?, maxResults? }         on-demand pull
+//   POST   /voice/scrape            { original, replies?, pollMetrics? } extension scrape
 //   GET    /voice/tweets?author=&q=&minLikes=&includeReplies=&limit=   query stash
 //   GET    /voice/metrics/:tweetId                                     snapshot history
 //
@@ -144,6 +145,187 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
     }
   });
 
+  // --------------------------------------------------------------- scrape
+
+  // Extension content script POSTs DOM-scraped tweet content here. The scrape
+  // is treated as authoritative — no X API call is made for tweet content
+  // itself (we trust the DOM). The only paid call is `getUserByUsername` for
+  // unknown authors (one $0.010 lookup per *new* author per request, deduped).
+  // Existing tracked_authors are matched by username so re-scrapes are free.
+  //
+  // Auto-author handling: when a username isn't tracked yet, we insert a row
+  // with source='auto_from_scrape' and both pull/metrics flags OFF — saving
+  // a tweet must never silently kick off paid pulls. Promote from the side
+  // panel's Voice tab once you decide an author is worth actively tracking.
+  //
+  // pollMetrics: when true, freshly-inserted tweets get nextPollAt=now so the
+  // voiceMetricsPoll worker (opt-in via VOICE_METRICS_POLL_ENABLED) picks them
+  // up on its next tick. Re-scrapes never re-arm polling on existing rows.
+  router.post('/voice/scrape', async (c) => {
+    const body = await readJson(c.req.raw);
+    if (!body) return c.json({ error: 'invalid_body' }, 400);
+
+    const original = parseScrapedTweet(body.original);
+    if (!original) return c.json({ error: 'invalid_original' }, 400);
+
+    const repliesRaw = Array.isArray(body.replies) ? body.replies : [];
+    const replies: ScrapedTweet[] = [];
+    const skippedReplies: Array<{ index: number; reason: string }> = [];
+    for (let i = 0; i < repliesRaw.length; i++) {
+      const r = parseScrapedTweet(repliesRaw[i]);
+      if (r) replies.push(r);
+      else skippedReplies.push({ index: i, reason: 'invalid_reply' });
+    }
+
+    const pollMetrics = body.pollMetrics === true;
+
+    // Dedupe authors by username — one $0.010 lookup per fresh author per
+    // request, even if 10 replies all came from the same user.
+    const usernames = new Set<string>([original.username, ...replies.map((r) => r.username)]);
+
+    const resolved = new Map<string, string>(); // username → xUserId
+    const authorsCreated: Array<{ xUserId: string; username: string }> = [];
+    const authorsFailed: Array<{ username: string; reason: string }> = [];
+
+    let token: string | null = null;
+    for (const username of usernames) {
+      const [existing] = await db
+        .select({ xUserId: trackedAuthors.xUserId })
+        .from(trackedAuthors)
+        .where(eq(trackedAuthors.username, username));
+      if (existing) {
+        resolved.set(username, existing.xUserId);
+        continue;
+      }
+
+      // Lazy: only acquire a token once we hit the first unknown author.
+      if (token === null) {
+        try {
+          token = await getValidAccessToken({
+            clientId: deps.clientId,
+            clientSecret: deps.clientSecret,
+          });
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          console.error('voice/scrape token failed:', detail);
+          return c.json({ error: 'token_unavailable', detail }, 502);
+        }
+      }
+
+      try {
+        const user = await getUserByUsername(token, username);
+        // INSERT may race with another request scraping the same author —
+        // ON CONFLICT DO NOTHING leaves the existing row alone (which keeps
+        // its potentially-promoted manual flags intact).
+        const [inserted] = await db
+          .insert(trackedAuthors)
+          .values({
+            xUserId: user.id,
+            username: user.username,
+            source: 'auto_from_scrape',
+            pullEnabled: false,
+            metricsPollingEnabled: false,
+          })
+          .onConflictDoNothing()
+          .returning({ xUserId: trackedAuthors.xUserId });
+        if (inserted) {
+          authorsCreated.push({ xUserId: inserted.xUserId, username: user.username });
+        }
+        resolved.set(username, user.id);
+      } catch (err) {
+        if (err instanceof XApiError && err.status === 404) {
+          authorsFailed.push({ username, reason: 'user_not_found' });
+          continue;
+        }
+        const detail = err instanceof Error ? err.message : String(err);
+        console.error(`voice/scrape resolve @${username} failed:`, detail);
+        authorsFailed.push({ username, reason: 'resolve_failed' });
+      }
+    }
+
+    // The original's author MUST resolve — without it we have no anchor for
+    // the conversation. Replies whose authors failed to resolve are skipped
+    // (recorded in `skippedReplies`) so we still save what we can.
+    const originalAuthorId = resolved.get(original.username);
+    if (!originalAuthorId) {
+      const failure =
+        authorsFailed.find((a) => a.username === original.username)?.reason ?? 'unresolved';
+      return c.json({ error: 'original_author_unresolved', detail: failure }, 422);
+    }
+
+    const now = new Date();
+    const conversationId = original.tweetId;
+
+    let inserted = 0;
+    let updated = 0;
+    let pollEnrolled = 0;
+
+    const upsertTweet = async (
+      tw: ScrapedTweet,
+      authorXUserId: string,
+      isReply: boolean,
+    ): Promise<void> => {
+      const createdAt = tw.createdAt ?? now;
+      const result = await db
+        .insert(voiceTweets)
+        .values({
+          tweetId: tw.tweetId,
+          authorXUserId,
+          text: tw.text,
+          createdAt,
+          isReply,
+          // We can't derive the precise parent of a reply from the DOM (deep
+          // threads have nested parents); leave inReplyToTweetId null and
+          // anchor the relationship via conversationId instead.
+          inReplyToTweetId: null,
+          conversationId,
+          source: 'extension_scrape',
+          fetchedAt: now,
+          lastSeenAt: now,
+          nextPollAt: pollMetrics ? now : null,
+        })
+        .onConflictDoNothing()
+        .returning({ tweetId: voiceTweets.tweetId });
+
+      if (result.length > 0) {
+        inserted++;
+        if (pollMetrics) pollEnrolled++;
+      } else {
+        // Already in the stash — just bump lastSeenAt. Don't re-arm polling
+        // or change the source/createdAt of an existing row.
+        await db
+          .update(voiceTweets)
+          .set({ lastSeenAt: now })
+          .where(eq(voiceTweets.tweetId, tw.tweetId));
+        updated++;
+      }
+    };
+
+    await upsertTweet(original, originalAuthorId, false);
+
+    for (const reply of replies) {
+      const authorXUserId = resolved.get(reply.username);
+      if (!authorXUserId) {
+        skippedReplies.push({ index: -1, reason: `author_unresolved:${reply.username}` });
+        continue;
+      }
+      await upsertTweet(reply, authorXUserId, true);
+    }
+
+    return c.json({
+      conversationId,
+      tweets: { inserted, updated, total: inserted + updated },
+      authors: {
+        resolved: resolved.size,
+        created: authorsCreated.length,
+        createdList: authorsCreated,
+        failed: authorsFailed,
+      },
+      pollEnrolled,
+      skippedReplies,
+    });
+  });
+
   // ---------------------------------------------------------------- query
 
   router.get('/voice/tweets', async (c) => {
@@ -277,6 +459,18 @@ interface Body {
   maxPolledTweets?: unknown;
   fullScan?: unknown;
   maxResults?: unknown;
+  original?: unknown;
+  replies?: unknown;
+  pollMetrics?: unknown;
+}
+
+interface ScrapedTweet {
+  tweetId: string;
+  username: string;
+  displayName: string | null;
+  text: string;
+  createdAt: Date | null;
+  url: string | null;
 }
 
 async function readJson(req: Request): Promise<Body | null> {
@@ -299,4 +493,31 @@ function parseMaxResults(value: unknown): number | undefined | 'invalid' {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return 'invalid';
   return Math.min(PULL_HARD_CAP, Math.floor(value));
+}
+
+export function parseScrapedTweet(value: unknown): ScrapedTweet | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+
+  const tweetId = typeof v.tweetId === 'string' ? v.tweetId.trim() : '';
+  if (!TWEET_ID_RE.test(tweetId)) return null;
+
+  const usernameRaw = typeof v.username === 'string' ? v.username.trim().replace(/^@/, '') : '';
+  if (!USERNAME_RE.test(usernameRaw)) return null;
+
+  // Text may legitimately be empty (image-only tweets); only reject non-string.
+  const text = typeof v.text === 'string' ? v.text : '';
+
+  const displayName =
+    typeof v.displayName === 'string' && v.displayName.trim() ? v.displayName.trim() : null;
+
+  let createdAt: Date | null = null;
+  if (typeof v.createdAt === 'string') {
+    const d = new Date(v.createdAt);
+    if (!Number.isNaN(d.getTime())) createdAt = d;
+  }
+
+  const url = typeof v.url === 'string' && v.url ? v.url : null;
+
+  return { tweetId, username: usernameRaw, displayName, text, createdAt, url };
 }
