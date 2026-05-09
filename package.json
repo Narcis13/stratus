@@ -5,8 +5,8 @@
   "description": "Thin typed wrapper over X API v2. Companion to X-API-IMPLEMENTATION-PLAN.md.",
   "type": "module",
   "scripts": {
-    "auth": "bun run src/server.ts",
-    "play": "bun run src/playground.ts",
+    "auth": "bun run src/x/server.ts",
+    "play": "bun run src/x/playground.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

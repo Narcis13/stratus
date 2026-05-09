@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { containsUrl } from './endpoints.ts';
-import { defaultPostParams } from './fields.ts';
-import { XApiError, classify } from './errors.ts';
-import { generatePkcePair, buildAuthorizeUrl } from './auth.ts';
+import { containsUrl } from './x/endpoints.ts';
+import { defaultPostParams } from './x/fields.ts';
+import { XApiError, classify } from './x/errors.ts';
+import { generatePkcePair, buildAuthorizeUrl } from './x/auth.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
