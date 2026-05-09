@@ -5,6 +5,7 @@
   "description": "Thin typed wrapper over X API v2. Companion to X-API-IMPLEMENTATION-PLAN.md.",
   "type": "module",
   "scripts": {
+    "start": "bun run src/app.ts",
     "auth": "bun run src/x/server.ts",
     "play": "bun run src/x/playground.ts",
     "test": "bun test",
@@ -27,6 +28,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.12.18"
   }
 }
