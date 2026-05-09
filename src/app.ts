@@ -8,7 +8,7 @@
 import { Hono } from 'hono';
 import { bearerAuth } from './middleware/auth.ts';
 import { healthz } from './routes/healthz.ts';
-import { mountX } from './x/index.ts';
+import { mountX, startXWorkers } from './x/index.ts';
 
 export const app = new Hono();
 
@@ -24,4 +24,5 @@ if (import.meta.main) {
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
   const server = Bun.serve({ port, fetch: app.fetch });
   console.log(`stratus listening on http://127.0.0.1:${server.port}`);
+  startXWorkers();
 }
