@@ -39,6 +39,21 @@ export interface XTweet {
     bookmark_count: number;
     impression_count: number;
   };
+  // Returned only on owned-user reads of posts ≤30 days old (X plan §6.9).
+  // Silently null after the 30-day window — that's why metricsPoll retires there.
+  non_public_metrics?: {
+    impression_count: number;
+    url_link_clicks: number;
+    user_profile_clicks: number;
+  };
+  organic_metrics?: {
+    impression_count: number;
+    like_count: number;
+    reply_count: number;
+    retweet_count: number;
+    url_link_clicks: number;
+    user_profile_clicks: number;
+  };
 }
 
 /** Cost: $0.001 (owned read). */

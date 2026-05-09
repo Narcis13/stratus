@@ -7,6 +7,7 @@ import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { calendar } from './routes/calendar.ts';
 import { createPostsRouter } from './routes/posts.ts';
+import { startMetricsPoll } from './workers/metricsPoll.ts';
 import { startOwnReconcile } from './workers/ownReconcile.ts';
 import { startPublisher } from './workers/publisher.ts';
 
@@ -42,6 +43,7 @@ export function startXWorkers(): XWorkers {
 
   stops.push(startPublisher(cfg));
   stops.push(startOwnReconcile(cfg));
+  stops.push(startMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
 
   return {
     stop() {

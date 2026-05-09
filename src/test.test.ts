@@ -4,6 +4,7 @@ import { containsUrl } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
 import { priceFor } from './x/pricing.ts';
+import { nextPollDelay } from './x/workers/metricsPoll.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -99,6 +100,42 @@ describe('pricing.priceFor', () => {
 
   test('unknown endpoint returns 0 (visible gap, not fabricated number)', () => {
     expect(priceFor('/2/something/new', 'GET', 200, null)).toBe(0);
+  });
+});
+
+describe('metricsPoll cadence', () => {
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+
+  test('0–30 min → +5 min', () => {
+    expect(nextPollDelay(0)).toBe(5 * MIN);
+    expect(nextPollDelay(29 * MIN)).toBe(5 * MIN);
+  });
+
+  test('30 min boundary flips to +15 min', () => {
+    expect(nextPollDelay(30 * MIN)).toBe(15 * MIN);
+    expect(nextPollDelay(5 * HOUR)).toBe(15 * MIN);
+  });
+
+  test('6 h – 48 h → +1 h', () => {
+    expect(nextPollDelay(6 * HOUR)).toBe(HOUR);
+    expect(nextPollDelay(47 * HOUR)).toBe(HOUR);
+  });
+
+  test('2 d – 7 d → +6 h', () => {
+    expect(nextPollDelay(2 * DAY)).toBe(6 * HOUR);
+    expect(nextPollDelay(6 * DAY)).toBe(6 * HOUR);
+  });
+
+  test('7 d – 30 d → +24 h', () => {
+    expect(nextPollDelay(7 * DAY)).toBe(DAY);
+    expect(nextPollDelay(29 * DAY)).toBe(DAY);
+  });
+
+  test('≥ 30 d → retired (null)', () => {
+    expect(nextPollDelay(30 * DAY)).toBeNull();
+    expect(nextPollDelay(60 * DAY)).toBeNull();
   });
 });
 
