@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "stratus",
+  "version": "0.0.1",
+  "description": "Side panel for stratus — schedule posts and stash voice tweets.",
+  "action": {
+    "default_title": "Open stratus"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "permissions": ["sidePanel", "storage"],
+  "host_permissions": [
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ]
+}
