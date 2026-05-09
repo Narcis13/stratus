@@ -69,10 +69,13 @@ When LinkedIn arrives later: create `src/linkedin/` with the same shape, registe
 
 ### Phase status
 
-- **Phase 1 — Plumbing + Calendar (in progress).** File relocation to `src/x/` done. Still TODO: Drizzle/Neon setup, Postgres token-store, `app.ts` + middleware, `calendar.ts` routes, `publisher.ts` worker, `pricing.ts` + cost middleware wired into `xFetch.onCost`.
-- Phases 2–5 (Metrics + own-reconcile → Voice library → Extension MVP → Extension scraping) — not started.
+- **Phase 1 — Plumbing + Calendar:** done. `app.ts` + Hono, bearer + CORS middleware, Drizzle/Neon, Postgres token store, `pricing.ts` + `costTracker` wired into `xFetch.onCost`, `calendar.ts` routes, `publisher.ts` worker.
+- **Phase 2 — Metrics + own-reconcile:** done. `metricsPoll` and `ownReconcile` workers; `/x/metrics` and `/x/posts` routes mounted via `mountX`.
+- **Phase 3 — Voice library:** done. `voicePull` worker and `/x/voice` routes; `voiceMetricsPoll` is opt-in via `VOICE_METRICS_POLL_ENABLED=true` (other-user reads at $0.005 each — keep it gated).
+- **Phase 4 — Extension MVP (calendar + drafts):** done. End-to-end smoke-tested 2026-05-10: side panel → background API client → bearer-guarded `/x/calendar` → DB → 60 s publisher tick → live tweet → row flips `PENDING → POSTED`.
+- **Phase 5 — Extension scraping for voice library:** not started.
 
-See `PLAN.md` §"Phased build" for the full breakdown.
+Authoritative source for what's actually wired is `src/x/index.ts` (`mountX` + `startXWorkers`). See `PLAN.md` §"Phased build" for the full breakdown.
 
 ## Non-negotiable invariants
 
