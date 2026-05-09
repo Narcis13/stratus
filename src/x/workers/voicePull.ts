@@ -9,7 +9,7 @@
 // read 0–N new tweets; the first pull reads up to `max_tweets_per_pull`.
 //
 // `runVoicePull` is the unit of work used by both:
-//   - the hourly interval (Phase 3 — not wired yet)
+//   - the hourly `startVoicePull` interval (walks all `pull_enabled` authors)
 //   - the manual `POST /x/voice/pull/:username` route
 //
 // Polling enrolment: tweets are sorted newest-first, then the first
@@ -170,4 +170,92 @@ export async function retireAuthorVoiceTweets(authorXUserId: string): Promise<nu
     .where(and(eq(voiceTweets.authorXUserId, authorXUserId), eq(voiceTweets.retired, false)))
     .returning({ tweetId: voiceTweets.tweetId });
   return updated.length;
+}
+
+// ------------------------------------------------------- hourly tick
+
+export interface VoicePullTickResult {
+  authors: number;
+  scanned: number;
+  inserted: number;
+  queuedForPolling: number;
+  failed: number;
+}
+
+const DEFAULT_INTERVAL_MS = 60 * 60 * 1000;
+
+/**
+ * One pass over every `pull_enabled` author, least-recently-pulled first so
+ * authors rotate fairly even if the tick gets interrupted. Per-author errors
+ * are isolated — one suspended account or 401 doesn't stall the rest.
+ */
+export async function tickVoicePull(deps: VoicePullDeps): Promise<VoicePullTickResult> {
+  const result: VoicePullTickResult = {
+    authors: 0,
+    scanned: 0,
+    inserted: 0,
+    queuedForPolling: 0,
+    failed: 0,
+  };
+
+  const authors = await db
+    .select({ xUserId: trackedAuthors.xUserId, username: trackedAuthors.username })
+    .from(trackedAuthors)
+    .where(eq(trackedAuthors.pullEnabled, true))
+    // never-pulled (NULL) goes first, then oldest-pulled — fair rotation under
+    // longer ticks or interrupted runs.
+    .orderBy(sql`${trackedAuthors.lastPulledAt} asc nulls first`);
+
+  for (const author of authors) {
+    result.authors++;
+    try {
+      const r = await runVoicePull(deps, author.xUserId);
+      result.scanned += r.scanned;
+      result.inserted += r.inserted;
+      result.queuedForPolling += r.queuedForPolling;
+    } catch (err) {
+      result.failed++;
+      console.error(`voicePull: @${author.username} failed:`, describe(err));
+    }
+  }
+
+  if (result.authors > 0) {
+    console.log(
+      `voicePull tick: authors=${result.authors} scanned=${result.scanned} inserted=${result.inserted} queued=${result.queuedForPolling} failed=${result.failed}`,
+    );
+  }
+  return result;
+}
+
+export interface VoicePullOptions extends VoicePullDeps {
+  intervalMs?: number;
+}
+
+export function startVoicePull(opts: VoicePullOptions): () => void {
+  const intervalMs = opts.intervalMs ?? DEFAULT_INTERVAL_MS;
+  const deps: VoicePullDeps = { clientId: opts.clientId, clientSecret: opts.clientSecret };
+  let running = false;
+
+  const safeTick = async (): Promise<void> => {
+    if (running) return;
+    running = true;
+    try {
+      await tickVoicePull(deps);
+    } catch (err) {
+      console.error('voicePull: tick crashed:', describe(err));
+    } finally {
+      running = false;
+    }
+  };
+
+  const handle = setInterval(() => {
+    void safeTick();
+  }, intervalMs);
+
+  return () => clearInterval(handle);
+}
+
+function describe(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
 }
