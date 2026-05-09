@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono';
 import { bearerAuth } from './middleware/auth.ts';
+import { cost } from './routes/cost.ts';
 import { healthz } from './routes/healthz.ts';
 import { mountX, startXWorkers } from './x/index.ts';
 
@@ -18,6 +19,7 @@ app.route('/', healthz);
 app.use('/x/*', bearerAuth());
 app.use('/cost/*', bearerAuth());
 
+app.route('/', cost);
 mountX(app);
 
 if (import.meta.main) {
