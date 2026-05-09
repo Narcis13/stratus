@@ -12,6 +12,7 @@ import { createVoiceRouter } from './routes/voice.ts';
 import { startMetricsPoll } from './workers/metricsPoll.ts';
 import { startOwnReconcile } from './workers/ownReconcile.ts';
 import { startPublisher } from './workers/publisher.ts';
+import { startVoiceMetricsPoll } from './workers/voiceMetricsPoll.ts';
 import { startVoicePull } from './workers/voicePull.ts';
 
 interface XConfig {
@@ -66,6 +67,11 @@ export function startXWorkers(): XWorkers {
     console.log(
       'voicePull: timer disabled via VOICE_PULL_ENABLED=false (manual POST /x/voice/pull/:username still works)',
     );
+  }
+  if (process.env.VOICE_METRICS_POLL_ENABLED !== 'false') {
+    stops.push(startVoiceMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
+  } else {
+    console.log('voiceMetricsPoll: disabled via VOICE_METRICS_POLL_ENABLED=false');
   }
 
   return {
