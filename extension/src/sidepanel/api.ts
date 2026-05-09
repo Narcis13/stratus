@@ -1,48 +1,19 @@
 // Typed thin client over the stratus API. The side panel calls this directly
-// using bearer + apiUrl from chrome.storage.local; the dedicated background
-// worker client (with retry/queue policy) is a separate task.
+// using bearer + apiUrl from chrome.storage.local; the background-routed
+// client lives in shared/bgClient.ts and is what content scripts use.
 
+import {
+  ApiError,
+  type CreateBody,
+  type ListOpts,
+  type PostStatus,
+  type ScheduledPost,
+  type UpdateBody,
+} from '../shared/types.ts';
 import type { Settings } from './storage.ts';
 
-export type PostStatus = 'draft' | 'pending' | 'posted' | 'failed' | 'cancelled';
-
-export interface ScheduledPost {
-  id: string;
-  text: string;
-  mediaIds: string[] | null;
-  scheduledFor: string | null;
-  status: PostStatus;
-  postedTweetId: string | null;
-  errorClass: string | null;
-  errorDetail: string | null;
-  source: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface CreateBody {
-  text: string;
-  scheduledFor?: string | null;
-  status?: 'draft' | 'pending';
-  mediaIds?: string[] | null;
-}
-
-export interface UpdateBody {
-  text?: string;
-  scheduledFor?: string | null;
-  status?: 'draft' | 'pending' | 'cancelled';
-  mediaIds?: string[] | null;
-}
-
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-  ) {
-    super(`${status} ${code}`);
-    this.name = 'ApiError';
-  }
-}
+export { ApiError };
+export type { CreateBody, ListOpts, PostStatus, ScheduledPost, UpdateBody };
 
 async function request<T>(s: Settings, path: string, init: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
@@ -68,10 +39,7 @@ async function request<T>(s: Settings, path: string, init: RequestInit = {}): Pr
 }
 
 export const api = {
-  list(
-    s: Settings,
-    opts: { from?: string; to?: string; status?: PostStatus } = {},
-  ): Promise<ScheduledPost[]> {
+  list(s: Settings, opts: ListOpts = {}): Promise<ScheduledPost[]> {
     const q = new URLSearchParams();
     if (opts.from) q.set('from', opts.from);
     if (opts.to) q.set('to', opts.to);
