@@ -30,6 +30,7 @@ export interface XTweet {
   author_id?: string;
   conversation_id?: string;
   in_reply_to_user_id?: string;
+  referenced_tweets?: Array<{ type: 'retweeted' | 'quoted' | 'replied_to'; id: string }>;
   public_metrics?: {
     retweet_count: number;
     reply_count: number;

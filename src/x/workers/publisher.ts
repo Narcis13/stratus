@@ -87,14 +87,21 @@ async function processOne(
     try {
       const out = await createPost(token, { text: row.text }, { selfXUserId });
       const now = new Date();
-      await tx.insert(postsPublished).values({
-        tweetId: out.id,
-        scheduledPostId: row.id,
-        text: out.text,
-        postedAt: now,
-        source: 'scheduled',
-        nextPollAt: now,
-      });
+      // onConflictDoNothing guards against a tight race where the reconciler
+      // inserted this tweet first (saw it on X before our txn committed). The
+      // existing row stays as-is — possibly mislabeled `'manual'` — but the
+      // scheduled_posts row still flips to 'posted' below, which is correct.
+      await tx
+        .insert(postsPublished)
+        .values({
+          tweetId: out.id,
+          scheduledPostId: row.id,
+          text: out.text,
+          postedAt: now,
+          source: 'scheduled',
+          nextPollAt: now,
+        })
+        .onConflictDoNothing();
       await tx
         .update(scheduledPosts)
         .set({
