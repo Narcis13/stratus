@@ -6,6 +6,7 @@ import type { Hono } from 'hono';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { calendar } from './routes/calendar.ts';
+import { metrics } from './routes/metrics.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { startMetricsPoll } from './workers/metricsPoll.ts';
 import { startOwnReconcile } from './workers/ownReconcile.ts';
@@ -27,6 +28,7 @@ function loadConfig(): XConfig {
 
 export function mountX(app: Hono): void {
   app.route('/x', calendar);
+  app.route('/x', metrics);
   app.route('/x', createPostsRouter(loadConfig()));
 }
 
