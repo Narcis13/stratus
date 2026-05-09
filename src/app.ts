@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import { bearerAuth } from './middleware/auth.ts';
 import { healthz } from './routes/healthz.ts';
+import { mountX } from './x/index.ts';
 
 export const app = new Hono();
 
@@ -16,6 +17,8 @@ app.route('/', healthz);
 // Bearer guard on every API surface. `/healthz` is mounted above and stays public.
 app.use('/x/*', bearerAuth());
 app.use('/cost/*', bearerAuth());
+
+mountX(app);
 
 if (import.meta.main) {
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
