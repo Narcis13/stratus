@@ -68,10 +68,12 @@ export function startXWorkers(): XWorkers {
       'voicePull: timer disabled via VOICE_PULL_ENABLED=false (manual POST /x/voice/pull/:username still works)',
     );
   }
-  if (process.env.VOICE_METRICS_POLL_ENABLED !== 'false') {
+  // Opt-in: other-user reads at $0.005 each add up fast. Set
+  // VOICE_METRICS_POLL_ENABLED=true to turn on the cadence ladder.
+  if (process.env.VOICE_METRICS_POLL_ENABLED === 'true') {
     stops.push(startVoiceMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
   } else {
-    console.log('voiceMetricsPoll: disabled via VOICE_METRICS_POLL_ENABLED=false');
+    console.log('voiceMetricsPoll: disabled (set VOICE_METRICS_POLL_ENABLED=true to enable)');
   }
 
   return {
