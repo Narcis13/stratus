@@ -44,8 +44,16 @@ export function startXWorkers(): XWorkers {
   const stops: Array<() => void> = [];
 
   stops.push(startPublisher(cfg));
-  stops.push(startOwnReconcile(cfg));
-  stops.push(startMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
+  if (process.env.OWN_RECONCILE_ENABLED !== 'false') {
+    stops.push(startOwnReconcile(cfg));
+  } else {
+    console.log('ownReconcile: timer disabled via OWN_RECONCILE_ENABLED=false (manual POST /x/posts/reconcile still works)');
+  }
+  if (process.env.METRICS_POLL_ENABLED !== 'false') {
+    stops.push(startMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
+  } else {
+    console.log('metricsPoll: disabled via METRICS_POLL_ENABLED=false');
+  }
 
   return {
     stop() {
