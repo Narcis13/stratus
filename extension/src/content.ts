@@ -19,9 +19,24 @@ import type { ApiRequest, ApiResponse } from './shared/messages.ts';
 const BUTTON_CLASS = 'stratus-save-btn';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
-const REPLY_HARVEST_LIMIT = 10;
+const REPLY_HARVEST_KEY = 'replyHarvestLimit';
+const REPLY_HARVEST_DEFAULT = 0;
+const REPLY_HARVEST_MAX = 10;
 
 const handled = new WeakSet<Element>();
+
+// Mirrors the side panel's setting (chrome.storage.local key
+// `replyHarvestLimit`). 0 = save the focused tweet only; up to 10 captures
+// the surrounding parents/replies on a tweet-detail page.
+let replyHarvestLimit = REPLY_HARVEST_DEFAULT;
+
+function clampReplyLimit(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return REPLY_HARVEST_DEFAULT;
+  const n = Math.floor(value);
+  if (n < 0) return 0;
+  if (n > REPLY_HARVEST_MAX) return REPLY_HARVEST_MAX;
+  return n;
+}
 
 interface ScrapedTweet {
   tweetId: string;
@@ -136,11 +151,16 @@ function scrapeTweet(article: Element): ScrapedTweet | null {
   };
 }
 
-function harvestReplies(focusedArticle: Element, focusedTweetId: string): ScrapedTweet[] {
+function harvestReplies(
+  focusedArticle: Element,
+  focusedTweetId: string,
+  limit: number,
+): ScrapedTweet[] {
   // Walk *all* tweet articles in DOM order, skipping the focused one. This
   // captures parent tweets shown above the focused tweet (when it's itself a
   // reply) plus the replies shown below — both useful conversational context.
   const out: ScrapedTweet[] = [];
+  if (limit <= 0) return out;
   const articles = document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]');
   for (const a of articles) {
     if (a === focusedArticle) continue;
@@ -148,7 +168,7 @@ function harvestReplies(focusedArticle: Element, focusedTweetId: string): Scrape
     if (!r) continue;
     if (r.tweetId === focusedTweetId) continue;
     out.push(r);
-    if (out.length >= REPLY_HARVEST_LIMIT) break;
+    if (out.length >= limit) break;
   }
   return out;
 }
@@ -192,7 +212,9 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
 
   const focusedId = focusedTweetIdFromUrl();
   const replies =
-    focusedId && focusedId === original.tweetId ? harvestReplies(article, original.tweetId) : [];
+    focusedId && focusedId === original.tweetId
+      ? harvestReplies(article, original.tweetId, replyHarvestLimit)
+      : [];
 
   const body: ScrapeBody = { original, replies };
   const request: ApiRequest = {
@@ -261,8 +283,21 @@ function scheduleScan(): void {
   });
 }
 
+function loadReplyHarvestLimit(): void {
+  chrome.storage.local.get(REPLY_HARVEST_KEY, (out) => {
+    replyHarvestLimit = clampReplyLimit(out[REPLY_HARVEST_KEY]);
+  });
+}
+
 function start(): void {
   injectStyles();
+  loadReplyHarvestLimit();
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[REPLY_HARVEST_KEY];
+    if (!change) return;
+    replyHarvestLimit = clampReplyLimit(change.newValue);
+  });
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });
