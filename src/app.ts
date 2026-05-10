@@ -6,6 +6,7 @@
 // running it (e.g. from tests) does NOT bind a port — see `import.meta.main`.
 
 import { Hono } from 'hono';
+import { mountGrok } from './grok/index.ts';
 import { bearerAuth } from './middleware/auth.ts';
 import { corsMiddleware } from './middleware/cors.ts';
 import { cost } from './routes/cost.ts';
@@ -22,9 +23,11 @@ app.route('/', healthz);
 // Bearer guard on every API surface. `/healthz` is mounted above and stays public.
 app.use('/x/*', bearerAuth());
 app.use('/cost/*', bearerAuth());
+app.use('/grok/*', bearerAuth());
 
 app.route('/', cost);
 mountX(app);
+mountGrok(app);
 
 if (import.meta.main) {
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
