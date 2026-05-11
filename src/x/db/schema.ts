@@ -127,3 +127,40 @@ export const voiceMetricsSnapshots = pgTable(
   },
   (t) => [index('voice_metrics_snapshots_tweet_snapshot_idx').on(t.tweetId, t.snapshotAt.desc())],
 );
+
+export const replyDrafts = pgTable(
+  'reply_drafts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    sourceTweetId: text('source_tweet_id').notNull(),
+    sourceAuthorUsername: text('source_author_username').notNull(),
+    sourceAuthorDisplayName: text('source_author_display_name'),
+    sourceText: text('source_text').notNull(),
+    sourceUrl: text('source_url').notNull(),
+    sourcePostedAt: timestamp('source_posted_at', { withTimezone: true }),
+
+    contextSnapshot: jsonb('context_snapshot').notNull(),
+
+    replyText: text('reply_text').notNull(),
+    replyTextEdited: text('reply_text_edited'),
+
+    model: text('model').notNull(),
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
+    costUsd: text('cost_usd'),
+    grokRequestId: text('grok_request_id'),
+
+    systemPromptOverride: text('system_prompt_override'),
+
+    status: text('status').notNull().default('generated'),
+    postedTweetId: text('posted_tweet_id'),
+
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index('reply_drafts_source_created_idx').on(t.sourceTweetId, t.createdAt.desc()),
+    index('reply_drafts_status_created_idx').on(t.status, t.createdAt.desc()),
+  ],
+);
