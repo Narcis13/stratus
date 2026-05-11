@@ -8,6 +8,7 @@ import { setDefaultOnCost } from './client.ts';
 import { calendar } from './routes/calendar.ts';
 import { metrics } from './routes/metrics.ts';
 import { createPostsRouter } from './routes/posts.ts';
+import { replies } from './routes/replies.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { startMetricsPoll } from './workers/metricsPoll.ts';
 import { startOwnReconcile } from './workers/ownReconcile.ts';
@@ -35,6 +36,12 @@ export function mountX(app: Hono): void {
   app.route('/x', metrics);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
+  // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
+  if (process.env.XAI_API_KEY) {
+    app.route('/x', replies);
+  } else {
+    console.log('x/replies: XAI_API_KEY not set — /x/replies/* not mounted');
+  }
 }
 
 export interface XWorkers {
