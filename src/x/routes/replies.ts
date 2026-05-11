@@ -1,13 +1,18 @@
 // Grok-drafted manual-assist reply drafts over `reply_drafts`.
 // Mounted under `/x` by `mountX` in ../index.ts.
 //
-// Routes (Phase 6 step 2 — generate only; CRUD lands in step 3):
-//   POST /replies/generate   body: { context, systemPromptOverride?, model?, reasoningEffort? }
+// Routes:
+//   POST   /replies/generate   body: { context, systemPromptOverride?, model?, reasoningEffort? }
+//   GET    /replies            ?status=&sourceAuthor=&limit=&since=
+//   GET    /replies/:id
+//   PATCH  /replies/:id        body: { replyTextEdited?, status?, postedTweetId? }
+//   DELETE /replies/:id
 //
 // Cost: askGrok already writes a `cost_events` row tagged platform='grok'.
 // The denormalized `costUsd` column on `reply_drafts` is a UI convenience —
 // do NOT double-log here.
 
+import { type SQL, and, desc, eq, gte } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
@@ -22,6 +27,23 @@ const DEFAULT_REASONING: ReasoningEffort = 'low';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const STATUSES = ['generated', 'copied', 'posted', 'discarded'] as const;
+type Status = (typeof STATUSES)[number];
+
+// Status transitions: see REPLY-MASTER-PLAN.md §"PATCH /x/replies/:id".
+// `discarded` is terminal; `posted` only re-opens to `discarded` (drop a
+// recorded reply from the history).
+const ALLOWED_TRANSITIONS: Record<Status, readonly Status[]> = {
+  generated: ['copied', 'posted', 'discarded'],
+  copied: ['posted', 'discarded'],
+  posted: ['discarded'],
+  discarded: [],
+};
+
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 200;
 
 interface RawBody {
   context?: unknown;
@@ -122,7 +144,143 @@ replies.post('/replies/generate', async (c) => {
   return c.json(row, 201);
 });
 
+// ---------------------------------------------------------------- list/get
+
+replies.get('/replies', async (c) => {
+  const statusStr = c.req.query('status');
+  const sourceAuthorStr = c.req.query('sourceAuthor')?.trim().replace(/^@/, '');
+  const limitStr = c.req.query('limit');
+  const sinceStr = c.req.query('since');
+
+  const filters: SQL[] = [];
+
+  if (statusStr !== undefined) {
+    if (!isStatus(statusStr)) return c.json({ error: 'invalid_status' }, 400);
+    filters.push(eq(replyDrafts.status, statusStr));
+  }
+  if (sourceAuthorStr !== undefined && sourceAuthorStr !== '') {
+    if (!USERNAME_RE.test(sourceAuthorStr)) {
+      return c.json({ error: 'invalid_source_author' }, 400);
+    }
+    filters.push(eq(replyDrafts.sourceAuthorUsername, sourceAuthorStr));
+  }
+  if (sinceStr !== undefined) {
+    const since = new Date(sinceStr);
+    if (Number.isNaN(since.getTime())) return c.json({ error: 'invalid_since' }, 400);
+    filters.push(gte(replyDrafts.createdAt, since));
+  }
+
+  let limit = DEFAULT_LIST_LIMIT;
+  if (limitStr !== undefined) {
+    const n = Number(limitStr);
+    if (!Number.isInteger(n) || n < 1) return c.json({ error: 'invalid_limit' }, 400);
+    limit = Math.min(MAX_LIST_LIMIT, n);
+  }
+
+  const rows = await db
+    .select()
+    .from(replyDrafts)
+    .where(filters.length ? and(...filters) : undefined)
+    .orderBy(desc(replyDrafts.createdAt))
+    .limit(limit);
+
+  return c.json(rows);
+});
+
+replies.get('/replies/:id', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const [row] = await db.select().from(replyDrafts).where(eq(replyDrafts.id, id));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+  return c.json(row);
+});
+
+// ----------------------------------------------------------------- update
+
+replies.patch('/replies/:id', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  const [existing] = await db.select().from(replyDrafts).where(eq(replyDrafts.id, id));
+  if (!existing) return c.json({ error: 'not_found' }, 404);
+
+  const updates: Partial<typeof replyDrafts.$inferInsert> = {};
+
+  if (body.replyTextEdited !== undefined) {
+    if (body.replyTextEdited === null) {
+      updates.replyTextEdited = null;
+    } else if (typeof body.replyTextEdited !== 'string') {
+      return c.json({ error: 'invalid_reply_text_edited' }, 400);
+    } else {
+      updates.replyTextEdited = body.replyTextEdited;
+    }
+  }
+
+  let nextStatus: Status | undefined;
+  if (body.status !== undefined) {
+    if (!isStatus(body.status)) return c.json({ error: 'invalid_status' }, 400);
+    nextStatus = body.status;
+    if (nextStatus !== existing.status) {
+      const allowed = ALLOWED_TRANSITIONS[existing.status as Status] ?? [];
+      if (!allowed.includes(nextStatus)) {
+        return c.json(
+          { error: 'invalid_status_transition', from: existing.status, to: nextStatus },
+          409,
+        );
+      }
+      updates.status = nextStatus;
+    }
+  }
+
+  if (body.postedTweetId !== undefined) {
+    if (body.postedTweetId === null) {
+      updates.postedTweetId = null;
+    } else if (typeof body.postedTweetId !== 'string' || !TWEET_ID_RE.test(body.postedTweetId)) {
+      return c.json({ error: 'invalid_posted_tweet_id' }, 400);
+    } else {
+      // Only meaningful when the row is/becomes `posted`.
+      const finalStatus = nextStatus ?? (existing.status as Status);
+      if (finalStatus !== 'posted') {
+        return c.json({ error: 'posted_tweet_id_requires_posted_status' }, 400);
+      }
+      updates.postedTweetId = body.postedTweetId;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) return c.json(existing);
+
+  updates.updatedAt = new Date();
+  const [row] = await db.update(replyDrafts).set(updates).where(eq(replyDrafts.id, id)).returning();
+
+  return c.json(row);
+});
+
+// ----------------------------------------------------------------- delete
+
+replies.delete('/replies/:id', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const result = await db
+    .delete(replyDrafts)
+    .where(eq(replyDrafts.id, id))
+    .returning({ id: replyDrafts.id });
+  if (result.length === 0) return c.json({ error: 'not_found' }, 404);
+  return c.body(null, 204);
+});
+
 // --------------------------------------------------------------- validation
+
+function isStatus(v: unknown): v is Status {
+  return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
+}
 
 function parseContext(value: unknown): PostContext | { error: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
