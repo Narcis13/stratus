@@ -11,7 +11,7 @@
 set -euo pipefail
 
 REMOTE="${1:-root@116.203.39.245}"
-DOMAIN="${DOMAIN:-116-203-39-245.sslip.io}"
+DOMAIN="${DOMAIN:-stratus-narcis.duckdns.org}"
 
 echo "==> bootstrapping $REMOTE for domain $DOMAIN"
 
