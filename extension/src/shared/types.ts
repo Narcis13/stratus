@@ -153,6 +153,19 @@ export interface RepliesListOpts {
   since?: string;
 }
 
+export interface ReplyGenerateBody {
+  context: PostContext;
+  systemPromptOverride?: string;
+  model?: string;
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+}
+
+export interface ReplyPatchBody {
+  replyTextEdited?: string | null;
+  status?: ReplyDraftStatus;
+  postedTweetId?: string | null;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

@@ -11,6 +11,8 @@ import {
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftStatus,
+  type ReplyGenerateBody,
+  type ReplyPatchBody,
   type ScheduledPost,
   type TopComment,
   type UpdateBody,
@@ -31,6 +33,8 @@ export type {
   RepliesListOpts,
   ReplyDraft,
   ReplyDraftStatus,
+  ReplyGenerateBody,
+  ReplyPatchBody,
   ScheduledPost,
   TopComment,
   UpdateBody,
@@ -132,6 +136,28 @@ export const api = {
       if (opts.since) q.set('since', opts.since);
       const qs = q.toString();
       return request<ReplyDraft[]>(s, `/x/replies${qs ? `?${qs}` : ''}`);
+    },
+
+    get(s: Settings, id: string): Promise<ReplyDraft> {
+      return request<ReplyDraft>(s, `/x/replies/${encodeURIComponent(id)}`);
+    },
+
+    generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraft> {
+      return request<ReplyDraft>(s, '/x/replies/generate', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    },
+
+    patch(s: Settings, id: string, body: ReplyPatchBody): Promise<ReplyDraft> {
+      return request<ReplyDraft>(s, `/x/replies/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      });
+    },
+
+    remove(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/replies/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
   },
 };

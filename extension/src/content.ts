@@ -15,15 +15,22 @@
 // what that route will accept.
 
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
+import type { PostContext, ReplyDraft, TopComment } from './shared/types.ts';
 
 const BUTTON_CLASS = 'stratus-save-btn';
+const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_HARVEST_KEY = 'replyHarvestLimit';
 const REPLY_HARVEST_DEFAULT = 0;
 const REPLY_HARVEST_MAX = 10;
+const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
+const REPLY_SYSTEM_PROMPT_KEY = 'replyMaster:systemPromptOverride';
+const REPLY_TOP_COMMENTS_MAX = 10;
+const REPLY_BTN_LABEL = '🪄 Reply Master';
 
 const handled = new WeakSet<Element>();
+const replyMasterHandled = new WeakSet<Element>();
 
 // Mirrors the side panel's setting (chrome.storage.local key
 // `replyHarvestLimit`). 0 = save the focused tweet only; up to 10 captures
@@ -90,6 +97,43 @@ function injectStyles(): void {
       background: rgba(0, 186, 124, 0.12);
     }
     .${BUTTON_CLASS}[data-state="failed"] {
+      color: rgb(244, 33, 46);
+      border-color: rgb(244, 33, 46);
+      background: rgba(244, 33, 46, 0.12);
+    }
+    .${REPLY_BTN_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      color: rgb(170, 100, 220);
+      border: 1px solid rgba(170, 100, 220, 0.5);
+      background: transparent;
+      margin-left: 6px;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${REPLY_BTN_CLASS}:hover {
+      color: rgb(192, 132, 232);
+      border-color: rgb(192, 132, 232);
+      background: rgba(170, 100, 220, 0.12);
+    }
+    .${REPLY_BTN_CLASS}[data-state="working"] {
+      color: rgb(113, 118, 123);
+      border-color: rgba(113, 118, 123, 0.4);
+      cursor: progress;
+    }
+    .${REPLY_BTN_CLASS}[data-state="done"] {
+      color: rgb(0, 186, 124);
+      border-color: rgb(0, 186, 124);
+      background: rgba(0, 186, 124, 0.12);
+    }
+    .${REPLY_BTN_CLASS}[data-state="failed"] {
       color: rgb(244, 33, 46);
       border-color: rgb(244, 33, 46);
       background: rgba(244, 33, 46, 0.12);
@@ -188,6 +232,199 @@ function scheduleReset(btn: HTMLButtonElement): void {
   }, STATUS_PERSIST_MS);
 }
 
+// X renders action-row aria-label like "12 replies, 5 reposts, 100 likes, 2,345 views, ..."
+// Pull each metric independently — order isn't guaranteed across locales/A-B tests.
+function parseMetricsLabel(label: string): PostContext['metrics'] {
+  const n = (re: RegExp): number => {
+    const m = label.match(re);
+    if (!m || !m[1]) return 0;
+    const v = Number(m[1].replace(/[,.\s]/g, ''));
+    return Number.isFinite(v) ? v : 0;
+  };
+  return {
+    replies: n(/([\d.,]+)\s+repl/i),
+    reposts: n(/([\d.,]+)\s+repost/i),
+    likes: n(/([\d.,]+)\s+like/i),
+    views: n(/([\d.,]+)\s+view/i),
+  };
+}
+
+function scrapeTopComment(article: Element, focusedTweetId: string): TopComment | null {
+  const permalink = findPermalink(article);
+  if (!permalink) return null;
+  if (permalink.tweetId === focusedTweetId) return null;
+  const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  if (text === '') return null;
+  const userNameEl = article.querySelector('[data-testid="User-Name"]');
+  const author = userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() ?? '';
+  return {
+    author: author || permalink.username,
+    handle: `@${permalink.username}`,
+    text,
+  };
+}
+
+function scrapePostContext(focusedArticle: Element, focusedTweetId: string): PostContext | null {
+  const permalink = findPermalink(focusedArticle);
+  if (!permalink || permalink.tweetId !== focusedTweetId) return null;
+
+  const text = focusedArticle.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  const userNameEl = focusedArticle.querySelector('[data-testid="User-Name"]');
+  const author =
+    userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || permalink.username;
+
+  const timeEl = focusedArticle.querySelector('time');
+  // Server validates postedAt as Date-parseable; fall back to now if X hasn't
+  // rendered the timestamp (rare on a focused tweet, but possible mid-hydration).
+  const postedAt = timeEl?.getAttribute('datetime') || new Date().toISOString();
+
+  // Action row of the focused article — the aria-label carries the metric blob.
+  const reply = focusedArticle.querySelector('[data-testid="reply"]');
+  const actionRow = reply?.closest('div[role="group"]');
+  const ariaLabel = actionRow?.getAttribute('aria-label') ?? '';
+  const metrics = parseMetricsLabel(ariaLabel);
+
+  const topComments: TopComment[] = [];
+  const articles = document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]');
+  for (const a of articles) {
+    if (a === focusedArticle) continue;
+    const c = scrapeTopComment(a, focusedTweetId);
+    if (!c) continue;
+    topComments.push(c);
+    if (topComments.length >= REPLY_TOP_COMMENTS_MAX) break;
+  }
+
+  return {
+    tweetId: focusedTweetId,
+    handle: permalink.username,
+    author,
+    text,
+    url: permalink.url,
+    postedAt,
+    metrics,
+    topComments,
+  };
+}
+
+function setReplyState(
+  btn: HTMLButtonElement,
+  state: 'idle' | 'working' | 'done' | 'failed',
+  label: string,
+): void {
+  btn.dataset.state = state;
+  btn.textContent = label;
+}
+
+function scheduleReplyReset(btn: HTMLButtonElement): void {
+  setTimeout(() => {
+    if (btn.isConnected) setReplyState(btn, 'idle', REPLY_BTN_LABEL);
+  }, STATUS_PERSIST_MS);
+}
+
+async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
+  if (btn.dataset.state === 'working') return;
+
+  const focusedId = focusedTweetIdFromUrl();
+  if (!focusedId) {
+    setReplyState(btn, 'failed', 'Failed: not_status_page');
+    scheduleReplyReset(btn);
+    return;
+  }
+  const article = btn.closest<HTMLElement>('article[data-testid="tweet"]');
+  if (!article) {
+    setReplyState(btn, 'failed', 'Failed: detached');
+    scheduleReplyReset(btn);
+    return;
+  }
+
+  const ctx = scrapePostContext(article, focusedId);
+  if (!ctx) {
+    setReplyState(btn, 'failed', 'Failed: scrape_failed');
+    scheduleReplyReset(btn);
+    return;
+  }
+
+  setReplyState(btn, 'working', 'Drafting…');
+
+  // Read the side panel's persisted system-prompt override fresh on every
+  // click — cheap, and avoids stale state if the user just tweaked it.
+  let systemPromptOverride: string | undefined;
+  try {
+    const out = await chrome.storage.local.get(REPLY_SYSTEM_PROMPT_KEY);
+    const v = out[REPLY_SYSTEM_PROMPT_KEY];
+    if (typeof v === 'string' && v.trim() !== '') systemPromptOverride = v;
+  } catch (err) {
+    console.warn('[stratus] reply master read override failed', err);
+  }
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/replies/generate',
+    body: systemPromptOverride ? { context: ctx, systemPromptOverride } : { context: ctx },
+  };
+
+  let res: ApiResponse<ReplyDraft> | undefined;
+  try {
+    res = (await chrome.runtime.sendMessage(request)) as ApiResponse<ReplyDraft> | undefined;
+  } catch (err) {
+    console.error('[stratus] reply master sendMessage failed', err);
+  }
+
+  if (!res || !res.ok) {
+    const code = res && !res.ok ? res.code : 'no_response';
+    setReplyState(btn, 'failed', `Failed: ${code}`);
+    scheduleReplyReset(btn);
+    return;
+  }
+
+  const draft = res.data;
+  const replyText = draft.replyTextEdited ?? draft.replyText;
+
+  // Clipboard first — fails quietly past the user-activation window on some
+  // builds; storage write below is what the side panel observes.
+  let copied = true;
+  try {
+    await navigator.clipboard.writeText(replyText);
+  } catch (err) {
+    copied = false;
+    console.warn('[stratus] clipboard write failed', err);
+  }
+
+  try {
+    await chrome.storage.local.set({ [REPLY_MASTER_STORAGE_KEY]: draft });
+  } catch (err) {
+    console.warn('[stratus] storage.set lastDraft failed', err);
+  }
+
+  setReplyState(btn, 'done', copied ? 'Copied ✓' : 'Drafted (copy manually)');
+  scheduleReplyReset(btn);
+}
+
+function attachReplyMasterButton(article: Element, focusedTweetId: string): void {
+  const reply = article.querySelector('[data-testid="reply"]');
+  if (!reply) return;
+  const actionRow = reply.closest('div[role="group"]');
+  if (!actionRow || replyMasterHandled.has(actionRow)) return;
+
+  const permalink = findPermalink(article);
+  if (!permalink || permalink.tweetId !== focusedTweetId) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = REPLY_BTN_CLASS;
+  btn.title = 'Generate a Grok-assisted reply, copy to clipboard';
+  setReplyState(btn, 'idle', REPLY_BTN_LABEL);
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    void onReplyMasterClick(btn);
+  });
+
+  actionRow.appendChild(btn);
+  replyMasterHandled.add(actionRow);
+}
+
 async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
   if (btn.dataset.state === 'saving') return;
 
@@ -268,7 +505,11 @@ function attachButton(article: Element): void {
 }
 
 function scan(root: ParentNode): void {
-  root.querySelectorAll('article[data-testid="tweet"]').forEach(attachButton);
+  const focusedId = focusedTweetIdFromUrl();
+  for (const article of root.querySelectorAll('article[data-testid="tweet"]')) {
+    attachButton(article);
+    if (focusedId) attachReplyMasterButton(article, focusedId);
+  }
 }
 
 let scheduled = false;
