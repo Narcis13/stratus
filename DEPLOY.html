@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>stratus — Hetzner deployment runbook</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel2: #1c2230;
+    --text: #e6e8ee;
+    --muted: #9aa3b2;
+    --accent: #ff5a3c;
+    --accent2: #7dd3fc;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --border: #283041;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--text); margin: 0; }
+  body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; padding: 32px 24px 80px; }
+  main { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 4px; }
+  h1 .sub { font-size: 14px; color: var(--muted); font-weight: 400; margin-left: 8px; }
+  h2 { font-size: 20px; margin: 36px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 24px 0 8px; color: var(--accent2); }
+  p { margin: 8px 0; }
+  a { color: var(--accent2); }
+  code { font-family: var(--mono); background: var(--panel2); padding: 1px 6px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-family: var(--mono); font-size: 13px; line-height: 1.5; }
+  pre code { background: transparent; padding: 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 0 24px; color: var(--muted); font-size: 13px; }
+  .meta b { color: var(--text); font-weight: 500; }
+  .callout { border-left: 3px solid var(--accent); background: var(--panel); padding: 10px 14px; border-radius: 6px; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--warn); }
+  .callout.bad  { border-left-color: var(--bad); }
+  .callout.ok   { border-left-color: var(--ok); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child  { margin-bottom: 0; }
+  .tag { display: inline-block; font-size: 11px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); margin-right: 6px; vertical-align: middle; }
+  .tag.local { color: var(--accent2); border-color: var(--accent2); }
+  .tag.server { color: var(--warn); border-color: var(--warn); }
+  ol li, ul li { margin: 4px 0; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  .toc { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 18px; margin: 0 0 24px; }
+  .toc ol { margin: 6px 0 0 18px; padding: 0; }
+  .toc a { text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .kbd { font-family: var(--mono); font-size: 12px; padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--panel2); }
+</style>
+</head>
+<body>
+<main>
+
+<h1>stratus deploy <span class="sub">Hetzner CX23 · Ubuntu · 116.203.39.245</span></h1>
+
+<div class="meta">
+  <span><b>Target:</b> ubuntu-4gb-nbg1-1 (CX23, 2 vCPU / 4 GB / 40 GB)</span>
+  <span><b>Runtime:</b> Bun ≥ 1.1</span>
+  <span><b>DB:</b> Neon Postgres (already provisioned)</span>
+  <span><b>Workers:</b> in-process <code>setInterval</code></span>
+</div>
+
+<div class="toc">
+  <b>Runbook</b>
+  <ol>
+    <li><a href="#tooling">Hetzner tooling — what you actually need</a></li>
+    <li><a href="#prereqs">Prerequisites (10 min, one-time)</a></li>
+    <li><a href="#bootstrap">Server bootstrap — one script</a></li>
+    <li><a href="#deploy">App deploy — one script (rerun for updates)</a></li>
+    <li><a href="#extension">Wire up the Chrome extension</a></li>
+    <li><a href="#oauth">X OAuth callback (only if re-authing on the server)</a></li>
+    <li><a href="#ops">Day-2 ops — logs, restart, snapshots</a></li>
+  </ol>
+</div>
+
+<h2 id="tooling">1. Hetzner tooling — what you actually need</h2>
+
+<p>There are three serious automation surfaces for Hetzner Cloud. Pick based on what you'll do most:</p>
+
+<table>
+  <tr><th>Tool</th><th>When to use</th><th>Effort</th></tr>
+  <tr>
+    <td><code>hcloud</code> CLI</td>
+    <td>One-shot ops from your laptop: list/create/snapshot servers, manage SSH keys + firewalls, read pricing. Best for solo workflow.</td>
+    <td>Low — install + paste API token, done.</td>
+  </tr>
+  <tr>
+    <td>Terraform (<code>hetznercloud/hcloud</code>)</td>
+    <td>You want infra defined in code, re-creatable from scratch. Overkill for one server you'll keep for months.</td>
+    <td>Medium — extra DSL to learn.</td>
+  </tr>
+  <tr>
+    <td>cloud-init via <code>--user-data-from-file</code></td>
+    <td>Bootstrap a brand-new server at <em>creation time</em>. Doesn't apply here — your CX23 already exists.</td>
+    <td>One YAML file, no agent on host.</td>
+  </tr>
+</table>
+
+<p>For this project: <b>install <code>hcloud</code> CLI locally</b> (server management), and use the two bash scripts below to provision + deploy. No Terraform, no Ansible.</p>
+
+<h3>1a. Install <code>hcloud</code> on your Mac <span class="tag local">local</span></h3>
+
+<pre><code>brew install hcloud
+# create an API token in the Hetzner Cloud Console:
+#   Project → Security → API tokens → Generate API token (Read &amp; Write)
+hcloud context create stratus     # paste token when prompted
+hcloud server list                # should show ubuntu-4gb-nbg1-1</code></pre>
+
+<p>From here you can <code>hcloud server poweroff</code>, <code>hcloud server create-image</code> (snapshot), <code>hcloud firewall create</code>, etc. — without ever opening the web console.</p>
+
+<h2 id="prereqs">2. Prerequisites</h2>
+
+<h3>2a. SSH key on the server <span class="tag local">local</span></h3>
+
+<p>You said you can already log in as <code>root</code>. If you're still using a password, push your laptop's public key now so the scripts below can run unattended:</p>
+
+<pre><code>ssh-copy-id root@116.203.39.245
+# then test password-less:
+ssh root@116.203.39.245 'echo ok'</code></pre>
+
+<h3>2b. Pick a hostname (strongly recommended)</h3>
+
+<p>X requires <b>HTTPS</b> for the OAuth callback (except <code>127.0.0.1</code>), and you don't want to ship bearer tokens over plain HTTP. Two paths:</p>
+
+<ul>
+  <li><b>Real domain</b> (e.g. <code>api.yourdomain.com</code>) — point an <code>A</code> record at <code>116.203.39.245</code>. Caddy will get a Let's Encrypt cert automatically.</li>
+  <li><b>No domain?</b> Use <code>116-203-39-245.sslip.io</code> for free — it's a wildcard DNS service that resolves the IP back. Caddy can issue a real cert against it.</li>
+</ul>
+
+<p>Throughout this doc, substitute your choice for <code>$DOMAIN</code>.</p>
+
+<h3>2c. Your <code>.env</code> values ready</h3>
+
+<p>You'll need these (you already have them locally in <code>.env</code>):</p>
+
+<table>
+  <tr><th>Key</th><th>Source</th></tr>
+  <tr><td><code>X_CLIENT_ID</code></td><td>console.x.com, your app</td></tr>
+  <tr><td><code>X_CLIENT_SECRET</code></td><td>console.x.com, your app</td></tr>
+  <tr><td><code>X_OAUTH_REDIRECT_URI</code></td><td><code>https://$DOMAIN/auth/x/callback</code> (server) — see §6</td></tr>
+  <tr><td><code>X_BEARER_TOKEN</code></td><td>console.x.com (optional, app-only reads)</td></tr>
+  <tr><td><code>API_TOKEN</code></td><td>your existing shared bearer (<code>openssl rand -hex 32</code> if creating new)</td></tr>
+  <tr><td><code>DATABASE_URL</code></td><td>Neon — same URL you use locally; the workers will pick up existing tokens</td></tr>
+  <tr><td><code>ALLOWED_ORIGINS</code></td><td>blank is fine; the extension is matched by <code>chrome-extension://*</code> regardless</td></tr>
+  <tr><td><code>PORT</code></td><td><code>3000</code> (Caddy fronts it on 443)</td></tr>
+</table>
+
+<div class="callout">
+<p><b>Tokens already in Neon.</b> Phase 1 swapped <code>.tokens.json</code> for a Postgres-backed token store. Because you'll point the server at the same <code>DATABASE_URL</code>, no token copy is needed — the workers read the existing row on first tick.</p>
+</div>
+
+<h2 id="bootstrap">3. Server bootstrap — one script <span class="tag server">server</span></h2>
+
+<p>Run this <b>once</b> per server. It installs Bun, Caddy, a hardened firewall, a non-root <code>stratus</code> user, and a systemd unit. Idempotent — safe to re-run.</p>
+
+<p>Save the following as <code>scripts/bootstrap.sh</code> in your repo (file does not exist yet — create it):</p>
+
+<pre><code>#!/usr/bin/env bash
+# scripts/bootstrap.sh — run ONCE on a fresh Hetzner Ubuntu box.
+#   usage: DOMAIN=api.example.com ./scripts/bootstrap.sh root@116.203.39.245
+set -euo pipefail
+
+REMOTE="${1:?usage: bootstrap.sh user@host}"
+DOMAIN="${DOMAIN:?set DOMAIN=api.example.com (or 116-203-39-245.sslip.io)}"
+
+ssh "$REMOTE" DOMAIN="$DOMAIN" bash -s &lt;&lt;'REMOTE_SCRIPT'
+set -euo pipefail
+
+echo "==&gt; apt update + base packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y curl unzip git ufw ca-certificates debian-keyring debian-archive-keyring apt-transport-https
+
+echo "==&gt; firewall (ufw)"
+ufw --force reset
+ufw default deny incoming
+ufw default allow outgoing
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+
+echo "==&gt; create 'stratus' user"
+id -u stratus &gt;/dev/null 2&gt;&amp;1 || useradd -m -s /bin/bash stratus
+install -d -o stratus -g stratus -m 0750 /home/stratus/app
+install -d -o stratus -g stratus -m 0700 /home/stratus/.config
+
+echo "==&gt; install Bun as 'stratus'"
+sudo -u stratus -H bash -lc '
+  if ! command -v bun &gt;/dev/null; then
+    curl -fsSL https://bun.sh/install | bash
+  fi
+  echo "export PATH=\"\$HOME/.bun/bin:\$PATH\"" &gt; ~/.profile
+'
+ln -sf /home/stratus/.bun/bin/bun /usr/local/bin/bun
+
+echo "==&gt; install Caddy (official repo)"
+if ! command -v caddy &gt;/dev/null; then
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    &gt; /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -y
+  apt-get install -y caddy
+fi
+
+echo "==&gt; write Caddyfile for $DOMAIN"
+cat &gt;/etc/caddy/Caddyfile &lt;&lt;EOF
+${DOMAIN} {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:3000
+}
+EOF
+systemctl reload caddy
+
+echo "==&gt; systemd unit"
+cat &gt;/etc/systemd/system/stratus.service &lt;&lt;'UNIT'
+[Unit]
+Description=stratus API (Bun + Hono)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=stratus
+Group=stratus
+WorkingDirectory=/home/stratus/app
+EnvironmentFile=/home/stratus/app/.env
+ExecStart=/usr/local/bin/bun run src/app.ts
+Restart=on-failure
+RestartSec=3
+# crash safety
+LimitNOFILE=65535
+# hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=false
+ReadWritePaths=/home/stratus/app
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable stratus.service
+echo "==&gt; bootstrap done. Now run deploy.sh."
+REMOTE_SCRIPT</code></pre>
+
+<p>Run it from your laptop:</p>
+
+<pre><code>chmod +x scripts/bootstrap.sh
+DOMAIN=116-203-39-245.sslip.io ./scripts/bootstrap.sh root@116.203.39.245
+# or DOMAIN=api.yourdomain.com ./scripts/bootstrap.sh root@116.203.39.245</code></pre>
+
+<div class="callout warn">
+<p><b>SSH from a non-root user later.</b> Once the app deploys, you can disable root password login: <code>sed -i 's/^#*PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config &amp;&amp; systemctl reload ssh</code>. Leave it for now if you're still debugging.</p>
+</div>
+
+<h2 id="deploy">4. App deploy — one script <span class="tag local">local</span></h2>
+
+<p>This is the script you'll run again and again every time you push changes. It rsyncs the repo, installs deps on the server, and restarts the service.</p>
+
+<p>Save as <code>scripts/deploy.sh</code>:</p>
+
+<pre><code>#!/usr/bin/env bash
+# scripts/deploy.sh — push current working tree to the server and restart.
+#   usage: ./scripts/deploy.sh root@116.203.39.245
+set -euo pipefail
+
+REMOTE="${1:?usage: deploy.sh user@host}"
+APPDIR=/home/stratus/app
+
+echo "==&gt; rsync code (excluding node_modules, dist, .env, tokens)"
+rsync -az --delete \
+  --exclude '.git' \
+  --exclude 'node_modules' \
+  --exclude 'extension/node_modules' \
+  --exclude 'extension/dist' \
+  --exclude '.tokens.json' \
+  --exclude '.env' \
+  --exclude '.env.local' \
+  ./ "$REMOTE":"$APPDIR/"
+
+echo "==&gt; fix ownership"
+ssh "$REMOTE" "chown -R stratus:stratus $APPDIR"
+
+echo "==&gt; upload .env if missing (one-time)"
+ssh "$REMOTE" "test -f $APPDIR/.env" || scp .env "$REMOTE":"$APPDIR/.env"
+ssh "$REMOTE" "chown stratus:stratus $APPDIR/.env &amp;&amp; chmod 600 $APPDIR/.env"
+
+echo "==&gt; bun install + restart"
+ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR &amp;&amp; bun install --frozen-lockfile'"
+ssh "$REMOTE" "systemctl restart stratus.service"
+
+echo "==&gt; health check"
+sleep 2
+ssh "$REMOTE" "systemctl is-active stratus.service"
+ssh "$REMOTE" "curl -fsS http://127.0.0.1:3000/healthz &amp;&amp; echo"
+echo "==&gt; deployed."</code></pre>
+
+<p>Run:</p>
+
+<pre><code>chmod +x scripts/deploy.sh
+./scripts/deploy.sh root@116.203.39.245</code></pre>
+
+<div class="callout">
+<p><b>Edit <code>.env</code> on the server before first start</b> to set <code>X_OAUTH_REDIRECT_URI=https://$DOMAIN/auth/x/callback</code>. Everything else (Neon URL, X creds, <code>API_TOKEN</code>) can stay identical to local.</p>
+</div>
+
+<h3>4a. Smoke-test from your laptop</h3>
+
+<pre><code>curl -s https://$DOMAIN/healthz                              # expect: ok
+curl -s -H "Authorization: Bearer $API_TOKEN" https://$DOMAIN/x/calendar
+# expect: a JSON array (possibly empty)</code></pre>
+
+<h2 id="extension">5. Wire up the Chrome extension <span class="tag local">local</span></h2>
+
+<p>The side panel reads its API base URL from the <b>Settings</b> tab — no rebuild needed, just:</p>
+
+<ol>
+  <li>Open the extension side panel → <b>Settings</b>.</li>
+  <li>Set <b>API base URL</b> to <code>https://$DOMAIN</code> (no trailing slash).</li>
+  <li>Set <b>Bearer token</b> to your <code>API_TOKEN</code> from <code>.env</code>.</li>
+  <li>Click <b>Save</b>, then reload the side panel.</li>
+</ol>
+
+<p>The calendar/replies/drafts tabs will start pulling from the Hetzner box.</p>
+
+<div class="callout warn">
+<p><b>CORS.</b> The <code>corsMiddleware</code> already allows any <code>chrome-extension://*</code>. If you ever build a separate web UI, add its origin to <code>ALLOWED_ORIGINS</code> in <code>.env</code> (comma-separated) and restart.</p>
+</div>
+
+<h2 id="oauth">6. X OAuth callback (only if re-authing on the server)</h2>
+
+<p>Your existing refresh token in Neon will continue to rotate on each call — you generally don't need to re-auth. But <b>if</b> you ever do (token revoked, account swap, etc.), update the callback URL in the X dev portal first:</p>
+
+<ol>
+  <li>console.x.com → your app (<b>Production</b> env) → <b>User authentication settings</b>.</li>
+  <li>Callback URI list — add <code>https://$DOMAIN/auth/x/callback</code>.</li>
+  <li>Set <code>X_OAUTH_REDIRECT_URI</code> in the server's <code>.env</code> to match exactly.</li>
+  <li>SSH in, run the OAuth flow once: <code>sudo -u stratus -H bash -lc 'cd /home/stratus/app &amp;&amp; bun run auth'</code> — but bind it to a local port and reverse-proxy temporarily, <em>or</em> just keep auth on your laptop with <code>127.0.0.1</code> and let the resulting refresh token sync via Neon. The latter is simpler.</li>
+</ol>
+
+<h2 id="ops">7. Day-2 ops</h2>
+
+<h3>Logs</h3>
+<pre><code>ssh root@116.203.39.245 'journalctl -u stratus -f --since "10 min ago"'
+ssh root@116.203.39.245 'journalctl -u caddy -f'</code></pre>
+
+<h3>Restart / stop</h3>
+<pre><code>ssh root@116.203.39.245 'systemctl restart stratus'
+ssh root@116.203.39.245 'systemctl status stratus'</code></pre>
+
+<h3>Update the app</h3>
+<pre><code># after git pull / local changes:
+./scripts/deploy.sh root@116.203.39.245</code></pre>
+
+<h3>Backups + snapshots (via <code>hcloud</code>) <span class="tag local">local</span></h3>
+<pre><code># one-off snapshot before risky work
+hcloud server create-image ubuntu-4gb-nbg1-1 --type snapshot --description "pre-phase-5"
+
+# enable Hetzner's automatic daily backups (€0.80/mo extra on CX23)
+hcloud server enable-backup ubuntu-4gb-nbg1-1
+
+# list / delete snapshots
+hcloud image list --type snapshot
+hcloud image delete &lt;id&gt;</code></pre>
+
+<p>Neon already snapshots Postgres on its side, so backups here are just for system config + the codebase.</p>
+
+<h3>Firewall (via <code>hcloud</code>, replaces UFW if you prefer cloud-side)</h3>
+<pre><code>hcloud firewall create --name stratus-web
+hcloud firewall add-rule stratus-web --direction in --protocol tcp --port 22 --source-ips 0.0.0.0/0 --source-ips ::/0
+hcloud firewall add-rule stratus-web --direction in --protocol tcp --port 80 --source-ips 0.0.0.0/0 --source-ips ::/0
+hcloud firewall add-rule stratus-web --direction in --protocol tcp --port 443 --source-ips 0.0.0.0/0 --source-ips ::/0
+hcloud firewall apply-to-resource stratus-web --type server --server ubuntu-4gb-nbg1-1</code></pre>
+
+<p>The Hetzner-side firewall runs <em>before</em> traffic ever hits the VM — UFW becomes redundant once this is in place. Keep both initially; tighten later.</p>
+
+<hr />
+
+<div class="callout ok">
+<p><b>The condensed flow.</b></p>
+<ol>
+  <li><code>brew install hcloud</code> &amp; <code>hcloud context create stratus</code></li>
+  <li><code>ssh-copy-id root@116.203.39.245</code></li>
+  <li><code>DOMAIN=… ./scripts/bootstrap.sh root@116.203.39.245</code> (once)</li>
+  <li><code>./scripts/deploy.sh root@116.203.39.245</code> (every change)</li>
+  <li>Extension Settings → API base URL = <code>https://$DOMAIN</code>, bearer = <code>$API_TOKEN</code>.</li>
+</ol>
+<p>That's it. Two scripts, no orchestrator, no queue, no container.</p>
+</div>
+
+</main>
+</body>
+</html>
