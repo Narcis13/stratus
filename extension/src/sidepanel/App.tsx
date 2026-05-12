@@ -2,17 +2,19 @@ import { type JSX, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { DraftsPanel } from './Drafts.tsx';
+import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
 
-type Tab = 'calendar' | 'composer' | 'drafts' | 'voice' | 'settings';
+type Tab = 'calendar' | 'composer' | 'drafts' | 'voice' | 'replies' | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
   { id: 'drafts', label: 'Drafts' },
   { id: 'voice', label: 'Voice' },
+  { id: 'replies', label: 'Replies' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -74,6 +76,8 @@ export function App(): JSX.Element {
           <DraftsPanel key={`draft-${refreshKey}`} settings={settings} onEdit={startEdit} />
         ) : activeTab === 'voice' ? (
           <VoicePanel settings={settings} />
+        ) : activeTab === 'replies' ? (
+          <RepliesPanel key={`replies-${refreshKey}`} settings={settings} />
         ) : (
           <SettingsPanel />
         )}

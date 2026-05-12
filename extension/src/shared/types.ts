@@ -95,6 +95,64 @@ export interface VoiceAuthorPatch {
   source?: VoiceAuthorSource;
 }
 
+// --------------------------------------------------------------- replies
+
+export type ReplyDraftStatus = 'generated' | 'copied' | 'posted' | 'discarded';
+
+export interface TopComment {
+  author: string;
+  handle: string;
+  text: string;
+}
+
+export interface PostContextMetrics {
+  views: number;
+  replies: number;
+  reposts: number;
+  likes: number;
+}
+
+export interface PostContext {
+  tweetId: string;
+  handle: string;
+  author: string;
+  text: string;
+  url: string;
+  postedAt: string;
+  metrics: PostContextMetrics;
+  topComments: TopComment[];
+}
+
+export interface ReplyDraft {
+  id: string;
+  sourceTweetId: string;
+  sourceAuthorUsername: string;
+  sourceAuthorDisplayName: string | null;
+  sourceText: string;
+  sourceUrl: string;
+  sourcePostedAt: string | null;
+  contextSnapshot: PostContext;
+  replyText: string;
+  replyTextEdited: string | null;
+  model: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  costUsd: string | null;
+  grokRequestId: string | null;
+  systemPromptOverride: string | null;
+  status: ReplyDraftStatus;
+  postedTweetId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RepliesListOpts {
+  status?: ReplyDraftStatus;
+  sourceAuthor?: string;
+  limit?: number;
+  since?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

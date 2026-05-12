@@ -6,8 +6,13 @@ import {
   ApiError,
   type CreateBody,
   type ListOpts,
+  type PostContext,
   type PostStatus,
+  type RepliesListOpts,
+  type ReplyDraft,
+  type ReplyDraftStatus,
   type ScheduledPost,
+  type TopComment,
   type UpdateBody,
   type VoiceAuthor,
   type VoiceAuthorPatch,
@@ -21,8 +26,13 @@ export { ApiError };
 export type {
   CreateBody,
   ListOpts,
+  PostContext,
   PostStatus,
+  RepliesListOpts,
+  ReplyDraft,
+  ReplyDraftStatus,
   ScheduledPost,
+  TopComment,
   UpdateBody,
   VoiceAuthor,
   VoiceAuthorPatch,
@@ -110,6 +120,18 @@ export const api = {
       return request<unknown>(s, `/x/voice/track/${encodeURIComponent(username)}`, {
         method: 'DELETE',
       });
+    },
+  },
+
+  replies: {
+    list(s: Settings, opts: RepliesListOpts = {}): Promise<ReplyDraft[]> {
+      const q = new URLSearchParams();
+      if (opts.status) q.set('status', opts.status);
+      if (opts.sourceAuthor) q.set('sourceAuthor', opts.sourceAuthor);
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.since) q.set('since', opts.since);
+      const qs = q.toString();
+      return request<ReplyDraft[]>(s, `/x/replies${qs ? `?${qs}` : ''}`);
     },
   },
 };
