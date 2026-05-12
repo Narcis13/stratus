@@ -18,11 +18,13 @@ interface Props {
   settings: Settings;
 }
 
-const LIST_LIMIT = 50;
+const LIST_LIMIT = 100;
 const TWEET_LIMIT = 280;
 const EDIT_DEBOUNCE_MS = 600;
 const SYSTEM_PROMPT_DEBOUNCE_MS = 600;
 const TWEET_ID_RE = /^\d{1,32}$/;
+const GROUP_PAGE_SIZE = 10;
+const POSTED_AUTO_CLEAR_MS = 700;
 
 const STATUS_OPTIONS: { value: '' | ReplyDraftStatus; label: string }[] = [
   { value: '', label: 'All' },
@@ -203,17 +205,11 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
         ) : history.length === 0 ? (
           <p className="muted">No reply drafts yet.</p>
         ) : (
-          <ul className="voice-tweet-list">
-            {history.map((r) => (
-              <li key={r.id}>
-                <HistoryRow
-                  draft={r}
-                  active={activeDraft?.id === r.id}
-                  onOpen={() => openFromHistory(r)}
-                />
-              </li>
-            ))}
-          </ul>
+          <HistoryGroups
+            history={history}
+            activeId={activeDraft?.id ?? null}
+            onOpen={openFromHistory}
+          />
         )}
       </div>
     </div>
@@ -354,6 +350,9 @@ function DraftEditor({
       setPostedInputOpen(false);
       setPostedTweetIdInput('');
       setInfo('Marked posted');
+      // Brief delay lets the success message register, then close the editor
+      // so the user is ready for the next tweet.
+      setTimeout(onClear, POSTED_AUTO_CLEAR_MS);
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Mark posted failed');
     } finally {
@@ -579,6 +578,136 @@ function SystemPromptOverride({
       </div>
     </details>
   );
+}
+
+interface DayGroup {
+  key: string;
+  label: string;
+  rows: ReplyDraft[];
+}
+
+function HistoryGroups({
+  history,
+  activeId,
+  onOpen,
+}: {
+  history: ReplyDraft[];
+  activeId: string | null;
+  onOpen: (row: ReplyDraft) => void;
+}): JSX.Element {
+  const groups = useMemo<DayGroup[]>(() => {
+    const map = new Map<string, DayGroup>();
+    for (const r of history) {
+      const d = new Date(r.createdAt);
+      const key = dayKeyOf(d);
+      const existing = map.get(key);
+      if (existing) {
+        existing.rows.push(r);
+      } else {
+        map.set(key, { key, label: dayLabelOf(d, key), rows: [r] });
+      }
+    }
+    // Newest day first (API returns newest first, so insertion order is right).
+    return Array.from(map.values());
+  }, [history]);
+
+  const todayKey = dayKeyOf(new Date());
+
+  return (
+    <div className="reply-history-groups">
+      {groups.map((g) => (
+        <HistoryGroup
+          key={g.key}
+          group={g}
+          defaultOpen={g.key === todayKey}
+          activeId={activeId}
+          onOpen={onOpen}
+        />
+      ))}
+    </div>
+  );
+}
+
+function HistoryGroup({
+  group,
+  defaultOpen,
+  activeId,
+  onOpen,
+}: {
+  group: DayGroup;
+  defaultOpen: boolean;
+  activeId: string | null;
+  onOpen: (row: ReplyDraft) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(defaultOpen);
+  const [visibleCount, setVisibleCount] = useState(GROUP_PAGE_SIZE);
+
+  // If the active draft is in this group, force-open it so the user sees the
+  // highlight even on older days.
+  const containsActive =
+    activeId !== null && group.rows.some((r) => r.id === activeId);
+  const effectiveOpen = open || containsActive;
+
+  const visible = group.rows.slice(0, visibleCount);
+  const remaining = group.rows.length - visible.length;
+
+  return (
+    <section className="reply-history-group">
+      <button
+        type="button"
+        className="reply-history-group-head"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={effectiveOpen}
+      >
+        <span className="reply-history-group-caret">{effectiveOpen ? '▾' : '▸'}</span>
+        <span className="reply-history-group-label">{group.label}</span>
+        <span className="reply-history-group-count">{group.rows.length}</span>
+      </button>
+      {effectiveOpen && (
+        <ul className="voice-tweet-list">
+          {visible.map((r) => (
+            <li key={r.id}>
+              <HistoryRow draft={r} active={activeId === r.id} onOpen={() => onOpen(r)} />
+            </li>
+          ))}
+          {remaining > 0 && (
+            <li>
+              <button
+                type="button"
+                className="reply-link reply-history-more"
+                onClick={() => setVisibleCount((n) => n + GROUP_PAGE_SIZE)}
+              >
+                Show {Math.min(remaining, GROUP_PAGE_SIZE)} more
+                {remaining > GROUP_PAGE_SIZE ? ` (${remaining} hidden)` : ''}
+              </button>
+            </li>
+          )}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function dayKeyOf(d: Date): string {
+  // Local-day key so "Today" matches the user's calendar, not UTC.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function dayLabelOf(d: Date, key: string): string {
+  const now = new Date();
+  if (key === dayKeyOf(now)) return 'Today';
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (key === dayKeyOf(yesterday)) return 'Yesterday';
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
 }
 
 function HistoryRow({
