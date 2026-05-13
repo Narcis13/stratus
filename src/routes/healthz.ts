@@ -3,6 +3,7 @@
 
 import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
+import pkg from '../../package.json' with { type: 'json' };
 import { db } from '../db/client.ts';
 
 export const healthz = new Hono();
@@ -10,8 +11,8 @@ export const healthz = new Hono();
 healthz.get('/healthz', async (c) => {
   try {
     await db.execute(sql`select 1`);
-    return c.json({ ok: true });
+    return c.json({ ok: true, version: pkg.version });
   } catch (err) {
-    return c.json({ ok: false, error: (err as Error).message }, 503);
+    return c.json({ ok: false, version: pkg.version, error: (err as Error).message }, 503);
   }
 });
