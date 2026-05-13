@@ -4,19 +4,43 @@ The headline workflow: queue 3–4 posts/day for the next 7 days, with safety ch
 
 ## Pre-flight
 
-1. `curl -fsS "$STRATUS_BASE_URL/healthz"` — must return `{"ok":true}`.
-2. `STRATUS_API_TOKEN` exported; if not, source it from project `.env`:
+1. Make sure `STRATUS_BASE_URL` and `STRATUS_API_TOKEN` are exported. If not, pull them from `.env`:
    ```bash
-   export STRATUS_API_TOKEN=$(grep ^API_TOKEN= .env | cut -d= -f2-)
+   set -a; source .env; set +a
+   export STRATUS_API_TOKEN="$API_TOKEN"
    ```
+   The deployed instance is at `https://stratus-narcis.duckdns.org`; `STRATUS_BASE_URL` in `.env` already points there.
+2. `curl -fsS "$STRATUS_BASE_URL/healthz"` — must return `{"ok":true}`.
 3. Confirm the user's local timezone — the API only accepts UTC, so you must convert.
 
-## Default cadences
+## Default cadences (anchored on hours, jittered minutes)
 
-- **3/day**: `09:00`, `13:00`, `18:00` local
-- **4/day**: `08:30`, `12:30`, `16:30`, `20:00` local
+Pick an *hour anchor* per slot, then jitter the minute per day to keep the cadence from looking like a cron job at `:00`.
 
-Convert each slot for each of the 7 days into UTC ISO 8601 (`YYYY-MM-DDTHH:MM:SSZ`).
+- **3/day** anchors: **09**, **13**, **18** local
+- **4/day** anchors: **08**, **12**, **16**, **20** local
+
+For each slot, each day, pick a fresh random minute in **[5, 35]** after the anchor, seconds `00`. Vary per slot AND per day — so the 09 anchor might land at 09:12 Mon, 09:23 Tue, 09:08 Wed, etc. Never repeat the same minute across multiple days for the same slot.
+
+### Picking the jitter
+
+A simple shell-friendly way (don't reuse the same RANDOM across slots):
+
+```bash
+# Random minute in [5, 35] inclusive — call once per slot, per day
+JITTER=$(( (RANDOM % 31) + 5 ))   # 5..35
+```
+
+Or in jq when building the payload:
+
+```bash
+jq -n --arg date "2026-05-19" --argjson hour 9 '
+  ($date + "T" + ("00" + ($hour | tostring))[-2:] + ":" +
+   ("00" + ((5 + (now * 1000 | floor) % 31) | tostring))[-2:] + ":00Z")
+'
+```
+
+Either way, **render as UTC ISO 8601** (`YYYY-MM-DDTHH:MM:SSZ`) before POSTing. Always show the user the final timestamps in the dry-run preview — the minute jitter must be visible so they can sanity-check.
 
 ## Per-post validation (run before any POST)
 
@@ -29,31 +53,60 @@ For each draft:
 
 ## Dry-run preview
 
-Before submitting, print a table grouped by day. Example:
+Before submitting, print a table grouped by day. Example (note the jittered minutes — never round `:00`):
 
 ```
 2026-05-14 Thu
-  09:00Z  shipping notes from the weekend — what worked and what flopped
-  13:00Z  the URL-surcharge thing in stratus: $0.20 vs $0.015, or 13x…
-  18:00Z  hot take: most "automation" is just a cron job in a fancy shirt
+  09:12Z  shipping notes from the weekend — what worked and what flopped
+  13:27Z  the URL-surcharge thing in stratus: $0.20 vs $0.015, or 13x…
+  18:08Z  hot take: most "automation" is just a cron job in a fancy shirt
+2026-05-15 Fri
+  09:23Z  …
+  13:07Z  …
+  18:31Z  …
 ```
 
 Get explicit user confirmation before submitting.
 
+## From a markdown file (the common case)
+
+When the user hands you an md file of blockquote-formatted tweets (one tweet = one contiguous run of `> ` lines, often labeled `**1.**`/`**2.**`/…), use [../scripts/md_to_schedule.ts](../scripts/md_to_schedule.ts) to do the heavy lifting in one shot:
+
+```bash
+bun run .claude/skills/stratus/scripts/md_to_schedule.ts \
+  /path/to/week.md Europe/Bucharest 2026-05-14 4 > /tmp/week.json
+```
+
+Positional args: `<md-file> <IANA timezone> <YYYY-MM-DD start-date> <slots/day 3|4>`.
+
+The script:
+
+- Strips YAML frontmatter and ignores all non-blockquote content (headers, labels, tables).
+- Extracts each contiguous `> ` block as one tweet, in file order.
+- Refuses on URL hits (Rule 1) or any tweet >280 chars; warns at >270.
+- Refuses if tweet count != `slotsPerDay × 7` (so 21 for 3/day, 28 for 4/day).
+- Generates jittered minutes in `[5,35]\{30}`, distinct per slot column across the 7 days.
+- Converts each local `<anchor>:<minute>` to UTC for the supplied timezone (DST-safe via `Intl.DateTimeFormat`).
+- Writes JSON to stdout, a short summary to stderr.
+
+Always inspect the JSON (or render a preview table from it) before piping into `schedule_week.sh`. The minutes are non-deterministic — re-running produces a different jitter — so the version you preview must be the version you submit.
+
 ## Bulk submission
 
-Use [../scripts/schedule_week.sh](../scripts/schedule_week.sh), which takes a JSON array of `{text, scheduledFor}` and POSTs each row, halting on the first non-2xx:
+Use [../scripts/schedule_week.sh](../scripts/schedule_week.sh) on the JSON file (either md-derived or hand-built). It takes a JSON array of `{text, scheduledFor}` and POSTs each row, halting on the first non-2xx:
 
 ```bash
 cat > /tmp/week.json <<'EOF'
 [
-  { "text": "monday morning, day 1", "scheduledFor": "2026-05-19T07:00:00Z" },
-  { "text": "monday lunch deep work cue", "scheduledFor": "2026-05-19T11:00:00Z" },
-  { "text": "monday wrap, what shipped", "scheduledFor": "2026-05-19T16:00:00Z" }
+  { "text": "monday morning, day 1", "scheduledFor": "2026-05-19T07:14:00Z" },
+  { "text": "monday lunch deep work cue", "scheduledFor": "2026-05-19T11:08:00Z" },
+  { "text": "monday wrap, what shipped", "scheduledFor": "2026-05-19T16:27:00Z" }
 ]
 EOF
 bash .claude/skills/stratus/scripts/schedule_week.sh /tmp/week.json
 ```
+
+(The minutes above are *examples* of jitter — generate fresh ones per slot per day; never reuse `:00`.)
 
 The script:
 
