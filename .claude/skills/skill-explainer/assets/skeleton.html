@@ -1,0 +1,1050 @@
+<!doctype html>
+<!--
+  ─────────────────────────────────────────────────────────────────────
+  SKILL EXPLAINER · skeleton
+  ─────────────────────────────────────────────────────────────────────
+  This file is the executable embodiment of references/design.md.
+  Copy this whole file to the target skill's EXPLAINER.html and fill in
+  the {{TODO}} markers.
+
+  Section placeholders are commented; uncomment the ones you need.
+  See references/content_recipes.md for which sections to include.
+  See references/canvas_patterns.md for the Canvas inside section 03.
+  See references/svg_library.md for SVG illustration patterns.
+
+  Hard rules: no emojis, no stock icons, one design system, faithful
+  to source. Edit copy and content. Do NOT edit colors, type stack,
+  or component class names.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{SKILL_NAME}} · Operator Manual</title>
+<meta name="description" content="{{ONE-LINE TAGLINE}}" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Geist:wght@100..900&family=JetBrains+Mono:wght@400..700&display=swap" rel="stylesheet">
+<style>
+  /* ─────────────────────────────────────────────────────────────
+     DESIGN SYSTEM — aerospace mission-control × editorial tech
+     Do not modify tokens. See references/design.md for the spec.
+     ───────────────────────────────────────────────────────────── */
+
+  :root {
+    --void:        #05080F;
+    --deep:        #0A1020;
+    --panel:       #0F1830;
+    --raised:      #131D38;
+    --edge:        #1F2A48;
+    --hairline:    rgba(140, 175, 230, 0.10);
+    --hairline-strong: rgba(140, 175, 230, 0.22);
+
+    --mist-100:    #DCE5F2;
+    --mist-200:    #A1B2D0;
+    --mist-300:    #6E81A4;
+    --mist-400:    #44557A;
+    --mist-500:    #2A3552;
+
+    --cobalt:      #4A8FE7;
+    --cyan:        #6EE0FF;
+    --azure:       #2D5BD5;
+    --frost:       #B8E5FF;
+
+    --mint:        #7DD3A0;
+    --ember:       #FFB55A;
+    --coral:       #FF7A7A;
+    --gold:        #E8C572;
+
+    --serif: 'Fraunces', 'Times New Roman', serif;
+    --sans:  'Geist', system-ui, sans-serif;
+    --mono:  'JetBrains Mono', ui-monospace, monospace;
+
+    --r-xs: 2px;
+    --r-sm: 4px;
+    --r:    8px;
+    --r-lg: 14px;
+
+    --gutter: clamp(20px, 4vw, 56px);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  html, body {
+    background: var(--void);
+    color: var(--mist-100);
+    font-family: var(--sans);
+    font-weight: 380;
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "ss02", "cv11";
+    overflow-x: hidden;
+  }
+  ::selection { background: rgba(110, 224, 255, 0.28); color: var(--frost); }
+  a { color: inherit; text-decoration: none; }
+
+  /* ── Atmospheric backdrop ───────────────────────────────── */
+  .bg-grid {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(to right, var(--hairline) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--hairline) 1px, transparent 1px);
+    background-size: 96px 96px;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, #000 30%, transparent 80%);
+    opacity: 0.6;
+  }
+  .bg-glow {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(60% 40% at 80% -10%, rgba(74, 143, 231, 0.18), transparent 60%),
+      radial-gradient(50% 35% at -10% 20%, rgba(110, 224, 255, 0.08), transparent 60%),
+      radial-gradient(55% 40% at 50% 110%, rgba(45, 91, 213, 0.12), transparent 65%);
+  }
+  .bg-noise {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    opacity: 0.045; mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='4'/><feColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.6 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  }
+
+  /* ── Top bar ─────────────────────────────────────────────── */
+  .topbar {
+    position: sticky; top: 0; z-index: 50;
+    display: grid; grid-template-columns: auto 1fr auto;
+    gap: 24px; align-items: center;
+    padding: 14px var(--gutter);
+    background: linear-gradient(to bottom, rgba(5,8,15,0.92), rgba(5,8,15,0.72));
+    backdrop-filter: blur(14px) saturate(120%);
+    border-bottom: 1px solid var(--hairline);
+  }
+  .monogram {
+    display: flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    color: var(--mist-200); text-transform: uppercase;
+  }
+  .monogram svg { width: 22px; height: 22px; }
+  .monogram .div { color: var(--mist-400); }
+  .monogram b { color: var(--mist-100); font-weight: 500; letter-spacing: 0.22em; }
+  .topbar-meta {
+    display: flex; gap: 22px; align-items: center; justify-content: flex-end;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
+    color: var(--mist-300); text-transform: uppercase;
+  }
+  .conn { display: inline-flex; align-items: center; gap: 8px; color: var(--mist-100); }
+  .conn .pulse {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--mint);
+    box-shadow: 0 0 0 0 rgba(125, 211, 160, 0.6);
+    animation: pulse 2.2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(125, 211, 160, 0.55); }
+    70%  { box-shadow: 0 0 0 9px rgba(125, 211, 160, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(125, 211, 160, 0); }
+  }
+  #utc-clock { color: var(--frost); }
+
+  /* ── Section rail ────────────────────────────────────────── */
+  .rail {
+    position: fixed; top: 50%; left: 18px; transform: translateY(-50%);
+    z-index: 40;
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 14px 10px;
+    background: rgba(10, 16, 32, 0.55);
+    backdrop-filter: blur(10px);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r);
+  }
+  .rail a {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+    color: var(--mist-400); padding: 6px 10px;
+    display: flex; gap: 10px; align-items: center;
+    border-radius: var(--r-sm);
+    transition: all 220ms ease;
+    text-transform: uppercase;
+  }
+  .rail a:hover { color: var(--mist-100); background: rgba(110, 224, 255, 0.06); }
+  .rail a.is-active { color: var(--cyan); background: rgba(110, 224, 255, 0.08); }
+  .rail a.is-active .dot { background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+  .rail .num { color: var(--mist-300); }
+  .rail .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--mist-400); }
+  @media (max-width: 1180px) { .rail { display: none; } }
+
+  /* ── Layout primitives ───────────────────────────────────── */
+  main { position: relative; z-index: 1; }
+  section {
+    position: relative;
+    padding: 110px var(--gutter);
+    max-width: 1400px; margin: 0 auto;
+  }
+  section + section { border-top: 1px dashed var(--hairline); }
+
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 14px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+    color: var(--mist-300); text-transform: uppercase;
+    margin-bottom: 28px;
+  }
+  .eyebrow .num {
+    color: var(--cyan); padding: 3px 9px;
+    border: 1px solid rgba(110, 224, 255, 0.28);
+    border-radius: var(--r-xs); background: rgba(110, 224, 255, 0.06);
+  }
+  .eyebrow .ln { width: 60px; height: 1px; background: var(--hairline-strong); }
+
+  h1, h2, h3 { font-weight: 400; letter-spacing: -0.02em; color: var(--mist-100); }
+  h2 {
+    font-family: var(--serif); font-size: clamp(36px, 5vw, 64px);
+    line-height: 1.02; letter-spacing: -0.03em;
+    margin-bottom: 18px;
+  }
+  h2 em { font-style: italic; color: var(--frost); font-weight: 300; }
+  h3 { font-family: var(--serif); font-size: 22px; line-height: 1.25; color: var(--mist-100); }
+  p.lede {
+    font-family: var(--serif); font-style: italic;
+    font-size: clamp(18px, 1.6vw, 22px); line-height: 1.5;
+    color: var(--mist-200); max-width: 56ch;
+  }
+
+  /* Corner brackets */
+  .bracket { position: relative; }
+  .bracket::before, .bracket::after,
+  .bracket > .br-bl, .bracket > .br-br {
+    content: ""; position: absolute; width: 12px; height: 12px;
+    border: 1px solid var(--hairline-strong);
+  }
+  .bracket::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .bracket::after  { top: -1px; right: -1px; border-left: 0; border-bottom: 0; }
+  .bracket > .br-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
+  .bracket > .br-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+
+  /* ── HERO ─────────────────────────────────────────────────── */
+  .hero {
+    padding-top: 80px;
+    display: grid; grid-template-columns: 1.05fr 0.95fr;
+    gap: 64px; align-items: center;
+  }
+  @media (max-width: 980px) { .hero { grid-template-columns: 1fr; gap: 40px; } }
+  .hero h1 {
+    font-family: var(--serif); font-size: clamp(72px, 11vw, 168px);
+    line-height: 0.88; letter-spacing: -0.05em; font-weight: 300;
+    color: var(--mist-100);
+  }
+  .hero h1 em { font-style: italic; color: var(--frost); font-weight: 300; opacity: 0.92; }
+  .hero h1 .dot { color: var(--cyan); font-style: normal; font-feature-settings: "ss03"; }
+  .hero .lede { margin-top: 28px; }
+  .hero .meta {
+    margin-top: 36px;
+    display: flex; flex-wrap: wrap; gap: 26px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    color: var(--mist-300); text-transform: uppercase;
+  }
+  .hero .meta span b { color: var(--mist-100); font-weight: 500; }
+  .hero-figure {
+    position: relative; aspect-ratio: 1 / 1.05;
+    background: radial-gradient(60% 50% at 50% 50%, rgba(74,143,231,0.08), transparent 70%);
+    padding: 24px;
+  }
+  .hero-figure svg { width: 100%; height: 100%; display: block; }
+  .hero-figure .stamp {
+    position: absolute; top: 24px; right: 24px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
+    color: var(--mist-300); text-transform: uppercase;
+    padding: 6px 10px; border: 1px solid var(--hairline-strong);
+    background: rgba(15, 24, 48, 0.65); backdrop-filter: blur(6px);
+  }
+  .hero-figure .stamp b { color: var(--cyan); font-weight: 500; }
+
+  /* KPI strip */
+  .kpis {
+    margin-top: 72px;
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 1px; background: var(--hairline); border: 1px solid var(--hairline);
+  }
+  @media (max-width: 880px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
+  .kpi { padding: 28px 24px; background: var(--deep); display: flex; flex-direction: column; gap: 8px; }
+  .kpi .label {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
+    color: var(--mist-300); text-transform: uppercase;
+  }
+  .kpi .value {
+    font-family: var(--serif); font-size: 44px; line-height: 1;
+    font-weight: 300; letter-spacing: -0.03em; color: var(--mist-100);
+  }
+  .kpi .value em { color: var(--cyan); font-style: italic; font-weight: 400; }
+  .kpi .value .u {
+    font-family: var(--mono); font-size: 13px; color: var(--mist-300);
+    margin-left: 6px; letter-spacing: 0.1em; font-style: normal;
+  }
+  .kpi .note { font-size: 12px; color: var(--mist-300); margin-top: 6px; }
+
+  /* ── BRIEF ────────────────────────────────────────────────── */
+  .brief-grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 56px; align-items: start; }
+  @media (max-width: 980px) { .brief-grid { grid-template-columns: 1fr; } }
+  dl.facts { display: grid; gap: 18px; }
+  dl.facts > div {
+    display: grid; grid-template-columns: 140px 1fr; gap: 18px;
+    padding: 14px 0; border-top: 1px solid var(--hairline);
+  }
+  dl.facts > div:last-child { border-bottom: 1px solid var(--hairline); }
+  dl.facts dt {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    color: var(--mist-300); text-transform: uppercase; padding-top: 2px;
+  }
+  dl.facts dd { font-size: 14px; color: var(--mist-100); }
+  dl.facts dd code {
+    font-family: var(--mono); font-size: 13px;
+    background: var(--raised); color: var(--cyan);
+    padding: 2px 6px; border-radius: var(--r-xs);
+    border: 1px solid var(--hairline);
+  }
+  dl.facts dd .muted { color: var(--mist-300); }
+
+  /* Terminal code blocks */
+  .terminal {
+    background: linear-gradient(to bottom, #08101F, #06090F);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r);
+    overflow: hidden; position: relative;
+  }
+  .terminal .head {
+    padding: 12px 16px;
+    background: rgba(15, 24, 48, 0.65);
+    border-bottom: 1px solid var(--hairline);
+    display: flex; align-items: center; gap: 12px;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
+    color: var(--mist-300); text-transform: uppercase;
+  }
+  .terminal .head .lights { display: inline-flex; gap: 5px; }
+  .terminal .head .lights i { width: 7px; height: 7px; border-radius: 50%; display: block; background: var(--mist-500); }
+  .terminal .head .lights i:nth-child(1) { background: rgba(255, 122, 122, 0.4); }
+  .terminal .head .lights i:nth-child(2) { background: rgba(255, 181, 90, 0.4); }
+  .terminal .head .lights i:nth-child(3) { background: rgba(125, 211, 160, 0.4); }
+  .terminal .head .path { flex: 1; color: var(--mist-200); }
+  .terminal pre {
+    margin: 0; padding: 18px 20px;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    color: var(--mist-100); white-space: pre; overflow-x: auto;
+  }
+  .terminal pre .prompt { color: var(--cyan); user-select: none; }
+  .terminal pre .cm { color: var(--mist-400); font-style: italic; }
+  .terminal pre .k { color: var(--cobalt); }
+  .terminal pre .s { color: var(--mint); }
+  .terminal pre .n { color: var(--ember); }
+  .terminal pre .var { color: var(--frost); }
+
+  /* Preflight steps */
+  .preflight { display: grid; gap: 18px; margin-top: 28px; }
+  .preflight .step {
+    display: grid; grid-template-columns: 40px 1fr; gap: 18px;
+    padding: 14px 16px;
+    background: rgba(15, 24, 48, 0.4);
+    border: 1px solid var(--hairline);
+    border-radius: var(--r);
+  }
+  .preflight .step .n {
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    font-family: var(--mono); font-size: 12px; color: var(--cyan);
+    border: 1px solid rgba(110, 224, 255, 0.3); border-radius: 50%;
+  }
+  .preflight .step h4 { font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--mist-100); margin-bottom: 4px; }
+  .preflight .step p { font-size: 13px; color: var(--mist-200); }
+  .preflight .step code {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--cyan); background: var(--raised);
+    padding: 1px 5px; border-radius: var(--r-xs);
+  }
+
+  /* ── SURFACE (endpoints) ──────────────────────────────────── */
+  .surface-intro {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 56px;
+    align-items: end; margin-bottom: 44px;
+  }
+  @media (max-width: 880px) { .surface-intro { grid-template-columns: 1fr; } }
+  .surface-intro p { color: var(--mist-200); max-width: 50ch; }
+  .endpoint-block { display: grid; gap: 36px; }
+  .endpoint-group h4 {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+    color: var(--mist-300); text-transform: uppercase;
+    margin-bottom: 12px; padding-left: 4px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .endpoint-group h4::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+  .endpoint-table {
+    border: 1px solid var(--hairline-strong);
+    background: rgba(10, 16, 32, 0.4);
+    border-radius: var(--r); overflow: hidden;
+  }
+  .endpoint-row {
+    display: grid;
+    grid-template-columns: 90px minmax(220px, 1fr) 1.4fr 60px;
+    align-items: center;
+    padding: 14px 18px; gap: 18px;
+    border-top: 1px solid var(--hairline);
+    transition: background 200ms ease;
+  }
+  .endpoint-row:first-child { border-top: 0; }
+  .endpoint-row:hover { background: rgba(74, 143, 231, 0.04); }
+  .endpoint-row:hover .path { color: var(--frost); }
+  .verb {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
+    font-weight: 500; padding: 4px 8px; border-radius: var(--r-xs);
+    border: 1px solid currentColor; width: max-content;
+  }
+  .verb.get    { color: var(--cyan);   background: rgba(110, 224, 255, 0.07); }
+  .verb.post   { color: var(--mint);   background: rgba(125, 211, 160, 0.08); }
+  .verb.patch  { color: var(--ember);  background: rgba(255, 181, 90, 0.08); }
+  .verb.delete { color: var(--coral);  background: rgba(255, 122, 122, 0.08); }
+  .verb.run    { color: var(--cobalt); background: rgba(74, 143, 231, 0.08); }
+  .path { font-family: var(--mono); font-size: 13px; color: var(--mist-100); transition: color 200ms ease; }
+  .path .seg-id { color: var(--ember); }
+  .path .qs { color: var(--mist-400); }
+  .purpose { font-size: 13px; color: var(--mist-200); }
+  .cost-pip {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em;
+    color: var(--mist-300); text-align: right;
+  }
+  .cost-pip.warn { color: var(--ember); }
+  .cost-pip.zero { color: var(--mist-400); }
+
+  /* ── TELEMETRY (canvas) ───────────────────────────────────── */
+  .telemetry-frame {
+    margin-top: 44px;
+    background: linear-gradient(to bottom, var(--deep), #07101F);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r-lg);
+    overflow: hidden; position: relative;
+  }
+  .telemetry-frame .telemetry-head {
+    display: grid; grid-template-columns: auto 1fr auto;
+    align-items: center; gap: 24px;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--hairline);
+    background: rgba(15, 24, 48, 0.4);
+  }
+  .telemetry-frame .label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.2em;
+    color: var(--mist-300); text-transform: uppercase;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .telemetry-frame .label b { color: var(--cyan); font-weight: 500; }
+  .telemetry-frame .label .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--cyan);
+    box-shadow: 0 0 12px var(--cyan); animation: pulse-c 1.6s infinite;
+  }
+  @keyframes pulse-c { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  .telemetry-frame .ctrl { display: flex; gap: 8px; align-items: center; }
+  .telemetry-frame button {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
+    color: var(--mist-200); text-transform: uppercase;
+    padding: 6px 12px; background: transparent;
+    border: 1px solid var(--hairline-strong); border-radius: var(--r-xs);
+    cursor: pointer; transition: all 180ms ease;
+  }
+  .telemetry-frame button:hover { color: var(--cyan); border-color: var(--cobalt); }
+  .telemetry-frame button.is-active { color: var(--cyan); border-color: var(--cyan); background: rgba(110, 224, 255, 0.06); }
+  #sig-canvas { display: block; width: 100%; height: 360px; }
+  .telemetry-stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--hairline); border-top: 1px solid var(--hairline);
+  }
+  .telemetry-stats .cell { padding: 20px 24px; background: var(--deep); display: flex; flex-direction: column; gap: 4px; }
+  .telemetry-stats .l { font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--mist-300); text-transform: uppercase; }
+  .telemetry-stats .v { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--mist-100); }
+  .telemetry-stats .v.a { color: var(--frost); }
+  .telemetry-stats .v.b { color: var(--mint); }
+  .telemetry-stats .v.c { color: var(--coral); }
+  .telemetry-stats .v.t { color: var(--cyan); }
+  .telemetry-caption { margin-top: 22px; font-size: 13px; color: var(--mist-300); max-width: 78ch; }
+  .telemetry-caption b { color: var(--mist-100); font-weight: 500; }
+  .telemetry-caption .ref { color: var(--coral); font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; }
+
+  /* ── HAZARD ───────────────────────────────────────────────── */
+  .hazard-intro { max-width: 60ch; margin-bottom: 56px; }
+  .hazard-intro p { color: var(--mist-200); font-size: 16px; }
+  .hazard-grid {
+    display: grid; grid-template-columns: 1.4fr 1fr 1fr;
+    grid-template-rows: auto auto; gap: 18px;
+  }
+  @media (max-width: 980px) { .hazard-grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 700px) { .hazard-grid { grid-template-columns: 1fr; } }
+  .hazard-card {
+    background:
+      linear-gradient(to bottom right, rgba(255, 122, 122, 0.04), transparent 60%),
+      var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: var(--r);
+    padding: 26px;
+    display: grid; gap: 18px; grid-template-rows: auto 1fr auto;
+    position: relative; overflow: hidden;
+  }
+  .hazard-card.featured {
+    grid-column: span 1; grid-row: span 2;
+    background:
+      linear-gradient(to bottom right, rgba(255, 122, 122, 0.08), transparent 50%),
+      var(--panel);
+    border-color: rgba(255, 122, 122, 0.25);
+  }
+  .hazard-card .index {
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
+    color: var(--coral); text-transform: uppercase;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .hazard-card .index .tri {
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 8px solid var(--coral);
+  }
+  .hazard-card h3 { font-family: var(--serif); font-size: 22px; line-height: 1.2; color: var(--mist-100); }
+  .hazard-card.featured h3 { font-size: 28px; }
+  .hazard-card .ill { width: 100%; height: 120px; display: grid; place-items: center; margin-top: -4px; }
+  .hazard-card.featured .ill { height: 220px; }
+  .hazard-card .ill svg { max-width: 100%; max-height: 100%; }
+  .hazard-card p { font-size: 13.5px; color: var(--mist-200); line-height: 1.55; }
+  .hazard-card p code {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--ember); background: rgba(255, 181, 90, 0.06);
+    padding: 1px 5px; border-radius: var(--r-xs);
+  }
+  .hazard-card .ref {
+    margin-top: 6px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em;
+    color: var(--mist-400); text-transform: uppercase;
+    border-top: 1px dashed var(--hairline);
+    padding-top: 12px;
+  }
+  .hazard-card .ref b { color: var(--mist-200); font-weight: 500; }
+
+  /* ── OPS (workflows) ──────────────────────────────────────── */
+  .workflow {
+    display: grid; grid-template-columns: 1fr 1.3fr;
+    gap: 56px; align-items: start;
+    padding: 64px 0;
+    border-top: 1px dashed var(--hairline);
+  }
+  .workflow:first-of-type { border-top: 0; padding-top: 0; }
+  @media (max-width: 980px) { .workflow { grid-template-columns: 1fr; gap: 32px; } }
+  .workflow .head .tag {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
+    color: var(--mist-300); text-transform: uppercase; margin-bottom: 14px;
+  }
+  .workflow .head .tag b { color: var(--cyan); }
+  .workflow .head h3 {
+    font-family: var(--serif); font-size: 36px; font-weight: 300;
+    letter-spacing: -0.025em; line-height: 1.05;
+    margin-bottom: 18px;
+  }
+  .workflow .head h3 em { font-style: italic; color: var(--frost); }
+  .workflow .head p { font-size: 14px; color: var(--mist-200); }
+  .workflow .head ul { margin-top: 18px; list-style: none; display: grid; gap: 8px; }
+  .workflow .head ul li { font-size: 13px; color: var(--mist-200); padding-left: 22px; position: relative; }
+  .workflow .head ul li::before {
+    content: ""; position: absolute; left: 0; top: 9px;
+    width: 12px; height: 1px; background: var(--cobalt);
+  }
+  .workflow .head ul li code {
+    font-family: var(--mono); font-size: 12px; color: var(--cyan);
+    background: var(--raised); padding: 1px 5px; border-radius: var(--r-xs);
+  }
+  .cadence-svg { margin-top: 24px; padding: 18px 0; border-top: 1px solid var(--hairline); }
+  .cadence-svg .legend {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
+    color: var(--mist-300); text-transform: uppercase; margin-top: 10px;
+  }
+  .cadence-svg .legend i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; vertical-align: middle; }
+
+  /* ── LEDGER (cost) ────────────────────────────────────────── */
+  .ledger-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 56px; margin-top: 40px; }
+  @media (max-width: 980px) { .ledger-grid { grid-template-columns: 1fr; } }
+  .price-table {
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r);
+    background: rgba(10, 16, 32, 0.5);
+    overflow: hidden;
+  }
+  .price-row {
+    display: grid; grid-template-columns: 1fr 100px 1fr;
+    align-items: center; gap: 18px; padding: 14px 20px;
+    border-top: 1px solid var(--hairline); font-size: 13px;
+  }
+  .price-row.head {
+    background: rgba(15, 24, 48, 0.7); border-top: 0;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
+    color: var(--mist-300); text-transform: uppercase;
+    padding: 12px 20px;
+  }
+  .price-row .surface { color: var(--mist-100); }
+  .price-row .price { font-family: var(--mono); font-size: 13px; color: var(--mist-100); text-align: right; font-weight: 500; }
+  .price-row .price.cheap { color: var(--mint); }
+  .price-row .price.mid   { color: var(--cyan); }
+  .price-row .price.high  { color: var(--ember); }
+  .price-row .price.spike { color: var(--coral); }
+  .price-row .bar { height: 6px; background: var(--raised); border-radius: 999px; overflow: hidden; position: relative; }
+  .price-row .bar i {
+    position: absolute; left: 0; top: 0; bottom: 0;
+    background: linear-gradient(to right, var(--cobalt), var(--cyan));
+    border-radius: 999px;
+  }
+  .price-row .bar.spike i { background: linear-gradient(to right, var(--ember), var(--coral)); }
+  .price-row .note { font-family: var(--mono); font-size: 10px; color: var(--mist-400); grid-column: 1 / -1; padding-top: 4px; }
+  .budget-card {
+    background: var(--panel);
+    border: 1px solid var(--hairline-strong);
+    border-radius: var(--r);
+    padding: 24px; display: grid; gap: 18px;
+  }
+  .budget-card h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em; color: var(--mist-300); text-transform: uppercase; font-weight: 400; }
+  .budget-card .row {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: baseline; gap: 16px;
+    padding-bottom: 14px; border-bottom: 1px dashed var(--hairline);
+  }
+  .budget-card .row:last-child { border-bottom: 0; }
+  .budget-card .row .name { font-family: var(--serif); font-size: 18px; font-style: italic; color: var(--mist-100); }
+  .budget-card .row .name small {
+    display: block; font-family: var(--sans); font-style: normal;
+    font-size: 12px; color: var(--mist-300); margin-top: 4px; letter-spacing: 0.04em;
+  }
+  .budget-card .row .figure { font-family: var(--mono); font-size: 22px; color: var(--cyan); font-weight: 500; }
+  .budget-card .row .figure small {
+    display: block; font-size: 10px; color: var(--mist-300);
+    letter-spacing: 0.14em; text-align: right; margin-top: 4px;
+  }
+
+  /* ── CONDUCT ──────────────────────────────────────────────── */
+  .conduct-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 40px; }
+  @media (max-width: 700px) { .conduct-grid { grid-template-columns: 1fr; } }
+  .conduct-card {
+    padding: 24px; border: 1px solid var(--hairline);
+    border-radius: var(--r);
+    background: rgba(10, 16, 32, 0.4);
+    display: grid; gap: 12px;
+  }
+  .conduct-card .n { font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--cyan); text-transform: uppercase; }
+  .conduct-card h4 { font-family: var(--serif); font-size: 18px; font-weight: 400; line-height: 1.3; color: var(--mist-100); }
+  .conduct-card p { font-size: 13px; color: var(--mist-200); }
+  .conduct-card code {
+    font-family: var(--mono); font-size: 12px;
+    color: var(--cyan); background: var(--raised);
+    padding: 1px 5px; border-radius: var(--r-xs);
+  }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  footer {
+    max-width: 1400px; margin: 0 auto;
+    padding: 80px var(--gutter) 60px;
+    border-top: 1px dashed var(--hairline);
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 24px; align-items: end;
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.16em;
+    color: var(--mist-400); text-transform: uppercase;
+  }
+  footer h5 {
+    font-family: var(--serif); font-style: italic; font-weight: 300;
+    font-size: 24px; color: var(--mist-200);
+    letter-spacing: -0.02em; text-transform: none; margin-bottom: 8px;
+  }
+  footer .right { text-align: right; }
+  footer .right b { color: var(--cyan); font-weight: 500; }
+
+  /* ── Reveal on scroll ────────────────────────────────────── */
+  .reveal { opacity: 0; transform: translateY(18px); transition: opacity 800ms cubic-bezier(.2,.7,.2,1), transform 800ms cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: translateY(0); }
+  .reveal-delay-1 { transition-delay: 100ms; }
+  .reveal-delay-2 { transition-delay: 200ms; }
+  .reveal-delay-3 { transition-delay: 320ms; }
+  .reveal-delay-4 { transition-delay: 440ms; }
+  @media (prefers-reduced-motion: reduce) {
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .conn .pulse, .telemetry-frame .label .dot { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="bg-glow"></div>
+<div class="bg-grid"></div>
+<div class="bg-noise"></div>
+
+<!-- ─────────────────────── TOP BAR ─────────────────────── -->
+<header class="topbar">
+  <div class="monogram">
+    <!-- Replace SVG below with one expressing the skill's domain (kept abstract / cobalt + cyan strokes) -->
+    <svg viewBox="0 0 24 24" fill="none">
+      <path d="M2 14 Q4 8 8 9 T14 7 T22 10" stroke="#6EE0FF" stroke-width="1.2" fill="none" stroke-linecap="round"/>
+      <path d="M2 17 Q5 12 9 13 T15 11 T22 14" stroke="#4A8FE7" stroke-width="1.2" fill="none" stroke-linecap="round" opacity="0.7"/>
+      <circle cx="12" cy="12" r="1.3" fill="#6EE0FF"/>
+    </svg>
+    <b>{{SKILL_NAME_UPPER}}</b>
+    <span class="div">/</span>
+    <span>OPERATOR&nbsp;MANUAL</span>
+    <span class="div">·</span>
+    <span>v1.0</span>
+  </div>
+  <div></div>
+  <div class="topbar-meta">
+    <span class="conn"><span class="pulse"></span>{{CONN_LABEL — e.g., "CONNECTED · HOST" or "READY · LOCAL"}}</span>
+    <span id="utc-clock">— : — : — UTC</span>
+  </div>
+</header>
+
+<!-- ─────────────────────── RAIL ─────────────────────── -->
+<!-- Edit the link list to match the sections you include. Drop entries for skipped sections. -->
+<aside class="rail">
+  <a href="#s-intro"><span class="num">00</span><span class="dot"></span>INTRO</a>
+  <a href="#s-brief"><span class="num">01</span><span class="dot"></span>BRIEF</a>
+  <a href="#s-surface"><span class="num">02</span><span class="dot"></span>SURFACE</a>
+  <a href="#s-telemetry"><span class="num">03</span><span class="dot"></span>TELEMETRY</a>
+  <a href="#s-hazard"><span class="num">04</span><span class="dot"></span>HAZARD</a>
+  <a href="#s-ops"><span class="num">05</span><span class="dot"></span>OPS</a>
+  <a href="#s-ledger"><span class="num">06</span><span class="dot"></span>LEDGER</a>
+  <a href="#s-conduct"><span class="num">07</span><span class="dot"></span>CONDUCT</a>
+</aside>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════
+     00 · HERO (always)
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-intro" class="hero">
+  <div class="hero-text reveal">
+    <div class="eyebrow">
+      <span class="num">00</span>
+      <span class="ln"></span>
+      <span>{{Skill dossier · short positioning line}}</span>
+    </div>
+
+    <h1>{{name}}<em class="dot">.</em></h1>
+
+    <p class="lede">
+      {{One-paragraph mission statement in italic Fraunces — the skill's purpose, distilled.}}
+    </p>
+
+    <div class="meta">
+      <span>{{LABEL}} · <b>{{value}}</b></span>
+      <span>{{LABEL}} · <b>{{value}}</b></span>
+      <span>{{LABEL}} · <b>{{value}}</b></span>
+      <span>{{LABEL}} · <b>{{value}}</b></span>
+    </div>
+  </div>
+
+  <figure class="hero-figure bracket reveal reveal-delay-1">
+    <span class="br-bl"></span><span class="br-br"></span>
+    <div class="stamp">FIG · <b>SCHEMATIC</b> · 00.A</div>
+    <!-- Custom hero SVG — see references/svg_library.md
+         Default: concentric-ring schematic with outbound nodes -->
+    <svg viewBox="0 0 480 520" xmlns="http://www.w3.org/2000/svg">
+      <!-- TODO · paste and adapt the concentric-ring template -->
+    </svg>
+  </figure>
+</section>
+
+<!-- KPI strip — drop entirely if the skill doesn't have 4 honest KPIs -->
+<section style="padding-top: 0; max-width: 1400px;" class="reveal reveal-delay-2">
+  <div class="kpis">
+    <div class="kpi">
+      <span class="label">{{LABEL}}</span>
+      <span class="value"><em>{{n}}</em><span class="u">{{unit}}</span></span>
+      <span class="note">{{one-line context}}</span>
+    </div>
+    <!-- repeat 3 more -->
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     01 · BRIEF — include if the skill needs setup/auth/preflight
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-brief">
+  <div class="eyebrow reveal"><span class="num">01</span><span class="ln"></span><span>{{Connection brief & preflight}}</span></div>
+  <h2 class="reveal">{{Headline.}} <em>{{Italic fragment.}}</em></h2>
+  <p class="lede reveal reveal-delay-1" style="margin-top:22px;">{{Lede paragraph.}}</p>
+
+  <div class="brief-grid reveal reveal-delay-2" style="margin-top:52px;">
+    <div>
+      <dl class="facts">
+        <div><dt>{{LABEL}}</dt><dd>{{value}}</dd></div>
+        <!-- repeat -->
+      </dl>
+    </div>
+    <div>
+      <div class="terminal bracket">
+        <span class="br-bl"></span><span class="br-br"></span>
+        <div class="head">
+          <span class="lights"><i></i><i></i><i></i></span>
+          <span class="path">{{path · description}}</span>
+          <span>{{LANG}}</span>
+        </div>
+<pre><span class="cm"># {{commentary}}</span>
+<span class="prompt">$</span> {{command}}</pre>
+      </div>
+
+      <div class="preflight">
+        <div class="step"><span class="n">1</span><div><h4>{{Step}}</h4><p>{{detail}}</p></div></div>
+        <!-- repeat -->
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     02 · SURFACE — include if the skill exposes endpoints/commands
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-surface">
+  <div class="eyebrow reveal"><span class="num">02</span><span class="ln"></span><span>{{Surface caption}}</span></div>
+
+  <div class="surface-intro">
+    <h2 class="reveal">{{Title}}, <em>{{italic fragment.}}</em></h2>
+    <p class="reveal reveal-delay-1">{{Lede paragraph.}}</p>
+  </div>
+
+  <div class="endpoint-block reveal reveal-delay-2">
+    <div class="endpoint-group">
+      <h4>{{Group name}}</h4>
+      <div class="endpoint-table">
+        <div class="endpoint-row">
+          <span class="verb get">GET</span>
+          <span class="path">/{{path}}</span>
+          <span class="purpose">{{purpose}}</span>
+          <span class="cost-pip zero">free</span>
+        </div>
+        <!-- repeat rows; verb classes: get/post/patch/delete/run -->
+      </div>
+    </div>
+    <!-- repeat groups -->
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     03 · TELEMETRY — Canvas centerpiece
+     Pick a pattern from references/canvas_patterns.md. Replace the
+     <script> block at the bottom with the chosen sim's IIFE.
+     Skip this section if no temporal element fits.
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-telemetry">
+  <div class="eyebrow reveal"><span class="num">03</span><span class="ln"></span><span>{{Telemetry caption — what's being shown}}</span></div>
+  <h2 class="reveal">{{Title.}} <em>{{Italic fragment.}}</em></h2>
+  <p class="lede reveal reveal-delay-1" style="margin-top:18px;">{{Caption explaining what the animation shows.}}</p>
+
+  <div class="telemetry-frame reveal reveal-delay-2 bracket">
+    <span class="br-bl"></span><span class="br-br"></span>
+
+    <div class="telemetry-head">
+      <span class="label"><span class="dot"></span>SIM · <b>{{SIM&nbsp;LABEL}}</b></span>
+      <span></span>
+      <span class="ctrl">
+        <button id="sim-play" class="is-active">PAUSE</button>
+        <button data-speed="1" class="is-active">1×</button>
+        <button data-speed="2">2×</button>
+        <button data-speed="4">4×</button>
+      </span>
+    </div>
+
+    <canvas id="sig-canvas" aria-label="{{describe what the canvas shows}}"></canvas>
+
+    <div class="telemetry-stats">
+      <div class="cell"><span class="l">SIM TIME</span><span class="v t" id="stat-time">—</span></div>
+      <div class="cell"><span class="l">{{METRIC A}}</span><span class="v a" id="stat-a">0</span></div>
+      <div class="cell"><span class="l">{{METRIC B}}</span><span class="v b" id="stat-b">0</span></div>
+      <div class="cell"><span class="l">{{METRIC C}}</span><span class="v c" id="stat-c">0</span></div>
+    </div>
+  </div>
+
+  <p class="telemetry-caption reveal reveal-delay-3">
+    {{Caption · what to look at. Link forward/back to other sections with <span class="ref">HAZARD · 0N</span> tags.}}
+  </p>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     04 · HAZARD — 3–5 cards; first may be .featured
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-hazard">
+  <div class="eyebrow reveal" style="color:var(--coral);">
+    <span class="num" style="color:var(--coral);border-color:rgba(255,122,122,0.35);background:rgba(255,122,122,0.06);">04</span>
+    <span class="ln"></span>
+    <span>{{Hazard caption — e.g., "Five non-negotiable rules"}}</span>
+  </div>
+  <h2 class="reveal">{{Headline.}} <em>{{italic fragment.}}</em></h2>
+  <div class="hazard-intro reveal reveal-delay-1" style="margin-top:20px;">
+    <p>{{Sub-paragraph framing the rules.}}</p>
+  </div>
+
+  <div class="hazard-grid">
+    <article class="hazard-card featured reveal reveal-delay-2 bracket">
+      <span class="br-bl"></span><span class="br-br"></span>
+      <div class="index"><span class="tri"></span>HAZARD · 01 · {{Topic}}</div>
+      <div>
+        <h3>{{Rule statement with an <em>italic fragment</em>.}}</h3>
+        <div class="ill"><svg viewBox="0 0 320 200"><!-- custom SVG --></svg></div>
+        <p>{{Explanation paragraph.}}</p>
+      </div>
+      <div class="ref">REF · <b>{{source location}}</b></div>
+    </article>
+    <!-- repeat .hazard-card (without .featured) for cards 2..N -->
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     05 · OPS — stacked workflows
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-ops">
+  <div class="eyebrow reveal"><span class="num">05</span><span class="ln"></span><span>{{Operations caption}}</span></div>
+  <h2 class="reveal">{{Headline.}} <em>{{italic fragment.}}</em></h2>
+
+  <div class="workflow">
+    <div class="head reveal">
+      <div class="tag"><b>OP · A</b> · {{sub-tag}}</div>
+      <h3>{{Workflow title with an <em>italic fragment</em>}}</h3>
+      <p>{{Paragraph explaining purpose & shape.}}</p>
+      <ul>
+        <li>{{constraint with <code>code</code> if needed}}</li>
+      </ul>
+    </div>
+    <div class="reveal reveal-delay-1">
+      <div class="terminal bracket">
+        <span class="br-bl"></span><span class="br-br"></span>
+        <div class="head"><span class="lights"><i></i><i></i><i></i></span><span class="path">{{path}}</span><span>{{LANG}}</span></div>
+<pre><span class="cm"># {{commentary}}</span>
+<span class="prompt">$</span> {{command}}</pre>
+      </div>
+    </div>
+  </div>
+  <!-- repeat .workflow blocks -->
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     06 · LEDGER — pricing/cost
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-ledger">
+  <div class="eyebrow reveal"><span class="num">06</span><span class="ln"></span><span>{{Ledger caption — pricing context}}</span></div>
+  <h2 class="reveal">{{Headline.}} <em>{{italic fragment.}}</em></h2>
+  <p class="lede reveal reveal-delay-1" style="margin-top:18px;">{{Lede.}}</p>
+
+  <div class="ledger-grid">
+    <div class="price-table reveal reveal-delay-2 bracket">
+      <span class="br-bl"></span><span class="br-br"></span>
+      <div class="price-row head"><span>Surface</span><span style="text-align:right;">Price</span><span>Relative</span></div>
+      <!-- repeat .price-row; classes on .price: cheap/mid/high/spike; .bar.spike for outliers -->
+      <div class="price-row">
+        <span class="surface">{{surface}}</span>
+        <span class="price cheap">{{$0.001}}</span>
+        <span class="bar"><i style="width:{{N}}%;"></i></span>
+      </div>
+    </div>
+
+    <div class="reveal reveal-delay-2">
+      <div class="budget-card bracket">
+        <span class="br-bl"></span><span class="br-br"></span>
+        <h4>{{Budget card title}}</h4>
+        <div class="row">
+          <div class="name">{{Item}}<small>{{derivation}}</small></div>
+          <div class="figure">{{$0.X}}<small>{{unit}}</small></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════
+     07 · CONDUCT — output etiquette
+     ═══════════════════════════════════════════════════════════ -->
+<section id="s-conduct">
+  <div class="eyebrow reveal"><span class="num">07</span><span class="ln"></span><span>{{Conduct caption}}</span></div>
+  <h2 class="reveal">{{Headline.}} <em>{{italic fragment.}}</em></h2>
+
+  <div class="conduct-grid">
+    <div class="conduct-card reveal reveal-delay-1 bracket">
+      <span class="br-bl"></span><span class="br-br"></span>
+      <span class="n">A</span>
+      <h4>{{Rule.}}</h4>
+      <p>{{One-line elaboration.}}</p>
+    </div>
+    <!-- repeat for B, C, D -->
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div>
+    <h5>{{One italic tagline · source-of-truth flavored.}}</h5>
+    <span>{{SKILL_NAME_UPPER}} · OPERATOR MANUAL · last orbit {{YYYY-MM-DD}}</span>
+  </div>
+  <div class="right">
+    <span><b>SKILL.md</b> is canonical. This page is a visual companion.</span>
+  </div>
+</footer>
+
+<script>
+  /* ─────────────────────────────────────────────────────────
+     Live UTC clock
+     ───────────────────────────────────────────────────────── */
+  (function clock() {
+    const el = document.getElementById('utc-clock');
+    if (!el) return;
+    function tick() {
+      const d = new Date();
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mm = String(d.getUTCMinutes()).padStart(2, '0');
+      const ss = String(d.getUTCSeconds()).padStart(2, '0');
+      el.textContent = `${hh} : ${mm} : ${ss} UTC`;
+    }
+    tick(); setInterval(tick, 1000);
+  })();
+
+  /* ─────────────────────────────────────────────────────────
+     Reveal on scroll
+     ───────────────────────────────────────────────────────── */
+  (function reveal() {
+    const els = document.querySelectorAll('.reveal');
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+      }
+    }, { rootMargin: '-8% 0px -10% 0px', threshold: 0.05 });
+    els.forEach(el => io.observe(el));
+  })();
+
+  /* ─────────────────────────────────────────────────────────
+     Rail active state (uses whatever sections are present)
+     ───────────────────────────────────────────────────────── */
+  (function rail() {
+    const links = Array.from(document.querySelectorAll('.rail a'));
+    const sections = links
+      .map(a => document.querySelector(a.getAttribute('href')))
+      .filter(Boolean);
+    if (!sections.length) return;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) {
+          const id = e.target.id;
+          links.forEach(a => a.classList.toggle('is-active', a.getAttribute('href') === '#' + id));
+        }
+      }
+    }, { rootMargin: '-40% 0px -50% 0px', threshold: 0 });
+    sections.forEach(s => io.observe(s));
+  })();
+
+  /* ─────────────────────────────────────────────────────────
+     SIGNATURE CANVAS · paste the chosen pattern from
+     references/canvas_patterns.md as an IIFE here.
+     Required DOM: #sig-canvas, #sim-play, [data-speed], #stat-time,
+                   #stat-a, #stat-b, #stat-c.
+     If you omit the TELEMETRY section, delete this block entirely.
+     ───────────────────────────────────────────────────────── */
+  /*
+  (function signatureSim() {
+    const canvas = document.getElementById('sig-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    // ... pattern code from references/canvas_patterns.md
+  })();
+  */
+</script>
+
+</body>
+</html>
