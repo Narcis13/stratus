@@ -13,7 +13,7 @@ export function corsMiddleware(): MiddlewareHandler {
   const staticOrigins = readStaticOriginsFromEnv();
   return cors({
     origin: (origin) => (matchOrigin(origin, staticOrigins) ? origin : null),
-    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowHeaders: ['Authorization', 'Content-Type'],
     maxAge: 600,
   });

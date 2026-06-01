@@ -24,6 +24,7 @@
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",
+    "https://stratus-narcis.duckdns.org/*",
     "http://127.0.0.1/*",
     "http://localhost/*"
   ]

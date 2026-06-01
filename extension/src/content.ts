@@ -256,6 +256,48 @@ function readCountsFrom(root: ParentNode): { followers: number | null; following
   return { followers, following };
 }
 
+// The hover card carries no `data-testid="UserDescription"` (the profile header
+// does, but the card doesn't). The bio is a bare `div[dir="auto"]` that sits
+// between the @handle link and the Following/Followers counts. The card's only
+// other dir=auto is the follow button's "Click to Follow …" label, which renders
+// *before* the handle — so the positional window cleanly excludes it.
+function readHoverCardBio(card: Element, handle: string): string | null {
+  const direct = card.querySelector('[data-testid="UserDescription"]')?.textContent?.trim();
+  if (direct) return direct;
+
+  const want = `/${handle.toLowerCase()}`;
+  let handleLink: HTMLAnchorElement | null = null;
+  for (const a of card.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')) {
+    if (a.pathname.toLowerCase() === want && a.textContent?.trim().startsWith('@')) {
+      handleLink = a;
+      break;
+    }
+  }
+  const followingLink = card.querySelector('a[href$="/following"]');
+  if (!handleLink || !followingLink) return null;
+
+  const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING;
+  for (const el of card.querySelectorAll<HTMLElement>('[dir="auto"]')) {
+    const afterHandle = handleLink.compareDocumentPosition(el) & FOLLOWING;
+    const beforeCounts = el.compareDocumentPosition(followingLink) & FOLLOWING;
+    if (afterHandle && beforeCounts) {
+      const text = el.textContent?.trim();
+      if (text) return text;
+    }
+  }
+  return null;
+}
+
+// The follow button's testid is `<numericUserId>-follow` (e.g. `335833273-follow`)
+// — the only place the card exposes the author's stable x_user_id. Opportunistic.
+function readUserIdFromFollowButton(root: ParentNode): string | null {
+  for (const el of root.querySelectorAll('[data-testid$="-follow"]')) {
+    const m = el.getAttribute('data-testid')?.match(/^(\d+)-follow$/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 async function waitForHoverCard(handle: string): Promise<Element | null> {
   const want = `/${handle.toLowerCase()}`;
   const deadline = Date.now() + HOVER_CARD_TIMEOUT_MS;
@@ -306,10 +348,17 @@ async function scrapeAuthorFromHoverCard(
 
   const nameEl = card.querySelector('[data-testid="User-Name"]');
   const displayName = nameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
-  const bio = card.querySelector('[data-testid="UserDescription"]')?.textContent?.trim() || null;
+  const bio = readHoverCardBio(card, handle);
   const { followers, following } = readCountsFrom(card);
+  const xUserId = readUserIdFromFollowButton(card);
 
-  if (displayName === null && bio === null && followers === null && following === null) {
+  if (
+    displayName === null &&
+    bio === null &&
+    followers === null &&
+    following === null &&
+    xUserId === null
+  ) {
     return null;
   }
   return {
@@ -318,7 +367,7 @@ async function scrapeAuthorFromHoverCard(
     bio,
     followersCount: followers,
     followingCount: following,
-    xUserId: null,
+    xUserId,
   };
 }
 
@@ -463,6 +512,7 @@ function scrapeProfileHeader(): { handle: string; profile: AuthorProfile } | nul
   // Scope counts to the primary column so we don't read a stray hover card.
   const header = document.querySelector('[data-testid="primaryColumn"]') ?? document;
   const { followers, following } = readCountsFrom(header);
+  const xUserId = readUserIdFromFollowButton(header);
   const pinned = scrapePinned(handle);
 
   return {
@@ -474,6 +524,7 @@ function scrapeProfileHeader(): { handle: string; profile: AuthorProfile } | nul
       followingCount: following,
       pinnedTweetId: pinned?.id ?? null,
       pinnedTweetText: pinned?.text ?? null,
+      xUserId,
       profileUrl: `https://x.com/${handle}`,
     },
   };
