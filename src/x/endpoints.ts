@@ -67,21 +67,6 @@ export async function getMe(token: string): Promise<XUser> {
   return res.data;
 }
 
-/** Cost: $0.010 (third-party user lookup). Used by voice/track to resolve username → id. */
-export async function getUserByUsername(token: string, username: string): Promise<XUser> {
-  const res = await xFetch<{ data: XUser }>(
-    `/2/users/by/username/${encodeURIComponent(username)}`,
-    {
-      token,
-      query: {
-        'user.fields':
-          'id,name,username,description,public_metrics,verified_type,subscription_type',
-      },
-    },
-  );
-  return res.data;
-}
-
 /** Cost: $0.005 if other-user, $0.001 if owned. */
 export async function getTweet(
   token: string,

@@ -58,9 +58,9 @@ src/
     …existing primitives…
     pricing.ts           X price table (the switch keyed off endpoint substrings)
     db/schema.ts         tokens, scheduled_posts, posts_published, metrics_snapshots,
-                         tracked_authors, voice_tweets, voice_metrics_snapshots
-    routes/              calendar.ts, metrics.ts, voice.ts (mounted under /x)
-    workers/             publisher, ownReconcile, metricsPoll, voicePull, voiceMetricsPoll
+                         voice_authors, voice_tweets, reply_drafts
+    routes/              calendar.ts, metrics.ts, voice.ts, replies.ts (mounted under /x)
+    workers/             publisher, ownReconcile, metricsPoll
     index.ts             exports mountX(app) and startXWorkers() — only outside caller is app.ts
 extension/               sibling Chrome MV3 side-panel UI (own package.json, Vite + React)
 ```
@@ -71,9 +71,9 @@ When LinkedIn arrives later: create `src/linkedin/` with the same shape, registe
 
 - **Phase 1 — Plumbing + Calendar:** done. `app.ts` + Hono, bearer + CORS middleware, Drizzle/Neon, Postgres token store, `pricing.ts` + `costTracker` wired into `xFetch.onCost`, `calendar.ts` routes, `publisher.ts` worker.
 - **Phase 2 — Metrics + own-reconcile:** done. `metricsPoll` and `ownReconcile` workers; `/x/metrics` and `/x/posts` routes mounted via `mountX`.
-- **Phase 3 — Voice library:** done. `voicePull` worker and `/x/voice` routes; `voiceMetricsPoll` is opt-in via `VOICE_METRICS_POLL_ENABLED=true` (other-user reads at $0.005 each — keep it gated).
+- **Phase 3 — Voice library:** done, then **pivoted (2026-06-01) to a pure DOM-scrape swipe file**. No X API, no metrics polling — the `voicePull`/`voiceMetricsPoll` workers and the `tracked_authors`/`voice_metrics_snapshots` tables were dropped. `voice_authors` (handle PK + profile fields) and `voice_tweets` (now stores `scraped_html`) hold tweets the user manually saves. `/x/voice` routes are all $0 (scrape, enrich-author, list, retire, delete). See `src/x/routes/voice.ts`.
 - **Phase 4 — Extension MVP (calendar + drafts):** done. End-to-end smoke-tested 2026-05-10: side panel → background API client → bearer-guarded `/x/calendar` → DB → 60 s publisher tick → live tweet → row flips `PENDING → POSTED`.
-- **Phase 5 — Extension scraping for voice library:** not started.
+- **Phase 5 — Extension scraping for voice library:** done (2026-06-01). Content script scrapes the tweet (text + `tweetText` innerHTML for emoji-faithful format templates) plus a best-effort author hover card on "Save to stratus", and the full profile header on a "Save author" button. All capture is DOM-only.
 
 Authoritative source for what's actually wired is `src/x/index.ts` (`mountX` + `startXWorkers`). See `PLAN.md` §"Phased build" for the full breakdown.
 
@@ -114,8 +114,7 @@ When `pricing.ts` and `costTracker.ts` land, `cost_events` rows must carry a `pl
 
 Cadence-derived budgets (from PLAN.md §"Cadence ladders"):
 - Own posts: ~113 polls × $0.001 ≈ **$0.113/tweet** over 30 days, then retired.
-- Voice tweets: ~18 polls × $0.005 ≈ **$0.09/tweet** over 7 days, then retired.
-- Per-author guardrail caps voice metrics polling at the latest `max_polled_tweets` (default 20).
+- Voice library: **$0** — captured by DOM scrape in the extension, never read through the X API.
 
 ## Common commands
 
@@ -135,7 +134,7 @@ Use **`127.0.0.1` not `localhost`** for the OAuth redirect URI.
 - **Follow `PLAN.md`'s phased build.** Don't jump phases for convenience — each phase ends with something usable, and skipping ahead breaks the "smoke test at the end" discipline.
 - **Add one endpoint at a time** in `src/x/endpoints.ts` when a route or worker actually needs it. Don't pre-stub the whole API surface.
 - **Per-platform isolation is load-bearing.** New X-specific code goes under `src/x/`. New cross-platform infrastructure goes under `src/db/`, `src/middleware/`, `src/routes/`, or `src/app.ts`. `src/x/` must not depend on `src/linkedin/` (or vice versa) when that lands; they only share the top-level layer.
-- **In-process workers, not a queue.** Five `setInterval` calls in the same Bun process, using `SELECT … FOR UPDATE SKIP LOCKED` for safety. Don't reach for Redis/BullMQ unless something *actually* breaks at one process.
+- **In-process workers, not a queue.** A few `setInterval` calls in the same Bun process (publisher, ownReconcile, metricsPoll), using `SELECT … FOR UPDATE SKIP LOCKED` for safety. Don't reach for Redis/BullMQ unless something *actually* breaks at one process.
 - **No comments stating the obvious.** Comments only for non-obvious *why* (cost trade-off, X policy quirk, race condition). `PLAN.md` and `X-API-IMPLEMENTATION-PLAN.md` carry long-form prose.
 - **Tests:** `bun:test` (native runner — same API as Vitest).
 - **No emojis** unless the user asks.
@@ -148,7 +147,7 @@ Use **`127.0.0.1` not `localhost`** for the OAuth redirect URI.
 - **`non_public_metrics` and `organic_metrics` silently null after 30 days** on owned posts. The metrics worker stops requesting them past the 30-day boundary and retires the row.
 - **Quote-tweet of others is blocked on self-serve** (Feb 2026). Self-quotes probably allowed; verify before exposing. v1 ships without quote/reply-to-others endpoints on purpose.
 - **OAuth 1.0a still required for `/2/media/upload`** as of May 2026 — we don't support media yet for that reason. Confirm before adding.
-- **Other-user reads are 5× owned reads** ($0.005 vs $0.001). The voice library's per-author `max_polled_tweets` cap exists to bound this — never remove it without a budget conversation.
+- **Other-user reads are 5× owned reads** ($0.005 vs $0.001) — which is exactly why the voice library captures by DOM scrape in the extension instead of reading other users through the API. Don't reintroduce X-API reads for the voice library without a budget conversation.
 
 ## Explicitly out of scope (v1)
 

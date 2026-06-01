@@ -15,6 +15,13 @@
       "when": 1778498595730,
       "tag": "0001_blushing_oracle",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1780330088531,
+      "tag": "0002_voice_swipe_file",
+      "breakpoints": true
     }
   ]
 }

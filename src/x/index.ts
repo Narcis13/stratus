@@ -13,8 +13,6 @@ import { createVoiceRouter } from './routes/voice.ts';
 import { startMetricsPoll } from './workers/metricsPoll.ts';
 import { startOwnReconcile } from './workers/ownReconcile.ts';
 import { startPublisher } from './workers/publisher.ts';
-import { startVoiceMetricsPoll } from './workers/voiceMetricsPoll.ts';
-import { startVoicePull } from './workers/voicePull.ts';
 
 interface XConfig {
   selfXUserId: string;
@@ -35,7 +33,7 @@ export function mountX(app: Hono): void {
   app.route('/x', calendar);
   app.route('/x', metrics);
   app.route('/x', createPostsRouter(cfg));
-  app.route('/x', createVoiceRouter({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
+  app.route('/x', createVoiceRouter());
   // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
   if (process.env.XAI_API_KEY) {
     app.route('/x', replies);
@@ -68,20 +66,8 @@ export function startXWorkers(): XWorkers {
   } else {
     console.log('metricsPoll: disabled via METRICS_POLL_ENABLED=false');
   }
-  if (process.env.VOICE_PULL_ENABLED !== 'false') {
-    stops.push(startVoicePull({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
-  } else {
-    console.log(
-      'voicePull: timer disabled via VOICE_PULL_ENABLED=false (manual POST /x/voice/pull/:username still works)',
-    );
-  }
-  // Opt-in: other-user reads at $0.005 each add up fast. Set
-  // VOICE_METRICS_POLL_ENABLED=true to turn on the cadence ladder.
-  if (process.env.VOICE_METRICS_POLL_ENABLED === 'true') {
-    stops.push(startVoiceMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
-  } else {
-    console.log('voiceMetricsPoll: disabled (set VOICE_METRICS_POLL_ENABLED=true to enable)');
-  }
+  // The voice library is a pure DOM-scrape swipe file now — no X-API author
+  // pulls or metrics polling, so there are no voice workers to start.
 
   return {
     stop() {

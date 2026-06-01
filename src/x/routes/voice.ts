@@ -1,464 +1,237 @@
-// Voice library: track other authors, query their tweets, view metrics history.
-// Mounted under `/x` by `mountX` in ../index.ts.
+// Voice library: a swipe file of other people's tweets, kept for style/format
+// reference. Mounted under `/x` by `mountX` in ../index.ts.
+//
+// This is a pure DOM-scrape store — the extension content script reads the
+// tweet (and a best-effort author hover card) straight from x.com and POSTs it
+// here. NO X API is touched: every route below is $0. Authors are identified by
+// their lowercased @handle (the only stable id scrapeable without the API);
+// the numeric x_user_id is filled opportunistically when the page exposes it.
 //
 // Routes:
-//   POST   /voice/track             { username, maxPolledTweets? }    enroll author
-//   DELETE /voice/track/:username                                      stop tracking (soft)
-//   POST   /voice/pull/:username    { fullScan?, maxResults? }         on-demand pull
-//   POST   /voice/scrape            { original, replies?, pollMetrics? } extension scrape
-//   GET    /voice/authors                                              list authors + tweet counts
-//   GET    /voice/tweets?author=&q=&minLikes=&includeReplies=&limit=   query stash
-//   GET    /voice/metrics/:tweetId                                     snapshot history
-//
-// "Stop tracking" is a soft disable, not a delete — `voice_tweets` rows have
-// an FK to `tracked_authors` and we want the historical stash to survive an
-// untrack. Disable both pulls and metrics polling, retire any active tweets
-// so `voiceMetricsPoll` stops spending. Re-tracking flips the flags back on.
-//
-// Query latest metrics via a lateral subquery so a single round-trip returns
-// each voice tweet plus its most recent snapshot — what a UI list view needs.
+//   POST   /voice/scrape              { tweet, author? }   save a tweet (+ stub/enrich its author)
+//   PUT    /voice/authors/:handle     { ...profile }       enrich author from their profile page
+//   GET    /voice/authors?retired=    list authors + tweet counts
+//   GET    /voice/tweets?author=&q=&limit=&retired=        query the stash
+//   PATCH  /voice/tweets/:tweetId     { retired }          archive / unarchive a tweet
+//   DELETE /voice/tweets/:tweetId                          hard-remove a tweet
+//   PATCH  /voice/authors/:handle     { retired }          archive / unarchive an author
+//   DELETE /voice/authors/:handle                          hard-remove an author (409 if it has tweets)
 
 import { type SQL, and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { trackedAuthors, voiceMetricsSnapshots, voiceTweets } from '../db/schema.ts';
-import { getUserByUsername } from '../endpoints.ts';
-import { XApiError } from '../errors.ts';
-import { getValidAccessToken } from '../token-store.ts';
-import { type VoicePullDeps, retireAuthorVoiceTweets, runVoicePull } from '../workers/voicePull.ts';
+import { voiceAuthors, voiceTweets } from '../db/schema.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 // Twitter usernames: 1–15 chars, alphanumeric + underscore.
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
-// X /2/users/:id/tweets pagination cap (X plan §6.1).
-const PULL_HARD_CAP = 3200;
 
-export interface VoiceRouterDeps extends VoicePullDeps {}
-
-export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
+export function createVoiceRouter(): Hono {
   const router = new Hono();
 
-  // ---------------------------------------------------------------- track
+  // --------------------------------------------------------------- scrape
 
-  router.post('/voice/track', async (c) => {
+  // The content script POSTs DOM-scraped content. The tweet's author always
+  // gets a row (a stub from handle + display name if we've never seen them);
+  // the optional `author` block carries best-effort hover-card fields (bio,
+  // follower/following counts). Re-scraping a known author only *fills* null
+  // fields — it never clobbers richer data captured via the profile "Save
+  // author" path.
+  router.post('/voice/scrape', async (c) => {
     const body = await readJson(c.req.raw);
     if (!body) return c.json({ error: 'invalid_body' }, 400);
 
-    const username =
-      typeof body.username === 'string' ? body.username.trim().replace(/^@/, '') : '';
-    if (!USERNAME_RE.test(username)) return c.json({ error: 'invalid_username' }, 400);
+    const tweet = parseScrapedTweet(body.tweet);
+    if (!tweet) return c.json({ error: 'invalid_tweet' }, 400);
 
-    const maxPolled = parsePositiveInt(body.maxPolledTweets);
-    if (maxPolled === 'invalid') return c.json({ error: 'invalid_max_polled_tweets' }, 400);
+    const hover = body.author === undefined ? null : parseScrapedAuthor(body.author);
+    // A malformed author block is non-fatal — we still have the tweet's own
+    // handle + display name to anchor the row.
 
-    let user: Awaited<ReturnType<typeof getUserByUsername>>;
-    try {
-      const token = await getValidAccessToken({
-        clientId: deps.clientId,
-        clientSecret: deps.clientSecret,
-      });
-      user = await getUserByUsername(token, username);
-    } catch (err) {
-      if (err instanceof XApiError && err.status === 404) {
-        return c.json({ error: 'user_not_found' }, 404);
-      }
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error('voice/track resolve failed:', detail);
-      return c.json({ error: 'resolve_failed', detail }, 502);
-    }
+    const now = new Date();
 
-    // Manual track: explicitly opt the author in (overrides any prior soft-disable
-    // from /voice/track DELETE or auto_from_scrape's defaults-off behavior).
-    const insertValues: typeof trackedAuthors.$inferInsert = {
-      xUserId: user.id,
-      username: user.username,
-      source: 'manual',
-      pullEnabled: true,
-      metricsPollingEnabled: true,
-      ...(maxPolled !== undefined ? { maxPolledTweets: maxPolled } : {}),
-    };
-    const updateValues: Partial<typeof trackedAuthors.$inferInsert> = {
-      username: user.username,
-      source: 'manual',
-      pullEnabled: true,
-      metricsPollingEnabled: true,
-      ...(maxPolled !== undefined ? { maxPolledTweets: maxPolled } : {}),
+    await fillAuthor(tweet.handle, {
+      displayName: hover?.displayName ?? tweet.displayName,
+      bio: hover?.bio ?? null,
+      followersCount: hover?.followersCount ?? null,
+      followingCount: hover?.followingCount ?? null,
+      xUserId: hover?.xUserId ?? null,
+      profileUrl: `https://x.com/${tweet.handle}`,
+    });
+
+    const [saved] = await db
+      .insert(voiceTweets)
+      .values({
+        tweetId: tweet.tweetId,
+        authorHandle: tweet.handle,
+        text: tweet.text,
+        scrapedHtml: tweet.html,
+        createdAt: tweet.createdAt ?? now,
+        url: tweet.url,
+        source: 'extension_scrape',
+        savedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: voiceTweets.tweetId,
+        // Re-save refreshes the captured text/html (the tweet may have been
+        // edited) and stamps updatedAt; createdAt/savedAt stay put.
+        set: {
+          text: tweet.text,
+          scrapedHtml: tweet.html ?? sql`${voiceTweets.scrapedHtml}`,
+          url: tweet.url ?? sql`${voiceTweets.url}`,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    const [author] = await db
+      .select()
+      .from(voiceAuthors)
+      .where(eq(voiceAuthors.handle, tweet.handle));
+
+    return c.json({ tweet: saved, author }, 201);
+  });
+
+  // --------------------------------------------------------------- enrich
+
+  // Full profile capture from the author's profile page (followers, following,
+  // bio, pinned tweet, …). Authoritative: provided fields overwrite whatever a
+  // hover-card scrape had guessed. Stamps enrichedAt.
+  router.put('/voice/authors/:handle', async (c) => {
+    const handle = normalizeHandle(c.req.param('handle'));
+    if (!handle) return c.json({ error: 'invalid_handle' }, 400);
+
+    const body = await readJson(c.req.raw);
+    if (!body) return c.json({ error: 'invalid_body' }, 400);
+
+    const profile = parseAuthorProfile(body);
+    if (!profile) return c.json({ error: 'invalid_profile' }, 400);
+
+    const now = new Date();
+    const fields = {
+      displayName: profile.displayName,
+      bio: profile.bio,
+      followersCount: profile.followersCount,
+      followingCount: profile.followingCount,
+      pinnedTweetId: profile.pinnedTweetId,
+      pinnedTweetText: profile.pinnedTweetText,
+      xUserId: profile.xUserId,
+      profileUrl: profile.profileUrl ?? `https://x.com/${handle}`,
     };
 
     const [row] = await db
-      .insert(trackedAuthors)
-      .values(insertValues)
-      .onConflictDoUpdate({ target: trackedAuthors.xUserId, set: updateValues })
+      .insert(voiceAuthors)
+      .values({ handle, source: 'profile_scrape', enrichedAt: now, updatedAt: now, ...fields })
+      .onConflictDoUpdate({
+        target: voiceAuthors.handle,
+        // Only overwrite columns the scrape actually caught — a missed bio must
+        // not wipe a good one captured on an earlier enrich.
+        set: { ...stripNullish(fields), enrichedAt: now, updatedAt: now },
+      })
       .returning();
 
-    return c.json(row, 201);
+    return c.json(row);
   });
 
   // -------------------------------------------------------------- authors
 
-  // Listed for the side panel's Voice tab: author filter dropdown plus the
-  // "promote to actively tracked" toggle for source='auto_from_scrape' rows.
-  // Tweet count is a left-join aggregate so authors with zero stashed tweets
-  // (e.g. just untracked, all retired) still appear.
   router.get('/voice/authors', async (c) => {
-    const sourceFilter = c.req.query('source');
-    if (sourceFilter && sourceFilter !== 'manual' && sourceFilter !== 'auto_from_scrape') {
-      return c.json({ error: 'invalid_source' }, 400);
-    }
+    const includeRetired = c.req.query('retired') === 'true';
 
     const tweetCount = sql<number>`count(${voiceTweets.tweetId})::int`.as('tweet_count');
 
-    const filters: SQL[] = [];
-    if (sourceFilter) filters.push(eq(trackedAuthors.source, sourceFilter));
-
     const rows = await db
       .select({
-        xUserId: trackedAuthors.xUserId,
-        username: trackedAuthors.username,
-        addedAt: trackedAuthors.addedAt,
-        lastPulledAt: trackedAuthors.lastPulledAt,
-        source: trackedAuthors.source,
-        pullEnabled: trackedAuthors.pullEnabled,
-        metricsPollingEnabled: trackedAuthors.metricsPollingEnabled,
-        maxPolledTweets: trackedAuthors.maxPolledTweets,
+        handle: voiceAuthors.handle,
+        xUserId: voiceAuthors.xUserId,
+        displayName: voiceAuthors.displayName,
+        bio: voiceAuthors.bio,
+        followersCount: voiceAuthors.followersCount,
+        followingCount: voiceAuthors.followingCount,
+        pinnedTweetId: voiceAuthors.pinnedTweetId,
+        pinnedTweetText: voiceAuthors.pinnedTweetText,
+        profileSummary: voiceAuthors.profileSummary,
+        profileUrl: voiceAuthors.profileUrl,
+        source: voiceAuthors.source,
+        addedAt: voiceAuthors.addedAt,
+        enrichedAt: voiceAuthors.enrichedAt,
+        updatedAt: voiceAuthors.updatedAt,
+        retired: voiceAuthors.retired,
         tweetCount,
       })
-      .from(trackedAuthors)
-      .leftJoin(voiceTweets, eq(voiceTweets.authorXUserId, trackedAuthors.xUserId))
-      .where(filters.length ? and(...filters) : undefined)
-      .groupBy(trackedAuthors.xUserId)
-      .orderBy(asc(trackedAuthors.username));
+      .from(voiceAuthors)
+      .leftJoin(voiceTweets, eq(voiceTweets.authorHandle, voiceAuthors.handle))
+      .where(includeRetired ? undefined : eq(voiceAuthors.retired, false))
+      .groupBy(voiceAuthors.handle)
+      .orderBy(asc(voiceAuthors.handle));
 
     return c.json(rows);
   });
 
-  // Promote / demote an existing author. Used by the Voice tab's
-  // "actively tracked" toggle on auto_from_scrape rows. We don't allow
-  // creating an author here — use POST /voice/track for that (it resolves
-  // username → xUserId via the X API). PATCH only flips flags on a row that
-  // already exists, so it's a free op (no $0.010 user lookup).
-  router.patch('/voice/authors/:username', async (c) => {
-    const username = c.req.param('username').replace(/^@/, '');
-    if (!USERNAME_RE.test(username)) return c.json({ error: 'invalid_username' }, 400);
+  router.patch('/voice/authors/:handle', async (c) => {
+    const handle = normalizeHandle(c.req.param('handle'));
+    if (!handle) return c.json({ error: 'invalid_handle' }, 400);
 
     const body = await readJson(c.req.raw);
-    if (!body) return c.json({ error: 'invalid_body' }, 400);
-
-    const updates: Partial<typeof trackedAuthors.$inferInsert> = {};
-    if (body.pullEnabled !== undefined) {
-      if (typeof body.pullEnabled !== 'boolean') {
-        return c.json({ error: 'invalid_pull_enabled' }, 400);
-      }
-      updates.pullEnabled = body.pullEnabled;
-    }
-    if (body.metricsPollingEnabled !== undefined) {
-      if (typeof body.metricsPollingEnabled !== 'boolean') {
-        return c.json({ error: 'invalid_metrics_polling_enabled' }, 400);
-      }
-      updates.metricsPollingEnabled = body.metricsPollingEnabled;
-    }
-    if (body.maxPolledTweets !== undefined) {
-      const parsed = parsePositiveInt(body.maxPolledTweets);
-      if (parsed === 'invalid') return c.json({ error: 'invalid_max_polled_tweets' }, 400);
-      if (parsed !== undefined) updates.maxPolledTweets = parsed;
-    }
-    if (body.source !== undefined) {
-      if (body.source !== 'manual' && body.source !== 'auto_from_scrape') {
-        return c.json({ error: 'invalid_source' }, 400);
-      }
-      updates.source = body.source;
-    }
-
-    if (Object.keys(updates).length === 0) {
-      return c.json({ error: 'no_updates' }, 400);
+    if (!body || typeof body.retired !== 'boolean') {
+      return c.json({ error: 'invalid_retired' }, 400);
     }
 
     const [updated] = await db
-      .update(trackedAuthors)
-      .set(updates)
-      .where(eq(trackedAuthors.username, username))
+      .update(voiceAuthors)
+      .set({ retired: body.retired, updatedAt: new Date() })
+      .where(eq(voiceAuthors.handle, handle))
       .returning();
 
     if (!updated) return c.json({ error: 'not_found' }, 404);
     return c.json(updated);
   });
 
-  router.delete('/voice/track/:username', async (c) => {
-    const username = c.req.param('username').replace(/^@/, '');
-    if (!USERNAME_RE.test(username)) return c.json({ error: 'invalid_username' }, 400);
+  router.delete('/voice/authors/:handle', async (c) => {
+    const handle = normalizeHandle(c.req.param('handle'));
+    if (!handle) return c.json({ error: 'invalid_handle' }, 400);
 
-    const [author] = await db
-      .select()
-      .from(trackedAuthors)
-      .where(eq(trackedAuthors.username, username));
-    if (!author) return c.json({ error: 'not_found' }, 404);
+    const [countRow] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(voiceTweets)
+      .where(eq(voiceTweets.authorHandle, handle));
+    const tweetCount = countRow?.count ?? 0;
+    if (tweetCount > 0) return c.json({ error: 'author_has_tweets', tweets: tweetCount }, 409);
 
-    const [updated] = await db
-      .update(trackedAuthors)
-      .set({ pullEnabled: false, metricsPollingEnabled: false })
-      .where(eq(trackedAuthors.xUserId, author.xUserId))
-      .returning();
+    const deleted = await db
+      .delete(voiceAuthors)
+      .where(eq(voiceAuthors.handle, handle))
+      .returning({ handle: voiceAuthors.handle });
 
-    const retired = await retireAuthorVoiceTweets(author.xUserId);
-    return c.json({ author: updated, retiredVoiceTweets: retired });
+    if (deleted.length === 0) return c.json({ error: 'not_found' }, 404);
+    return c.json({ deleted: handle });
   });
 
-  // ----------------------------------------------------------------- pull
-
-  router.post('/voice/pull/:username', async (c) => {
-    const username = c.req.param('username').replace(/^@/, '');
-    if (!USERNAME_RE.test(username)) return c.json({ error: 'invalid_username' }, 400);
-
-    const [author] = await db
-      .select()
-      .from(trackedAuthors)
-      .where(eq(trackedAuthors.username, username));
-    if (!author) return c.json({ error: 'not_found' }, 404);
-
-    const body = await readJson(c.req.raw);
-    const fullScan = body?.fullScan === true;
-    const maxResults = parseMaxResults(body?.maxResults);
-    if (maxResults === 'invalid') return c.json({ error: 'invalid_max_results' }, 400);
-
-    try {
-      const result = await runVoicePull(deps, author.xUserId, {
-        fullScan,
-        ...(maxResults !== undefined ? { maxResults } : {}),
-      });
-      return c.json(result);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error('voice/pull failed:', detail);
-      return c.json({ error: 'pull_failed', detail }, 500);
-    }
-  });
-
-  // --------------------------------------------------------------- scrape
-
-  // Extension content script POSTs DOM-scraped tweet content here. The scrape
-  // is treated as authoritative — no X API call is made for tweet content
-  // itself (we trust the DOM). The only paid call is `getUserByUsername` for
-  // unknown authors (one $0.010 lookup per *new* author per request, deduped).
-  // Existing tracked_authors are matched by username so re-scrapes are free.
-  //
-  // Auto-author handling: when a username isn't tracked yet, we insert a row
-  // with source='auto_from_scrape' and both pull/metrics flags OFF — saving
-  // a tweet must never silently kick off paid pulls. Promote from the side
-  // panel's Voice tab once you decide an author is worth actively tracking.
-  //
-  // pollMetrics: when true, freshly-inserted tweets get nextPollAt=now so the
-  // voiceMetricsPoll worker (opt-in via VOICE_METRICS_POLL_ENABLED) picks them
-  // up on its next tick. Re-scrapes never re-arm polling on existing rows.
-  router.post('/voice/scrape', async (c) => {
-    const body = await readJson(c.req.raw);
-    if (!body) return c.json({ error: 'invalid_body' }, 400);
-
-    const original = parseScrapedTweet(body.original);
-    if (!original) return c.json({ error: 'invalid_original' }, 400);
-
-    const repliesRaw = Array.isArray(body.replies) ? body.replies : [];
-    const replies: ScrapedTweet[] = [];
-    const skippedReplies: Array<{ index: number; reason: string }> = [];
-    for (let i = 0; i < repliesRaw.length; i++) {
-      const r = parseScrapedTweet(repliesRaw[i]);
-      if (r) replies.push(r);
-      else skippedReplies.push({ index: i, reason: 'invalid_reply' });
-    }
-
-    const pollMetrics = body.pollMetrics === true;
-
-    // Dedupe authors by username — one $0.010 lookup per fresh author per
-    // request, even if 10 replies all came from the same user.
-    const usernames = new Set<string>([original.username, ...replies.map((r) => r.username)]);
-
-    const resolved = new Map<string, string>(); // username → xUserId
-    const authorsCreated: Array<{ xUserId: string; username: string }> = [];
-    const authorsFailed: Array<{ username: string; reason: string }> = [];
-
-    let token: string | null = null;
-    for (const username of usernames) {
-      const [existing] = await db
-        .select({ xUserId: trackedAuthors.xUserId })
-        .from(trackedAuthors)
-        .where(eq(trackedAuthors.username, username));
-      if (existing) {
-        resolved.set(username, existing.xUserId);
-        continue;
-      }
-
-      // Lazy: only acquire a token once we hit the first unknown author.
-      if (token === null) {
-        try {
-          token = await getValidAccessToken({
-            clientId: deps.clientId,
-            clientSecret: deps.clientSecret,
-          });
-        } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          console.error('voice/scrape token failed:', detail);
-          return c.json({ error: 'token_unavailable', detail }, 502);
-        }
-      }
-
-      try {
-        const user = await getUserByUsername(token, username);
-        // INSERT may race with another request scraping the same author —
-        // ON CONFLICT DO NOTHING leaves the existing row alone (which keeps
-        // its potentially-promoted manual flags intact).
-        const [inserted] = await db
-          .insert(trackedAuthors)
-          .values({
-            xUserId: user.id,
-            username: user.username,
-            source: 'auto_from_scrape',
-            pullEnabled: false,
-            metricsPollingEnabled: false,
-          })
-          .onConflictDoNothing()
-          .returning({ xUserId: trackedAuthors.xUserId });
-        if (inserted) {
-          authorsCreated.push({ xUserId: inserted.xUserId, username: user.username });
-        }
-        resolved.set(username, user.id);
-      } catch (err) {
-        if (err instanceof XApiError && err.status === 404) {
-          authorsFailed.push({ username, reason: 'user_not_found' });
-          continue;
-        }
-        const detail = err instanceof Error ? err.message : String(err);
-        console.error(`voice/scrape resolve @${username} failed:`, detail);
-        authorsFailed.push({ username, reason: 'resolve_failed' });
-      }
-    }
-
-    // The original's author MUST resolve — without it we have no anchor for
-    // the conversation. Replies whose authors failed to resolve are skipped
-    // (recorded in `skippedReplies`) so we still save what we can.
-    const originalAuthorId = resolved.get(original.username);
-    if (!originalAuthorId) {
-      const failure =
-        authorsFailed.find((a) => a.username === original.username)?.reason ?? 'unresolved';
-      return c.json({ error: 'original_author_unresolved', detail: failure }, 422);
-    }
-
-    const now = new Date();
-    const conversationId = original.tweetId;
-
-    let inserted = 0;
-    let updated = 0;
-    let pollEnrolled = 0;
-
-    const upsertTweet = async (
-      tw: ScrapedTweet,
-      authorXUserId: string,
-      isReply: boolean,
-    ): Promise<void> => {
-      const createdAt = tw.createdAt ?? now;
-      const result = await db
-        .insert(voiceTweets)
-        .values({
-          tweetId: tw.tweetId,
-          authorXUserId,
-          text: tw.text,
-          createdAt,
-          isReply,
-          // We can't derive the precise parent of a reply from the DOM (deep
-          // threads have nested parents); leave inReplyToTweetId null and
-          // anchor the relationship via conversationId instead.
-          inReplyToTweetId: null,
-          conversationId,
-          source: 'extension_scrape',
-          fetchedAt: now,
-          lastSeenAt: now,
-          nextPollAt: pollMetrics ? now : null,
-        })
-        .onConflictDoNothing()
-        .returning({ tweetId: voiceTweets.tweetId });
-
-      if (result.length > 0) {
-        inserted++;
-        if (pollMetrics) pollEnrolled++;
-      } else {
-        // Already in the stash — just bump lastSeenAt. Don't re-arm polling
-        // or change the source/createdAt of an existing row.
-        await db
-          .update(voiceTweets)
-          .set({ lastSeenAt: now })
-          .where(eq(voiceTweets.tweetId, tw.tweetId));
-        updated++;
-      }
-    };
-
-    await upsertTweet(original, originalAuthorId, false);
-
-    for (const reply of replies) {
-      const authorXUserId = resolved.get(reply.username);
-      if (!authorXUserId) {
-        skippedReplies.push({ index: -1, reason: `author_unresolved:${reply.username}` });
-        continue;
-      }
-      await upsertTweet(reply, authorXUserId, true);
-    }
-
-    return c.json({
-      conversationId,
-      tweets: { inserted, updated, total: inserted + updated },
-      authors: {
-        resolved: resolved.size,
-        created: authorsCreated.length,
-        createdList: authorsCreated,
-        failed: authorsFailed,
-      },
-      pollEnrolled,
-      skippedReplies,
-    });
-  });
-
-  // ---------------------------------------------------------------- query
+  // --------------------------------------------------------------- tweets
 
   router.get('/voice/tweets', async (c) => {
-    const authorParam = c.req.query('author')?.replace(/^@/, '');
+    const authorParam = c.req.query('author');
     const q = c.req.query('q')?.trim();
-    const minLikesStr = c.req.query('minLikes');
-    const includeReplies = c.req.query('includeReplies') === 'true';
+    const includeRetired = c.req.query('retired') === 'true';
     const limitStr = c.req.query('limit');
 
     const filters: SQL[] = [];
 
     if (authorParam) {
-      // Accept either a numeric id or a @username.
-      if (/^\d+$/.test(authorParam)) {
-        filters.push(eq(voiceTweets.authorXUserId, authorParam));
-      } else if (USERNAME_RE.test(authorParam)) {
-        const [author] = await db
-          .select({ xUserId: trackedAuthors.xUserId })
-          .from(trackedAuthors)
-          .where(eq(trackedAuthors.username, authorParam));
-        if (!author) return c.json([]);
-        filters.push(eq(voiceTweets.authorXUserId, author.xUserId));
-      } else {
-        return c.json({ error: 'invalid_author' }, 400);
-      }
+      const handle = normalizeHandle(authorParam);
+      if (!handle) return c.json({ error: 'invalid_author' }, 400);
+      filters.push(eq(voiceTweets.authorHandle, handle));
     }
 
     if (q) {
-      // ILIKE with escaped wildcards — keep query as substring match.
+      // ILIKE with escaped wildcards — keep the query as a substring match.
       const pattern = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
       filters.push(ilike(voiceTweets.text, pattern));
     }
 
-    if (!includeReplies) {
-      filters.push(eq(voiceTweets.isReply, false));
-    }
-
-    let minLikes: number | undefined;
-    if (minLikesStr !== undefined) {
-      const n = Number(minLikesStr);
-      if (!Number.isFinite(n) || n < 0) return c.json({ error: 'invalid_min_likes' }, 400);
-      minLikes = Math.floor(n);
-    }
+    if (!includeRetired) filters.push(eq(voiceTweets.retired, false));
 
     let limit = DEFAULT_LIST_LIMIT;
     if (limitStr !== undefined) {
@@ -467,43 +240,22 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
       limit = Math.min(MAX_LIST_LIMIT, n);
     }
 
-    // Latest snapshot per tweet via correlated subquery — single round-trip,
-    // and the subquery's LIMIT 1 keeps it cheap (uses the
-    // (tweet_id, snapshot_at desc) index).
-    const latestPublic = sql<unknown>`(
-      select ${voiceMetricsSnapshots.publicMetrics}
-      from ${voiceMetricsSnapshots}
-      where ${voiceMetricsSnapshots.tweetId} = ${voiceTweets.tweetId}
-      order by ${voiceMetricsSnapshots.snapshotAt} desc
-      limit 1
-    )`;
-
-    if (minLikes !== undefined) {
-      // Filter on the latest snapshot's like_count. NULL (no snapshot yet) is
-      // treated as 0 so a minLikes>0 filter excludes un-snapshotted tweets.
-      filters.push(sql`coalesce((${latestPublic}->>'like_count')::int, 0) >= ${minLikes}`);
-    }
-
     const rows = await db
       .select({
         tweetId: voiceTweets.tweetId,
-        authorXUserId: voiceTweets.authorXUserId,
-        authorUsername: trackedAuthors.username,
+        authorHandle: voiceTweets.authorHandle,
+        authorDisplayName: voiceAuthors.displayName,
         text: voiceTweets.text,
+        scrapedHtml: voiceTweets.scrapedHtml,
         createdAt: voiceTweets.createdAt,
-        isReply: voiceTweets.isReply,
-        inReplyToTweetId: voiceTweets.inReplyToTweetId,
-        conversationId: voiceTweets.conversationId,
+        url: voiceTweets.url,
         source: voiceTweets.source,
-        fetchedAt: voiceTweets.fetchedAt,
-        lastSeenAt: voiceTweets.lastSeenAt,
-        nextPollAt: voiceTweets.nextPollAt,
-        pollCount: voiceTweets.pollCount,
+        savedAt: voiceTweets.savedAt,
+        updatedAt: voiceTweets.updatedAt,
         retired: voiceTweets.retired,
-        latestPublicMetrics: latestPublic,
       })
       .from(voiceTweets)
-      .innerJoin(trackedAuthors, eq(trackedAuthors.xUserId, voiceTweets.authorXUserId))
+      .innerJoin(voiceAuthors, eq(voiceAuthors.handle, voiceTweets.authorHandle))
       .where(filters.length ? and(...filters) : undefined)
       .orderBy(desc(voiceTweets.createdAt))
       .limit(limit);
@@ -511,34 +263,36 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
     return c.json(rows);
   });
 
-  // -------------------------------------------------------------- metrics
-
-  router.get('/voice/metrics/:tweetId', async (c) => {
+  router.patch('/voice/tweets/:tweetId', async (c) => {
     const tweetId = c.req.param('tweetId');
     if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
 
-    const [tweet] = await db.select().from(voiceTweets).where(eq(voiceTweets.tweetId, tweetId));
-    if (!tweet) return c.json({ error: 'not_found' }, 404);
+    const body = await readJson(c.req.raw);
+    if (!body || typeof body.retired !== 'boolean') {
+      return c.json({ error: 'invalid_retired' }, 400);
+    }
 
-    const snapshots = await db
-      .select({
-        snapshotAt: voiceMetricsSnapshots.snapshotAt,
-        publicMetrics: voiceMetricsSnapshots.publicMetrics,
-      })
-      .from(voiceMetricsSnapshots)
-      .where(eq(voiceMetricsSnapshots.tweetId, tweetId))
-      .orderBy(asc(voiceMetricsSnapshots.snapshotAt));
+    const [updated] = await db
+      .update(voiceTweets)
+      .set({ retired: body.retired, updatedAt: new Date() })
+      .where(eq(voiceTweets.tweetId, tweetId))
+      .returning();
 
-    return c.json({
-      tweetId: tweet.tweetId,
-      authorXUserId: tweet.authorXUserId,
-      createdAt: tweet.createdAt,
-      retired: tweet.retired,
-      pollCount: tweet.pollCount,
-      nextPollAt: tweet.nextPollAt,
-      lastSeenAt: tweet.lastSeenAt,
-      snapshots,
-    });
+    if (!updated) return c.json({ error: 'not_found' }, 404);
+    return c.json(updated);
+  });
+
+  router.delete('/voice/tweets/:tweetId', async (c) => {
+    const tweetId = c.req.param('tweetId');
+    if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
+
+    const deleted = await db
+      .delete(voiceTweets)
+      .where(eq(voiceTweets.tweetId, tweetId))
+      .returning({ tweetId: voiceTweets.tweetId });
+
+    if (deleted.length === 0) return c.json({ error: 'not_found' }, 404);
+    return c.json({ deleted: tweetId });
   });
 
   return router;
@@ -546,26 +300,102 @@ export function createVoiceRouter(deps: VoiceRouterDeps): Hono {
 
 // --------------------------------------------------------------- helpers
 
+// Fill-only author upsert: create a stub if new, otherwise set just the columns
+// that are still null. Never overwrites enriched data with a weaker hover-card
+// guess. `fields` values of null mean "nothing to offer for this column".
+async function fillAuthor(
+  handle: string,
+  fields: {
+    displayName: string | null;
+    bio: string | null;
+    followersCount: number | null;
+    followingCount: number | null;
+    xUserId: string | null;
+    profileUrl: string | null;
+  },
+): Promise<void> {
+  const now = new Date();
+  const [existing] = await db.select().from(voiceAuthors).where(eq(voiceAuthors.handle, handle));
+
+  if (!existing) {
+    await db.insert(voiceAuthors).values({
+      handle,
+      source: 'extension_scrape',
+      displayName: fields.displayName,
+      bio: fields.bio,
+      followersCount: fields.followersCount,
+      followingCount: fields.followingCount,
+      xUserId: fields.xUserId,
+      profileUrl: fields.profileUrl,
+      addedAt: now,
+      updatedAt: now,
+    });
+    return;
+  }
+
+  const set: Partial<typeof voiceAuthors.$inferInsert> = {};
+  if (existing.displayName === null && fields.displayName !== null) {
+    set.displayName = fields.displayName;
+  }
+  if (existing.bio === null && fields.bio !== null) set.bio = fields.bio;
+  if (existing.followersCount === null && fields.followersCount !== null) {
+    set.followersCount = fields.followersCount;
+  }
+  if (existing.followingCount === null && fields.followingCount !== null) {
+    set.followingCount = fields.followingCount;
+  }
+  if (existing.xUserId === null && fields.xUserId !== null) set.xUserId = fields.xUserId;
+  if (existing.profileUrl === null && fields.profileUrl !== null) {
+    set.profileUrl = fields.profileUrl;
+  }
+
+  if (Object.keys(set).length === 0) return;
+  set.updatedAt = now;
+  await db.update(voiceAuthors).set(set).where(eq(voiceAuthors.handle, handle));
+}
+
 interface Body {
-  username?: unknown;
-  maxPolledTweets?: unknown;
-  fullScan?: unknown;
-  maxResults?: unknown;
-  original?: unknown;
-  replies?: unknown;
-  pollMetrics?: unknown;
-  pullEnabled?: unknown;
-  metricsPollingEnabled?: unknown;
-  source?: unknown;
+  tweet?: unknown;
+  author?: unknown;
+  retired?: unknown;
+  displayName?: unknown;
+  bio?: unknown;
+  followersCount?: unknown;
+  followingCount?: unknown;
+  pinnedTweetId?: unknown;
+  pinnedTweetText?: unknown;
+  xUserId?: unknown;
+  profileUrl?: unknown;
 }
 
 interface ScrapedTweet {
   tweetId: string;
-  username: string;
+  handle: string;
   displayName: string | null;
   text: string;
+  html: string | null;
   createdAt: Date | null;
   url: string | null;
+}
+
+interface ScrapedAuthor {
+  handle: string;
+  displayName: string | null;
+  bio: string | null;
+  followersCount: number | null;
+  followingCount: number | null;
+  xUserId: string | null;
+}
+
+interface AuthorProfile {
+  displayName: string | null;
+  bio: string | null;
+  followersCount: number | null;
+  followingCount: number | null;
+  pinnedTweetId: string | null;
+  pinnedTweetText: string | null;
+  xUserId: string | null;
+  profileUrl: string | null;
 }
 
 async function readJson(req: Request): Promise<Body | null> {
@@ -578,16 +408,25 @@ async function readJson(req: Request): Promise<Body | null> {
   }
 }
 
-function parsePositiveInt(value: unknown): number | undefined | 'invalid' {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return 'invalid';
-  return value;
+function normalizeHandle(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const h = value.trim().replace(/^@/, '').toLowerCase();
+  return USERNAME_RE.test(h) ? h : null;
 }
 
-function parseMaxResults(value: unknown): number | undefined | 'invalid' {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 1) return 'invalid';
-  return Math.min(PULL_HARD_CAP, Math.floor(value));
+function optString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function optCount(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
+  return Math.floor(value);
+}
+
+function optTweetId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  return TWEET_ID_RE.test(v) ? v : null;
 }
 
 export function parseScrapedTweet(value: unknown): ScrapedTweet | null {
@@ -597,14 +436,13 @@ export function parseScrapedTweet(value: unknown): ScrapedTweet | null {
   const tweetId = typeof v.tweetId === 'string' ? v.tweetId.trim() : '';
   if (!TWEET_ID_RE.test(tweetId)) return null;
 
-  const usernameRaw = typeof v.username === 'string' ? v.username.trim().replace(/^@/, '') : '';
-  if (!USERNAME_RE.test(usernameRaw)) return null;
+  const handle = normalizeHandle(v.handle);
+  if (!handle) return null;
 
   // Text may legitimately be empty (image-only tweets); only reject non-string.
   const text = typeof v.text === 'string' ? v.text : '';
-
-  const displayName =
-    typeof v.displayName === 'string' && v.displayName.trim() ? v.displayName.trim() : null;
+  const html = typeof v.html === 'string' && v.html ? v.html : null;
+  const displayName = optString(v.displayName);
 
   let createdAt: Date | null = null;
   if (typeof v.createdAt === 'string') {
@@ -612,7 +450,47 @@ export function parseScrapedTweet(value: unknown): ScrapedTweet | null {
     if (!Number.isNaN(d.getTime())) createdAt = d;
   }
 
-  const url = typeof v.url === 'string' && v.url ? v.url : null;
+  const url = optString(v.url);
 
-  return { tweetId, username: usernameRaw, displayName, text, createdAt, url };
+  return { tweetId, handle, displayName, text, html, createdAt, url };
+}
+
+export function parseScrapedAuthor(value: unknown): ScrapedAuthor | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  const handle = normalizeHandle(v.handle);
+  if (!handle) return null;
+  return {
+    handle,
+    displayName: optString(v.displayName),
+    bio: optString(v.bio),
+    followersCount: optCount(v.followersCount),
+    followingCount: optCount(v.followingCount),
+    xUserId: optTweetId(v.xUserId),
+  };
+}
+
+function parseAuthorProfile(body: Body): AuthorProfile | null {
+  // Every field is optional, but a scrape that caught *nothing* usable is a
+  // no-op we'd rather reject than persist as an empty enriched row.
+  const profile: AuthorProfile = {
+    displayName: optString(body.displayName),
+    bio: optString(body.bio),
+    followersCount: optCount(body.followersCount),
+    followingCount: optCount(body.followingCount),
+    pinnedTweetId: optTweetId(body.pinnedTweetId),
+    pinnedTweetText: optString(body.pinnedTweetText),
+    xUserId: optTweetId(body.xUserId),
+    profileUrl: optString(body.profileUrl),
+  };
+  const hasAny = Object.values(profile).some((v) => v !== null);
+  return hasAny ? profile : null;
+}
+
+function stripNullish<T extends Record<string, unknown>>(obj: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const [k, val] of Object.entries(obj)) {
+    if (val !== undefined && val !== null) (out as Record<string, unknown>)[k] = val;
+  }
+  return out;
 }

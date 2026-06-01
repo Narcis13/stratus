@@ -1,6 +1,6 @@
 ---
 name: stratus
-description: Drive the stratus HTTP API for X (Twitter) operations — schedule posts a week ahead (3–4/day, minute-jittered so they don't look bot-like), browse/edit the calendar, read tweet metrics, manage the voice library of tracked authors, generate Grok-drafted reply drafts, and read the cost dashboard. Use when the user wants to plan/queue tweets, audit scheduled posts, inspect tweet performance, track or query other authors' tweets, draft replies via Grok, or check API spend. Talks to the Hono service at $STRATUS_BASE_URL (defaults to the Hetzner-hosted instance), authenticated with a bearer token.
+description: Drive the stratus HTTP API for X (Twitter) operations — schedule posts a week ahead (3–4/day, minute-jittered so they don't look bot-like), browse/edit the calendar, read tweet metrics, manage a $0 DOM-scraped voice/swipe library of other authors' tweets, generate Grok-drafted reply drafts, and read the cost dashboard. Use when the user wants to plan/queue tweets, audit scheduled posts, inspect tweet performance, stash or query other authors' tweets for style reference, draft replies via Grok, or check API spend. Talks to the Hono service at $STRATUS_BASE_URL (defaults to the Hetzner-hosted instance), authenticated with a bearer token.
 ---
 
 # Stratus operator skill
@@ -37,14 +37,14 @@ Stratus is a single-user service that fronts X API v2 with a typed wrapper plus 
 | DELETE | `/x/posts/scheduled/:id`          | Hard-delete a non-posted row                  |
 | POST   | `/x/posts/reconcile`              | Force own-reconcile worker run                |
 | GET    | `/x/metrics/:tweetId`             | Snapshot history for one of MY posts          |
-| POST   | `/x/voice/track`                  | Enroll an author (`$0.010` X lookup)          |
-| GET    | `/x/voice/authors`                | List tracked authors + counts                 |
-| PATCH  | `/x/voice/authors/:username`      | Flip pullEnabled/metricsPollingEnabled/etc.   |
-| DELETE | `/x/voice/track/:username`        | Soft-disable an author                        |
-| POST   | `/x/voice/pull/:username`         | On-demand pull of recent tweets               |
-| POST   | `/x/voice/scrape`                 | Ingest DOM-scraped tweets (extension)         |
-| GET    | `/x/voice/tweets`                 | Query stash (`?author=&q=&minLikes=&limit=`)  |
-| GET    | `/x/voice/metrics/:tweetId`       | Snapshot history for a voice tweet            |
+| POST   | `/x/voice/scrape`                 | Save a DOM-scraped tweet (+ stub/enrich author) — $0 |
+| PUT    | `/x/voice/authors/:handle`        | Enrich an author from their profile page — $0 |
+| GET    | `/x/voice/authors`                | List authors + tweet counts (`?retired=`)     |
+| PATCH  | `/x/voice/authors/:handle`        | Archive / unarchive an author (`{retired}`)   |
+| DELETE | `/x/voice/authors/:handle`        | Hard-remove an author (409 if it has tweets)  |
+| GET    | `/x/voice/tweets`                 | Query stash (`?author=&q=&limit=&retired=`)   |
+| PATCH  | `/x/voice/tweets/:tweetId`        | Archive / unarchive a tweet (`{retired}`)     |
+| DELETE | `/x/voice/tweets/:tweetId`        | Hard-remove a tweet                           |
 | POST   | `/x/replies/generate`             | Draft a reply with Grok                       |
 | GET    | `/x/replies`                      | List drafts (`?status=&sourceAuthor=&limit=`) |
 | GET    | `/x/replies/:id`                  | Get one draft                                 |
@@ -73,11 +73,13 @@ Self-replies work; replying to a non-self tweet via `in_reply_to_tweet_id` is bl
 
 Pass `"2026-05-15T13:30:00Z"`. The publisher's predicate is `scheduledFor <= now()` so timezones get normalized server-side; just send Zulu. When the user says "Tuesday at 9 AM" without a zone, ask what timezone they mean and convert. Today's date is in your auto-memory; honor it.
 
-### 4. Voice-track / pull / scrape cost reminders
+### 4. The voice library is $0 and DOM-only — never reintroduce an X-API read for it
 
-- `POST /x/voice/track` does ONE `getUserByUsername` lookup → `$0.010`. Cheap, but flag it before doing it for a list of 20 authors.
-- `POST /x/voice/pull/:username` reads other-user tweets at `$0.005/result`. Always clamp via `maxResults` in the body when calling it on a busy author; default behavior fetches up to 100/page.
-- `voiceMetricsPoll` is opt-in via env (`VOICE_METRICS_POLL_ENABLED=true`). Don't try to "enable polling" through the API — there's no endpoint for it.
+As of the 2026-06-01 pivot, the voice library is a pure DOM-scrape **swipe file**. Every `/x/voice/*` route is `$0` — it only touches Postgres. There is no `track`, no `pull`, no metrics polling, no `getUserByUsername`. Authors are keyed by lowercased `@handle` (the only id scrapeable without the API); the numeric `xUserId` is filled opportunistically when the page exposes it.
+
+- The extension content script feeds it: "Save to stratus" on a tweet POSTs `/x/voice/scrape`; "Save author" on a profile PUTs `/x/voice/authors/:handle`. Both are DOM reads — no X API.
+- If a user asks to "pull naval's last 20 tweets" or "track an author", that capability is **gone**. Other-user reads are 5× owned reads ($0.005 vs $0.001) — the whole point of the pivot was to stop paying them. Don't reach for `searchRecent`/`getTweet` to fake it; explain the swipe-file model and have them scrape from the extension instead.
+- `retired` is a soft-archive flag on both authors and tweets. Deleting an author 409s if it still has tweets — retire or delete the tweets first.
 
 ### 5. `posted` rows are write-locked
 
@@ -166,29 +168,36 @@ curl -s "$STRATUS_BASE_URL/x/metrics/$TWEET_ID" \
 
 Snapshot cadence is ~113 polls over 30 days (≈$0.113/tweet), then `retired=true` and polling stops. `non_public_metrics`/`organic_metrics` are only populated within 30 days of `postedAt`.
 
-### D) Voice library
+### D) Voice library (a $0 DOM-scrape swipe file)
 
-Detailed flows in [references/voice.md](references/voice.md). Most common operations:
+The library is fed by the Chrome extension scraping x.com — not by the API. From the CLI you mostly **read and curate** what the extension has stashed. Every route is `$0`. Detailed flows + the scrape/enrich payload shapes in [references/voice.md](references/voice.md). Most common operations:
 
 ```bash
-# Track an author
-curl -sX POST "$STRATUS_BASE_URL/x/voice/track" \
-  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"username":"naval","maxPolledTweets":20}'
-
-# Pull recent tweets on-demand (clamp maxResults!)
-curl -sX POST "$STRATUS_BASE_URL/x/voice/pull/naval" \
-  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"maxResults":20}'
-
-# Query the stash
-curl -s "$STRATUS_BASE_URL/x/voice/tweets?author=naval&minLikes=500&limit=20" \
+# Query the stash — substring search across all authors
+curl -s "$STRATUS_BASE_URL/x/voice/tweets?q=leverage&limit=50" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
 
-# Stop tracking (soft — keeps historical rows)
-curl -sX DELETE "$STRATUS_BASE_URL/x/voice/track/naval" \
+# A single author's saved tweets (author = @handle, lowercased)
+curl -s "$STRATUS_BASE_URL/x/voice/tweets?author=naval&limit=20" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+
+# List authors + their tweet counts
+curl -s "$STRATUS_BASE_URL/x/voice/authors" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+
+# Archive (soft) a tweet you no longer want surfaced
+curl -sX PATCH "$STRATUS_BASE_URL/x/voice/tweets/$TWEET_ID" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"retired":true}'
+
+# Hard-delete a tweet, then the now-empty author
+curl -sX DELETE "$STRATUS_BASE_URL/x/voice/tweets/$TWEET_ID" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN"
+curl -sX DELETE "$STRATUS_BASE_URL/x/voice/authors/naval" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN"   # 409 if the author still has tweets
 ```
+
+Saved tweets carry `scrapedHtml` (the innerHTML of X's `tweetText` node) so a stashed tweet can be reused as an emoji-/linebreak-faithful **format template**. If the user wants to add tweets, point them at the extension ("Save to stratus" on a tweet, "Save author" on a profile) — there is no API-side fetch.
 
 ### E) Reply drafts (Grok-backed)
 

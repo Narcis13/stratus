@@ -4,6 +4,7 @@
 
 import {
   ApiError,
+  type AuthorProfile,
   type CreateBody,
   type ListOpts,
   type PostContext,
@@ -14,11 +15,10 @@ import {
   type ReplyGenerateBody,
   type ReplyPatchBody,
   type ScheduledPost,
+  type ScrapeBody,
   type TopComment,
   type UpdateBody,
   type VoiceAuthor,
-  type VoiceAuthorPatch,
-  type VoiceAuthorSource,
   type VoiceTweet,
   type VoiceTweetsOpts,
 } from '../shared/types.ts';
@@ -26,6 +26,7 @@ import type { Settings } from './storage.ts';
 
 export { ApiError };
 export type {
+  AuthorProfile,
   CreateBody,
   ListOpts,
   PostContext,
@@ -36,11 +37,10 @@ export type {
   ReplyGenerateBody,
   ReplyPatchBody,
   ScheduledPost,
+  ScrapeBody,
   TopComment,
   UpdateBody,
   VoiceAuthor,
-  VoiceAuthorPatch,
-  VoiceAuthorSource,
   VoiceTweet,
   VoiceTweetsOpts,
 };
@@ -97,8 +97,8 @@ export const api = {
   },
 
   voice: {
-    listAuthors(s: Settings, source?: VoiceAuthorSource): Promise<VoiceAuthor[]> {
-      const qs = source ? `?source=${encodeURIComponent(source)}` : '';
+    listAuthors(s: Settings, opts: { retired?: boolean } = {}): Promise<VoiceAuthor[]> {
+      const qs = opts.retired ? '?retired=true' : '';
       return request<VoiceAuthor[]>(s, `/x/voice/authors${qs}`);
     },
 
@@ -106,22 +106,45 @@ export const api = {
       const q = new URLSearchParams();
       if (opts.author) q.set('author', opts.author);
       if (opts.q) q.set('q', opts.q);
-      if (opts.minLikes !== undefined) q.set('minLikes', String(opts.minLikes));
-      if (opts.includeReplies) q.set('includeReplies', 'true');
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.retired) q.set('retired', 'true');
       const qs = q.toString();
       return request<VoiceTweet[]>(s, `/x/voice/tweets${qs ? `?${qs}` : ''}`);
     },
 
-    patchAuthor(s: Settings, username: string, patch: VoiceAuthorPatch): Promise<VoiceAuthor> {
-      return request<VoiceAuthor>(s, `/x/voice/authors/${encodeURIComponent(username)}`, {
-        method: 'PATCH',
-        body: JSON.stringify(patch),
+    scrape(s: Settings, body: ScrapeBody): Promise<{ tweet: VoiceTweet; author: VoiceAuthor }> {
+      return request(s, '/x/voice/scrape', { method: 'POST', body: JSON.stringify(body) });
+    },
+
+    enrichAuthor(s: Settings, handle: string, profile: AuthorProfile): Promise<VoiceAuthor> {
+      return request<VoiceAuthor>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
+        method: 'PUT',
+        body: JSON.stringify(profile),
       });
     },
 
-    untrack(s: Settings, username: string): Promise<unknown> {
-      return request<unknown>(s, `/x/voice/track/${encodeURIComponent(username)}`, {
+    retireTweet(s: Settings, tweetId: string, retired: boolean): Promise<VoiceTweet> {
+      return request<VoiceTweet>(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ retired }),
+      });
+    },
+
+    deleteTweet(s: Settings, tweetId: string): Promise<unknown> {
+      return request<unknown>(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}`, {
+        method: 'DELETE',
+      });
+    },
+
+    retireAuthor(s: Settings, handle: string, retired: boolean): Promise<VoiceAuthor> {
+      return request<VoiceAuthor>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ retired }),
+      });
+    },
+
+    deleteAuthor(s: Settings, handle: string): Promise<unknown> {
+      return request<unknown>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
       });
     },

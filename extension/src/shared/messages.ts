@@ -2,7 +2,7 @@
 // the background service worker. The background worker is the only place that
 // reads the bearer token and attaches the Authorization header.
 
-export type ApiMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 export interface ApiRequest {
   type: 'stratus/api';

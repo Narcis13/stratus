@@ -39,60 +39,91 @@ export interface ListOpts {
 
 // ---------------------------------------------------------------- voice
 
-export type VoiceAuthorSource = 'manual' | 'auto_from_scrape';
+// A swipe file of other people's tweets, captured straight from the x.com DOM.
+// No X API, no metrics — these mirror the server's voice_authors / voice_tweets
+// rows (timestamps arrive as ISO strings).
 
+// Author row as returned by GET /x/voice/authors (includes tweetCount).
 export interface VoiceAuthor {
-  xUserId: string;
-  username: string;
+  handle: string;
+  xUserId: string | null;
+  displayName: string | null;
+  bio: string | null;
+  followersCount: number | null;
+  followingCount: number | null;
+  pinnedTweetId: string | null;
+  pinnedTweetText: string | null;
+  profileSummary: string | null;
+  profileUrl: string | null;
+  source: string;
   addedAt: string;
-  lastPulledAt: string | null;
-  source: VoiceAuthorSource;
-  pullEnabled: boolean;
-  metricsPollingEnabled: boolean;
-  maxPolledTweets: number;
+  enrichedAt: string | null;
+  updatedAt: string;
+  retired: boolean;
   tweetCount: number;
 }
 
-export interface VoicePublicMetrics {
-  retweet_count?: number;
-  reply_count?: number;
-  like_count?: number;
-  quote_count?: number;
-  bookmark_count?: number;
-  impression_count?: number;
-}
-
+// Stashed tweet as returned by GET /x/voice/tweets.
 export interface VoiceTweet {
   tweetId: string;
-  authorXUserId: string;
-  authorUsername: string;
+  authorHandle: string;
+  authorDisplayName: string | null;
   text: string;
+  scrapedHtml: string | null;
   createdAt: string;
-  isReply: boolean;
-  inReplyToTweetId: string | null;
-  conversationId: string | null;
+  url: string | null;
   source: string;
-  fetchedAt: string;
-  lastSeenAt: string | null;
-  nextPollAt: string | null;
-  pollCount: number;
+  savedAt: string;
+  updatedAt: string | null;
   retired: boolean;
-  latestPublicMetrics: VoicePublicMetrics | null;
 }
 
 export interface VoiceTweetsOpts {
   author?: string;
   q?: string;
-  minLikes?: number;
-  includeReplies?: boolean;
   limit?: number;
+  retired?: boolean;
 }
 
-export interface VoiceAuthorPatch {
-  pullEnabled?: boolean;
-  metricsPollingEnabled?: boolean;
-  maxPolledTweets?: number;
-  source?: VoiceAuthorSource;
+// --- scrape payloads (content script → server) ---
+
+// One tweet read from the DOM. `html` is the innerHTML of [data-testid="tweetText"].
+export interface ScrapedTweet {
+  tweetId: string;
+  handle: string;
+  displayName: string | null;
+  text: string;
+  html: string | null;
+  createdAt: string | null;
+  url: string | null;
+}
+
+// Best-effort author fields scraped from the tweet's hover card.
+export interface ScrapedAuthor {
+  handle: string;
+  displayName: string | null;
+  bio: string | null;
+  followersCount: number | null;
+  followingCount: number | null;
+  xUserId: string | null;
+}
+
+export interface ScrapeBody {
+  tweet: ScrapedTweet;
+  author?: ScrapedAuthor;
+}
+
+// Full profile-header capture (PUT /x/voice/authors/:handle). All optional —
+// whatever the profile page exposed.
+export interface AuthorProfile {
+  displayName?: string | null;
+  bio?: string | null;
+  followersCount?: number | null;
+  followingCount?: number | null;
+  pinnedTweetId?: string | null;
+  pinnedTweetText?: string | null;
+  xUserId?: string | null;
+  profileUrl?: string | null;
 }
 
 // --------------------------------------------------------------- replies

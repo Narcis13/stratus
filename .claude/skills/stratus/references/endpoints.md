@@ -9,10 +9,9 @@ Full request/response shapes for every route. Use this when crafting a non-trivi
 - [Scheduled posts (calendar)](#scheduled-posts-calendar)
 - [Published posts (reconcile)](#published-posts-reconcile)
 - [Metrics (own tweets)](#metrics-own-tweets)
+- [Voice — scrape & enrich (ingest)](#voice--scrape--enrich-ingest)
 - [Voice — authors](#voice--authors)
-- [Voice — pulls and scrapes](#voice--pulls-and-scrapes)
-- [Voice — tweet stash queries](#voice--tweet-stash-queries)
-- [Voice — metrics](#voice--metrics)
+- [Voice — tweet stash](#voice--tweet-stash)
 - [Replies — generate](#replies--generate)
 - [Replies — CRUD](#replies--crud)
 - [Grok ask](#grok-ask)
@@ -184,95 +183,89 @@ Response:
 
 ---
 
-## Voice — authors
+## Voice — scrape & enrich (ingest)
 
-### POST /x/voice/track
-
-Body:
-
-- `username` (string, required) — `^[A-Za-z0-9_]{1,15}$`; leading `@` is stripped.
-- `maxPolledTweets` (positive int, optional, default 20) — guardrail for `voiceMetricsPoll`.
-
-Side effects: one `getUserByUsername` X call → `$0.010`. Upserts `tracked_authors` with `source='manual'`, both `pullEnabled` and `metricsPollingEnabled` set to `true` (overrides any prior soft-disable).
-
-Errors: `404 user_not_found`, `502 resolve_failed`, `400 invalid_username`.
-
-### GET /x/voice/authors
-
-Query: `?source=manual|auto_from_scrape` (optional). Returns array, ordered by username, with `tweetCount` left-joined from `voice_tweets`.
-
-### PATCH /x/voice/authors/:username
-
-Body (any subset):
-
-- `pullEnabled` (bool)
-- `metricsPollingEnabled` (bool)
-- `maxPolledTweets` (positive int)
-- `source` (`manual|auto_from_scrape`)
-
-`400 no_updates` if body is empty. `404 not_found` if username not tracked.
-
-### DELETE /x/voice/track/:username
-
-Soft disable. Flips both flags to `false` AND retires any active voice tweets for that author so `voiceMetricsPoll` stops spending on them. Returns `{ author, retiredVoiceTweets: <int> }`. Re-enable via `POST /x/voice/track` (which resets the flags to `true`).
-
----
-
-## Voice — pulls and scrapes
-
-### POST /x/voice/pull/:username
-
-On-demand pull of recent tweets for an already-tracked author. Body:
-
-- `fullScan` (bool, default false) — ignore the `since_id` checkpoint.
-- `maxResults` (number, optional, hard cap 3200) — **always clamp this on busy accounts** ($0.005/result).
-
-Returns `{ scanned, inserted }`. `404 not_found` if author isn't tracked.
+The voice library is a **pure DOM-scrape swipe file** (pivoted 2026-06-01). **Every route below is `$0`** — Postgres only, no X API. Authors are keyed by lowercased `@handle`; the numeric `xUserId` is stored opportunistically (nullable). These two routes are how the Chrome extension feeds the library.
 
 ### POST /x/voice/scrape
 
-Extension-only ingest path. Body shape (no X API calls except a `$0.010` lookup per *new* author):
+Save a DOM-scraped tweet (and stub/fill its author). Body:
 
 ```json
 {
-  "original": {
-    "tweetId": "1791…",
-    "username": "naval",
-    "displayName": "Naval",
-    "text": "…",
-    "createdAt": "2026-05-12T10:00:00Z",
-    "url": "https://x.com/naval/status/1791…"
+  "tweet": {
+    "tweetId": "1791…",     // digits, required
+    "handle": "naval",       // ^[A-Za-z0-9_]{1,15}$, @/case stripped, required
+    "displayName": "Naval",  // optional
+    "text": "…",             // optional — may be "" for image-only tweets
+    "html": "…",             // optional — innerHTML of [data-testid="tweetText"]
+    "createdAt": "2026-05-12T10:00:00Z",  // optional ISO
+    "url": "https://x.com/naval/status/1791…"  // optional
   },
-  "replies": [ { "tweetId": "…", "username": "…", "text": "…", "createdAt": null, "url": null } ],
-  "pollMetrics": false
+  "author": {                // optional best-effort hover-card block
+    "handle": "naval",
+    "displayName": "Naval",
+    "bio": "…",
+    "followersCount": 2100000,
+    "followingCount": 60,
+    "xUserId": "745273"
+  }
 }
 ```
 
-New authors get `source='auto_from_scrape'` with BOTH `pullEnabled` and `metricsPollingEnabled` false — promote via `PATCH /x/voice/authors/:username` if you want active tracking. Returns counts of inserted/updated tweets and resolved/created/failed authors.
+- `400 invalid_tweet` if `tweet.tweetId`/`tweet.handle` are missing/malformed. A bad `author` block is non-fatal (the tweet's own handle anchors the author row).
+- Re-scrape refreshes `text`/`scrapedHtml`/`url` + `updatedAt` on the tweet; on the author it only **fills null** columns (never clobbers a richer profile scrape).
+- `201 { tweet, author }`.
+
+### PUT /x/voice/authors/:handle
+
+Authoritative enrich from the author's profile header. Body (all optional, but ≥1 non-null required):
+
+- `displayName`, `bio` (strings)
+- `followersCount`, `followingCount` (non-negative ints)
+- `pinnedTweetId` (digits), `pinnedTweetText` (string)
+- `xUserId` (digits), `profileUrl` (string)
+
+`400 invalid_handle` / `400 invalid_profile` (nothing usable). Upserts with `source='profile_scrape'`, stamps `enrichedAt`+`updatedAt`, overwrites only the columns the scrape caught. Returns the row.
 
 ---
 
-## Voice — tweet stash queries
+## Voice — authors
+
+### GET /x/voice/authors
+
+Query: `?retired=true` to include archived authors (default hides them). Returns an array ordered by `handle`, each row carrying the profile fields (`displayName`, `bio`, `followersCount`, `followingCount`, `pinnedTweetId`, `pinnedTweetText`, `profileSummary`, `profileUrl`, `source`, `addedAt`, `enrichedAt`, `updatedAt`, `retired`) plus `tweetCount` (left-joined from `voice_tweets`).
+
+### PATCH /x/voice/authors/:handle
+
+Soft archive toggle. Body must be exactly `{ "retired": <bool> }` — else `400 invalid_retired`. `404 not_found` if the handle is unknown. Returns the updated row.
+
+### DELETE /x/voice/authors/:handle
+
+Hard delete. `409 { error: "author_has_tweets", tweets: <n> }` while any tweet still references the author — retire/delete its tweets first. `404 not_found` if unknown. `200 { deleted: <handle> }` on success.
+
+---
+
+## Voice — tweet stash
 
 ### GET /x/voice/tweets
 
 Query params (all optional):
 
-- `author` — either a numeric X user id OR a `@username`. `[]` returned if username isn't tracked.
+- `author` — a `@handle` (case/`@` stripped). `400 invalid_author` if malformed.
 - `q` — case-insensitive substring match on `text` (ILIKE; `%` and `_` escaped).
-- `minLikes` — number; filters by the latest snapshot's `public_metrics.like_count` (untracked → 0).
-- `includeReplies` (default false) — `?includeReplies=true` to include reply tweets.
-- `limit` (default 50, max 200).
+- `retired=true` — include archived tweets (default hides them).
+- `limit` (default 50, max 200; `400 invalid_limit` if not a positive int).
 
-Response rows include `latestPublicMetrics` (the most recent snapshot's `public_metrics` JSON, or null). Ordered by `createdAt desc`.
+Rows: `tweetId`, `authorHandle`, `authorDisplayName` (joined), `text`, `scrapedHtml`, `createdAt`, `url`, `source`, `savedAt`, `updatedAt`, `retired`. Inner-joined to `voice_authors`, ordered by `createdAt desc`. (No `minLikes`/`includeReplies`/metrics filters — those died with the API-read model.)
 
----
+### PATCH /x/voice/tweets/:tweetId
 
-## Voice — metrics
+Soft archive toggle. `tweetId` must be digits (`400 invalid_tweet_id`). Body exactly `{ "retired": <bool> }` (`400 invalid_retired`). `404 not_found` if unknown. Returns the updated row.
 
-### GET /x/voice/metrics/:tweetId
+### DELETE /x/voice/tweets/:tweetId
 
-Snapshot history for one voice tweet. Same shape as `/x/metrics/:tweetId` but `snapshots[]` only carries `publicMetrics` (other-user reads can't see private metrics).
+Hard delete. `404 not_found` if unknown. `200 { deleted: <tweetId> }` on success.
 
 ---
 
@@ -412,10 +405,9 @@ Upstream X / Grok: `502 { error, status, type?, code?, message?, requestId? }`.
 | Publisher tick → `createPost`    | $0.015 / post                     | per published row       |
 | `POST /x/posts/reconcile`        | $0.001 × scanned                  | own-reconcile worker    |
 | Metrics poll tick                | $0.001 each, ~113 over 30 days    | metricsPoll worker      |
-| `POST /x/voice/track`            | $0.010 (one user lookup)          | voice track             |
-| `POST /x/voice/pull/:username`   | $0.005 / result                   | other-user reads        |
-| `POST /x/voice/scrape`           | $0.010 / NEW author (deduped)     | scrape lookup           |
-| Voice metrics poll tick (opt-in) | $0.005 each, ~18 over 7 days      | voiceMetricsPoll        |
+| `POST /x/voice/scrape`           | $0 (DOM only, no X API)           | swipe-file ingest       |
+| `PUT  /x/voice/authors/:handle`  | $0 (DOM only, no X API)           | author enrich           |
+| `GET /x/voice/tweets` / `authors`| $0 (DB read)                      | swipe-file query        |
 | `POST /x/replies/generate`       | ~$0.001–0.005 (token-based)       | Grok Responses          |
 | `POST /grok/ask`                 | token-based                       | Grok Responses          |
 | `GET /cost/today`                | $0                                | shared cost_events read |

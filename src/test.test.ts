@@ -6,7 +6,6 @@ import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
 import { priceFor } from './x/pricing.ts';
 import { nextPollDelay } from './x/workers/metricsPoll.ts';
-import { nextVoicePollDelay } from './x/workers/voiceMetricsPoll.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -138,32 +137,6 @@ describe('metricsPoll cadence', () => {
   test('≥ 30 d → retired (null)', () => {
     expect(nextPollDelay(30 * DAY)).toBeNull();
     expect(nextPollDelay(60 * DAY)).toBeNull();
-  });
-});
-
-describe('voiceMetricsPoll cadence', () => {
-  const MIN = 60_000;
-  const HOUR = 60 * MIN;
-  const DAY = 24 * HOUR;
-
-  test('0–6 h → +1 h', () => {
-    expect(nextVoicePollDelay(0)).toBe(HOUR);
-    expect(nextVoicePollDelay(5 * HOUR + 59 * MIN)).toBe(HOUR);
-  });
-
-  test('6 h boundary flips to +6 h', () => {
-    expect(nextVoicePollDelay(6 * HOUR)).toBe(6 * HOUR);
-    expect(nextVoicePollDelay(47 * HOUR)).toBe(6 * HOUR);
-  });
-
-  test('2 d – 7 d → +24 h', () => {
-    expect(nextVoicePollDelay(2 * DAY)).toBe(DAY);
-    expect(nextVoicePollDelay(7 * DAY - MIN)).toBe(DAY);
-  });
-
-  test('≥ 7 d → retired (null)', () => {
-    expect(nextVoicePollDelay(7 * DAY)).toBeNull();
-    expect(nextVoicePollDelay(30 * DAY)).toBeNull();
   });
 });
 

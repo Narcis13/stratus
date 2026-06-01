@@ -88,7 +88,9 @@ Pull from the source tweet's voice-library row to populate `context` if you've a
 TWEET_ID=1791000000000000001
 ROW=$(curl -s "$STRATUS_BASE_URL/x/voice/tweets?author=naval&q=inflation&limit=5" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq ".[] | select(.tweetId==\"$TWEET_ID\")")
-# …compose context.json from $ROW + a /voice/metrics/$TWEET_ID call for the latest metrics.
+# …compose context.json from $ROW (text/scrapedHtml/url/createdAt). Voice rows no
+# longer carry metrics, so fill context.metrics (views/replies/reposts/likes) from
+# what the extension scraped or what you can read off the tweet — or omit it.
 ```
 
 ## List / filter drafts
