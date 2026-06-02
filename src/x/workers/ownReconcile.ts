@@ -85,7 +85,10 @@ export async function runOwnReconcile(
         inReplyToTweetId: repliedTo?.id ?? null,
         conversationId: tweet.conversation_id ?? null,
         source: 'manual',
-        nextPollAt: now,
+        // Single snapshot at 24h of age, even for replies/posts discovered late
+        // (postedAt is the tweet's real created_at, so an already-old row is due
+        // immediately and metricsPoll retires it after one read).
+        nextPollAt: new Date(postedAt.getTime() + 24 * 60 * 60 * 1000),
       })
       .onConflictDoNothing()
       .returning({ tweetId: postsPublished.tweetId });
@@ -124,6 +127,10 @@ export function startOwnReconcile(opts: OwnReconcileOptions): () => void {
       running = false;
     }
   };
+
+  // Run once on boot so a process restarted more often than the 24h interval
+  // still reconciles. `since_id` keeps this cheap (0–5 reads in steady state).
+  void safeTick();
 
   const handle = setInterval(() => {
     void safeTick();

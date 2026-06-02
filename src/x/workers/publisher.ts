@@ -99,7 +99,9 @@ async function processOne(
           text: out.text,
           postedAt: now,
           source: 'scheduled',
-          nextPollAt: now,
+          // Single metrics snapshot ~24h after publish (the "day-after" number,
+          // not the intraday curve). See metricsPoll.nextPollDelay.
+          nextPollAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
         })
         .onConflictDoNothing();
       await tx

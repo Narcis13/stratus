@@ -18,7 +18,7 @@ Hard ceiling on scope: if a feature isn't in service of those three, it doesn't 
 
 **Calendar.** I write 5–10 posts on a Sunday. Each row in `scheduled_posts` has `text`, `media_ids?`, `scheduled_for`, `status`. The worker wakes every 60 s, picks rows due in the last minute, posts them via the existing `createPost`, writes the resulting tweet ID back, and flips status. Failures stay `failed` with the error class — I retry by editing the row.
 
-**Metrics.** Every tweet I publish — through the scheduler *or* manually from the X app when inspiration strikes — ends up in `posts_published` and gets a polling cadence. A daily **own-reconcile** worker calls `GET /2/users/:id/tweets` with replies included and upserts the last ~500 of my own tweets, queuing any unseen ones for polling. A second worker reads `posts_published` rows due for their next poll, fetches `public_metrics` (and `non_public_metrics` while ≤30 d old), and inserts a row in `metrics_snapshots`. Dashboard endpoint returns the time series. Cadence lifted from the X plan §6.9 — owned reads at $0.001 keep this cheap (~$0.11/tweet over 30 days).
+**Metrics.** Every tweet I publish — through the scheduler *or* manually from the X app when inspiration strikes — ends up in `posts_published` and gets a polling cadence. A daily **own-reconcile** worker calls `GET /2/users/:id/tweets` with replies included and upserts the last ~500 of my own tweets, queuing any unseen ones for polling. A second worker reads `posts_published` rows due for their next poll, fetches `public_metrics` (and `non_public_metrics` while ≤30 d old), and inserts a row in `metrics_snapshots`. Dashboard endpoint returns the time series. Cadence is a single snapshot at ~24h, then retire — owned reads at $0.001 keep this cheap (~$0.001/tweet). Profile visits (`user_profile_clicks`) ride along free in `non_public_metrics`.
 
 **Voice library.** I add an X username to `tracked_authors`. An hourly job pulls their last N tweets **and replies** via `/2/users/:id/tweets`, upserts them into `voice_tweets`, and queues each into a lighter polling cadence — so I capture engagement velocity over time, not just a snapshot. A search endpoint lets me query by author / keyword / engagement threshold. No LLM analysis yet — just a clean store with time-series I can grep and feed an LLM later. Other-user reads are $0.005/tweet, so polling is bounded per-author (default: latest 20 tweets, ~7-day window).
 
@@ -220,7 +220,7 @@ async function tickPublisher() {
     try {
       const out = await createPost(token, { text: row.text }, { selfXUserId });
       await markPosted(row.id, out.id);
-      await enqueueMetricsPoll(out.id);  // first poll in 5 min
+      await enqueueMetricsPoll(out.id);  // single snapshot at 24h
     } catch (err) {
       await markFailed(row.id, classify(err), err.message);
     }
@@ -228,7 +228,7 @@ async function tickPublisher() {
 }
 ```
 
-The metrics worker is the same shape — pulls rows from `posts_published` where `next_poll_at <= now() and not retired`, calls `getTweet(token, id, { ownedPrivate: age < 30d })`, inserts a snapshot, computes the next `next_poll_at` from the cadence ladder.
+The metrics worker is the same shape — pulls rows from `posts_published` where `next_poll_at <= now() and not retired`, calls `getTweet(token, id, { ownedPrivate: true })`, inserts a snapshot, then retires the row (`nextPollDelay` returns null past 24h — one snapshot per tweet).
 
 `ownReconcile` is the gateway that brings manually-posted tweets into the system. Pseudocode:
 ```ts
@@ -251,16 +251,24 @@ Run on a 24 h interval, plus exposed via `POST /posts/reconcile` so I can fire i
 
 ### Cadence ladders
 
-**Own posts** (`metricsPoll`, owned reads = $0.001 each):
+**Own posts** (`metricsPoll`, owned reads = $0.001 each). Simplified 2026-06-02
+from the 30-day ~113-poll ladder to a **single snapshot at ~24h**, then retire:
 ```
-0–30 min   → +5 min     (6 polls)
-30 min–6 h → +15 min    (22)
-6 h–48 h   → +1 h       (42)
-2 d–7 d    → +6 h       (20)
-7 d–30 d   → +24 h      (23)
->30 d      → retired (final snapshot)
-≈ 113 polls × $0.001 = $0.113/tweet
+< 24 h   → wait until 24h
+≥ 24 h   → snapshot once, then retired
+1 snapshot × $0.001 = $0.001/tweet
 ```
+We want the day-after number ("how did yesterday's posts do"), not the intraday
+curve. `nextPollAt` is seeded to `postedAt + 24h` by both the publisher and
+ownReconcile, so the lone snapshot lands at 24h age even for replies discovered
+late (a reply found 30h after posting is snapshotted immediately and retired).
+The owned read carries `non_public_metrics.user_profile_clicks` ("profile
+visits") and `organic_metrics` for free; 24h is inside X's 30-day window where
+those private fields are still returned (§6.9). My replies to others ride the
+same path — a reply is my own tweet, so it's an owned $0.001 read.
+`GET /x/metrics/replies` and `GET /x/metrics/posts` list replies / non-reply
+posts (newest first, `?limit=` 1–200) each with their latest snapshot; the
+per-tweet time series stays at `GET /x/metrics/:tweetId`.
 
 **Voice tweets** (`voiceMetricsPoll`, other-user reads = $0.005 each):
 ```

@@ -1,16 +1,15 @@
 // Drains due `posts_published` rows by snapshotting metrics from X. Runs every
-// 60s in-process. Cadence ladder per PLAN.md §"Cadence ladders":
-//   0–30 min   → +5 min   (6 polls)
-//   30 min–6 h → +15 min  (22)
-//   6 h–48 h   → +1 h     (42)
-//   2 d–7 d    → +6 h     (20)
-//   7 d–30 d   → +24 h    (23)
-//   ≥30 d      → retired
-// ≈113 polls × $0.001 ≈ $0.113/tweet over 30 days.
+// 60s in-process, but acts on each row only once: a single snapshot at ~24h of
+// post age, then retire. We want the day-after number ("how did yesterday's
+// posts do"), not the intraday engagement curve — and at 50+ replies/day, one
+// read per tweet keeps the cost flat at $0.001/tweet.
 //
-// `non_public_metrics` and `organic_metrics` silently null past 30 days on owned
-// posts (X plan §6.9) — exactly when we retire — so we ask for them only while
-// age < 30d and stop polling at the boundary.
+// `nextPollAt` is seeded to postedAt + 24h by both the publisher and
+// ownReconcile, so the lone snapshot lands at 24h age regardless of when the
+// row was discovered (a manual reply found 30h late is snapshotted immediately
+// and retired). 24h is well inside X's 30-day window, so the owned read still
+// carries `non_public_metrics` (incl. `user_profile_clicks` — "profile visits")
+// and `organic_metrics` for free (X plan §6.9).
 //
 // Per-row transaction with `FOR UPDATE SKIP LOCKED` (same shape as publisher):
 // the X call happens inside the lock so a second tick can't double-snapshot
@@ -42,8 +41,13 @@ const TRANSIENT_RETRY_DELAY_MS = 5 * 60_000;
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
-const DAY = 24 * HOUR;
-const RETIRE_AT_MS = 30 * DAY;
+
+// Single snapshot at 24h of post age, then retire. `nextPollAt` is seeded to
+// postedAt + 24h upstream, so a due row is normally already ≥24h old and gets
+// exactly one snapshot. The positive-delay branch only fires defensively for a
+// row that somehow becomes due early (e.g. a stale row from the old cadence) —
+// we reschedule it to 24h rather than snapshot it immature.
+const SNAPSHOT_AT_MS = 24 * HOUR;
 
 /**
  * Returns the delay (ms) until the next metrics poll for a tweet of the given
@@ -52,12 +56,8 @@ const RETIRE_AT_MS = 30 * DAY;
  * Pure function — no I/O — so it's covered by unit tests in src/test.test.ts.
  */
 export function nextPollDelay(ageMs: number): number | null {
-  if (ageMs >= RETIRE_AT_MS) return null;
-  if (ageMs < 30 * MIN) return 5 * MIN;
-  if (ageMs < 6 * HOUR) return 15 * MIN;
-  if (ageMs < 48 * HOUR) return HOUR;
-  if (ageMs < 7 * DAY) return 6 * HOUR;
-  return DAY;
+  if (ageMs < SNAPSHOT_AT_MS) return SNAPSHOT_AT_MS - ageMs;
+  return null;
 }
 
 export interface TickResult {
@@ -112,8 +112,10 @@ async function processOne(token: string): Promise<'polled' | 'retired' | 'failed
 
     const now = new Date();
     const ageMs = now.getTime() - row.postedAt.getTime();
-    // Only request privates while in the 30-day window; X nulls them after.
-    const ownedPrivate = ageMs < RETIRE_AT_MS;
+    // Always request privates: every checkpoint is inside X's 30-day window,
+    // and `non_public_metrics` carries `user_profile_clicks` ("profile visits")
+    // at no extra cost on this same owned read.
+    const ownedPrivate = true;
 
     let tweet: Awaited<ReturnType<typeof getTweet>>;
     try {

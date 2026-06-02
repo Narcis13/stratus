@@ -109,34 +109,15 @@ describe('metricsPoll cadence', () => {
   const HOUR = 60 * MIN;
   const DAY = 24 * HOUR;
 
-  test('0–30 min → +5 min', () => {
-    expect(nextPollDelay(0)).toBe(5 * MIN);
-    expect(nextPollDelay(29 * MIN)).toBe(5 * MIN);
+  test('before 24h → delay to the single 24h snapshot', () => {
+    expect(nextPollDelay(0)).toBe(DAY);
+    expect(nextPollDelay(HOUR)).toBe(23 * HOUR);
+    expect(nextPollDelay(23 * HOUR)).toBe(HOUR);
   });
 
-  test('30 min boundary flips to +15 min', () => {
-    expect(nextPollDelay(30 * MIN)).toBe(15 * MIN);
-    expect(nextPollDelay(5 * HOUR)).toBe(15 * MIN);
-  });
-
-  test('6 h – 48 h → +1 h', () => {
-    expect(nextPollDelay(6 * HOUR)).toBe(HOUR);
-    expect(nextPollDelay(47 * HOUR)).toBe(HOUR);
-  });
-
-  test('2 d – 7 d → +6 h', () => {
-    expect(nextPollDelay(2 * DAY)).toBe(6 * HOUR);
-    expect(nextPollDelay(6 * DAY)).toBe(6 * HOUR);
-  });
-
-  test('7 d – 30 d → +24 h', () => {
-    expect(nextPollDelay(7 * DAY)).toBe(DAY);
-    expect(nextPollDelay(29 * DAY)).toBe(DAY);
-  });
-
-  test('≥ 30 d → retired (null)', () => {
+  test('≥ 24h → retired (null) after the one snapshot', () => {
+    expect(nextPollDelay(DAY)).toBeNull();
     expect(nextPollDelay(30 * DAY)).toBeNull();
-    expect(nextPollDelay(60 * DAY)).toBeNull();
   });
 });
 

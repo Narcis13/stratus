@@ -113,7 +113,7 @@ When `pricing.ts` and `costTracker.ts` land, `cost_events` rows must carry a `pl
 | Delete | $0.010 | |
 
 Cadence-derived budgets (from PLAN.md §"Cadence ladders"):
-- Own posts: ~113 polls × $0.001 ≈ **$0.113/tweet** over 30 days, then retired.
+- Own posts (and my replies to others — a reply is my own tweet): **1 snapshot at ~24h × $0.001 = $0.001/tweet**, then retired (simplified 2026-06-02 from the old ~113-poll 30-day ladder). We want the day-after number, not the intraday curve. `nextPollAt` is seeded to `postedAt + 24h` by both the publisher and ownReconcile, so the lone snapshot lands at 24h age even for replies discovered late. Profile visits (`user_profile_clicks`) come free in `non_public_metrics` on the same owned read. At 50+ replies/day that's ~$0.05/day of snapshots plus the daily reconcile discovery reads.
 - Voice library: **$0** — captured by DOM scrape in the extension, never read through the X API.
 
 ## Common commands
@@ -144,7 +144,7 @@ Use **`127.0.0.1` not `localhost`** for the OAuth redirect URI.
 - **Use Production app environment** in console.x.com, not Development — Development has a `client-forbidden` bug for some flows.
 - **Hard pagination caps** that kill iteration silently: `/users/:id/tweets` 3,200; `/users/:id/mentions` 800; `/tweets/:id/retweeted_by` and `/liking_users` hard 100. Own-reconcile caps at the last ~500 tweets per pass for this reason.
 - **`search/all` is server-rate-limited to 1 req/sec** — pass `perPageSleepMs: 1100` to `paginate()`.
-- **`non_public_metrics` and `organic_metrics` silently null after 30 days** on owned posts. The metrics worker stops requesting them past the 30-day boundary and retires the row.
+- **`non_public_metrics` and `organic_metrics` silently null after 30 days** on owned posts. The metrics worker now retires at 24h (well inside that window), so it always requests them — but don't extend the cadence past 30 days without making the worker stop requesting the private fields at the boundary.
 - **Quote-tweet of others is blocked on self-serve** (Feb 2026). Self-quotes probably allowed; verify before exposing. v1 ships without quote/reply-to-others endpoints on purpose.
 - **OAuth 1.0a still required for `/2/media/upload`** as of May 2026 — we don't support media yet for that reason. Confirm before adding.
 - **Other-user reads are 5× owned reads** ($0.005 vs $0.001) — which is exactly why the voice library captures by DOM scrape in the extension instead of reading other users through the API. Don't reintroduce X-API reads for the voice library without a budget conversation.
