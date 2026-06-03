@@ -1,29 +1,4 @@
-// Reply prompt + context renderer for /x/replies/generate.
-//
-// REPLY_PROMPT_TEMPLATE is the verbatim `reply prompt.md` from the repo root,
-// embedded here so it ships with the code (the service deploys without the .md)
-// and prompt edits stay in one place. The single `{{TWEET_CONTEXT}}` token is
-// replaced at render time with the post context the endpoint receives in the
-// body. To change the prose, edit reply prompt.md and re-run
-// scripts/_gen_reply_prompt.ts — don't hand-edit the literal below.
-
-import type { GrokMessage } from '../../grok/index.ts';
-
-export interface PostContext {
-  url: string;
-  tweetId: string;
-  author: string;
-  handle: string;
-  text: string;
-  postedAt: string;
-  metrics: { views: number; replies: number; reposts: number; likes: number };
-  topComments: { author: string; handle: string; text: string }[];
-}
-
-const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
-const MAX_TOP_COMMENTS = 10;
-
-export const REPLY_PROMPT_TEMPLATE = `## 0. Prime directive — the 3-sentence test
+## 0. Prime directive — the 3-sentence test
 
 If a reader cannot tell, within **3 sentences**, that a specific human wrote this — and not an AI — you have failed.
 
@@ -192,7 +167,7 @@ You are replying to an X post. Your job: write one reply that makes a stranger s
 
 <idea>      </idea>
 
-If \`<idea>\` has content, that's the seed — build the reply around it, in English, in my voice (the idea may be in Romanian; translate the intent, don't translate word-for-word). If it's empty, you decide the angle from the post and the voice rules in the system prompt.
+If `<idea>` has content, that's the seed — build the reply around it, in English, in my voice (the idea may be in Romanian; translate the intent, don't translate word-for-word). If it's empty, you decide the angle from the post and the voice rules in the system prompt.
 
 **What makes a reply worth posting here:**
 
@@ -217,59 +192,4 @@ Never agreement-bait. Never "great post, so true." If the reply could've been wr
 
 **Output:**
 
-Output the reply only — exact formatting, blank lines between propositions, exactly as it should appear on X. Just the raw reply text: no preamble, no quotes, no backticks, no labels, no confirmation line. The entire response is the reply, ready to paste straight into the reply box.`;
-
-export function buildGrokInput(ctx: PostContext, override?: string): GrokMessage[] {
-  const template = override && override.trim().length > 0 ? override : REPLY_PROMPT_TEMPLATE;
-  const context = renderContext(ctx);
-  // split/join (not replace) so a '$' in the context can't trigger
-  // String.prototype.replace's special replacement patterns.
-  const content = template.includes(CONTEXT_PLACEHOLDER)
-    ? template.split(CONTEXT_PLACEHOLDER).join(context)
-    : `${template}\n\n${context}`;
-  return [{ role: 'user', content }];
-}
-
-// Renders the body context into the spot `{{TWEET_CONTEXT}}` marks: the post's
-// author, body, engagement, and up to MAX_TOP_COMMENTS top replies.
-function renderContext(ctx: PostContext): string {
-  const handle = stripAt(ctx.handle);
-  const relative = relativeTime(ctx.postedAt);
-  const m = ctx.metrics;
-  const lines: string[] = [
-    'ORIGINAL TWEET',
-    `@${handle} (${ctx.author}, ${relative}):`,
-    ctx.text,
-    '',
-    'ENGAGEMENT',
-    `likes=${m.likes} reposts=${m.reposts} replies=${m.replies} views=${m.views}`,
-  ];
-
-  if (ctx.topComments.length > 0) {
-    const limited = ctx.topComments.slice(0, MAX_TOP_COMMENTS);
-    lines.push('', `TOP REPLIES (oldest first, up to ${MAX_TOP_COMMENTS})`);
-    limited.forEach((c, i) => {
-      lines.push(`${i + 1}. @${stripAt(c.handle)}: ${c.text}`);
-    });
-  }
-
-  return lines.join('\n');
-}
-
-function stripAt(handle: string): string {
-  return handle.replace(/^@/, '');
-}
-
-function relativeTime(postedAt: string): string {
-  const t = new Date(postedAt).getTime();
-  if (Number.isNaN(t)) return 'unknown time ago';
-  const diffMs = Date.now() - t;
-  if (diffMs < 60_000) return 'just now';
-  const min = Math.floor(diffMs / 60_000);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  if (day < 30) return `${day}d ago`;
-  return `${Math.floor(day / 30)}mo ago`;
-}
+Output the reply only — exact formatting, blank lines between propositions, exactly as it should appear on X. Just the raw reply text: no preamble, no quotes, no backticks, no labels, no confirmation line. The entire response is the reply, ready to paste straight into the reply box.

@@ -20,8 +20,11 @@ import type { ReasoningEffort } from '../../grok/index.ts';
 import { replyDrafts } from '../db/schema.ts';
 import { type PostContext, buildGrokInput } from '../replies/prompt.ts';
 
-// Reply length cap + a little slack for tokenization noise.
-const MAX_OUTPUT_TOKENS = 280;
+// Safety ceiling, not a length lever — reply length is enforced by the prompt
+// (~280 chars). This just has to clear a low-effort reasoning pass plus the
+// reply so a draft never gets truncated mid-sentence. Billed by actual tokens
+// used, so headroom here costs nothing unless the model actually fills it.
+const MAX_OUTPUT_TOKENS = 2000;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: ReasoningEffort = 'low';
 
