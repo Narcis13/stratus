@@ -20,6 +20,8 @@
 //
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
+import { BAND_LABEL, classifyBand, formatCount } from './replyBand.ts';
+import type { Band, TweetSignals } from './replyBand.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
 import type {
   AuthorProfile,
@@ -34,6 +36,7 @@ import type {
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
+const BAND_BADGE_CLASS = 'stratus-band-badge';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -158,6 +161,23 @@ function injectStyles(): void {
       border-color: rgb(244, 33, 46);
       background: rgba(244, 33, 46, 0.12);
     }
+    article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 rgb(0, 186, 124); }
+    article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 rgb(255, 179, 0); }
+    article[data-testid="tweet"][data-stratus-band="skip"] { opacity: 0.45; }
+    .${BAND_BADGE_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      margin-left: 8px;
+      white-space: nowrap;
+    }
+    .${BAND_BADGE_CLASS}[data-band="hot"]  { color: rgb(0, 186, 124); border: 1px solid rgba(0, 186, 124, 0.5); background: rgba(0, 186, 124, 0.10); }
+    .${BAND_BADGE_CLASS}[data-band="warm"] { color: rgb(214, 150, 0); border: 1px solid rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
   `;
   document.head.appendChild(style);
 }
@@ -293,7 +313,7 @@ function readHoverCardBio(card: Element, handle: string): string | null {
 function readUserIdFromFollowButton(root: ParentNode): string | null {
   for (const el of root.querySelectorAll('[data-testid$="-follow"]')) {
     const m = el.getAttribute('data-testid')?.match(/^(\d+)-follow$/);
-    if (m) return m[1];
+    if (m?.[1]) return m[1];
   }
   return null;
 }
@@ -782,12 +802,86 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
   replyMasterHandled.add(actionRow);
 }
 
+// --------------------------------------------------------- reply-target band
+
+// Highlight timeline tweets that sit in the 1k–8k-view sweet spot worth
+// replying to early. Every signal is read from the DOM ($0). The scoring model
+// lives in replyBand.ts; the rationale is in evals/reply-eval-*.md.
+
+const BAIT_PHRASES =
+  /\b(agree or disagree|what'?s your|which one|be honest|your take|hot take|thoughts\??|am i wrong|change my mind|guess the)\b/i;
+
+function looksLikeReplyBait(article: Element): boolean {
+  const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  if (/\?$/.test(text)) return true; // ends on a question
+  if (BAIT_PHRASES.test(text)) return true;
+  // Best-effort poll detection — selector may drift across X redesigns.
+  if (article.querySelector('[role="radiogroup"], [data-testid*="poll" i]')) return true;
+  return false;
+}
+
+function readTweetSignals(article: Element): TweetSignals | null {
+  const reply = article.querySelector('[data-testid="reply"]');
+  const actionRow = reply?.closest('div[role="group"]');
+  const aria = actionRow?.getAttribute('aria-label');
+  if (!aria) return null; // ads / promoted rows carry no metrics label
+  const m = parseMetricsLabel(aria);
+
+  const dt = article.querySelector('time')?.getAttribute('datetime');
+  if (!dt) return null;
+  const posted = Date.parse(dt);
+  if (Number.isNaN(posted)) return null;
+  const ageMin = Math.max(0, (Date.now() - posted) / 60000);
+
+  return {
+    views: m.views,
+    replies: m.replies,
+    ageMin,
+    vpm: m.views / Math.max(ageMin, 1),
+    bait: looksLikeReplyBait(article),
+  };
+}
+
+// The badge is recomputed every scan (NOT WeakSet-deduped): X recycles article
+// nodes as you scroll, and metrics climb as a tweet ages, so a cached verdict
+// goes stale. Re-querying the row each pass self-corrects recycled nodes.
+function renderBandBadge(article: Element, band: Band, sig: TweetSignals | null): void {
+  const reply = article.querySelector('[data-testid="reply"]');
+  const actionRow = reply?.closest('div[role="group"]');
+  if (!actionRow) return;
+
+  const existing = actionRow.querySelector<HTMLSpanElement>(`.${BAND_BADGE_CLASS}`);
+  if (!sig || (band !== 'hot' && band !== 'warm')) {
+    existing?.remove(); // 'skip' is conveyed by dimming; null shows nothing
+    return;
+  }
+
+  const badge = existing ?? document.createElement('span');
+  if (!existing) {
+    badge.className = BAND_BADGE_CLASS;
+    actionRow.appendChild(badge);
+  }
+  badge.dataset.band = band;
+  const age = sig.ageMin < 60 ? `${Math.round(sig.ageMin)}m` : `${Math.floor(sig.ageMin / 60)}h`;
+  const baitMark = sig.bait ? ' · ?' : '';
+  badge.textContent = `${formatCount(sig.views)} · ${sig.replies}r · ${age}${baitMark} · ${BAND_LABEL[band]}`;
+}
+
+function applyBand(article: HTMLElement): void {
+  const sig = readTweetSignals(article);
+  const band = sig ? classifyBand(sig) : null;
+  if (band) article.dataset.stratusBand = band;
+  else delete article.dataset.stratusBand;
+  renderBandBadge(article, band, sig);
+}
+
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
   const focusedId = focusedTweetIdFromUrl();
-  for (const article of root.querySelectorAll('article[data-testid="tweet"]')) {
+  for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
+    applyBand(article);
     if (focusedId) attachReplyMasterButton(article, focusedId);
   }
   syncAuthorButton();
