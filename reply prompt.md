@@ -173,7 +173,7 @@ If `<idea>` has content, that's the seed — build the reply around it, in Engli
 
 Pick the angle that earns the most attention without becoming slop. One of:
 
-- **Extends** — add the specific thing the post left out. A real number, a lived detail, the part nobody says out loud. I know things SF Twitter doesn't (Romanian public hospital, ~20 SMB accounting clients, 30 years of code, building at 51). Use that.
+- **Extends** — add the specific thing the post left out. A real number, a lived detail, the part nobody says out loud. I know things SF Twitter doesn't — 30 years of code, building real AI agents and skills with Claude Code, shipping at 51 after the day job. Use that.
 - **Contrarian** — disagree with a sharp, defensible claim. Not "well actually." A real counter-position I'd stand behind, with a reason.
 - **Debate-inducing** — reframe the post so people in the replies have to take a side. Tension, not aggression.
 
@@ -181,10 +181,10 @@ Never agreement-bait. Never "great post, so true." If the reply could've been wr
 
 **Hard rules for the reply:**
 
-- 2–3 short propositions, each on its own line, with a blank line between them. This is the format — non-negotiable.
+- 1–2 short propositions, each on its own line, with a blank line between them. This is the format — non-negotiable.
 - First proposition is the hook and must stand alone. The reader sees that line first; it has to land before they read the rest.
 - Plain spoken English, contractions, hard claims, first person. All §2/§3 voice rules apply. Run the slop scan from §7 — zero LLM-isms, zero forbidden openers.
-- At least one concrete, specific thing where it fits — a number, a tool, a scene from one of my two laboratories. Specificity is what makes a stranger curious enough to click.
+- At least one concrete, specific thing where it fits — a number, a tool, a command: a Claude Code session, a skill I wrote, a commit, the 386→Turbo Pascal→AI-agents arc, building 4h/day at 51. Lead with the AI builder and developer life — that's the angle here. Specificity is what makes a stranger curious enough to click.
 - No @mention of the author (I'm replying in-thread, they're tagged already). No hashtags. No emoji. No link.
 - Length: tight. This is a reply, not a thread. Usually under ~280 chars across the propositions unless the angle genuinely needs more.
 - Fit the actual context of the post. If a top reply already made my point, find a different angle.
