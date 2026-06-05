@@ -39,7 +39,7 @@ src/
     fields.ts       field-selection defaults (defaultPostParams)
     errors.ts       XApiError + classify (RFC 7807 problem-details parsing)
     pagination.ts   paginate(next_token) async iterator
-    endpoints.ts    getMe, getTweet, searchRecent, createPost, deletePost
+    endpoints.ts    getMe, getTweet, getTweetsByIds, searchRecent, getUserTweets, createPost, deletePost
     server.ts       Bun.serve OAuth callback — `bun run auth`
     playground.ts   `bun run play` — example calls
 ```
@@ -60,7 +60,7 @@ src/
     db/schema.ts         tokens, scheduled_posts, posts_published, metrics_snapshots,
                          voice_authors, voice_tweets, reply_drafts
     routes/              calendar.ts, metrics.ts, voice.ts, replies.ts (mounted under /x)
-    workers/             publisher, ownReconcile, metricsPoll
+    workers/             publisher, dailyMetrics (daily 03:00 UTC discover+snapshot)
     index.ts             exports mountX(app) and startXWorkers() — only outside caller is app.ts
 extension/               sibling Chrome MV3 side-panel UI (own package.json, Vite + React)
 ```
@@ -70,7 +70,7 @@ When LinkedIn arrives later: create `src/linkedin/` with the same shape, registe
 ### Phase status
 
 - **Phase 1 — Plumbing + Calendar:** done. `app.ts` + Hono, bearer + CORS middleware, Drizzle/Neon, Postgres token store, `pricing.ts` + `costTracker` wired into `xFetch.onCost`, `calendar.ts` routes, `publisher.ts` worker.
-- **Phase 2 — Metrics + own-reconcile:** done. `metricsPoll` and `ownReconcile` workers; `/x/metrics` and `/x/posts` routes mounted via `mountX`.
+- **Phase 2 — Metrics + own-reconcile:** done, then **consolidated (2026-06-05) into a single daily pass**. The old `metricsPoll` (60s) + `ownReconcile` (24h) workers were replaced by one `dailyMetrics` worker that runs at **03:00 UTC** (`src/x/workers/dailyMetrics.ts`): (A) discovers own tweets/replies via a `since_id` timeline pull, (B) snapshots every due row (≥24h old) by batched id lookup (`getTweetsByIds` → `GET /2/tweets?ids=`, ≤100/call), one snapshot then retire. `/x/metrics` and `/x/posts` routes still mounted via `mountX`; `POST /x/posts/reconcile` now triggers the daily pass. Disable the timer with `DAILY_METRICS_ENABLED=false` (manual reconcile still works).
 - **Phase 3 — Voice library:** done, then **pivoted (2026-06-01) to a pure DOM-scrape swipe file**. No X API, no metrics polling — the `voicePull`/`voiceMetricsPoll` workers and the `tracked_authors`/`voice_metrics_snapshots` tables were dropped. `voice_authors` (handle PK + profile fields) and `voice_tweets` (now stores `scraped_html`) hold tweets the user manually saves. `/x/voice` routes are all $0 (scrape, enrich-author, list, retire, delete). See `src/x/routes/voice.ts`.
 - **Phase 4 — Extension MVP (calendar + drafts):** done. End-to-end smoke-tested 2026-05-10: side panel → background API client → bearer-guarded `/x/calendar` → DB → 60 s publisher tick → live tweet → row flips `PENDING → POSTED`.
 - **Phase 5 — Extension scraping for voice library:** done (2026-06-01). Content script scrapes the tweet (text + `tweetText` innerHTML for emoji-faithful format templates) plus a best-effort author hover card on "Save to stratus", and the full profile header on a "Save author" button. All capture is DOM-only.
@@ -113,7 +113,7 @@ When `pricing.ts` and `costTracker.ts` land, `cost_events` rows must carry a `pl
 | Delete | $0.010 | |
 
 Cadence-derived budgets (from PLAN.md §"Cadence ladders"):
-- Own posts (and my replies to others — a reply is my own tweet): **1 snapshot at ~24h × $0.001 = $0.001/tweet**, then retired (simplified 2026-06-02 from the old ~113-poll 30-day ladder). We want the day-after number, not the intraday curve. `nextPollAt` is seeded to `postedAt + 24h` by both the publisher and ownReconcile, so the lone snapshot lands at 24h age even for replies discovered late. Profile visits (`user_profile_clicks`) come free in `non_public_metrics` on the same owned read. At 50+ replies/day that's ~$0.05/day of snapshots plus the daily reconcile discovery reads.
+- Own posts (and my replies to others — a reply is my own tweet): **1 snapshot at ~24h × $0.001 = $0.001/tweet**, then retired (simplified 2026-06-02; consolidated 2026-06-05 into one daily 03:00 UTC pass — see `dailyMetrics`). We want the day-after number, not the intraday curve. `nextPollAt` is seeded to `postedAt + 24h` by the publisher and by daily discovery, so the lone snapshot lands at 24h age even for replies discovered late. The snapshot pass reads exactly the *due* set by batched id lookup (≤100/call) — no wasted reads. Profile visits (`user_profile_clicks`) come free in `non_public_metrics` on the same owned read. At 50+ replies/day that's ~$0.05/day of snapshots plus the daily discovery reads.
 - Voice library: **$0** — captured by DOM scrape in the extension, never read through the X API.
 
 ## Common commands

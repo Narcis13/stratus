@@ -2,6 +2,7 @@
 // Cost notes are inline so you see the impact at the call site.
 
 import { xFetch } from './client.ts';
+import { XApiError } from './errors.ts';
 import { defaultPostParams } from './fields.ts';
 import type { Page } from './pagination.ts';
 import { paginate } from './pagination.ts';
@@ -40,7 +41,8 @@ export interface XTweet {
     impression_count: number;
   };
   // Returned only on owned-user reads of posts ≤30 days old (X plan §6.9).
-  // Silently null after the 30-day window — that's why metricsPoll retires there.
+  // Silently null after the 30-day window — the daily snapshot fires at ~24h,
+  // well inside it (see workers/dailyMetrics.ts).
   non_public_metrics?: {
     impression_count: number;
     url_link_clicks: number;
@@ -73,10 +75,26 @@ export async function getTweet(
   id: string,
   opts: { ownedPrivate?: boolean } = {},
 ): Promise<XTweet> {
-  const res = await xFetch<{ data: XTweet }>(`/2/tweets/${id}`, {
-    token,
-    query: defaultPostParams(opts),
-  });
+  const res = await xFetch<{
+    data?: XTweet;
+    errors?: Array<{ type?: string; title?: string; detail?: string }>;
+  }>(`/2/tweets/${id}`, { token, query: defaultPostParams(opts) });
+  // X answers an unreadable tweet (deleted, suspended author) with HTTP 200 and
+  // a `{errors:[…]}` body and NO `data` — and bills the read regardless. xFetch
+  // can't see this (200 is "ok"), so without this guard getTweet returns
+  // undefined and the caller dereferences it, throwing *after* the billed read.
+  // In the metrics worker that throw rolls back the per-row tx so next_poll_at
+  // never advances — re-billing the same dead tweet every 60s. Surface it as a
+  // 404 so the worker's retire-on-404 path stops polling it. (Burned $18 once.)
+  if (!res.data) {
+    const e = res.errors?.[0];
+    throw new XApiError({
+      status: 404,
+      type: e?.type ?? 'https://api.x.com/2/problems/resource-not-found',
+      detail: e?.detail ?? e?.title ?? `No data returned for tweet ${id}`,
+      rawBody: res,
+    });
+  }
   return res.data;
 }
 
@@ -135,6 +153,42 @@ export async function* getUserTweets(
       },
     });
   yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
+}
+
+export interface GetTweetsByIdsResult {
+  /** Tweets X returned, in arbitrary order. */
+  found: XTweet[];
+  /** Ids X did not return (deleted, suspended author, or never existed). */
+  missing: string[];
+}
+
+/**
+ * Batch tweet lookup — up to 100 ids in one call. Cost: $0.001/result if the
+ * ids are the authenticated user's own tweets, $0.005/result otherwise. We only
+ * ever call this on our own tweets (the daily metrics snapshot), so it's priced
+ * as an owned read in pricing.ts. X bills per result *returned*, so missing ids
+ * (which come back under `errors`, not `data`) aren't billed.
+ */
+export async function getTweetsByIds(
+  token: string,
+  ids: string[],
+  opts: { ownedPrivate?: boolean } = {},
+): Promise<GetTweetsByIdsResult> {
+  if (ids.length === 0) return { found: [], missing: [] };
+  if (ids.length > 100) {
+    throw new Error(`getTweetsByIds: max 100 ids per call, got ${ids.length}`);
+  }
+  const res = await xFetch<{
+    data?: XTweet[];
+    errors?: Array<{ resource_id?: string; value?: string; type?: string; detail?: string }>;
+  }>('/2/tweets', {
+    token,
+    query: { ids: ids.join(','), ...defaultPostParams(opts) },
+  });
+  const found = res.data ?? [];
+  const foundIds = new Set(found.map((t) => t.id));
+  const missing = ids.filter((id) => !foundIds.has(id));
+  return { found, missing };
 }
 
 // ------------------------------------------------------------------- WRITES

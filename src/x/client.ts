@@ -22,6 +22,8 @@ export interface CostInfo {
   endpoint: string;
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   status: number;
+  /** Results X returned in the body — drives per-result billing (invariant #5). */
+  items: number | null;
   durationMs: number;
   attempts: number;
   rateLimitRemaining: number | null;
@@ -75,6 +77,7 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
           endpoint,
           method,
           status: res.status,
+          items: itemCount(data),
           durationMs: performance.now() - start,
           attempts: attempt,
           rateLimitRemaining: remaining,
@@ -94,6 +97,7 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
         endpoint,
         method,
         status: res.status,
+        items: null,
         durationMs: performance.now() - start,
         attempts: attempt,
         rateLimitRemaining: remaining,
@@ -137,6 +141,19 @@ function sleep(ms: number): Promise<void> {
 function numHeader(h: Headers, k: string): number | null {
   const v = h.get(k);
   return v == null ? null : Number.parseInt(v, 10);
+}
+
+// X list endpoints return `{ data: [...], meta: { result_count } }`; single-
+// object endpoints return `{ data: {...} }`. Count results so per-result
+// endpoints (search, own-timeline, batch lookup) bill by what X actually
+// returned rather than as a single item — see invariant #5 in CLAUDE.md.
+// `null` when there's nothing array-like, which prices as a single unit.
+function itemCount(body: unknown): number | null {
+  if (body == null || typeof body !== 'object') return null;
+  const b = body as { data?: unknown; meta?: { result_count?: number } };
+  if (Array.isArray(b.data)) return b.data.length;
+  if (typeof b.meta?.result_count === 'number') return b.meta.result_count;
+  return null;
 }
 
 function buildUrl(

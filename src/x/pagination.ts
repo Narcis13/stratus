@@ -14,7 +14,8 @@
 //   /tweets/search/all       1 req/sec server-enforced — pass perPageSleepMs: 1100
 
 export interface Page<T> {
-  data: T[];
+  // Optional: X omits `data` on an empty result, returning only `meta`.
+  data?: T[];
   meta?: { next_token?: string; result_count?: number };
 }
 
@@ -38,7 +39,10 @@ export async function* paginate<T>(
     const page = await fetchPage(nextToken);
     pageCount++;
 
-    for (const item of page.data) {
+    // X omits `data` entirely on an empty result (e.g. a since_id pull with no
+    // new tweets returns just `{ meta: { result_count: 0 } }`) — default to []
+    // so the common "nothing new" case doesn't throw.
+    for (const item of page.data ?? []) {
       yield item;
       itemCount++;
       if (opts.maxItems !== undefined && itemCount >= opts.maxItems) return;

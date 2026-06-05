@@ -24,16 +24,17 @@ export function makeOnCost(platform: string): (info: CostInfo) => void {
   if (!price) throw new Error(`costTracker: no price table for platform '${platform}'`);
 
   return (info) => {
-    // xFetch doesn't yet thread item counts. Per-result endpoints undercount
-    // until that lands — see comment in `pricing.ts`.
-    const usd = price(info.endpoint, info.method, info.status, null);
+    // `info.items` is the result count xFetch read off the response body, so
+    // per-result endpoints (search, own-timeline, batch lookup) bill by what X
+    // actually returned — not as one item. See `pricing.ts`.
+    const usd = price(info.endpoint, info.method, info.status, info.items);
 
     db.insert(costEvents)
       .values({
         platform,
         endpoint: info.endpoint,
         status: info.status,
-        items: null,
+        items: info.items,
         costUsd: usd.toFixed(5),
         durationMs: Math.round(info.durationMs),
         attempts: info.attempts,

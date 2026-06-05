@@ -5,7 +5,7 @@ import { containsUrl } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
 import { priceFor } from './x/pricing.ts';
-import { nextPollDelay } from './x/workers/metricsPoll.ts';
+import { msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -82,6 +82,16 @@ describe('pricing.priceFor', () => {
     expect(priceFor('/2/tweets/abc', 'GET', 200, null)).toBe(0.005);
   });
 
+  test('GET /2/users/:id/tweets is an owned read priced per result', () => {
+    expect(priceFor('/2/users/123/tweets', 'GET', 200, 40)).toBeCloseTo(0.04, 5);
+    expect(priceFor('/2/users/123/tweets', 'GET', 200, null)).toBe(0.001);
+  });
+
+  test('GET /2/tweets batch lookup is an owned read priced per result', () => {
+    expect(priceFor('/2/tweets?ids=1,2,3', 'GET', 200, 3)).toBeCloseTo(0.003, 5);
+    expect(priceFor('/2/tweets', 'GET', 200, null)).toBe(0.001);
+  });
+
   test('search/recent multiplies $0.005 by item count', () => {
     expect(priceFor('/2/tweets/search/recent', 'GET', 200, 10)).toBeCloseTo(0.05, 5);
   });
@@ -104,20 +114,23 @@ describe('pricing.priceFor', () => {
   });
 });
 
-describe('metricsPoll cadence', () => {
-  const MIN = 60_000;
-  const HOUR = 60 * MIN;
-  const DAY = 24 * HOUR;
+describe('dailyMetrics schedule', () => {
+  const HOUR = 60 * 60_000;
 
-  test('before 24h → delay to the single 24h snapshot', () => {
-    expect(nextPollDelay(0)).toBe(DAY);
-    expect(nextPollDelay(HOUR)).toBe(23 * HOUR);
-    expect(nextPollDelay(23 * HOUR)).toBe(HOUR);
+  test('schedules the next 03:00 UTC ahead of now', () => {
+    // 01:00 UTC → 2h until 03:00 the same day.
+    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 5, 1, 0, 0)), 3)).toBe(2 * HOUR);
+    // 05:00 UTC → 22h until the next day's 03:00.
+    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 5, 5, 0, 0)), 3)).toBe(22 * HOUR);
   });
 
-  test('≥ 24h → retired (null) after the one snapshot', () => {
-    expect(nextPollDelay(DAY)).toBeNull();
-    expect(nextPollDelay(30 * DAY)).toBeNull();
+  test('exactly 03:00 UTC rolls to the following day', () => {
+    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 5, 3, 0, 0)), 3)).toBe(24 * HOUR);
+  });
+
+  test('crosses the month boundary correctly', () => {
+    // 2026-06-30 05:00 UTC → next 03:00 is 2026-07-01 03:00 (22h).
+    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 30, 5, 0, 0)), 3)).toBe(22 * HOUR);
   });
 });
 

@@ -1,13 +1,13 @@
 // Endpoints over `posts_published` — the catalog of own tweets we track
-// metrics on. `POST /posts/reconcile` triggers a one-shot run of the
-// own-reconcile worker logic; the daily interval also runs in-process.
+// metrics on. `POST /posts/reconcile` triggers a one-shot run of the daily
+// discover+snapshot pass; the in-process timer runs it once a day at 03:00 UTC.
 
 import { Hono } from 'hono';
-import { type OwnReconcileDeps, runOwnReconcile } from '../workers/ownReconcile.ts';
+import { type DailyMetricsDeps, runDailyMetrics } from '../workers/dailyMetrics.ts';
 
 const RECONCILE_HARD_CAP = 3200; // /2/users/:id/tweets pagination cap (X plan §6.1)
 
-export function createPostsRouter(deps: OwnReconcileDeps): Hono {
+export function createPostsRouter(deps: DailyMetricsDeps): Hono {
   const router = new Hono();
 
   router.post('/posts/reconcile', async (c) => {
@@ -17,7 +17,7 @@ export function createPostsRouter(deps: OwnReconcileDeps): Hono {
     if (maxResults === 'invalid') return c.json({ error: 'invalid_max_results' }, 400);
 
     try {
-      const result = await runOwnReconcile(deps, {
+      const result = await runDailyMetrics(deps, {
         fullScan,
         ...(maxResults !== undefined ? { maxResults } : {}),
       });

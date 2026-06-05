@@ -4,10 +4,10 @@
 // whole API surface. Anything we haven't mapped yet returns 0 so the cost row
 // still lands (with a visible "$0 / unknown endpoint" we can grep later).
 //
-// `items` is the response item count for per-result endpoints (search, lists).
-// xFetch doesn't currently thread it through; pagination/searchRecent will
-// when the metrics + voice workers land. Until then, per-result endpoints
-// undercount paged calls — flagged inline below.
+// `items` is the response item count for per-result endpoints (search, lists,
+// batch lookups). xFetch threads it through from the response body, so a page
+// of N results bills N× the per-result rate. It's `null` for single-object
+// responses (priced as one unit).
 
 const POST_CREATE_BASE = 0.015;
 // URL surcharge ($0.20 vs $0.015) can't be inferred from the path alone.
@@ -37,6 +37,15 @@ export function priceFor(
   if (m === 'DELETE' && /^\/2\/tweets\/[^/]+$/.test(path)) return POST_DELETE;
 
   if (m === 'GET' && path === '/2/users/me') return OWNED_READ;
+
+  // Own-timeline pull (`GET /2/users/:id/tweets`) and batch tweet lookup
+  // (`GET /2/tweets?ids=`) are only ever called on the authenticated user's own
+  // tweets — discovery + the daily metrics snapshot. Owned reads bill
+  // $0.001/result; multiply by the response item count. We never read OTHER
+  // users through these paths (the voice library is DOM-scraped, never API-read
+  // — see CLAUDE.md), so the owned rate is correct, not optimistic.
+  if (m === 'GET' && /^\/2\/users\/[^/]+\/tweets$/.test(path)) return OWNED_READ * (items ?? 1);
+  if (m === 'GET' && path === '/2/tweets') return OWNED_READ * (items ?? 1);
 
   // Single-tweet lookup: $0.001 owned vs $0.005 other-user — can't tell from
   // the path. Price as other-user (the conservative/upper bound) until a

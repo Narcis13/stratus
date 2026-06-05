@@ -100,7 +100,8 @@ async function processOne(
           postedAt: now,
           source: 'scheduled',
           // Single metrics snapshot ~24h after publish (the "day-after" number,
-          // not the intraday curve). See metricsPoll.nextPollDelay.
+          // not the intraday curve). The daily 03:00 UTC pass picks this up once
+          // nextPollAt is reached — see workers/dailyMetrics.ts.
           nextPollAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
         })
         .onConflictDoNothing();

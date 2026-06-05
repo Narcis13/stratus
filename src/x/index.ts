@@ -10,8 +10,7 @@ import { metrics } from './routes/metrics.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { replies } from './routes/replies.ts';
 import { createVoiceRouter } from './routes/voice.ts';
-import { startMetricsPoll } from './workers/metricsPoll.ts';
-import { startOwnReconcile } from './workers/ownReconcile.ts';
+import { startDailyMetrics } from './workers/dailyMetrics.ts';
 import { startPublisher } from './workers/publisher.ts';
 
 interface XConfig {
@@ -54,17 +53,14 @@ export function startXWorkers(): XWorkers {
   const stops: Array<() => void> = [];
 
   stops.push(startPublisher(cfg));
-  if (process.env.OWN_RECONCILE_ENABLED !== 'false') {
-    stops.push(startOwnReconcile(cfg));
+  // One daily 03:00 UTC pass that discovers own tweets/replies and snapshots
+  // each once at ~24h (replaces the old 60s metricsPoll + 24h ownReconcile).
+  if (process.env.DAILY_METRICS_ENABLED !== 'false') {
+    stops.push(startDailyMetrics(cfg));
   } else {
     console.log(
-      'ownReconcile: timer disabled via OWN_RECONCILE_ENABLED=false (manual POST /x/posts/reconcile still works)',
+      'dailyMetrics: timer disabled via DAILY_METRICS_ENABLED=false (manual POST /x/posts/reconcile still works)',
     );
-  }
-  if (process.env.METRICS_POLL_ENABLED !== 'false') {
-    stops.push(startMetricsPoll({ clientId: cfg.clientId, clientSecret: cfg.clientSecret }));
-  } else {
-    console.log('metricsPoll: disabled via METRICS_POLL_ENABLED=false');
   }
   // The voice library is a pure DOM-scrape swipe file now — no X-API author
   // pulls or metrics polling, so there are no voice workers to start.

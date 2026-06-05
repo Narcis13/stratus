@@ -192,4 +192,4 @@ Never agreement-bait. Never "great post, so true." If the reply could've been wr
 
 **Output:**
 
-Output the reply only — exact formatting, blank lines between propositions, exactly as it should appear on X. Just the raw reply text: no preamble, no quotes, no backticks, no labels, no confirmation line. The entire response is the reply, ready to paste straight into the reply box.
+Write the reply, then put the complete reply text — exact formatting, blank lines between propositions, exactly as it should appear on X — onto the system clipboard using the clipboard skill, so I can Command+V it straight into the reply box. Confirm in one line that it's copied. Don't wrap the clipboard content in quotes or backticks; copy only the raw reply text.
