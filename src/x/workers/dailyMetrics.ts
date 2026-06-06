@@ -6,21 +6,24 @@
 //      already in posts_published via the publisher, so steady-state discovery
 //      reads only the handful of new manual tweets. New rows seed
 //      nextPollAt = postedAt + 24h.
-//   B. Snapshot — read every *due* row (retired=false AND nextPollAt<=now) by
-//      batched id lookup (`GET /2/tweets?ids=`, ≤100 ids/call), write ONE
-//      metrics_snapshots row each, then retire. "Single day-after snapshot":
-//      each tweet is measured once, ~24h after posting — the day-after number,
-//      not the intraday curve.
+//   B. Snapshot — read EVERY non-retired row (regardless of age) by batched id
+//      lookup (`GET /2/tweets?ids=`, ≤100 ids/call), write ONE metrics_snapshots
+//      row each, then retire. Whatever a tweet's metrics are at the next ~03:00
+//      UTC pass is the single number we keep — age no longer gates this.
+//
+// ONCE AND ONLY ONCE: each batch is retired in one committed txn the instant the
+// read returns, BEFORE any snapshot insert — so a retired row is never selected
+// again and we never pay to read a tweet twice, even across a crash. The
+// trade-off is at-most-once snapshots: a crash between the retire commit and the
+// inserts loses that batch's snapshots (a metrics gap), never a double charge.
 //
 // Why this shape (and not the old two workers): the 60s poller logged a steady
 // stream of X reads independent of any user action, which polluted cost_events
 // and — via a pricing gap — misreported them. One scheduled pass keeps reads in
-// a predictable daily window. Cost is owned reads at $0.001/result: discovery
-// reads only new tweets; the snapshot batch reads exactly the due set, so there
-// are no wasted reads and a missed daily run simply leaves due rows for the
-// next run to pick up (no time-window guesswork).
+// a predictable daily window at owned-read prices ($0.001/result), and a missed
+// run simply leaves rows for the next pass (still read exactly once each).
 
-import { and, asc, eq, inArray, lte, sql } from 'drizzle-orm';
+import { asc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { metricsSnapshots, postsPublished } from '../db/schema.ts';
 import { getTweetsByIds, getUserTweets } from '../endpoints.ts';
@@ -61,6 +64,11 @@ const DEFAULT_MAX_RESULTS = 500;
 const SNAPSHOT_BATCH = 100; // GET /2/tweets?ids= accepts ≤100 ids
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_HOUR_UTC = 3;
+// X nulls non_public/organic on owned posts after 30 days and can return them
+// unstorable past that. Now that we snapshot regardless of age, only request the
+// private fields for tweets still inside the window (2-day margin). This is the
+// only thing age still affects — it does not gate *whether* a tweet is read.
+const PRIVATE_FIELDS_MAX_AGE_MS = 28 * DAY_MS;
 
 export async function runDailyMetrics(
   deps: DailyMetricsDeps,
@@ -73,8 +81,8 @@ export async function runDailyMetrics(
     clientSecret: deps.clientSecret,
   });
 
-  // Discover first so any tweet already past 24h when found is due immediately
-  // and gets snapshotted in the same run's snapshot pass.
+  // Discover first so any tweet found this run is in the table before the
+  // snapshot pass, which reads every non-retired row regardless of age.
   await discover(token, deps.selfXUserId, runOpts, result);
   await snapshotDue(token, result);
 
@@ -105,9 +113,9 @@ async function discover(
   const maxResults = runOpts.maxResults ?? DEFAULT_MAX_RESULTS;
   const now = new Date();
 
-  // Discovery doesn't request the private metric fields: new tweets are <24h
-  // old and won't be snapshotted yet — the snapshot pass does the authoritative
-  // owned-private read once they cross 24h.
+  // Discovery doesn't request the private metric fields — it only needs to seed
+  // rows. The snapshot pass does the authoritative owned read (with private
+  // fields where the tweet is still inside the 30-day window).
   for await (const tweet of getUserTweets(token, selfXUserId, {
     maxResults,
     ...(sinceId ? { sinceId } : {}),
@@ -137,59 +145,86 @@ async function discover(
 }
 
 async function snapshotDue(token: string, result: RunResult): Promise<void> {
-  // Pull the whole due set up front. A snapshot retires the row, so there's no
-  // re-pick risk within the run — single process, single daily pass, no need
-  // for FOR UPDATE SKIP LOCKED here.
-  const due = await db
-    .select({ tweetId: postsPublished.tweetId })
+  // EVERY non-retired tweet, regardless of age. Retired rows are never selected
+  // again, so each tweet is read (and billed) once and only once. Oldest first
+  // so a backlog drains in posting order across passes.
+  const rows = await db
+    .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
     .from(postsPublished)
-    .where(and(eq(postsPublished.retired, false), lte(postsPublished.nextPollAt, new Date())))
-    .orderBy(asc(postsPublished.nextPollAt));
+    .where(eq(postsPublished.retired, false))
+    .orderBy(asc(postsPublished.postedAt));
 
-  for (let i = 0; i < due.length; i += SNAPSHOT_BATCH) {
-    const ids = due.slice(i, i + SNAPSHOT_BATCH).map((r) => r.tweetId);
+  // Age only decides which fields are safe to request — not whether to read.
+  const nowMs = Date.now();
+  const fresh = rows.filter((r) => nowMs - r.postedAt.getTime() < PRIVATE_FIELDS_MAX_AGE_MS);
+  const stale = rows.filter((r) => nowMs - r.postedAt.getTime() >= PRIVATE_FIELDS_MAX_AGE_MS);
 
-    let found: Awaited<ReturnType<typeof getTweetsByIds>>['found'];
-    let missing: string[];
-    try {
-      ({ found, missing } = await getTweetsByIds(token, ids, { ownedPrivate: true }));
-    } catch (err) {
-      // Transient (network/5xx/429) — leave these rows due; next run retries.
-      result.failed++;
-      console.error(`dailyMetrics: snapshot batch failed: ${describe(err)}`);
-      continue;
-    }
+  for (const [group, ownedPrivate] of [
+    [fresh, true],
+    [stale, false],
+  ] as const) {
+    for (let i = 0; i < group.length; i += SNAPSHOT_BATCH) {
+      const ids = group.slice(i, i + SNAPSHOT_BATCH).map((r) => r.tweetId);
 
-    const now = new Date();
-    for (const tweet of found) {
-      await db.insert(metricsSnapshots).values({
-        tweetId: tweet.id,
-        publicMetrics: tweet.public_metrics ?? null,
-        nonPublicMetrics: tweet.non_public_metrics ?? null,
-        organicMetrics: tweet.organic_metrics ?? null,
+      let found: Awaited<ReturnType<typeof getTweetsByIds>>['found'];
+      let missing: string[];
+      try {
+        ({ found, missing } = await getTweetsByIds(token, ids, { ownedPrivate }));
+      } catch (err) {
+        // Transient (network/5xx/429), not billed — leave these rows un-retired;
+        // next run retries them at no cost.
+        result.failed++;
+        console.error(`dailyMetrics: snapshot batch failed: ${describe(err)}`);
+        continue;
+      }
+
+      // The read is already BILLED. Retire the whole batch in one committed txn
+      // BEFORE inserting any snapshot, so a crash can never cause a re-read
+      // (once and only once). Found ids get a pollCount credit; ids X couldn't
+      // serve (deleted/suspended) retire without one.
+      const now = new Date();
+      const foundIds = found.map((t) => t.id);
+      const foundSet = new Set(foundIds);
+      const unserved = ids.filter((id) => !foundSet.has(id));
+      await db.transaction(async (tx) => {
+        if (foundIds.length > 0) {
+          await tx
+            .update(postsPublished)
+            .set({
+              pollCount: sql`${postsPublished.pollCount} + 1`,
+              lastSeenAt: now,
+              nextPollAt: null,
+              retired: true,
+            })
+            .where(inArray(postsPublished.tweetId, foundIds));
+        }
+        if (unserved.length > 0) {
+          await tx
+            .update(postsPublished)
+            .set({ retired: true, lastSeenAt: now })
+            .where(inArray(postsPublished.tweetId, unserved));
+        }
       });
-      await db
-        .update(postsPublished)
-        .set({
-          pollCount: sql`${postsPublished.pollCount} + 1`,
-          lastSeenAt: now,
-          nextPollAt: null,
-          retired: true,
-        })
-        .where(eq(postsPublished.tweetId, tweet.id));
-      result.snapshotted++;
-      result.retired++;
-    }
+      result.retired += ids.length;
+      if (unserved.length > 0) {
+        console.log(`dailyMetrics: retired ${unserved.length} unreadable tweet(s)`);
+      }
 
-    // Ids X didn't return (deleted, suspended author) — retire without a
-    // snapshot so we stop trying to read them.
-    if (missing.length > 0) {
-      await db
-        .update(postsPublished)
-        .set({ retired: true, lastSeenAt: now })
-        .where(inArray(postsPublished.tweetId, missing));
-      result.retired += missing.length;
-      console.log(`dailyMetrics: retired ${missing.length} unreadable tweet(s)`);
+      // Snapshots insert autonomously after the retire commit — a failed insert
+      // is a metrics gap for that tweet, never a re-read.
+      for (const tweet of found) {
+        try {
+          await db.insert(metricsSnapshots).values({
+            tweetId: tweet.id,
+            publicMetrics: tweet.public_metrics ?? null,
+            nonPublicMetrics: tweet.non_public_metrics ?? null,
+            organicMetrics: tweet.organic_metrics ?? null,
+          });
+          result.snapshotted++;
+        } catch (err) {
+          console.error(`dailyMetrics: snapshot insert failed ${tweet.id}: ${describe(err)}`);
+        }
+      }
     }
   }
 }
