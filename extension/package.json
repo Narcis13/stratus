@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Chrome MV3 side-panel extension for stratus.",
   "scripts": {
-    "build": "vite build",
-    "dev": "vite build --watch --mode development",
+    "build": "rm -rf dist && CONTENT_BUILD=1 vite build && vite build",
+    "dev": "rm -rf dist && CONTENT_BUILD=1 vite build && vite build --watch --mode development",
     "typecheck": "tsc --build --noEmit"
   },
   "dependencies": {

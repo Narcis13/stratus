@@ -1,18 +1,18 @@
 import { type JSX, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
 import { ComposerPanel } from './Composer.tsx';
-import { DraftsPanel } from './Drafts.tsx';
+import { HarvestPanel } from './Harvest.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
 
-type Tab = 'calendar' | 'composer' | 'drafts' | 'voice' | 'replies' | 'settings';
+type Tab = 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
-  { id: 'drafts', label: 'Drafts' },
+  { id: 'harvest', label: 'Harvest' },
   { id: 'voice', label: 'Voice' },
   { id: 'replies', label: 'Replies' },
   { id: 'settings', label: 'Settings' },
@@ -72,8 +72,8 @@ export function App(): JSX.Element {
             onClearEdit={clearEdit}
             onSaved={onSaved}
           />
-        ) : activeTab === 'drafts' ? (
-          <DraftsPanel key={`draft-${refreshKey}`} settings={settings} onEdit={startEdit} />
+        ) : activeTab === 'harvest' ? (
+          <HarvestPanel />
         ) : activeTab === 'voice' ? (
           <VoicePanel settings={settings} />
         ) : activeTab === 'replies' ? (

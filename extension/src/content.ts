@@ -20,6 +20,7 @@
 //
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
+import { initHarvest } from './harvester.ts';
 import { BAND_LABEL, classifyBand, formatCount } from './replyBand.ts';
 import type { Band, TweetSignals } from './replyBand.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
@@ -901,6 +902,7 @@ function scheduleScan(): void {
 
 function start(): void {
   injectStyles();
+  initHarvest();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });

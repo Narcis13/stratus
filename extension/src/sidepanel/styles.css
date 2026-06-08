@@ -316,8 +316,7 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
-.post-list,
-.draft-list {
+.post-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -358,36 +357,63 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
-/* drafts */
-.draft-row {
+/* harvest */
+.field select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 13px;
+}
+.field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.seg-group {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 100%;
-  text-align: left;
-  background: var(--bg);
+}
+.seg-group > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.seg-row {
+  display: flex;
+  gap: 4px;
+}
+.seg-row button {
+  flex: 1;
+}
+
+.harvest-tuning {
+  align-items: flex-end;
+}
+.harvest-tuning .field {
+  flex: 1;
+}
+
+.harvest-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   border: 1px solid var(--border);
   border-radius: 6px;
+  background: var(--bg);
   padding: 10px 12px;
-  cursor: pointer;
-  margin-bottom: 6px;
 }
-.draft-row:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent);
-}
-.draft-text {
-  white-space: pre-wrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  font-size: 13px;
-}
-.draft-meta {
+.harvest-hint {
   font-size: 11px;
-  color: var(--muted);
+}
+.harvest-result {
+  background: rgba(90, 209, 154, 0.1);
+  border: 1px solid rgba(90, 209, 154, 0.3);
+  border-radius: 6px;
+  padding: 8px 10px;
+  line-height: 1.5;
 }
 
 /* voice */
