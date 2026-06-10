@@ -18,6 +18,8 @@ import {
   type HarvestCommand,
   type HarvestContextResult,
   type HarvestEvent,
+  type HarvestIngest,
+  type HarvestIngestRow,
   type HarvestMode,
   type HarvestOptions,
   type HarvestScope,
@@ -25,6 +27,7 @@ import {
   isRepliesPath,
   profileHandleFromUrl,
 } from './shared/harvest.ts';
+import type { ApiRequest, ApiResponse } from './shared/messages.ts';
 
 // ----------------------------------------------------------------- randomness
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -239,7 +242,11 @@ interface PostRow {
   url: string;
 }
 
+// Fields beyond the CSV columns (o_id, r_reposts, r_bookmarks) exist for the
+// stratus ingest only — the CSV builders ignore them to keep the original
+// scrape.js output shape.
 interface ReplyRow {
+  o_id: string;
   o_text: string;
   o_comments: number;
   o_likes: number;
@@ -248,7 +255,9 @@ interface ReplyRow {
   o_handle: string;
   r_text: string;
   r_comments: number;
+  r_reposts: number;
   r_likes: number;
+  r_bookmarks: number;
   r_views: number;
   r_time: string;
 }
@@ -309,6 +318,7 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
       if (!inWindow(reply.timeMs, ctx.window)) continue;
       if (!ctx.store[reply.id]) added++;
       ctx.store[reply.id] = {
+        o_id: orig.id ?? '',
         o_text: orig.text,
         o_comments: orig.metrics.comments,
         o_likes: orig.metrics.likes,
@@ -317,7 +327,9 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
         o_handle: orig.handle ?? '',
         r_text: reply.text,
         r_comments: reply.metrics.comments,
+        r_reposts: reply.metrics.reposts,
         r_likes: reply.metrics.likes,
+        r_bookmarks: reply.metrics.bookmarks,
         r_views: reply.metrics.views,
         r_time: reply.time,
       };
@@ -397,6 +409,83 @@ function repliesCSV(store: Record<string, ReplyRow>): string {
   return `﻿${lines.join('\r\n')}`;
 }
 
+// -------------------------------------------------------------- stratus ship
+// Rows go through the existing background ApiRequest path (the background
+// worker owns the bearer token), in batches, alongside the CSV download.
+// Upload failure never loses the harvest — the CSV is already on disk.
+
+const INGEST_CHUNK = 200;
+
+function postsIngestRows(store: Record<string, PostRow>): HarvestIngestRow[] {
+  return Object.entries(store).map(([id, r]) => ({
+    tweetId: id,
+    handle: r.handle,
+    text: r.text,
+    comments: r.comments,
+    reposts: r.reposts,
+    likes: r.likes,
+    bookmarks: r.bookmarks,
+    views: r.views,
+    time: r.time || null,
+  }));
+}
+
+function repliesIngestRows(profile: string, store: Record<string, ReplyRow>): HarvestIngestRow[] {
+  return Object.entries(store).map(([id, r]) => ({
+    tweetId: id,
+    handle: profile,
+    text: r.r_text,
+    comments: r.r_comments,
+    reposts: r.r_reposts,
+    likes: r.r_likes,
+    bookmarks: r.r_bookmarks,
+    views: r.r_views,
+    time: r.r_time || null,
+    orig: {
+      tweetId: r.o_id || null,
+      handle: r.o_handle || null,
+      text: r.o_text,
+      time: r.o_time || null,
+      comments: r.o_comments,
+      likes: r.o_likes,
+      views: r.o_views,
+    },
+  }));
+}
+
+async function apiSend<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  const req: ApiRequest = { type: 'stratus/api', method, path, body };
+  const res = (await chrome.runtime.sendMessage(req)) as ApiResponse<T> | undefined;
+  if (!res) throw new Error('no_response');
+  if (!res.ok) throw new Error(res.code);
+  return res.data;
+}
+
+async function shipToStratus(
+  handle: string,
+  mode: HarvestMode,
+  scope: HarvestScope,
+  rows: HarvestIngestRow[],
+): Promise<HarvestIngest> {
+  try {
+    const run = await apiSend<{ id: string }>('POST', '/x/harvest/runs', { handle, mode, scope });
+    let matched = 0;
+    let backfilled = 0;
+    for (let i = 0; i < rows.length; i += INGEST_CHUNK) {
+      const batch = await apiSend<{ matched: number; backfilled: number }>(
+        'POST',
+        '/x/harvest/rows',
+        { runId: run.id, rows: rows.slice(i, i + INGEST_CHUNK) },
+      );
+      matched += batch.matched;
+      backfilled += batch.backfilled;
+    }
+    return { sent: true, rows: rows.length, runId: run.id, matched, backfilled };
+  } catch (err) {
+    return { sent: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function download(csv: string, name: string): void {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -457,6 +546,7 @@ async function runHarvest<R>(
   options: HarvestOptions,
   harvest: Harvester<R>,
   buildCsv: (store: Record<string, R>) => string,
+  toIngest: (profile: string, store: Record<string, R>) => HarvestIngestRow[],
   rowTime: (r: R) => string,
   emit: (e: HarvestEvent) => void,
   shouldCancel: () => boolean,
@@ -543,6 +633,12 @@ async function runHarvest<R>(
 
   if (rows.length > 0) download(buildCsv(ctx.store), filename);
 
+  let ingest: HarvestIngest | undefined;
+  if (rows.length > 0 && options.sendToStratus !== false) {
+    emit({ type: 'sending', rows: rows.length });
+    ingest = await shipToStratus(profile, mode, options.scope, toIngest(profile, ctx.store));
+  }
+
   emit({
     type: 'done',
     rows: rows.length,
@@ -550,6 +646,7 @@ async function runHarvest<R>(
     firstTime: times[times.length - 1] ?? null,
     lastTime: times[0] ?? null,
     cancelled,
+    ...(ingest ? { ingest } : {}),
   });
 }
 
@@ -608,6 +705,7 @@ export function initHarvest(): void {
               opts,
               harvestReplies,
               repliesCSV,
+              (profile, store) => repliesIngestRows(profile, store),
               (r) => r.r_time,
               emit,
               shouldCancel,
@@ -617,6 +715,7 @@ export function initHarvest(): void {
               opts,
               harvestPosts,
               postsCSV,
+              (_profile, store) => postsIngestRows(store),
               (r) => r.time,
               emit,
               shouldCancel,

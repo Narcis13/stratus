@@ -75,6 +75,17 @@ export const metricsSnapshots = pgTable(
   (t) => [index('metrics_snapshots_tweet_snapshot_idx').on(t.tweetId, t.snapshotAt.desc())],
 );
 
+// One row per UTC day from the dailyMetrics pass — the follower-growth KPI
+// series. Counts come free on the same $0.001 getMe() owned read.
+export const accountSnapshots = pgTable('account_snapshots', {
+  id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+  snapshotAt: timestamp('snapshot_at', { withTimezone: true }).defaultNow().notNull(),
+  followersCount: integer('followers_count').notNull(),
+  followingCount: integer('following_count').notNull(),
+  tweetCount: integer('tweet_count').notNull(),
+  listedCount: integer('listed_count').notNull(),
+});
+
 // Swipe file of other people's tweets, kept for style/format reference. Pure
 // DOM-scrape capture from the extension — no X API, no metrics polling. Authors
 // are identified by their lowercased @handle (the only stable id we can scrape
@@ -136,6 +147,11 @@ export const replyDrafts = pgTable(
 
     replyText: text('reply_text').notNull(),
     replyTextEdited: text('reply_text_edited'),
+    // All variants from the structured two-variant call ({text, angle}[]);
+    // replyText holds the primary pick. Null on pre-7.1 rows.
+    variants: jsonb('variants'),
+    // The optional human steer sent with the generate call (often Romanian).
+    idea: text('idea'),
 
     model: text('model').notNull(),
     promptTokens: integer('prompt_tokens'),
@@ -154,5 +170,55 @@ export const replyDrafts = pgTable(
   (t) => [
     index('reply_drafts_source_created_idx').on(t.sourceTweetId, t.createdAt.desc()),
     index('reply_drafts_status_created_idx').on(t.status, t.createdAt.desc()),
+  ],
+);
+
+// $0 ingestion of the extension's DOM harvester (OVERHAUL-PLAN §6.3). One run
+// per harvest click; repeated harvests of the same tweet intentionally create
+// new rows — the (tweet_id, captured_at) series is the longitudinal view/
+// bookmark curve the once-only API snapshot can't provide.
+export const harvestRuns = pgTable('harvest_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  handle: text('handle').notNull(),
+  mode: text('mode').notNull(), // 'posts' | 'replies'
+  scope: text('scope').notNull(), // 'all' | 'today' | 'yesterday'
+  rowCount: integer('row_count').default(0).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const harvestRows = pgTable(
+  'harvest_rows',
+  {
+    id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => harvestRuns.id),
+    tweetId: text('tweet_id').notNull(),
+    handle: text('handle').notNull(),
+    mode: text('mode').notNull(),
+    text: text('text').notNull(),
+    comments: integer('comments').default(0).notNull(),
+    reposts: integer('reposts').default(0).notNull(),
+    likes: integer('likes').default(0).notNull(),
+    bookmarks: integer('bookmarks').default(0).notNull(),
+    views: integer('views').default(0).notNull(),
+    tweetTime: timestamp('tweet_time', { withTimezone: true }),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow().notNull(),
+    // Replies mode only: the tweet replied to, as paired by the harvester.
+    // Capture-time metrics of the target feed the BAND calibration crosstab.
+    origTweetId: text('orig_tweet_id'),
+    origHandle: text('orig_handle'),
+    origText: text('orig_text'),
+    origTime: timestamp('orig_time', { withTimezone: true }),
+    origComments: integer('orig_comments'),
+    origLikes: integer('orig_likes'),
+    origViews: integer('orig_views'),
+    // Reconcile result against reply_drafts (replies mode only) — the second,
+    // API-free outcome source for posted reply drafts.
+    matchedDraftId: uuid('matched_draft_id').references(() => replyDrafts.id),
+  },
+  (t) => [
+    index('harvest_rows_tweet_captured_idx').on(t.tweetId, t.capturedAt.desc()),
+    index('harvest_rows_run_idx').on(t.runId),
   ],
 );

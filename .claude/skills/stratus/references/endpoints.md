@@ -6,12 +6,14 @@ Full request/response shapes for every route. Use this when crafting a non-trivi
 
 - [Health](#health)
 - [Cost](#cost)
+- [Daily brief](#daily-brief)
 - [Scheduled posts (calendar)](#scheduled-posts-calendar)
 - [Published posts (reconcile)](#published-posts-reconcile)
 - [Metrics (own tweets)](#metrics-own-tweets)
 - [Voice — scrape & enrich (ingest)](#voice--scrape--enrich-ingest)
 - [Voice — authors](#voice--authors)
 - [Voice — tweet stash](#voice--tweet-stash)
+- [Harvest ingestion](#harvest-ingestion)
 - [Replies — generate](#replies--generate)
 - [Replies — CRUD](#replies--crud)
 - [Grok ask](#grok-ask)
@@ -24,7 +26,20 @@ Full request/response shapes for every route. Use this when crafting a non-trivi
 
 ### GET /healthz
 
-No auth. `200 {"ok":true}` if DB round-trips, else `503 {"ok":false,"error":"..."}`.
+No auth. `200` if the DB round-trips AND every registered worker heartbeat is fresh; `503` otherwise.
+
+```json
+{
+  "ok": true,
+  "version": "0.1.1",
+  "workers": [
+    { "name": "x.publisher",    "lastBeatAt": "...", "staleAfterMs": 300000,   "stale": false },
+    { "name": "x.dailyMetrics", "lastBeatAt": "...", "staleAfterMs": 90000000, "stale": false }
+  ]
+}
+```
+
+On failure adds `"error"` (DB) and/or `"staleWorkers": ["x.publisher"]`. Publisher is stale after >5 min without a tick, dailyMetrics after >25 h without a run. `workers` is empty when hit without `startXWorkers` (tests).
 
 ---
 
@@ -62,13 +77,88 @@ Response:
 }
 ```
 
+Platforms with a registered soft daily budget (X: `X_DAILY_BUDGET_USD`, default $0.15) also carry `"dailyBudgetUsd"` and `"overBudget"` on their entry. Crossing the budget logs a `BUDGET WATCHDOG` error server-side; it never blocks calls.
+
+### GET /cost/daily
+
+Trailing daily spend series, UTC days, today included, zero-filled (every day present even with no spend).
+
+Query params:
+
+- `days` (optional, default `30`, clamped 1–90). Non-numeric → `400 {"error":"invalid_days"}`.
+
+```json
+{
+  "from": "2026-05-12T00:00:00.000Z",
+  "days": 30,
+  "budgets": { "x": 0.15 },
+  "daily": [
+    { "day": "2026-05-12", "totalUsd": 0.034, "totalCalls": 12,
+      "byPlatform": [ { "platform": "x", "costUsd": 0.034, "calls": 12 } ] }
+  ]
+}
+```
+
 ---
 
-## Scheduled posts (calendar)
+## Daily brief
+
+### GET /x/brief
+
+The growth-coach payload behind the extension's Today tab (OVERHAUL-PLAN §6.4): follower trend, yesterday's numbers, today's schedule + empty slots, reply quota, the week's 70/30 ratio, and today's spend in one $0 JSON (pure SQL, no X API reads).
+
+Query params:
+
+- `tzOffsetMin` (optional, default `0`) — JS `Date.getTimezoneOffset()` of the viewer, i.e. UTC − local in minutes (`-180` for UTC+3). Sets the local-day boundaries for `yesterday`/`today`/`replyQuota`. Spend ignores it and stays on the UTC billing day, matching `/cost/today`. Invalid values → `400 {"error":"invalid_tz_offset_min"}`.
+
+Response (shapes elided where they repeat other endpoints):
+
+```json
+{
+  "generatedAt": "2026-06-10T09:28:59.178Z",
+  "tzOffsetMin": -180,
+  "account": {
+    "followers": 199,
+    "measuredAt": "2026-06-10T08:20:35.077Z",
+    "delta7d": 13,
+    "sparkline": [ { "snapshotAt": "...", "followers": 186 } ]
+  },
+  "yesterday": {
+    "from": "...", "to": "...",
+    "posts":   [ { "tweetId": "...", "text": "...", "postedAt": "...", "isReply": false,
+                   "measuredAt": "...", "metrics": { "views": 43, "likes": 1, "replies": 1,
+                   "retweets": 0, "quotes": 0, "bookmarks": 0, "profileVisits": 0 } } ],
+    "replies": [ "same shape, isReply: true" ],
+    "profileClickLeaders": [ "same shape — top 3 by profileVisits over the trailing 7 days" ]
+  },
+  "today": {
+    "from": "...", "to": "...",
+    "scheduled": [ { "id": "uuid", "text": "...", "scheduledFor": "...", "status": "pending" } ],
+    "anchors": [ 8, 12, 16, 20 ],
+    "gaps": [ 16 ]
+  },
+  "replyQuota": { "postedToday": 12, "target": { "min": 10, "max": 20 } },
+  "week": { "from": "...", "to": "...", "posts": 30, "replies": 120, "replyPct": 80, "targetReplyPct": 70 },
+  "spend": {
+    "from": "...", "to": "...",
+    "xUsd": 0.081, "grokUsd": 0.012, "totalUsd": 0.093,
+    "byPlatform": [ { "platform": "x", "costUsd": 0.081, "calls": 10 } ]
+  }
+}
+```
+
+Notes for the operator:
+
+- `delta7d` diffs the latest `account_snapshots` row against the newest one ≥7 days old (oldest available when history is shorter; `null` with <2 snapshots). `sparkline` is the last 14 days.
+- `anchors` are the cadence ladder hours (local): 3/day → `[9,13,18]`, 4/day → `[8,12,16,20]`, picked by how many pending/posted slots today already has. `gaps` are anchor hours no scheduled post sits nearest to — "you have no post slotted for 16:00".
+- `replyQuota.postedToday` counts `reply_drafts` flipped to `posted` today (paste time); replies posted outside Reply Master only appear after the next 03:00 UTC discovery pass.
+- `metrics` on yesterday's rows is `null` until the 03:00 UTC pass snapshots them — same once-only data as `/x/metrics/*`.
 
 DB-backed CRUD over `scheduled_posts`. The publisher worker drains `status='pending'` rows whose `scheduledFor <= now()` every 60 s.
 
-Status lifecycle: `draft → pending → posted` (worker) | `pending → failed` (worker) | `* → cancelled` (user PATCH) | `* → DELETE` (user, except `posted`).
+Status lifecycle: `draft → pending → publishing → posted` (worker) | `publishing → failed` (worker, definite X 4xx) | `* → cancelled` (user PATCH) | `* → DELETE` (user, except `posted`/`publishing`). A row stuck in `publishing` means the X outcome is unknown (5xx/network mid-call) — it is never auto-retried; the publisher logs it every tick and the daily reconcile picks the tweet up if it actually shipped.
+
+URL guard: rows that are (or would become) `pending` with a URL in `text` are rejected with `400 {"error":"url_in_text","hint":...}` — a URL post bills at $0.20 instead of $0.015, so `createPost` would refuse it at the scheduled minute anyway (a silently lost slot). Drafts may hold URLs; the check re-runs when promoting to `pending`.
 
 ### POST /x/posts/scheduled
 
@@ -77,9 +167,9 @@ Body fields:
 - `text` (string, required) — tweet body. Trim happens server-side; empty → `400 text_required`.
 - `scheduledFor` (string|null, optional) — ISO 8601 UTC, e.g. `"2026-05-15T13:30:00Z"`. Required when status is `pending`.
 - `mediaIds` (string[]|null, optional) — currently a no-op at publish time (media upload not supported), but the field is accepted for forward compat.
-- `status` (`"draft"`|`"pending"`, optional) — if omitted: derived (`pending` if `scheduledFor` set, else `draft`). Cannot create with `posted`/`failed`/`cancelled`.
+- `status` (`"draft"`|`"pending"`, optional) — if omitted: derived (`pending` if `scheduledFor` set, else `draft`). Cannot create with `publishing`/`posted`/`failed`/`cancelled`.
 
-`201` returns the inserted row. `400 invalid_*` on bad shapes.
+`201` returns the inserted row. `400 invalid_*` on bad shapes; `400 url_in_text` when creating a `pending` row whose text contains a URL.
 
 Example:
 
@@ -113,7 +203,7 @@ Query params (all optional, ANDed):
 
 - `from` (ISO date) — `scheduledFor >= from`
 - `to` (ISO date) — `scheduledFor < to`
-- `status` — one of `draft|pending|posted|failed|cancelled`
+- `status` — one of `draft|pending|publishing|posted|failed|cancelled`
 
 Order: `scheduledFor asc nulls last, createdAt desc`. Returns an array.
 
@@ -124,16 +214,17 @@ Body fields (all optional, any subset):
 - `text` (string)
 - `scheduledFor` (string|null)
 - `mediaIds` (string[]|null)
-- `status` (`draft|pending|failed|cancelled`) — cannot set to `posted` here.
+- `status` (`draft|pending|failed|cancelled`) — `posted`/`publishing` are worker-owned (`400 status_not_settable_via_patch`).
 
 Constraints:
 
-- `409 cannot_edit_posted` if row is already `posted`.
+- `409 cannot_edit_posted` / `409 cannot_edit_publishing` if the row is in a worker-owned state.
 - If final status is `pending`, final `scheduledFor` must be non-null (`400 scheduled_for_required_when_pending`).
+- If final status is `pending`, final `text` must not contain a URL (`400 url_in_text`).
 
 ### DELETE /x/posts/scheduled/:id
 
-`204` on success. `404 not_found` / `409 cannot_delete_posted`.
+`204` on success. `404 not_found` / `409 cannot_delete_posted` / `409 cannot_delete_publishing`.
 
 ---
 
@@ -269,6 +360,42 @@ Hard delete. `404 not_found` if unknown. `200 { deleted: <tweetId> }` on success
 
 ---
 
+## Harvest ingestion
+
+$0 — rows arrive DOM-scraped from the extension's Harvest tab ("Send to stratus" toggle, default on); no X API anywhere. Repeated harvests of the same tweet create new rows on purpose: the `(tweetId, capturedAt)` series in `harvest_rows` is the longitudinal view/bookmark curve.
+
+### POST /x/harvest/runs
+
+One run per harvest click. Body: `{ "handle": "@x", "mode": "posts"|"replies", "scope": "all"|"today"|"yesterday" }` (handle is `@`/case-normalized; `400 invalid_handle|invalid_mode|invalid_scope`). Returns `201` with the run row: `{ id, handle, mode, scope, rowCount, createdAt }`.
+
+### POST /x/harvest/rows
+
+Batched insert. Body: `{ "runId": "<uuid>", "rows": [ ... ] }`, max 500 rows per call (`400 too_many_rows`), `404 run_not_found` if the run id is unknown. Row schema:
+
+```json
+{
+  "tweetId": "1791…",
+  "handle": "13_narcissus",
+  "text": "tweet body (may be empty)",
+  "comments": 3, "reposts": 1, "likes": 12, "bookmarks": 2, "views": 845,
+  "time": "2026-06-09T18:30:00Z",
+  "orig": {
+    "tweetId": "999…", "handle": "bigauthor", "text": "original post",
+    "time": "2026-06-09T17:00:00Z", "comments": 19, "likes": 38, "views": 1500
+  }
+}
+```
+
+`time` may be null (timestamp not scraped). `orig` is replies-mode only — the tweet replied to, whose capture-time metrics feed BAND calibration. Validation errors come back as `400 { error: "invalid_row_…", index: <n> }` for the first bad row.
+
+**Replies-mode reconcile (automatic):** each row is matched against `reply_drafts` — exact on `postedTweetId`, else a text+time fallback (collapsed-whitespace equality on what was actually posted, reply time within −10 min/+7 d of draft creation, same-source candidates preferred). A fallback match also **backfills the draft's missing `postedTweetId`**, which is what makes `GET /x/replies/outcomes` cover drafts never PATCHed after pasting. Response: `201 { inserted, matched, backfilled }`.
+
+### GET /x/harvest/runs
+
+`?limit=` (default 20, max 100). Recent runs newest-first, each with its cumulative `rowCount`.
+
+---
+
 ## Replies — generate
 
 ### POST /x/replies/generate
@@ -289,12 +416,17 @@ Body:
     "metrics":  { "views": 12000, "replies": 30, "reposts": 5, "likes": 240 },
     "topComments": [
       { "author": "Display", "handle": "alice", "text": "…" }
-    ]
+    ],
+    "signals":  { "band": "hot", "views": 12000, "replies": 30, "ageMin": 22, "vpm": 545, "bait": false }
   }
   ```
+  `signals` is optional — the band verdict + classifier inputs the extension stamps at capture time (replyBand.ts), persisted in `contextSnapshot` so the draft is a labeled row for `GET /x/replies/outcomes`. `band` ∈ {hot, warm, skip, null}.
+- `idea` (string, optional, ≤2000 chars) — the human steer, substituted into the prompt's `<idea>` tag. Romanian is fine; the reply comes out in English. Persisted on the row.
 - `systemPromptOverride` (string, optional) — replaces the default REPLY-MASTER system prompt for this call. Persisted on the row.
 - `model` (string, optional) — default `grok-4.3`. Aliases `grok-4.3-latest`/`grok-latest` priced.
 - `reasoningEffort` (`none|low|medium|high`, optional) — default `low`.
+
+The call uses Grok structured outputs (`{replies: [{text, angle}]}`) and asks for **two variants**, each tagged `extends` / `contrarian` / `debate`. A server-side specificity gate (digit OR first-person marker OR named tool) triggers exactly one automatic regenerate when no variant passes; `costUsd` then covers both calls. `replyText` is the first gate-passing variant; all variants ride along in `variants` for the picker.
 
 Response is the full draft row from `reply_drafts`:
 
@@ -306,11 +438,16 @@ Response is the full draft row from `reply_drafts`:
   "sourceText": "…",
   "sourceUrl": "https://x.com/naval/status/1791…",
   "contextSnapshot": { "...": "the full context echoed back" },
-  "replyText": "…drafted reply…",
+  "replyText": "…primary variant…",
   "replyTextEdited": null,
+  "variants": [
+    { "text": "…primary variant…", "angle": "extends" },
+    { "text": "…second variant…", "angle": "contrarian" }
+  ],
+  "idea": "seed text or null",
   "model": "grok-4.3",
-  "promptTokens": 412, "completionTokens": 89,
-  "costUsd": "0.00214",
+  "promptTokens": 4400, "completionTokens": 240,
+  "costUsd": "0.00350",
   "grokRequestId": "req_…",
   "systemPromptOverride": null,
   "status": "generated",
@@ -319,13 +456,17 @@ Response is the full draft row from `reply_drafts`:
 }
 ```
 
-Errors: `400 invalid_context_*` on validation; `502 grok_upstream_error` (with `status,type,code,message,requestId`) on xAI failure; `429` if xAI rate-limits.
+Errors: `400 invalid_context_*` / `400 invalid_idea` on validation; `502 grok_upstream_error` (with `status,type,code,message,requestId`) on xAI failure; `502 grok_parse_error` if the structured output can't be parsed even after the retry; `429` if xAI rate-limits.
 
 ## Replies — CRUD
 
 ### GET /x/replies
 
 Query: `?status=&sourceAuthor=&limit=&since=`. Default limit 50 (max 200). `status` ∈ {generated, copied, posted, discarded}. `since` is an ISO timestamp filter on `createdAt`.
+
+### GET /x/replies/outcomes
+
+First-party calibration data ($0, pure SQL): every `posted` draft joined to `posts_published` and its latest `metrics_snapshots` row via `postedTweetId`. Query: `?limit=&since=` (default/max limit 1000). Returns `{count, measured, unlinked, outcomes}`; each outcome row carries the capture-time `signals` (band verdict), `sourceMetrics`, and `outcome: {views, likes, replies, retweets, quotes, bookmarks, profileVisits}` — `profileVisits` is `user_profile_clicks`, the follow-precursor. `outcome` is null until the draft is linked (PATCH `postedTweetId`) **and** the daily pass has snapshotted the reply. Feeds `evals/analyze-own-replies.ts` (BAND recalibration at ≥100 measured).
 
 ### GET /x/replies/:id
 
@@ -408,6 +549,6 @@ Upstream X / Grok: `502 { error, status, type?, code?, message?, requestId? }`.
 | `POST /x/voice/scrape`           | $0 (DOM only, no X API)           | swipe-file ingest       |
 | `PUT  /x/voice/authors/:handle`  | $0 (DOM only, no X API)           | author enrich           |
 | `GET /x/voice/tweets` / `authors`| $0 (DB read)                      | swipe-file query        |
-| `POST /x/replies/generate`       | ~$0.001–0.005 (token-based)       | Grok Responses          |
+| `POST /x/replies/generate`       | ~$0.002–0.004 (2× on auto-retry)  | Grok Responses          |
 | `POST /grok/ask`                 | token-based                       | Grok Responses          |
 | `GET /cost/today`                | $0                                | shared cost_events read |

@@ -28,6 +28,17 @@ export interface GrokMessage {
 
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high';
 
+// Structured outputs on /v1/responses go through `text.format`, NOT the
+// chat-completions `response_format` (the API rejects that with a 400 telling
+// you so). The constrained JSON still arrives in output[].content[] as
+// `output_text`, so the normal text-extraction path applies.
+export interface GrokJsonSchemaFormat {
+  name: string;
+  schema: Record<string, unknown>;
+  /** Defaults to true — xAI guarantees schema conformance only when strict. */
+  strict?: boolean;
+}
+
 export interface AskGrokOptions {
   /** Defaults to `grok-4.3`. Aliases `grok-4.3-latest` / `grok-latest` also priced. */
   model?: string;
@@ -41,6 +52,10 @@ export interface AskGrokOptions {
   maxOutputTokens?: number;
   /** 0..2; xAI default ≈ 1. Omit to use server default. */
   temperature?: number;
+  /** Constrain the reply to a JSON schema (structured outputs). */
+  jsonSchema?: GrokJsonSchemaFormat;
+  /** Routes repeat calls to the same server so the prompt-prefix cache hits. */
+  promptCacheKey?: string;
   /** Max retry attempts on 429/5xx/network. Default 3. */
   maxAttempts?: number;
   signal?: AbortSignal;
@@ -96,6 +111,17 @@ export async function askGrok(opts: AskGrokOptions): Promise<AskGrokResult> {
   if (opts.reasoningEffort) body.reasoning = { effort: opts.reasoningEffort };
   if (opts.maxOutputTokens !== undefined) body.max_output_tokens = opts.maxOutputTokens;
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
+  if (opts.jsonSchema) {
+    body.text = {
+      format: {
+        type: 'json_schema',
+        name: opts.jsonSchema.name,
+        schema: opts.jsonSchema.schema,
+        strict: opts.jsonSchema.strict ?? true,
+      },
+    };
+  }
+  if (opts.promptCacheKey) body.prompt_cache_key = opts.promptCacheKey;
 
   const maxAttempts = opts.maxAttempts ?? 3;
   const start = performance.now();

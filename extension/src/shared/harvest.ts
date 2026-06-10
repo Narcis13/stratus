@@ -15,7 +15,42 @@ export interface HarvestOptions {
   pace: HarvestPace;
   // Hard row cap (safety / cost). Omitted means unlimited.
   max?: number;
+  // Ship rows to POST /x/harvest/* alongside the CSV download. Default on —
+  // only an explicit false skips the upload (OVERHAUL-PLAN §6.3).
+  sendToStratus?: boolean;
 }
+
+// One harvested row as shipped to POST /x/harvest/rows. `orig` is the tweet
+// replied to (replies mode only) — its capture-time metrics feed the BAND
+// calibration crosstab, and its id strengthens the reply_drafts reconcile.
+export interface HarvestIngestOrig {
+  tweetId: string | null;
+  handle: string | null;
+  text: string;
+  time: string | null;
+  comments: number;
+  likes: number;
+  views: number;
+}
+
+export interface HarvestIngestRow {
+  tweetId: string;
+  handle: string;
+  text: string;
+  comments: number;
+  reposts: number;
+  likes: number;
+  bookmarks: number;
+  views: number;
+  time: string | null;
+  orig?: HarvestIngestOrig;
+}
+
+// Outcome of the upload, attached to the final 'done' event. The CSV download
+// happens regardless — a failed upload only loses the Postgres copy.
+export type HarvestIngest =
+  | { sent: true; rows: number; runId: string; matched: number; backfilled: number }
+  | { sent: false; error: string };
 
 // Port name used by chrome.tabs.connect (side panel) / chrome.runtime.onConnect
 // (content script).
@@ -28,6 +63,7 @@ export type HarvestCommand = { type: 'start'; options: HarvestOptions } | { type
 export type HarvestEvent =
   | { type: 'started'; handle: string; mode: HarvestMode; scope: HarvestScope }
   | { type: 'progress'; rows: number; oldest: string | null; steps: number }
+  | { type: 'sending'; rows: number }
   | {
       type: 'done';
       rows: number;
@@ -35,6 +71,7 @@ export type HarvestEvent =
       firstTime: string | null;
       lastTime: string | null;
       cancelled: boolean;
+      ingest?: HarvestIngest;
     }
   | { type: 'error'; code: string; message?: string };
 

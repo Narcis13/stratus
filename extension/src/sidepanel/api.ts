@@ -5,6 +5,8 @@
 import {
   ApiError,
   type AuthorProfile,
+  type Brief,
+  type BriefTweet,
   type CreateBody,
   type ListOpts,
   type PostContext,
@@ -27,6 +29,8 @@ import type { Settings } from './storage.ts';
 export { ApiError };
 export type {
   AuthorProfile,
+  Brief,
+  BriefTweet,
   CreateBody,
   ListOpts,
   PostContext,
@@ -69,6 +73,12 @@ async function request<T>(s: Settings, path: string, init: RequestInit = {}): Pr
 }
 
 export const api = {
+  // The server computes "today"/"yesterday" in the browser's timezone;
+  // getTimezoneOffset() is UTC − local (e.g. -180 for UTC+3).
+  brief(s: Settings): Promise<Brief> {
+    return request<Brief>(s, `/x/brief?tzOffsetMin=${new Date().getTimezoneOffset()}`);
+  },
+
   list(s: Settings, opts: ListOpts = {}): Promise<ScheduledPost[]> {
     const q = new URLSearchParams();
     if (opts.from) q.set('from', opts.from);

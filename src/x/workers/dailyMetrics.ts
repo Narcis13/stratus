@@ -23,10 +23,11 @@
 // a predictable daily window at owned-read prices ($0.001/result), and a missed
 // run simply leaves rows for the next pass (still read exactly once each).
 
-import { asc, eq, inArray, sql } from 'drizzle-orm';
+import { asc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { metricsSnapshots, postsPublished } from '../db/schema.ts';
-import { getTweetsByIds, getUserTweets } from '../endpoints.ts';
+import { beat } from '../../heartbeats.ts';
+import { accountSnapshots, metricsSnapshots, postsPublished } from '../db/schema.ts';
+import { getMe, getTweetsByIds, getUserTweets } from '../endpoints.ts';
 import { getValidAccessToken } from '../token-store.ts';
 
 export interface DailyMetricsDeps {
@@ -58,7 +59,12 @@ export interface RunResult {
   retired: number;
   /** Snapshot batches that errored (rows left due for the next run). */
   failed: number;
+  /** Whether this run wrote the daily account_snapshots row (false = already
+   *  written today, or the getMe read failed). */
+  accountSnapshotted: boolean;
 }
+
+export const DAILY_METRICS_HEARTBEAT = 'x.dailyMetrics';
 
 const DEFAULT_MAX_RESULTS = 500;
 const SNAPSHOT_BATCH = 100; // GET /2/tweets?ids= accepts ≤100 ids
@@ -74,23 +80,70 @@ export async function runDailyMetrics(
   deps: DailyMetricsDeps,
   runOpts: RunOptions = {},
 ): Promise<RunResult> {
-  const result: RunResult = { scanned: 0, discovered: 0, snapshotted: 0, retired: 0, failed: 0 };
+  const result: RunResult = {
+    scanned: 0,
+    discovered: 0,
+    snapshotted: 0,
+    retired: 0,
+    failed: 0,
+    accountSnapshotted: false,
+  };
 
   const token = await getValidAccessToken({
     clientId: deps.clientId,
     clientSecret: deps.clientSecret,
   });
 
-  // Discover first so any tweet found this run is in the table before the
-  // snapshot pass, which reads every non-retired row regardless of age.
+  // Account KPI first so a timeline-pull failure can't cost us the day's
+  // followers_count data point.
+  await snapshotAccount(token, result);
+
+  // Discover before the snapshot pass so any tweet found this run is in the
+  // table before snapshotDue reads every non-retired row regardless of age.
   await discover(token, deps.selfXUserId, runOpts, result);
   await snapshotDue(token, result);
 
   console.log(
     `dailyMetrics: scanned=${result.scanned} discovered=${result.discovered} ` +
-      `snapshotted=${result.snapshotted} retired=${result.retired} failed=${result.failed}`,
+      `snapshotted=${result.snapshotted} retired=${result.retired} failed=${result.failed} ` +
+      `account=${result.accountSnapshotted}`,
   );
   return result;
+}
+
+// One getMe() per UTC day ($0.001) for the follower-growth series. The
+// same-UTC-day guard keeps the boot catch-up run (fires on every restart and
+// deploy) from writing extra rows or spending extra reads — exactly one
+// account_snapshots row per day, normally stamped at the 03:00 UTC pass.
+async function snapshotAccount(token: string, result: RunResult): Promise<void> {
+  const utcDayStart = new Date();
+  utcDayStart.setUTCHours(0, 0, 0, 0);
+  const [existing] = await db
+    .select({ id: accountSnapshots.id })
+    .from(accountSnapshots)
+    .where(gte(accountSnapshots.snapshotAt, utcDayStart))
+    .limit(1);
+  if (existing) return;
+
+  try {
+    const me = await getMe(token);
+    const pm = me.public_metrics;
+    if (!pm) {
+      console.error('dailyMetrics: getMe returned no public_metrics — account snapshot skipped');
+      return;
+    }
+    await db.insert(accountSnapshots).values({
+      followersCount: pm.followers_count,
+      followingCount: pm.following_count,
+      tweetCount: pm.tweet_count,
+      listedCount: pm.listed_count,
+    });
+    result.accountSnapshotted = true;
+  } catch (err) {
+    // Next boot catch-up or tomorrow's pass retries; one missed day is a gap
+    // in the series, never a crash of the whole metrics run.
+    console.error(`dailyMetrics: account snapshot failed: ${describe(err)}`);
+  }
 }
 
 async function discover(
@@ -242,7 +295,7 @@ export function msUntilNextUtcHour(now: Date, hourUtc: number): number {
   return next.getTime() - now.getTime();
 }
 
-export function startDailyMetrics(opts: DailyMetricsOptions): () => void {
+export function startDailyMetrics(opts: DailyMetricsOptions): () => Promise<void> {
   const deps: DailyMetricsDeps = {
     selfXUserId: opts.selfXUserId,
     clientId: opts.clientId,
@@ -250,19 +303,23 @@ export function startDailyMetrics(opts: DailyMetricsOptions): () => void {
   };
   const hourUtc = opts.hourUtc ?? DEFAULT_HOUR_UTC;
   let timer: ReturnType<typeof setTimeout> | null = null;
-  let running = false;
+  let current: Promise<void> | null = null;
   let stopped = false;
 
   const safeRun = async (): Promise<void> => {
-    if (running) return;
-    running = true;
     try {
       await runDailyMetrics(deps);
     } catch (err) {
       console.error('dailyMetrics: run crashed:', describe(err));
     } finally {
-      running = false;
+      beat(DAILY_METRICS_HEARTBEAT);
+      current = null;
     }
+  };
+
+  const runOnce = (): Promise<void> => {
+    if (!current) current = safeRun();
+    return current;
   };
 
   // Re-arm a setTimeout to the next fire time each run, rather than a fixed 24h
@@ -275,7 +332,7 @@ export function startDailyMetrics(opts: DailyMetricsOptions): () => void {
         `(~${String(hourUtc).padStart(2, '0')}:00 UTC)`,
     );
     timer = setTimeout(() => {
-      void safeRun().finally(arm);
+      void runOnce().finally(arm);
     }, delay);
   };
 
@@ -283,12 +340,15 @@ export function startDailyMetrics(opts: DailyMetricsOptions): () => void {
   // discover manual tweets since the checkpoint. Idempotent — retired rows are
   // never re-snapshotted and since_id keeps discovery cheap, so frequent
   // restarts don't multiply cost.
-  void safeRun();
+  void runOnce();
   arm();
 
-  return () => {
+  // Stop = clear the timer AND drain the in-flight run, so a deploy restart
+  // can't kill the process between a billed batch read and its retire commit.
+  return async () => {
     stopped = true;
     if (timer) clearTimeout(timer);
+    await (current ?? Promise.resolve());
   };
 }
 

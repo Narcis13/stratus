@@ -3,19 +3,32 @@
 // Status lifecycle:
 //   draft       no scheduled_for; not eligible for the publisher worker
 //   pending     scheduled_for set; publisher will pick it up at that minute
+//   publishing  claimed by the publisher, X call in flight (or outcome unknown
+//               after a 5xx/network error) — locked here; resolve manually via
+//               SQL or wait for reconcile if it's stuck
 //   posted      publisher succeeded — locked from edits/deletes here
 //   failed      publisher hit X — keep the row so user can edit & retry
 //   cancelled   user explicitly soft-cancelled (PATCH); hard DELETE removes the row entirely
 //
 // `posted` rows are write-locked: the API has no business unpublishing tweets.
+// `publishing` rows are locked too: editing a row whose X outcome is unresolved
+// risks a double post.
+//
+// URL guard: a `pending` row whose text matches the URL regex would be billed
+// at $0.20 instead of $0.015 — createPost refuses it, so the row would just die
+// at its scheduled minute (a silently lost posting slot). Reject at schedule
+// time instead. Drafts may hold URLs; promoting one to pending re-checks.
 
 import { type SQL, and, eq, gte, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { scheduledPosts } from '../db/schema.ts';
+import { containsUrl } from '../endpoints.ts';
 
-const STATUSES = ['draft', 'pending', 'posted', 'failed', 'cancelled'] as const;
+const STATUSES = ['draft', 'pending', 'publishing', 'posted', 'failed', 'cancelled'] as const;
 type Status = (typeof STATUSES)[number];
+// States a client may write. `publishing`/`posted` are worker-owned.
+const WRITABLE_STATUSES = ['draft', 'pending', 'failed', 'cancelled'] as const;
 
 export const calendar = new Hono();
 
@@ -43,6 +56,15 @@ calendar.post('/posts/scheduled', async (c) => {
 
   if (status === 'pending' && !scheduledFor) {
     return c.json({ error: 'scheduled_for_required_when_pending' }, 400);
+  }
+  if (status === 'pending' && containsUrl(text)) {
+    return c.json(
+      {
+        error: 'url_in_text',
+        hint: 'A URL in the post text is billed at $0.20 (13x). Move the link to a reply, or save as a draft.',
+      },
+      400,
+    );
   }
 
   const [row] = await db
@@ -102,6 +124,7 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
   const [existing] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, id));
   if (!existing) return c.json({ error: 'not_found' }, 404);
   if (existing.status === 'posted') return c.json({ error: 'cannot_edit_posted' }, 409);
+  if (existing.status === 'publishing') return c.json({ error: 'cannot_edit_publishing' }, 409);
 
   const updates: Partial<typeof scheduledPosts.$inferInsert> = {};
 
@@ -123,7 +146,9 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
   }
   if (body.status !== undefined) {
     if (!isStatus(body.status)) return c.json({ error: 'invalid_status' }, 400);
-    if (body.status === 'posted') return c.json({ error: 'cannot_set_posted_via_patch' }, 400);
+    if (!(WRITABLE_STATUSES as readonly string[]).includes(body.status)) {
+      return c.json({ error: 'status_not_settable_via_patch' }, 400);
+    }
     updates.status = body.status;
   }
 
@@ -132,6 +157,16 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     updates.scheduledFor !== undefined ? updates.scheduledFor : existing.scheduledFor;
   if (finalStatus === 'pending' && !finalScheduledFor) {
     return c.json({ error: 'scheduled_for_required_when_pending' }, 400);
+  }
+  const finalText = updates.text ?? existing.text;
+  if (finalStatus === 'pending' && containsUrl(finalText)) {
+    return c.json(
+      {
+        error: 'url_in_text',
+        hint: 'A URL in the post text is billed at $0.20 (13x). Move the link to a reply, or save as a draft.',
+      },
+      400,
+    );
   }
 
   if (Object.keys(updates).length === 0) return c.json(existing);
@@ -153,6 +188,7 @@ calendar.delete('/posts/scheduled/:id', async (c) => {
   const [existing] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, id));
   if (!existing) return c.json({ error: 'not_found' }, 404);
   if (existing.status === 'posted') return c.json({ error: 'cannot_delete_posted' }, 409);
+  if (existing.status === 'publishing') return c.json({ error: 'cannot_delete_publishing' }, 409);
 
   await db.delete(scheduledPosts).where(eq(scheduledPosts.id, id));
   return c.body(null, 204);

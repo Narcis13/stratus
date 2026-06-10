@@ -6,10 +6,10 @@
 // doesn't have to make a second call to render axes and "tracking stopped"
 // state.
 
-import { asc, desc, eq, inArray } from 'drizzle-orm';
+import { asc, desc, eq, gte, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { metricsSnapshots, postsPublished } from '../db/schema.ts';
+import { accountSnapshots, metricsSnapshots, postsPublished } from '../db/schema.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 
@@ -102,14 +102,92 @@ metrics.get('/metrics/posts', async (c) => {
   return c.json({ count: posts.length, posts });
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export interface AccountSnapshotRow {
+  snapshotAt: Date;
+  followersCount: number;
+  followingCount: number;
+  tweetCount: number;
+  listedCount: number;
+}
+
+export interface AccountSeriesPoint extends AccountSnapshotRow {
+  /** Change since the previous snapshot; null on the first point. */
+  deltas: { followers: number; following: number; tweets: number; listed: number } | null;
+  /** My posts/replies published in (prev snapshot, this snapshot] — what a
+   *  followers delta is attributable to. First point uses a 24h lookback. */
+  activity: { posts: number; replies: number };
+}
+
+export function buildAccountSeries(
+  snapshots: AccountSnapshotRow[],
+  published: Array<{ postedAt: Date; isReply: boolean }>,
+): AccountSeriesPoint[] {
+  const ordered = [...snapshots].sort((a, b) => a.snapshotAt.getTime() - b.snapshotAt.getTime());
+
+  return ordered.map((s, i) => {
+    const prev = i > 0 ? ordered[i - 1] : undefined;
+    const windowStart = prev ? prev.snapshotAt.getTime() : s.snapshotAt.getTime() - DAY_MS;
+    const windowEnd = s.snapshotAt.getTime();
+
+    let posts = 0;
+    let replies = 0;
+    for (const p of published) {
+      const t = p.postedAt.getTime();
+      if (t > windowStart && t <= windowEnd) {
+        if (p.isReply) replies++;
+        else posts++;
+      }
+    }
+
+    return {
+      ...s,
+      deltas: prev
+        ? {
+            followers: s.followersCount - prev.followersCount,
+            following: s.followingCount - prev.followingCount,
+            tweets: s.tweetCount - prev.tweetCount,
+            listed: s.listedCount - prev.listedCount,
+          }
+        : null,
+      activity: { posts, replies },
+    };
+  });
+}
+
+// The mission KPI: daily follower counts with deltas, each day joined against
+// how many posts/replies went out in that snapshot window so a spike is
+// attributable. One row per UTC day, written by the dailyMetrics 03:00 pass.
+metrics.get('/metrics/account', async (c) => {
+  const snaps = await db
+    .select({
+      snapshotAt: accountSnapshots.snapshotAt,
+      followersCount: accountSnapshots.followersCount,
+      followingCount: accountSnapshots.followingCount,
+      tweetCount: accountSnapshots.tweetCount,
+      listedCount: accountSnapshots.listedCount,
+    })
+    .from(accountSnapshots)
+    .orderBy(asc(accountSnapshots.snapshotAt));
+
+  const first = snaps[0];
+  const published = first
+    ? await db
+        .select({ postedAt: postsPublished.postedAt, isReply: postsPublished.isReply })
+        .from(postsPublished)
+        .where(gte(postsPublished.postedAt, new Date(first.snapshotAt.getTime() - DAY_MS)))
+    : [];
+
+  const series = buildAccountSeries(snaps, published);
+  return c.json({ count: series.length, latest: series.at(-1) ?? null, series });
+});
+
 metrics.get('/metrics/:tweetId', async (c) => {
   const tweetId = c.req.param('tweetId');
   if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
 
-  const [post] = await db
-    .select()
-    .from(postsPublished)
-    .where(eq(postsPublished.tweetId, tweetId));
+  const [post] = await db.select().from(postsPublished).where(eq(postsPublished.tweetId, tweetId));
   if (!post) return c.json({ error: 'not_found' }, 404);
 
   const snapshots = await db

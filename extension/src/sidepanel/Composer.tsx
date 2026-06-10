@@ -25,7 +25,7 @@ export function ComposerPanel({
   const [original, setOriginal] = useState<ScheduledPost | null>(null);
 
   const isEditing = editingId !== null;
-  const isLocked = original?.status === 'posted';
+  const isLocked = original?.status === 'posted' || original?.status === 'publishing';
 
   const reset = useCallback(() => {
     setText('');

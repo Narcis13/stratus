@@ -4,12 +4,14 @@ import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
+import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
 
-type Tab = 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
+type Tab = 'today' | 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'today', label: 'Today' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
   { id: 'harvest', label: 'Harvest' },
@@ -20,7 +22,7 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function App(): JSX.Element {
   const { settings, loading } = useSettings();
-  const [tab, setTab] = useState<Tab>('calendar');
+  const [tab, setTab] = useState<Tab>('today');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -63,6 +65,8 @@ export function App(): JSX.Element {
           <div className="panel">
             <p className="muted">Configure API URL and bearer token first.</p>
           </div>
+        ) : activeTab === 'today' ? (
+          <TodayPanel key={`today-${refreshKey}`} settings={settings} />
         ) : activeTab === 'calendar' ? (
           <CalendarPanel key={`cal-${refreshKey}`} settings={settings} onEdit={startEdit} />
         ) : activeTab === 'composer' ? (

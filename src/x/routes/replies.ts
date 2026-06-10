@@ -2,8 +2,9 @@
 // Mounted under `/x` by `mountX` in ../index.ts.
 //
 // Routes:
-//   POST   /replies/generate   body: { context, systemPromptOverride?, model?, reasoningEffort? }
+//   POST   /replies/generate   body: { context, idea?, systemPromptOverride?, model?, reasoningEffort? }
 //   GET    /replies            ?status=&sourceAuthor=&limit=&since=
+//   GET    /replies/outcomes   ?limit=&since=   posted drafts joined to their metrics
 //   GET    /replies/:id
 //   PATCH  /replies/:id        body: { replyTextEdited?, status?, postedTweetId? }
 //   DELETE /replies/:id
@@ -12,21 +13,33 @@
 // The denormalized `costUsd` column on `reply_drafts` is a UI convenience —
 // do NOT double-log here.
 
-import { type SQL, and, desc, eq, gte } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import type { ReasoningEffort } from '../../grok/index.ts';
-import { replyDrafts } from '../db/schema.ts';
-import { type PostContext, buildGrokInput } from '../replies/prompt.ts';
+import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
+import {
+  type PostContext,
+  type PostSignals,
+  REPLY_VARIANTS_SCHEMA,
+  type ReplyVariant,
+  buildGrokInput,
+  parseReplyVariants,
+  passesSpecificityGate,
+} from '../replies/prompt.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
-// (~280 chars). This just has to clear a low-effort reasoning pass plus the
-// reply so a draft never gets truncated mid-sentence. Billed by actual tokens
-// used, so headroom here costs nothing unless the model actually fills it.
-const MAX_OUTPUT_TOKENS = 2000;
+// (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
+// that xAI does not count reasoning tokens against this cap (a low-effort
+// pass of ~520 reasoning tokens completed fine under a 350 cap).
+const MAX_OUTPUT_TOKENS = 350;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: ReasoningEffort = 'low';
+const MAX_IDEA_LENGTH = 2000;
+// Stable key so repeat drafts land on the same xAI server — the ~17.5KB
+// template is a cacheable prefix (context + idea sit at the very end).
+const PROMPT_CACHE_KEY = 'stratus-x-reply-draft';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -47,9 +60,13 @@ const ALLOWED_TRANSITIONS: Record<Status, readonly Status[]> = {
 
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
+// Outcomes feed the BAND recalibration crosstab, which wants the full posted
+// history (≥100 rows before thresholds move) — higher cap than the list view.
+const MAX_OUTCOMES_LIMIT = 1000;
 
 interface RawBody {
   context?: unknown;
+  idea?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
   reasoningEffort?: unknown;
@@ -76,6 +93,15 @@ replies.post('/replies/generate', async (c) => {
     systemOverride = body.systemPromptOverride;
   }
 
+  let idea: string | undefined;
+  if (body.idea !== undefined && body.idea !== null) {
+    if (typeof body.idea !== 'string' || body.idea.length > MAX_IDEA_LENGTH) {
+      return c.json({ error: 'invalid_idea' }, 400);
+    }
+    const trimmed = body.idea.trim();
+    if (trimmed !== '') idea = trimmed;
+  }
+
   let model: string | undefined;
   if (body.model !== undefined && body.model !== null) {
     if (typeof body.model !== 'string' || body.model.trim() === '') {
@@ -93,17 +119,41 @@ replies.post('/replies/generate', async (c) => {
     reasoningEffort = r;
   }
 
-  const messages = buildGrokInput(ctx, systemOverride);
+  const messages = buildGrokInput(ctx, systemOverride, idea);
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
-  try {
-    result = await askGrok({
+  const callGrok = (): ReturnType<typeof askGrok> =>
+    askGrok({
       ...(model !== undefined ? { model } : {}),
       messages,
       reasoningEffort,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
+      jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
+      promptCacheKey: PROMPT_CACHE_KEY,
     });
+
+  let result: Awaited<ReturnType<typeof askGrok>>;
+  let costUsd: number;
+  let variants: ReplyVariant[] | null;
+  try {
+    result = await callGrok();
+    costUsd = result.costUsd;
+    variants = parseReplyVariants(result.text);
+
+    // Specificity gate (§7.1): if no variant carries a digit, a first-person
+    // marker, or a named tool, burn exactly one regenerate. Both calls are
+    // already cost-logged by askGrok; we just sum the draft's denormalized
+    // costUsd. A second all-generic round ships anyway — the human edits.
+    const someSpecific = variants?.some((v) => passesSpecificityGate(v.text)) ?? false;
+    if (variants === null || !someSpecific) {
+      const retry = await callGrok();
+      costUsd += retry.costUsd;
+      const retryVariants = parseReplyVariants(retry.text);
+      if (retryVariants !== null) {
+        result = retry;
+        variants = retryVariants;
+      }
+    }
   } catch (err) {
     if (err instanceof GrokApiError) {
       return c.json(
@@ -123,6 +173,15 @@ replies.post('/replies/generate', async (c) => {
     return c.json({ error: 'generate_failed', detail }, 502);
   }
 
+  if (variants === null) {
+    return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+  }
+
+  // Primary pick = first variant that clears the gate; the rest ride along in
+  // `variants` for the panel's picker.
+  const primary = variants.find((v) => passesSpecificityGate(v.text)) ?? variants[0];
+  if (!primary) return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+
   const [row] = await db
     .insert(replyDrafts)
     .values({
@@ -133,11 +192,13 @@ replies.post('/replies/generate', async (c) => {
       sourceUrl: ctx.url,
       sourcePostedAt: new Date(ctx.postedAt),
       contextSnapshot: ctx,
-      replyText: result.text.trim(),
+      replyText: primary.text,
+      variants,
+      idea: idea ?? null,
       model: result.model,
       promptTokens: result.usage.inputTokens,
       completionTokens: result.usage.outputTokens,
-      costUsd: result.costUsd.toFixed(5),
+      costUsd: costUsd.toFixed(5),
       grokRequestId: result.requestId,
       systemPromptOverride: systemOverride ?? null,
       status: 'generated',
@@ -188,6 +249,194 @@ replies.get('/replies', async (c) => {
     .limit(limit);
 
   return c.json(rows);
+});
+
+// ---------------------------------------------------------------- outcomes
+
+// First-party calibration data (OVERHAUL-PLAN §6.2): every posted draft joined
+// to its published row and latest metrics snapshot via postedTweetId. All $0 —
+// pure SQL over already-billed dailyMetrics reads. `signals` is the band
+// verdict stamped at capture time; `outcome` stays null until the 03:00 UTC
+// pass has snapshotted the reply (or while postedTweetId is unlinked).
+// Registered before `/replies/:id` so "outcomes" isn't parsed as an id.
+
+interface OutcomeDraftRow {
+  id: string;
+  sourceTweetId: string;
+  sourceAuthorUsername: string;
+  sourceText: string;
+  sourceUrl: string;
+  sourcePostedAt: Date | null;
+  contextSnapshot: unknown;
+  replyText: string;
+  replyTextEdited: string | null;
+  postedTweetId: string | null;
+  createdAt: Date;
+}
+
+interface OutcomePostRow {
+  tweetId: string;
+  postedAt: Date;
+  retired: boolean;
+}
+
+interface OutcomeSnapRow {
+  tweetId: string;
+  snapshotAt: Date;
+  publicMetrics: unknown;
+  nonPublicMetrics: unknown;
+}
+
+export interface ReplyOutcome {
+  draftId: string;
+  sourceTweetId: string;
+  sourceAuthorUsername: string;
+  sourceText: string;
+  sourceUrl: string;
+  sourcePostedAt: Date | null;
+  /** What actually went out: the human edit when there is one. */
+  replyText: string;
+  /** Band verdict + classifier inputs stamped at capture; null on old drafts. */
+  signals: PostSignals | null;
+  /** Capture-time metrics of the tweet replied to (from contextSnapshot). */
+  sourceMetrics: PostContext['metrics'] | null;
+  draftCreatedAt: Date;
+  postedTweetId: string | null;
+  postedAt: Date | null;
+  retired: boolean | null;
+  measuredAt: Date | null;
+  outcome: {
+    views: number | null;
+    likes: number | null;
+    replies: number | null;
+    retweets: number | null;
+    quotes: number | null;
+    bookmarks: number | null;
+    /** user_profile_clicks — the follow-precursor, free on the owned read. */
+    profileVisits: number | null;
+  } | null;
+}
+
+// Pure join/shape — exported for unit tests. `snaps` must arrive newest-first;
+// the first row seen per tweet is its latest snapshot (same pattern as
+// routes/metrics.ts listPerformance).
+export function buildReplyOutcomes(
+  drafts: OutcomeDraftRow[],
+  posts: OutcomePostRow[],
+  snaps: OutcomeSnapRow[],
+): ReplyOutcome[] {
+  const postById = new Map(posts.map((p) => [p.tweetId, p]));
+  const latestSnap = new Map<string, OutcomeSnapRow>();
+  for (const s of snaps) if (!latestSnap.has(s.tweetId)) latestSnap.set(s.tweetId, s);
+
+  return drafts.map((d) => {
+    const ctx = d.contextSnapshot as Partial<PostContext> | null;
+    const post = d.postedTweetId ? postById.get(d.postedTweetId) : undefined;
+    const snap = d.postedTweetId ? latestSnap.get(d.postedTweetId) : undefined;
+    const pub = (snap?.publicMetrics ?? null) as Record<string, number> | null;
+    const priv = (snap?.nonPublicMetrics ?? null) as Record<string, number> | null;
+
+    return {
+      draftId: d.id,
+      sourceTweetId: d.sourceTweetId,
+      sourceAuthorUsername: d.sourceAuthorUsername,
+      sourceText: d.sourceText,
+      sourceUrl: d.sourceUrl,
+      sourcePostedAt: d.sourcePostedAt,
+      replyText: d.replyTextEdited ?? d.replyText,
+      signals: ctx?.signals ?? null,
+      sourceMetrics: ctx?.metrics ?? null,
+      draftCreatedAt: d.createdAt,
+      postedTweetId: d.postedTweetId,
+      postedAt: post?.postedAt ?? null,
+      retired: post?.retired ?? null,
+      measuredAt: snap?.snapshotAt ?? null,
+      outcome: snap
+        ? {
+            views: pub?.impression_count ?? priv?.impression_count ?? null,
+            likes: pub?.like_count ?? null,
+            replies: pub?.reply_count ?? null,
+            retweets: pub?.retweet_count ?? null,
+            quotes: pub?.quote_count ?? null,
+            bookmarks: pub?.bookmark_count ?? null,
+            profileVisits: priv?.user_profile_clicks ?? null,
+          }
+        : null,
+    };
+  });
+}
+
+replies.get('/replies/outcomes', async (c) => {
+  const limitStr = c.req.query('limit');
+  const sinceStr = c.req.query('since');
+
+  const filters: SQL[] = [eq(replyDrafts.status, 'posted')];
+  if (sinceStr !== undefined) {
+    const since = new Date(sinceStr);
+    if (Number.isNaN(since.getTime())) return c.json({ error: 'invalid_since' }, 400);
+    filters.push(gte(replyDrafts.createdAt, since));
+  }
+
+  let limit = MAX_LIST_LIMIT;
+  if (limitStr !== undefined) {
+    const n = Number(limitStr);
+    if (!Number.isInteger(n) || n < 1) return c.json({ error: 'invalid_limit' }, 400);
+    limit = Math.min(MAX_OUTCOMES_LIMIT, n);
+  }
+
+  const drafts = await db
+    .select({
+      id: replyDrafts.id,
+      sourceTweetId: replyDrafts.sourceTweetId,
+      sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
+      sourceText: replyDrafts.sourceText,
+      sourceUrl: replyDrafts.sourceUrl,
+      sourcePostedAt: replyDrafts.sourcePostedAt,
+      contextSnapshot: replyDrafts.contextSnapshot,
+      replyText: replyDrafts.replyText,
+      replyTextEdited: replyDrafts.replyTextEdited,
+      postedTweetId: replyDrafts.postedTweetId,
+      createdAt: replyDrafts.createdAt,
+    })
+    .from(replyDrafts)
+    .where(and(...filters))
+    .orderBy(desc(replyDrafts.createdAt))
+    .limit(limit);
+
+  const ids = drafts.flatMap((d) => (d.postedTweetId ? [d.postedTweetId] : []));
+
+  const posts = ids.length
+    ? await db
+        .select({
+          tweetId: postsPublished.tweetId,
+          postedAt: postsPublished.postedAt,
+          retired: postsPublished.retired,
+        })
+        .from(postsPublished)
+        .where(inArray(postsPublished.tweetId, ids))
+    : [];
+
+  const snaps = ids.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          snapshotAt: metricsSnapshots.snapshotAt,
+          publicMetrics: metricsSnapshots.publicMetrics,
+          nonPublicMetrics: metricsSnapshots.nonPublicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, ids))
+        .orderBy(desc(metricsSnapshots.snapshotAt))
+    : [];
+
+  const outcomes = buildReplyOutcomes(drafts, posts, snaps);
+  const measured = outcomes.filter((o) => o.outcome !== null).length;
+  return c.json({
+    count: outcomes.length,
+    measured,
+    unlinked: outcomes.filter((o) => o.postedTweetId === null).length,
+    outcomes,
+  });
 });
 
 replies.get('/replies/:id', async (c) => {
@@ -285,7 +534,8 @@ function isStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
 }
 
-function parseContext(value: unknown): PostContext | { error: string } {
+// Exported for unit tests (pure).
+export function parseContext(value: unknown): PostContext | { error: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { error: 'context_required' };
   }
@@ -339,6 +589,14 @@ function parseContext(value: unknown): PostContext | { error: string } {
     topComments.push({ author: r.author, handle: r.handle, text: r.text });
   }
 
+  // Optional capture-time band signals — absent on older extension builds.
+  let signals: PostSignals | undefined;
+  if (v.signals !== undefined && v.signals !== null) {
+    const parsed = parseSignals(v.signals);
+    if ('error' in parsed) return parsed;
+    signals = parsed.signals;
+  }
+
   return {
     tweetId,
     handle: handleRaw,
@@ -348,5 +606,36 @@ function parseContext(value: unknown): PostContext | { error: string } {
     postedAt: v.postedAt,
     metrics,
     topComments,
+    ...(signals ? { signals } : {}),
   };
+}
+
+function parseSignals(value: unknown): { signals: PostSignals } | { error: string } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { error: 'invalid_context_signals' };
+  }
+  const s = value as Record<string, unknown>;
+
+  const band = s.band;
+  if (band !== null && band !== 'hot' && band !== 'warm' && band !== 'skip') {
+    return { error: 'invalid_context_signals_band' };
+  }
+
+  const nums: Record<'views' | 'replies' | 'ageMin' | 'vpm', number> = {
+    views: 0,
+    replies: 0,
+    ageMin: 0,
+    vpm: 0,
+  };
+  for (const k of ['views', 'replies', 'ageMin', 'vpm'] as const) {
+    const n = s[k];
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+      return { error: `invalid_context_signals_${k}` };
+    }
+    nums[k] = n;
+  }
+
+  if (typeof s.bait !== 'boolean') return { error: 'invalid_context_signals_bait' };
+
+  return { signals: { band, ...nums, bait: s.bait } };
 }

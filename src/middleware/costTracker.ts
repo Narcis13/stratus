@@ -7,6 +7,7 @@
 // the X call that produced it. A missed row shows up as a gap in the dashboard,
 // not a thrown publish.
 
+import { sql } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { costEvents } from '../db/shared-schema.ts';
 import type { CostInfo } from '../x/client.ts';
@@ -19,9 +20,26 @@ const priceTables: Record<string, PriceFn> = {
   // linkedin: linkedinPriceFor,  // when src/linkedin/pricing.ts lands
 };
 
-export function makeOnCost(platform: string): (info: CostInfo) => void {
+// Soft daily budgets by platform, registered via makeOnCost opts. Soft = log
+// loudly and flag in /cost responses; never block a call (one wallet, one user
+// — the dashboard is the cap).
+const dailyBudgets = new Map<string, number>();
+
+export function getDailyBudgetUsd(platform: string): number | null {
+  return dailyBudgets.get(platform) ?? null;
+}
+
+export interface OnCostOptions {
+  /** Soft daily (UTC) budget in USD — crossing it logs loudly, never blocks. */
+  dailyBudgetUsd?: number;
+}
+
+export function makeOnCost(platform: string, opts: OnCostOptions = {}): (info: CostInfo) => void {
   const price = priceTables[platform];
   if (!price) throw new Error(`costTracker: no price table for platform '${platform}'`);
+
+  const budget = opts.dailyBudgetUsd;
+  if (budget != null && budget > 0) dailyBudgets.set(platform, budget);
 
   return (info) => {
     // `info.items` is the result count xFetch read off the response body, so
@@ -41,8 +59,29 @@ export function makeOnCost(platform: string): (info: CostInfo) => void {
         requestId: null,
       })
       .execute()
+      .then(() => checkBudget(platform))
       .catch((err) => {
         console.error('costTracker: insert failed:', err instanceof Error ? err.message : err);
       });
   };
+}
+
+async function checkBudget(platform: string): Promise<void> {
+  const budget = dailyBudgets.get(platform);
+  if (budget == null) return;
+
+  const from = new Date();
+  from.setUTCHours(0, 0, 0, 0);
+  const [row] = await db
+    .select({ total: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)` })
+    .from(costEvents)
+    .where(sql`${costEvents.platform} = ${platform} and ${costEvents.ts} >= ${from}`);
+
+  const total = Number(row?.total ?? 0);
+  if (total >= budget) {
+    console.error(
+      `BUDGET WATCHDOG: '${platform}' spend today is $${total.toFixed(5)} — over the ` +
+        `$${budget.toFixed(2)}/day soft budget. See GET /cost/today for the breakdown.`,
+    );
+  }
 }

@@ -42,6 +42,18 @@ if ! ssh "$REMOTE" "test -f $APPDIR/.env"; then
   echo "    ssh $REMOTE 'nano $APPDIR/.env'"
 fi
 
+echo "==> diff server .env keys against .env.example"
+EXPECTED_KEYS=$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' .env.example | cut -d= -f1 | sort)
+SERVER_KEYS=$(ssh "$REMOTE" "grep -E '^[A-Za-z_][A-Za-z0-9_]*=' $APPDIR/.env | cut -d= -f1" | sort)
+MISSING_KEYS=$(comm -23 <(echo "$EXPECTED_KEYS") <(echo "$SERVER_KEYS"))
+if [[ -n "$MISSING_KEYS" ]]; then
+  echo "    WARNING: server .env is missing keys present in .env.example:"
+  echo "$MISSING_KEYS" | sed 's/^/      /'
+  echo "    add them: ssh $REMOTE 'nano $APPDIR/.env'  (then restart: systemctl restart stratus)"
+else
+  echo "    server .env has every key from .env.example"
+fi
+
 echo "==> bun install"
 ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && bun install --frozen-lockfile'"
 

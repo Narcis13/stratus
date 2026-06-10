@@ -9,6 +9,7 @@ import {
 import {
   clearLastDraft,
   setLastDraft,
+  useIdea,
   useLastDraft,
   useSystemPromptOverride,
 } from './replyMasterStorage.ts';
@@ -41,6 +42,7 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
     loading: systemPromptLoading,
     save: saveSystemPrompt,
   } = useSystemPromptOverride();
+  const { value: idea, loading: ideaLoading, save: saveIdea } = useIdea();
   const [activeDraft, setActiveDraft] = useState<ReplyDraft | null>(null);
   const [history, setHistory] = useState<ReplyDraft[]>([]);
   const [statusFilter, setStatusFilter] = useState<'' | ReplyDraftStatus>('');
@@ -145,6 +147,8 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
         </p>
       )}
 
+      <IdeaSteer value={idea} loading={ideaLoading} onSave={saveIdea} />
+
       {activeDraft && (
         <DraftEditor
           key={activeDraft.id}
@@ -152,6 +156,8 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
           settings={settings}
           isLive={lastShownStorageId.current === activeDraft.id}
           systemPromptOverride={systemPromptOverride}
+          idea={idea}
+          onIdeaConsumed={() => saveIdea('')}
           onChanged={onDraftChanged}
           onDiscarded={onDraftDiscarded}
           onRegenerated={onRegenerated}
@@ -221,6 +227,8 @@ interface EditorProps {
   settings: Settings;
   isLive: boolean;
   systemPromptOverride: string;
+  idea: string;
+  onIdeaConsumed: () => void | Promise<void>;
   onChanged: (row: ReplyDraft) => void | Promise<void>;
   onDiscarded: (id: string) => void | Promise<void>;
   onRegenerated: (row: ReplyDraft) => void | Promise<void>;
@@ -232,6 +240,8 @@ function DraftEditor({
   settings,
   isLive,
   systemPromptOverride,
+  idea,
+  onIdeaConsumed,
   onChanged,
   onDiscarded,
   onRegenerated,
@@ -308,11 +318,14 @@ function DraftEditor({
       // looking at to steer the next call.
       const override =
         systemPromptOverride.trim() !== '' ? systemPromptOverride : draft.systemPromptOverride;
+      const steer = idea.trim();
       const next = await api.replies.generate(settings, {
         context: ctx,
         ...(override ? { systemPromptOverride: override } : {}),
+        ...(steer !== '' ? { idea: steer } : {}),
       });
       await onRegenerated(next);
+      if (steer !== '') await onIdeaConsumed();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Regenerate failed');
     } finally {
@@ -413,11 +426,33 @@ function DraftEditor({
               ))}
             </ul>
           )}
+          {draft.idea && (
+            <div className="muted">
+              <strong>Steer:</strong> {draft.idea}
+            </div>
+          )}
           <a className="muted" href={draft.sourceUrl} target="_blank" rel="noreferrer">
             Open on x.com →
           </a>
         </div>
       </details>
+
+      {draft.variants && draft.variants.length > 1 && (
+        <div className="reply-variants">
+          {draft.variants.map((v, i) => (
+            <button
+              key={`${v.angle}-${i}`}
+              type="button"
+              className={`reply-variant${text === v.text ? ' active' : ''}`}
+              onClick={() => setText(v.text)}
+              disabled={isTerminal || busy !== null}
+              title={v.text}
+            >
+              V{i + 1} · {v.angle}
+            </button>
+          ))}
+        </div>
+      )}
 
       <label className="field">
         <span>
@@ -503,6 +538,65 @@ function DraftEditor({
         </div>
       )}
     </div>
+  );
+}
+
+// The per-tweet steer. Persisted to chrome.storage so the page button picks it
+// up; consumed (cleared) by whichever surface fires the generate it steered.
+function IdeaSteer({
+  value,
+  loading,
+  onSave,
+}: {
+  value: string;
+  loading: boolean;
+  onSave: (next: string) => Promise<void>;
+}): JSX.Element {
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
+  const lastSavedRef = useRef(value);
+
+  // Re-sync when storage changes elsewhere — most importantly when the content
+  // script consumes the idea after a successful generate.
+  useEffect(() => {
+    setDraft(value);
+    lastSavedRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (draft === lastSavedRef.current) return;
+    const t = setTimeout(() => {
+      void (async () => {
+        setSaving(true);
+        try {
+          await onSave(draft);
+          lastSavedRef.current = draft;
+        } finally {
+          setSaving(false);
+        }
+      })();
+    }, SYSTEM_PROMPT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [draft, loading, onSave]);
+
+  return (
+    <label className="field reply-idea">
+      <span>
+        Idea steer{' '}
+        <span className="muted">(optional — used on the next generate, then cleared)</span>
+      </span>
+      <textarea
+        className="reply-textarea"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={2}
+        placeholder="Seed for the next draft — Romanian is fine, the reply comes out in English."
+        disabled={loading}
+        spellCheck
+      />
+      {saving && <small className="muted">saving…</small>}
+    </label>
   );
 }
 
@@ -644,8 +738,7 @@ function HistoryGroup({
 
   // If the active draft is in this group, force-open it so the user sees the
   // highlight even on older days.
-  const containsActive =
-    activeId !== null && group.rows.some((r) => r.id === activeId);
+  const containsActive = activeId !== null && group.rows.some((r) => r.id === activeId);
   const effectiveOpen = open || containsActive;
 
   const visible = group.rows.slice(0, visibleCount);

@@ -33,5 +33,29 @@ if (import.meta.main) {
   const port = Number.parseInt(process.env.PORT ?? '3000', 10);
   const server = Bun.serve({ port, fetch: app.fetch });
   console.log(`stratus listening on http://127.0.0.1:${server.port}`);
-  startXWorkers();
+  const workers = startXWorkers();
+
+  // Graceful shutdown: stop timers, drain any in-flight worker tick, then exit.
+  // Without this, a deploy restart can kill the process mid-createPost — the
+  // tweet ships but the row stays 'publishing'/'pending' (double-post window).
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received — draining workers…`);
+    // Backstop: systemd SIGKILLs at 90s; bail before then if a tick hangs.
+    const force = setTimeout(() => {
+      console.error('shutdown: drain timed out after 30s — exiting anyway');
+      process.exit(1);
+    }, 30_000);
+    force.unref();
+    void (async () => {
+      await workers.stop();
+      await server.stop();
+      console.log('shutdown: clean exit');
+      process.exit(0);
+    })();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }

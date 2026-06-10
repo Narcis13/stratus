@@ -42,6 +42,7 @@ const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
 const REPLY_SYSTEM_PROMPT_KEY = 'replyMaster:systemPromptOverride';
+const REPLY_IDEA_KEY = 'replyMaster:idea';
 const REPLY_TOP_COMMENTS_MAX = 10;
 const REPLY_BTN_LABEL = '🪄 Reply Master';
 const SAVE_BTN_LABEL = 'Save to stratus';
@@ -676,6 +677,11 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     if (topComments.length >= REPLY_TOP_COMMENTS_MAX) break;
   }
 
+  // Stamp the band verdict + classifier inputs at capture time, via the same
+  // readTweetSignals path the badge uses — the draft row becomes a labeled
+  // training example for recalibrating BAND from own outcomes (plan §6.2).
+  const sig = readTweetSignals(focusedArticle);
+
   return {
     tweetId: focusedTweetId,
     handle: permalink.username,
@@ -685,6 +691,7 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     postedAt,
     metrics,
     topComments,
+    ...(sig ? { signals: { band: classifyBand(sig), ...sig } } : {}),
   };
 }
 
@@ -729,10 +736,13 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   setReplyState(btn, 'working', 'Drafting…');
 
   let systemPromptOverride: string | undefined;
+  let idea: string | undefined;
   try {
-    const out = await chrome.storage.local.get(REPLY_SYSTEM_PROMPT_KEY);
+    const out = await chrome.storage.local.get([REPLY_SYSTEM_PROMPT_KEY, REPLY_IDEA_KEY]);
     const v = out[REPLY_SYSTEM_PROMPT_KEY];
     if (typeof v === 'string' && v.trim() !== '') systemPromptOverride = v;
+    const i = out[REPLY_IDEA_KEY];
+    if (typeof i === 'string' && i.trim() !== '') idea = i.trim();
   } catch (err) {
     console.warn('[stratus] reply master read override failed', err);
   }
@@ -741,7 +751,11 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     type: 'stratus/api',
     method: 'POST',
     path: '/x/replies/generate',
-    body: systemPromptOverride ? { context: ctx, systemPromptOverride } : { context: ctx },
+    body: {
+      context: ctx,
+      ...(systemPromptOverride ? { systemPromptOverride } : {}),
+      ...(idea ? { idea } : {}),
+    },
   };
 
   let res: ApiResponse<ReplyDraft> | undefined;
@@ -771,6 +785,8 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   try {
     await chrome.storage.local.set({ [REPLY_MASTER_STORAGE_KEY]: draft });
+    // The idea steered this draft; clear it so it can't leak into the next one.
+    if (idea) await chrome.storage.local.remove(REPLY_IDEA_KEY);
   } catch (err) {
     console.warn('[stratus] storage.set lastDraft failed', err);
   }
