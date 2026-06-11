@@ -6,7 +6,10 @@
 export type HarvestMode = 'posts' | 'replies';
 // 'all' scrapes the whole timeline (until bottom / max). 'today'/'yesterday'
 // keep only items whose timestamp falls on that local calendar day.
-export type HarvestScope = 'all' | 'today' | 'yesterday';
+// 'since-last' (§9.4) is the per-handle incremental cursor: keep only items
+// newer than the newest item of the previous completed run for this
+// handle+mode (chrome.storage.local); behaves like 'all' on the first run.
+export type HarvestScope = 'all' | 'today' | 'yesterday' | 'since-last';
 export type HarvestPace = 'slow' | 'human' | 'fast';
 
 export interface HarvestOptions {
@@ -43,7 +46,21 @@ export interface HarvestIngestRow {
   bookmarks: number;
   views: number;
   time: string | null;
+  // Content-shape columns (§9.4) — optional so older builds keep working.
+  hasPhoto?: boolean;
+  hasVideo?: boolean;
+  isQuote?: boolean;
+  textLen?: number;
+  lineBreaks?: number;
+  /** Replies mode: 1-based position inside the rendered group (1 = directly
+   *  under the true original; deeper = self-thread/chain pairing suspect). */
+  groupPosition?: number;
   orig?: HarvestIngestOrig;
+}
+
+// Per-handle incremental cursor (§9.4), stored in chrome.storage.local.
+export function harvestCursorKey(handle: string, mode: HarvestMode): string {
+  return `harvest:cursor:${handle.toLowerCase()}:${mode}`;
 }
 
 // Outcome of the upload, attached to the final 'done' event. The CSV download

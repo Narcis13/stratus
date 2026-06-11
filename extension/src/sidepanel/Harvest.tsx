@@ -25,6 +25,10 @@ const SCOPES: { id: HarvestScope; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
+  // §9.4 — incremental: only items newer than the last completed run for this
+  // handle+mode. First run scrapes like All, then each run picks up where the
+  // previous one ended.
+  { id: 'since-last', label: 'Since last' },
 ];
 
 const PACES: HarvestPace[] = ['slow', 'human', 'fast'];

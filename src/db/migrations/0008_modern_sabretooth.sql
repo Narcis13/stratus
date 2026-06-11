@@ -1,0 +1,19 @@
+ALTER TABLE "harvest_rows" ADD COLUMN "has_photo" boolean;--> statement-breakpoint
+ALTER TABLE "harvest_rows" ADD COLUMN "has_video" boolean;--> statement-breakpoint
+ALTER TABLE "harvest_rows" ADD COLUMN "is_quote" boolean;--> statement-breakpoint
+ALTER TABLE "harvest_rows" ADD COLUMN "text_len" integer;--> statement-breakpoint
+ALTER TABLE "harvest_rows" ADD COLUMN "line_breaks" integer;--> statement-breakpoint
+ALTER TABLE "harvest_rows" ADD COLUMN "group_position" integer;--> statement-breakpoint
+ALTER TABLE "metrics_snapshots" ADD COLUMN "age_at_snapshot_min" integer;--> statement-breakpoint
+ALTER TABLE "reply_drafts" ADD COLUMN "pillar" text;--> statement-breakpoint
+ALTER TABLE "scheduled_posts" ADD COLUMN "thread_id" uuid;--> statement-breakpoint
+ALTER TABLE "scheduled_posts" ADD COLUMN "thread_position" integer;--> statement-breakpoint
+ALTER TABLE "scheduled_posts" ADD COLUMN "pillar" text;--> statement-breakpoint
+ALTER TABLE "scheduled_posts" ADD COLUMN "quote_tweet_id" text;--> statement-breakpoint
+ALTER TABLE "voice_tweets" ADD COLUMN "hook_type" text;--> statement-breakpoint
+ALTER TABLE "voice_tweets" ADD COLUMN "skeleton" text;--> statement-breakpoint
+ALTER TABLE "voice_tweets" ADD COLUMN "line_break_pattern" text;--> statement-breakpoint
+ALTER TABLE "voice_tweets" ADD COLUMN "template_length" text;--> statement-breakpoint
+ALTER TABLE "voice_tweets" ADD COLUMN "device" text;--> statement-breakpoint
+ALTER TABLE "voice_tweets" ADD COLUMN "template_extracted_at" timestamp with time zone;--> statement-breakpoint
+CREATE INDEX "scheduled_posts_thread_idx" ON "scheduled_posts" USING btree ("thread_id","thread_position");

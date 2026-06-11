@@ -1,0 +1,143 @@
+// Money-path request tests (§9.6) over the real composed app — bearer auth,
+// CORS preflight, and the calendar/drafter validation guards. Every asserted
+// path fails (or short-circuits) BEFORE its first DB query or X/Grok call, so
+// `bun test` stays network-free. DB-backed end-to-end checks live in
+// scripts/smoke-authoring.ts / smoke-targets.ts / smoke-mentions.ts.
+
+import { describe, expect, test } from 'bun:test';
+import { app } from './app.ts';
+
+const TOKEN = process.env.API_TOKEN ?? '';
+const authed = TOKEN !== '';
+const AUTH = { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' };
+
+function futureIso(): string {
+  return new Date(Date.now() + 60 * 60 * 1000).toISOString();
+}
+
+describe('bearer auth', () => {
+  test('missing token → 401', async () => {
+    const res = await app.request('/x/posts/scheduled');
+    expect(res.status).toBe(401);
+  });
+
+  test('wrong token → 401', async () => {
+    const res = await app.request('/x/posts/scheduled', {
+      headers: { authorization: 'Bearer definitely-not-the-token' },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  test('cost dashboard is guarded too', async () => {
+    const res = await app.request('/cost/today');
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('cors preflight', () => {
+  test('chrome-extension origin short-circuits OPTIONS without a bearer', async () => {
+    const res = await app.request('/x/posts/scheduled', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'chrome-extension://abcdefghijklmnop',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization,content-type',
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get('access-control-allow-origin')).toBe(
+      'chrome-extension://abcdefghijklmnop',
+    );
+  });
+
+  test('unknown web origin gets no allow-origin header', async () => {
+    const res = await app.request('/x/posts/scheduled', {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://evil.example',
+        'access-control-request-method': 'POST',
+      },
+    });
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+  });
+});
+
+describe.if(authed)('calendar guards (§8.2 / §6.5)', () => {
+  test('pending post with URL → 400 url_in_text (the $0.20 surcharge guard)', async () => {
+    const res = await app.request('/x/posts/scheduled', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        text: 'new post, read this: https://example.com/article',
+        scheduledFor: futureIso(),
+        status: 'pending',
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('url_in_text');
+  });
+
+  test('thread head with URL → 400 url_in_text (link belongs in a tail segment)', async () => {
+    const res = await app.request('/x/posts/threads', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        segments: ['hook with https://example.com', 'second segment'],
+        scheduledFor: futureIso(),
+        status: 'pending',
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('url_in_text');
+  });
+
+  test('thread needs at least two segments', async () => {
+    const res = await app.request('/x/posts/threads', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ segments: ['only one'] }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('thread_needs_two_segments');
+  });
+
+  test('thread pending without scheduledFor → 400', async () => {
+    const res = await app.request('/x/posts/threads', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ segments: ['one', 'two'], status: 'pending' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test('create status cannot be worker-owned', async () => {
+    const res = await app.request('/x/posts/scheduled', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ text: 'hi', status: 'posted' }),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe.if(authed && Boolean(process.env.XAI_API_KEY))('drafter guards (§8.1/§8.5)', () => {
+  test('invalid pillar → 400 before any Grok spend', async () => {
+    const res = await app.request('/x/posts/draft', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ pillar: 'growth-hacks' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_pillar');
+  });
+
+  test('reup requires a numeric tweet id', async () => {
+    const res = await app.request('/x/posts/reup', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ tweetId: 'not-a-tweet-id' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
+  });
+});

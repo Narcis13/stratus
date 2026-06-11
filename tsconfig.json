@@ -17,5 +17,5 @@
     "noEmit": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*", "scripts/**/*", "drizzle.config.ts"]
 }

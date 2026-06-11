@@ -35,10 +35,23 @@ export const scheduledPosts = pgTable(
     errorClass: text('error_class'),
     errorDetail: text('error_detail'),
     source: text('source').notNull().default('api'),
+    // Threads (§8.2): segments share a thread_id; thread_position is 1-based.
+    // Only position 1 carries scheduled_for/status 'pending' — the publisher
+    // chains the rest as self-replies and drives their status itself.
+    threadId: uuid('thread_id'),
+    threadPosition: integer('thread_position'),
+    // Content pillar declared by the drafter (§8.4) — feeds /x/metrics/pillars.
+    pillar: text('pillar'),
+    // Self-quote re-up (§8.5): when set, the publisher posts this row as a
+    // quote tweet — only after verifying the quoted id is own via posts_published.
+    quoteTweetId: text('quote_tweet_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
   },
-  (t) => [index('scheduled_posts_status_scheduled_idx').on(t.status, t.scheduledFor)],
+  (t) => [
+    index('scheduled_posts_status_scheduled_idx').on(t.status, t.scheduledFor),
+    index('scheduled_posts_thread_idx').on(t.threadId, t.threadPosition),
+  ],
 );
 
 export const postsPublished = pgTable(
@@ -71,6 +84,10 @@ export const metricsSnapshots = pgTable(
     publicMetrics: jsonb('public_metrics'),
     nonPublicMetrics: jsonb('non_public_metrics'),
     organicMetrics: jsonb('organic_metrics'),
+    // Minutes between postedAt and this snapshot (§8.4). The daily pass reads
+    // tweets at anywhere from 3 to 27 hours old, so raw view counts aren't
+    // comparable across tweets without this. Null on pre-8.4 rows.
+    ageAtSnapshotMin: integer('age_at_snapshot_min'),
   },
   (t) => [index('metrics_snapshots_tweet_snapshot_idx').on(t.tweetId, t.snapshotAt.desc())],
 );
@@ -110,6 +127,23 @@ export const voiceAuthors = pgTable('voice_authors', {
   retired: boolean('retired').default(false).notNull(),
 });
 
+// Append-only follower-count series, one row per profile enrich (§7.4). The
+// profile scrape used to overwrite followers_count in place; keeping every
+// capture makes author momentum (followers/day) computable for the target
+// roster. Still $0 — rows only exist when the user clicks "Save author".
+export const voiceAuthorSnapshots = pgTable(
+  'voice_author_snapshots',
+  {
+    id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+    handle: text('handle')
+      .notNull()
+      .references(() => voiceAuthors.handle),
+    followersCount: integer('followers_count').notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('voice_author_snapshots_handle_captured_idx').on(t.handle, t.capturedAt.desc())],
+);
+
 export const voiceTweets = pgTable(
   'voice_tweets',
   {
@@ -127,6 +161,14 @@ export const voiceTweets = pgTable(
     savedAt: timestamp('saved_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }),
     retired: boolean('retired').default(false).notNull(),
+    // Template extraction (§8.3) — one Grok structured-output pass per tweet
+    // distills the *structure* (never the content) for the Remix workflow.
+    hookType: text('hook_type'),
+    skeleton: text('skeleton'),
+    lineBreakPattern: text('line_break_pattern'),
+    templateLength: text('template_length'),
+    device: text('device'),
+    templateExtractedAt: timestamp('template_extracted_at', { withTimezone: true }),
   },
   (t) => [index('voice_tweets_author_created_idx').on(t.authorHandle, t.createdAt.desc())],
 );
@@ -152,6 +194,9 @@ export const replyDrafts = pgTable(
     variants: jsonb('variants'),
     // The optional human steer sent with the generate call (often Romanian).
     idea: text('idea'),
+    // Content pillar (§8.4) — reply drafts rarely declare one today; the
+    // column exists so /x/metrics/pillars can aggregate both surfaces.
+    pillar: text('pillar'),
 
     model: text('model').notNull(),
     promptTokens: integer('prompt_tokens'),
@@ -171,6 +216,31 @@ export const replyDrafts = pgTable(
     index('reply_drafts_source_created_idx').on(t.sourceTweetId, t.createdAt.desc()),
     index('reply_drafts_status_created_idx').on(t.status, t.createdAt.desc()),
   ],
+);
+
+// Mention inbox (§7.5): mentions of me, pulled incrementally (since_id = max
+// stored tweet_id) by the daily pass and the on-demand refresh — owned reads,
+// $0.001/result. `status` drives the panel's Inbox: rows arrive 'unanswered';
+// the answered backfill flips them when one of my published replies targets
+// them, or the user marks them by hand. Replying stays manual paste — see
+// routes/mentions.ts for the Feb 2026 carve-out note.
+export const mentions = pgTable(
+  'mentions',
+  {
+    tweetId: text('tweet_id').primaryKey(),
+    authorId: text('author_id'),
+    authorUsername: text('author_username'),
+    authorName: text('author_name'),
+    text: text('text').notNull(),
+    postedAt: timestamp('posted_at', { withTimezone: true }).notNull(),
+    conversationId: text('conversation_id'),
+    inReplyToTweetId: text('in_reply_to_tweet_id'),
+    status: text('status').notNull().default('unanswered'), // unanswered | answered | dismissed
+    answeredDraftId: uuid('answered_draft_id').references(() => replyDrafts.id),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index('mentions_status_posted_idx').on(t.status, t.postedAt.desc())],
 );
 
 // $0 ingestion of the extension's DOM harvester (OVERHAUL-PLAN §6.3). One run
@@ -216,6 +286,17 @@ export const harvestRows = pgTable(
     // Reconcile result against reply_drafts (replies mode only) — the second,
     // API-free outcome source for posted reply drafts.
     matchedDraftId: uuid('matched_draft_id').references(() => replyDrafts.id),
+    // Content-shape columns (§9.4) so "which formats earn views" is answerable.
+    // Nullable: older extension builds don't send them.
+    hasPhoto: boolean('has_photo'),
+    hasVideo: boolean('has_video'),
+    isQuote: boolean('is_quote'),
+    textLen: integer('text_len'),
+    lineBreaks: integer('line_breaks'),
+    // Replies mode: 1-based position of this reply inside its rendered group —
+    // position 1 is the reply directly under the harvested target; deeper
+    // positions mark self-threads/chains the items[k-1] pairing used to mislabel.
+    groupPosition: integer('group_position'),
   },
   (t) => [
     index('harvest_rows_tweet_captured_idx').on(t.tweetId, t.capturedAt.desc()),

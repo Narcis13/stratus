@@ -34,7 +34,11 @@ export function addDays(date: Date, days: number): Date {
   return d;
 }
 
-const DAY_FMT = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+const DAY_FMT = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+});
 const TIME_FMT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
 export function formatDayLabel(d: Date): string {

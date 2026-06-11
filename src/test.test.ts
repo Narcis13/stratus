@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { beat, heartbeatStatus, registerHeartbeat, unregisterHeartbeat } from './heartbeats.ts';
 import { matchOrigin } from './middleware/cors.ts';
+import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
-import { containsUrl } from './x/endpoints.ts';
+import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
+import { POST_PROMPT_TEMPLATE, buildPostDraftInput, parsePostDrafts } from './x/posts/prompt.ts';
 import { priceFor } from './x/pricing.ts';
 import {
   type PostContext,
@@ -21,14 +23,27 @@ import {
   localMinuteOfDay,
   pickAnchors,
 } from './x/routes/brief.ts';
+import { parsePillar } from './x/routes/drafter.ts';
 import {
   type UnlinkedDraft,
   matchUnlinkedDraft,
   normalizeHarvestText,
   parseIngestRow,
 } from './x/routes/harvest.ts';
-import { buildAccountSeries } from './x/routes/metrics.ts';
-import { buildReplyOutcomes, parseContext } from './x/routes/replies.ts';
+import {
+  MAX_REFRESHES_PER_DAY,
+  type RefreshLimiter,
+  takeRefreshSlot,
+} from './x/routes/mentions.ts';
+import { aggregatePillars, buildAccountSeries, buildBestTimes } from './x/routes/metrics.ts';
+import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
+import {
+  type FollowerSnapshotPoint,
+  authorMomentum,
+  rankTargets,
+  targetBand,
+} from './x/routes/voice.ts';
+import { parseExtractedTemplate } from './x/routes/voiceExtract.ts';
 import { msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
@@ -118,6 +133,11 @@ describe('pricing.priceFor', () => {
 
   test('search/recent multiplies $0.005 by item count', () => {
     expect(priceFor('/2/tweets/search/recent', 'GET', 200, 10)).toBeCloseTo(0.05, 5);
+  });
+
+  test('GET /2/users/:id/mentions is an owned read priced per result (§7.5)', () => {
+    expect(priceFor('/2/users/123/mentions', 'GET', 200, 12)).toBeCloseTo(0.012, 5);
+    expect(priceFor('/2/users/123/mentions', 'GET', 200, null)).toBe(0.001);
   });
 
   test('search/recent with unknown items defaults to one result (undercount)', () => {
@@ -330,6 +350,20 @@ describe('reply prompt (§7.1)', () => {
     expect(msg?.content).toContain('<idea>seed</idea>');
   });
 
+  test('parent (mention thread context, §7.5) renders before the original tweet', () => {
+    const [msg] = buildGrokInput({ ...promptCtx, parent: { text: 'my post about shipping' } });
+    const content = msg?.content ?? '';
+    expect(content).toContain('MY POST (the tweet below is a reply to it)');
+    expect(content.indexOf('my post about shipping')).toBeLessThan(
+      content.indexOf('ORIGINAL TWEET'),
+    );
+  });
+
+  test('no parent → no thread-context block', () => {
+    const [msg] = buildGrokInput(promptCtx);
+    expect(msg?.content).not.toContain('MY POST');
+  });
+
   test('parseReplyVariants accepts the schema shape and trims', () => {
     const out = parseReplyVariants(
       '{"replies":[{"text":"  one\\n\\ntwo  ","angle":"contrarian"},{"text":"solo","angle":"extends"}]}',
@@ -413,6 +447,147 @@ describe('replies parseContext signals', () => {
       error: 'invalid_context_signals_bait',
     });
     expect(parseContext({ ...baseCtx, signals: [] })).toEqual({ error: 'invalid_context_signals' });
+  });
+
+  test('optional parent is preserved; junk parents are rejected (§7.5)', () => {
+    const out = parseContext({ ...baseCtx, parent: { text: 'my original post' } });
+    if ('error' in out) throw new Error(out.error);
+    expect(out.parent).toEqual({ text: 'my original post' });
+
+    const none = parseContext(baseCtx);
+    if ('error' in none) throw new Error(none.error);
+    expect('parent' in none).toBe(false);
+
+    expect(parseContext({ ...baseCtx, parent: 'text' })).toEqual({
+      error: 'invalid_context_parent',
+    });
+    expect(parseContext({ ...baseCtx, parent: { text: '   ' } })).toEqual({
+      error: 'invalid_context_parent',
+    });
+    expect(parseContext({ ...baseCtx, parent: {} })).toEqual({
+      error: 'invalid_context_parent',
+    });
+  });
+});
+
+describe('mentions refresh limiter (§7.5)', () => {
+  const day1 = new Date('2026-06-10T08:00:00Z');
+
+  test('counts up within a day and refuses past the cap', () => {
+    let state: RefreshLimiter = { day: '', used: 0 };
+    for (let i = 0; i < MAX_REFRESHES_PER_DAY; i++) {
+      const slot = takeRefreshSlot(state, day1);
+      expect(slot.ok).toBe(true);
+      expect(slot.remaining).toBe(MAX_REFRESHES_PER_DAY - i - 1);
+      state = slot.state;
+    }
+    const refused = takeRefreshSlot(state, day1);
+    expect(refused.ok).toBe(false);
+    expect(refused.remaining).toBe(0);
+  });
+
+  test('the counter resets on the next UTC day', () => {
+    const exhausted: RefreshLimiter = { day: '2026-06-10', used: MAX_REFRESHES_PER_DAY };
+    expect(takeRefreshSlot(exhausted, day1).ok).toBe(false);
+    const next = takeRefreshSlot(exhausted, new Date('2026-06-11T00:00:01Z'));
+    expect(next.ok).toBe(true);
+    expect(next.state).toEqual({ day: '2026-06-11', used: 1 });
+  });
+});
+
+describe('replies band gate (§7.3)', () => {
+  const now = Date.parse('2026-06-10T09:00:00Z');
+  const ctx = (over: Partial<PostContext> = {}): PostContext => ({
+    tweetId: '123456',
+    handle: 'someone',
+    author: 'Some One',
+    text: 'a plain statement tweet.',
+    url: 'https://x.com/someone/status/123456',
+    postedAt: '2026-06-10T08:00:00Z', // 60 min before `now`
+    metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
+    topComments: [],
+    ...over,
+  });
+
+  test('capture-time signals win, but the band is recomputed server-side', () => {
+    const stamped = { band: null, views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false };
+    const sig = gateSignalsFor(ctx({ signals: stamped }), now);
+    expect(sig).toEqual({ views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false });
+    // The extension stamped null; current thresholds say hot — the gate must
+    // trust its own classifyBand, not the stale verdict.
+    expect(classifyBand(sig)).toBe('hot');
+  });
+
+  test('without signals, inputs derive from metrics + postedAt + text bait', () => {
+    const sig = gateSignalsFor(ctx(), now);
+    expect(sig.views).toBe(1500);
+    expect(sig.replies).toBe(8);
+    expect(sig.ageMin).toBe(60);
+    expect(sig.vpm).toBe(25);
+    expect(sig.bait).toBe(false);
+    expect(classifyBand(sig)).toBe('hot');
+
+    const baity = gateSignalsFor(ctx({ text: 'agree or disagree' }), now);
+    expect(baity.bait).toBe(true);
+  });
+
+  test('future postedAt clamps age to 0 instead of going negative', () => {
+    const sig = gateSignalsFor(ctx({ postedAt: '2026-06-10T10:00:00Z' }), now);
+    expect(sig.ageMin).toBe(0);
+    expect(sig.vpm).toBe(1500);
+  });
+
+  test('dead and buried posts land in the refused bands', () => {
+    const dead = gateSignalsFor(
+      ctx({ metrics: { views: 40, replies: 1, reposts: 0, likes: 2 } }),
+      now,
+    );
+    expect(classifyBand(dead)).toBeNull();
+    const buried = gateSignalsFor(
+      ctx({ metrics: { views: 70000, replies: 168, reposts: 50, likes: 900 } }),
+      now,
+    );
+    expect(classifyBand(buried)).toBe('skip');
+  });
+
+  // Route-level wiring, through the real Hono handler. Safe to call in tests:
+  // the gate refuses BEFORE any Grok call or DB write.
+  const post = (body: unknown) =>
+    replies.request('/replies/generate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+  test('generate refuses a dead post with 422 band_gate', async () => {
+    // Old + tiny + slow + not bait → null band whatever "now" is.
+    const res = await post({
+      context: ctx({
+        postedAt: '2026-06-08T08:00:00Z',
+        metrics: { views: 40, replies: 1, reposts: 0, likes: 2 },
+      }),
+    });
+    expect(res.status).toBe(422);
+    const out = (await res.json()) as { error: string; band: unknown; signals: { bait: boolean } };
+    expect(out.error).toBe('band_gate');
+    expect(out.band).toBeNull();
+    expect(out.signals.bait).toBe(false);
+  });
+
+  test('generate refuses a buried post (skip band) regardless of age', async () => {
+    const res = await post({
+      context: ctx({ metrics: { views: 70000, replies: 168, reposts: 50, likes: 900 } }),
+    });
+    expect(res.status).toBe(422);
+    const out = (await res.json()) as { error: string; band: unknown };
+    expect(out.error).toBe('band_gate');
+    expect(out.band).toBe('skip');
+  });
+
+  test('non-boolean override is a 400', async () => {
+    const res = await post({ context: ctx(), override: 'yes' });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_override');
   });
 });
 
@@ -748,5 +923,316 @@ describe('brief attachLatestSnapshots', () => {
     // Tweet 2 has no snapshot yet — metrics stay null, not zero.
     expect(out[1]?.metrics).toBeNull();
     expect(out[1]?.measuredAt).toBeNull();
+  });
+});
+
+describe('voice targetBand', () => {
+  test('is 2x to 10x of my follower count', () => {
+    expect(targetBand(150)).toEqual({ min: 300, max: 1500 });
+    expect(targetBand(0)).toEqual({ min: 0, max: 0 });
+  });
+});
+
+describe('voice authorMomentum', () => {
+  const pt = (iso: string, followers: number): FollowerSnapshotPoint => ({
+    capturedAt: new Date(iso),
+    followersCount: followers,
+  });
+
+  test('fewer than two points has no momentum', () => {
+    expect(authorMomentum([])).toBeNull();
+    expect(authorMomentum([pt('2026-06-01T00:00:00Z', 500)])).toBeNull();
+  });
+
+  test('computes followers/day between oldest and newest, regardless of input order', () => {
+    const m = authorMomentum([
+      pt('2026-06-09T00:00:00Z', 560),
+      pt('2026-06-01T00:00:00Z', 500),
+      pt('2026-06-05T00:00:00Z', 900), // interior points don't affect the slope
+    ]);
+    expect(m).toEqual({ delta: 60, days: 8, perDay: 7.5 });
+  });
+
+  test('clamps the span to one day so back-to-back enriches do not explode', () => {
+    const m = authorMomentum([pt('2026-06-10T10:00:00Z', 500), pt('2026-06-10T10:05:00Z', 510)]);
+    expect(m?.perDay).toBe(10);
+  });
+
+  test('shrinking accounts get negative momentum', () => {
+    const m = authorMomentum([pt('2026-06-01T00:00:00Z', 1000), pt('2026-06-03T00:00:00Z', 950)]);
+    expect(m).toEqual({ delta: -50, days: 2, perDay: -25 });
+  });
+});
+
+describe('voice rankTargets', () => {
+  const t = (handle: string, followersCount: number, perDay: number | null) => ({
+    handle,
+    followersCount,
+    momentum: perDay === null ? null : { delta: 0, days: 1, perDay },
+  });
+
+  test('momentum desc, unknown momentum last ordered by size asc', () => {
+    const ranked = rankTargets([
+      t('big-unknown', 9000, null),
+      t('slow', 4000, 2),
+      t('small-unknown', 600, null),
+      t('fast', 8000, 40),
+    ]);
+    expect(ranked.map((x) => x.handle)).toEqual(['fast', 'slow', 'small-unknown', 'big-unknown']);
+  });
+
+  test('equal momentum breaks ties by follower count asc', () => {
+    const ranked = rankTargets([t('bigger', 5000, 3), t('smaller', 700, 3)]);
+    expect(ranked.map((x) => x.handle)).toEqual(['smaller', 'bigger']);
+  });
+});
+
+// ---------------------------------------------------------------- Phase 8/9
+
+describe('post prompt (§8.1)', () => {
+  test('embedded template stays in sync with post prompt.md', async () => {
+    const md = await Bun.file(new URL('../post prompt.md', import.meta.url)).text();
+    expect(POST_PROMPT_TEMPLATE.trimEnd()).toBe(md.trimEnd());
+  });
+
+  test('variable content sits at the very end (cacheable prefix)', () => {
+    const winnersAt = POST_PROMPT_TEMPLATE.indexOf('{{MY_WINNERS}}');
+    expect(winnersAt).toBeGreaterThan(POST_PROMPT_TEMPLATE.length * 0.8);
+    expect(POST_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
+  });
+
+  test('buildPostDraftInput substitutes all four placeholders', () => {
+    const [msg] = buildPostDraftInput({
+      winners: [{ text: 'won post', views: 412, profileVisits: 9 }],
+      remix: {
+        hookType: 'contrast hook',
+        skeleton: 'hook -> list of 3 -> question close',
+        lineBreakPattern: 'list with blank lines',
+        templateLength: 'medium',
+        device: 'numbered list',
+        rawText: null,
+      },
+      pillar: 'builder-51',
+      idea: 'ceva despre spitale',
+    });
+    const content = msg?.content ?? '';
+    expect(content).not.toContain('{{MY_WINNERS}}');
+    expect(content).not.toContain('{{REMIX}}');
+    expect(content).not.toContain('{{PILLAR}}');
+    expect(content).not.toContain('{{IDEA}}');
+    expect(content).toContain('won post');
+    expect(content).toContain('412 views · 9 profile clicks');
+    expect(content).toContain('hook -> list of 3 -> question close');
+    expect(content).toContain('<pillar>builder-51</pillar>');
+    expect(content).toContain('<idea>ceva despre spitale</idea>');
+  });
+
+  test('no winners renders the empty marker, $ in idea is safe', () => {
+    const [msg] = buildPostDraftInput({ winners: [], idea: 'price it at $99 $& $`' });
+    const content = msg?.content ?? '';
+    expect(content).toContain('(no measured winners yet)');
+    expect(content).toContain('price it at $99 $& $`');
+  });
+
+  test('un-extracted remix falls back to deriving from raw text', () => {
+    const [msg] = buildPostDraftInput({
+      winners: [],
+      remix: {
+        hookType: null,
+        skeleton: null,
+        lineBreakPattern: null,
+        templateLength: null,
+        device: null,
+        rawText: 'the swiped tweet body',
+      },
+    });
+    expect(msg?.content).toContain('derive it yourself');
+    expect(msg?.content).toContain('the swiped tweet body');
+  });
+
+  test('parsePostDrafts accepts the schema shape and rejects junk', () => {
+    const ok = parsePostDrafts(
+      JSON.stringify({
+        posts: [
+          { text: 'a', register: 'plain', pillar: 'ai-craft' },
+          { text: 'b', register: 'spicy', pillar: 'unsexy-problems' },
+          { text: 'c', register: 'reflective', pillar: 'builder-51' },
+        ],
+      }),
+    );
+    expect(ok).toHaveLength(3);
+    expect(ok?.[1]?.register).toBe('spicy');
+    expect(parsePostDrafts('not json')).toBeNull();
+    expect(parsePostDrafts('{"posts":[]}')).toBeNull();
+    expect(parsePostDrafts('{"posts":[{"text":""}]}')).toBeNull();
+    // Unknown register/pillar degrade to defaults rather than dropping the draft.
+    const degraded = parsePostDrafts(
+      JSON.stringify({ posts: [{ text: 'x', register: 'weird', pillar: 'nope' }] }),
+    );
+    expect(degraded?.[0]).toEqual({ text: 'x', register: 'plain', pillar: 'ai-craft' });
+  });
+
+  test('parsePillar maps 1/2/3 and slugs, rejects junk', () => {
+    expect(parsePillar(1)).toBe('ai-craft');
+    expect(parsePillar(2)).toBe('builder-51');
+    expect(parsePillar(3)).toBe('unsexy-problems');
+    expect(parsePillar('builder-51')).toBe('builder-51');
+    expect(parsePillar(undefined)).toBeUndefined();
+    expect(parsePillar(0)).toBe('invalid');
+    expect(parsePillar('growth')).toBe('invalid');
+  });
+});
+
+describe('createPost gates (§9.2/§8.5)', () => {
+  test('quote without verifiedSelfQuote throws before any network call', async () => {
+    await expect(
+      createPost('tok', { text: 'take', quote_tweet_id: '123' }, { selfXUserId: '1' }),
+    ).rejects.toThrow(/verified self-quote/);
+  });
+
+  test('reply with a known non-self parent author throws', async () => {
+    await expect(
+      createPost(
+        'tok',
+        { text: 'hi', reply: { in_reply_to_tweet_id: '5' } },
+        { selfXUserId: '1', parentAuthorId: '2' },
+      ),
+    ).rejects.toThrow(/non-self tweet/);
+  });
+
+  test('reply without selfXUserId still throws (pre-existing gate)', async () => {
+    await expect(
+      createPost('tok', { text: 'hi', reply: { in_reply_to_tweet_id: '5' } }),
+    ).rejects.toThrow(/selfXUserId/);
+  });
+});
+
+describe('buildBestTimes (§8.4)', () => {
+  test('groups by UTC weekday+hour and normalizes by age', () => {
+    // 2026-06-08 is a Monday (UTC weekday 1).
+    const cells = buildBestTimes([
+      {
+        postedAt: new Date('2026-06-08T09:10:00Z'),
+        views: 1440,
+        likes: 10,
+        profileVisits: 2,
+        ageAtSnapshotMin: 1440,
+      },
+      {
+        postedAt: new Date('2026-06-08T09:40:00Z'),
+        views: 720,
+        likes: 4,
+        profileVisits: null,
+        ageAtSnapshotMin: 720,
+      },
+      {
+        postedAt: new Date('2026-06-09T18:00:00Z'),
+        views: 100,
+        likes: 1,
+        profileVisits: 0,
+        ageAtSnapshotMin: null,
+      },
+    ]);
+    expect(cells).toHaveLength(2);
+    const mon9 = cells.find((c) => c.weekday === 1 && c.hour === 9);
+    expect(mon9?.posts).toBe(2);
+    expect(mon9?.avgViews).toBe(1080);
+    // 1440 views over 1440 min = 1440/day; 720 over 720 min = 1440/day.
+    expect(mon9?.avgViewsPerDay).toBe(1440);
+    expect(mon9?.avgProfileVisits).toBe(2);
+    const tue18 = cells.find((c) => c.weekday === 2 && c.hour === 18);
+    expect(tue18?.avgViewsPerDay).toBeNull();
+    expect(tue18?.avgViews).toBe(100);
+  });
+
+  test('empty input → no cells', () => {
+    expect(buildBestTimes([])).toEqual([]);
+  });
+});
+
+describe('aggregatePillars (§8.4)', () => {
+  test('aggregates per pillar with unassigned bucket, sorted by views', () => {
+    const out = aggregatePillars([
+      { pillar: 'ai-craft', isReply: false, views: 100, likes: 5, profileVisits: 3 },
+      { pillar: 'ai-craft', isReply: false, views: 300, likes: 10, profileVisits: 1 },
+      { pillar: 'ai-craft', isReply: true, views: null, likes: null, profileVisits: null },
+      { pillar: null, isReply: false, views: 50, likes: 1, profileVisits: null },
+    ]);
+    expect(out[0]?.pillar).toBe('ai-craft');
+    expect(out[0]?.posts).toBe(2);
+    expect(out[0]?.replies).toBe(1);
+    expect(out[0]?.measured).toBe(2);
+    expect(out[0]?.views).toBe(400);
+    expect(out[0]?.avgViews).toBe(200);
+    expect(out[0]?.profileVisits).toBe(4);
+    expect(out[1]?.pillar).toBe('unassigned');
+  });
+});
+
+describe('parseExtractedTemplate (§8.3)', () => {
+  test('valid shape parses; unknown length degrades to medium', () => {
+    const t = parseExtractedTemplate(
+      JSON.stringify({
+        hookType: 'stat hook',
+        skeleton: 'stat -> consequence -> question',
+        lineBreakPattern: 'one-liner',
+        length: 'bizarre',
+        device: 'direct address',
+      }),
+    );
+    expect(t?.hookType).toBe('stat hook');
+    expect(t?.length).toBe('medium');
+  });
+
+  test('missing field → null', () => {
+    expect(parseExtractedTemplate(JSON.stringify({ hookType: 'x' }))).toBeNull();
+    expect(parseExtractedTemplate('garbage')).toBeNull();
+  });
+});
+
+describe('harvest parseIngestRow content-shape fields (§9.4)', () => {
+  const base = {
+    tweetId: '123',
+    handle: 'someone',
+    text: 'hello',
+    comments: 1,
+    reposts: 2,
+    likes: 3,
+    bookmarks: 4,
+    views: 5,
+    time: '2026-06-09T10:00:00Z',
+  };
+
+  test('optional fields parse and floor', () => {
+    const row = parseIngestRow({
+      ...base,
+      hasPhoto: true,
+      hasVideo: false,
+      isQuote: true,
+      textLen: 12.9,
+      lineBreaks: 2,
+      groupPosition: 3,
+    });
+    if ('error' in row) throw new Error(row.error);
+    expect(row.hasPhoto).toBe(true);
+    expect(row.isQuote).toBe(true);
+    expect(row.textLen).toBe(12);
+    expect(row.groupPosition).toBe(3);
+  });
+
+  test('absent fields stay null (older extension builds)', () => {
+    const row = parseIngestRow(base);
+    if ('error' in row) throw new Error(row.error);
+    expect(row.hasPhoto).toBeNull();
+    expect(row.groupPosition).toBeNull();
+  });
+
+  test('wrong types rejected', () => {
+    expect(parseIngestRow({ ...base, hasPhoto: 'yes' })).toEqual({
+      error: 'invalid_row_hasPhoto',
+    });
+    expect(parseIngestRow({ ...base, groupPosition: -1 })).toEqual({
+      error: 'invalid_row_groupPosition',
+    });
   });
 });

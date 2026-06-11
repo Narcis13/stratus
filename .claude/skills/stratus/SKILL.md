@@ -1,6 +1,6 @@
 ---
 name: stratus
-description: Drive the stratus HTTP API for X (Twitter) operations — schedule posts a week ahead (3–4/day, minute-jittered so they don't look bot-like), browse/edit the calendar, read tweet metrics, manage a $0 DOM-scraped voice/swipe library of other authors' tweets, generate Grok-drafted reply drafts, and read the cost dashboard. Use when the user wants to plan/queue tweets, audit scheduled posts, inspect tweet performance, stash or query other authors' tweets for style reference, draft replies via Grok, or check API spend. Talks to the Hono service at $STRATUS_BASE_URL (defaults to the Hetzner-hosted instance), authenticated with a bearer token.
+description: Drive the stratus HTTP API for X (Twitter) operations — schedule posts a week ahead (3–4/day, minute-jittered so they don't look bot-like), browse/edit the calendar, draft original posts/threads/self-quote re-ups via Grok, read tweet metrics (once-only daily snapshots, best-times, pillars), manage a $0 DOM-scraped voice/swipe library of other authors' tweets (targets roster, Grok template extraction), generate Grok-drafted reply drafts (band-gated) and read their measured outcomes, work the mention inbox, read the daily brief and the cost dashboard. Use when the user wants to plan/queue tweets, audit scheduled posts, inspect tweet performance, stash or query other authors' tweets for style reference, draft posts or replies via Grok, or check API spend. Talks to the Hono service at $STRATUS_BASE_URL (defaults to the Hetzner-hosted instance), authenticated with a bearer token.
 ---
 
 # Stratus operator skill
@@ -29,28 +29,51 @@ Stratus is a single-user service that fronts X API v2 with a typed wrapper plus 
 
 | Verb   | Path                              | Purpose                                       |
 |--------|-----------------------------------|-----------------------------------------------|
-| GET    | `/healthz`                        | DB round-trip check, no auth                  |
+| GET    | `/healthz`                        | DB + worker-heartbeat check, no auth          |
 | GET    | `/cost/today`                     | Per-platform / per-endpoint UTC-day spend     |
+| GET    | `/cost/daily`                     | Trailing daily spend series (`?days=`, ≤90)   |
+| GET    | `/x/brief`                        | Daily growth brief (`?tzOffsetMin=`) — $0     |
 | POST   | `/x/posts/scheduled`              | Create a draft or scheduled post              |
 | GET    | `/x/posts/scheduled`              | List scheduled posts (`?from=&to=&status=`)   |
+| GET    | `/x/posts/scheduled/:id`          | One row (+ `thread` siblings if threaded)     |
 | PATCH  | `/x/posts/scheduled/:id`          | Edit text / time / mediaIds / status          |
-| DELETE | `/x/posts/scheduled/:id`          | Hard-delete a non-posted row                  |
-| POST   | `/x/posts/reconcile`              | Force own-reconcile worker run                |
+| DELETE | `/x/posts/scheduled/:id`          | Hard-delete a non-posted row (threads: via head) |
+| POST   | `/x/posts/threads`                | Create a thread (2–25 segments, one unit)     |
+| POST   | `/x/posts/draft`                  | Grok: 3 post drafts into the calendar (~$0.006) |
+| POST   | `/x/posts/reup`                   | Grok: self-quote re-up drafts of an OWN tweet |
+| POST   | `/x/posts/reconcile`              | One-shot run of the daily metrics pass        |
 | GET    | `/x/metrics/:tweetId`             | Snapshot history for one of MY posts          |
+| GET    | `/x/metrics/posts`                | My posts + latest snapshot (`?limit=`)        |
+| GET    | `/x/metrics/replies`              | My replies + latest snapshot (`?limit=`)      |
+| GET    | `/x/metrics/account`              | Daily follower KPI series with deltas         |
+| GET    | `/x/metrics/best-times`           | Engagement by UTC weekday × hour, age-normalized — $0 |
+| GET    | `/x/metrics/pillars`              | Performance by content pillar — $0            |
 | POST   | `/x/voice/scrape`                 | Save a DOM-scraped tweet (+ stub/enrich author) — $0 |
-| PUT    | `/x/voice/authors/:handle`        | Enrich an author from their profile page — $0 |
+| PUT    | `/x/voice/authors/:handle`        | Enrich an author; appends a follower snapshot — $0 |
 | GET    | `/x/voice/authors`                | List authors + tweet counts (`?retired=`)     |
 | PATCH  | `/x/voice/authors/:handle`        | Archive / unarchive an author (`{retired}`)   |
 | DELETE | `/x/voice/authors/:handle`        | Hard-remove an author (409 if it has tweets)  |
-| GET    | `/x/voice/tweets`                 | Query stash (`?author=&q=&limit=&retired=`)   |
+| GET    | `/x/voice/targets`                | 2–10x reply-target roster, momentum-ranked — $0 |
+| GET    | `/x/voice/tweets`                 | Query stash (`?author=&q=&hook=&extracted=&limit=&retired=`) |
 | PATCH  | `/x/voice/tweets/:tweetId`        | Archive / unarchive a tweet (`{retired}`)     |
 | DELETE | `/x/voice/tweets/:tweetId`        | Hard-remove a tweet                           |
-| POST   | `/x/replies/generate`             | Draft a reply with Grok                       |
+| POST   | `/x/voice/tweets/:tweetId/extract`| Grok template extraction for one tweet (~$0.005) |
+| POST   | `/x/voice/extract-batch`          | Backfill extraction (`{limit?}` ≤50)          |
+| POST   | `/x/replies/generate`             | Draft a reply with Grok (band-gated; 2 variants) |
 | GET    | `/x/replies`                      | List drafts (`?status=&sourceAuthor=&limit=`) |
+| GET    | `/x/replies/outcomes`             | Posted drafts joined to measured outcomes — $0 |
 | GET    | `/x/replies/:id`                  | Get one draft                                 |
 | PATCH  | `/x/replies/:id`                  | Edit / status-transition a draft              |
 | DELETE | `/x/replies/:id`                  | Delete a draft                                |
+| GET    | `/x/mentions`                     | Mention inbox (`?status=&limit=`)             |
+| POST   | `/x/mentions/refresh`             | Incremental mentions pull (capped 6/day)      |
+| PATCH  | `/x/mentions/:tweetId`            | Move mention status / link an answering draft |
+| POST   | `/x/harvest/runs`                 | Create a harvest run (the extension feeds these) |
+| POST   | `/x/harvest/rows`                 | Batched harvest rows (≤500; reconciles reply drafts) |
+| GET    | `/x/harvest/runs`                 | Recent harvest runs                           |
 | POST   | `/grok/ask`                       | Raw Grok ask (no DB persistence)              |
+
+Grok-backed routes (`/x/replies/*`, `/x/posts/draft`, `/x/posts/reup`, the voice extract pair, `/grok/ask`) mount only when the server has `XAI_API_KEY`.
 
 Full request/response shapes live in [references/endpoints.md](references/endpoints.md) — read it before crafting any non-trivial body.
 
@@ -58,12 +81,12 @@ Full request/response shapes live in [references/endpoints.md](references/endpoi
 
 These were learned the expensive way. Violating them costs real money or fails silently at publish time.
 
-### 1. URL surcharge — silently kills scheduled posts
+### 1. URL surcharge — rejected at schedule time
 
-`createPost` in `src/x/endpoints.ts` rejects any text matching `/(^|\s)https?:\/\//i` unless `allowUrlSurcharge: true`. **The publisher worker does NOT pass that flag.** So if you schedule a tweet whose `text` contains a URL, it WILL flip to `status='failed'` with `error_class='unknown'` at the 60s tick — silently, from the user's POV.
+A standalone post whose text matches `/(^|\s)https?:\/\//i` bills at **$0.20 instead of $0.015** (13x). The calendar API now rejects any `pending` row with a URL up front (`400 url_in_text`); drafts may hold URLs, but promotion to `pending` re-checks. `createPost` refuses the surcharge at the publisher tick as the backstop.
 
-- **Before scheduling, refuse any text containing `http://` or `https://`.** Tell the user to either strip the link or post that one manually from the X app (where the $0.20 surcharge is on them, not us).
-- If they insist on a link in a scheduled post, there is no API escape hatch today — surface this and let them decide.
+- **Before scheduling, refuse any text containing `http://` or `https://`.** Tell the user to strip the link, post that one manually from the X app, or use a thread: a URL in a **tail segment** of `POST /x/posts/threads` is allowed — link-in-first-reply costs $0.015 + $0.015 = $0.030 vs $0.20 (a reply's link does not trigger the surcharge).
+- There is no API escape hatch for a URL in a standalone scheduled post — surface this and let them decide.
 
 ### 2. Reply-to-other-users is policy-blocked
 
@@ -159,14 +182,16 @@ curl -sX DELETE "$STRATUS_BASE_URL/x/posts/scheduled/$ID" \
 
 ### C) Tweet metrics
 
-Metrics rows only exist for tweets in `posts_published`. If the user asks about a tweet that was posted manually from the X app, run `POST /x/posts/reconcile` first (own-reconcile worker) — it's `$0.001/tweet`, daily cap of 500 in one pass. Then read snapshots:
+Metrics rows only exist for tweets in `posts_published`. If the user asks about a tweet that was posted manually from the X app, run `POST /x/posts/reconcile` first (a one-shot run of the daily `dailyMetrics` pass) — discovery is `$0.001/tweet` scanned, cap 500 per pass. Then read snapshots:
 
 ```bash
 curl -s "$STRATUS_BASE_URL/x/metrics/$TWEET_ID" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
 ```
 
-Snapshot cadence is ~113 polls over 30 days (≈$0.113/tweet), then `retired=true` and polling stops. `non_public_metrics`/`organic_metrics` are only populated within 30 days of `postedAt`.
+Each tweet is snapshotted **once and only once** at the first 03:00 UTC pass after it lands ($0.001), then `retired=true` — there is no polling cadence. Tweets whose snapshot cleared 500 views (`WINNER_REREAD_MIN_VIEWS`) get exactly one bonus re-read at day 7+, max 5/day. A tweet posted today shows `metrics: null` until the next pass. `non_public_metrics`/`organic_metrics` (incl. `user_profile_clicks`) are only requested while the tweet is ≤28 days old at read time.
+
+For lists and insight, prefer the $0 aggregate reads: `GET /x/metrics/posts` / `GET /x/metrics/replies` (latest snapshot per tweet), `GET /x/metrics/account` (follower series), `GET /x/metrics/best-times` (age-normalized weekday×hour cells), `GET /x/metrics/pillars` (per-pillar performance).
 
 ### D) Voice library (a $0 DOM-scrape swipe file)
 
@@ -199,6 +224,22 @@ curl -sX DELETE "$STRATUS_BASE_URL/x/voice/authors/naval" \
 
 Saved tweets carry `scrapedHtml` (the innerHTML of X's `tweetText` node) so a stashed tweet can be reused as an emoji-/linebreak-faithful **format template**. If the user wants to add tweets, point them at the extension ("Save to stratus" on a tweet, "Save author" on a profile) — there is no API-side fetch.
 
+Two Grok-backed extras (xAI tokens, not X API):
+
+```bash
+# distill structure (hookType/skeleton/lineBreakPattern/length/device) into saved tweets, ~$0.005 each
+curl -sX POST "$STRATUS_BASE_URL/x/voice/extract-batch" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' -d '{"limit":20}'
+
+# then query by structure
+curl -s "$STRATUS_BASE_URL/x/voice/tweets?hook=stat&extracted=true&limit=20" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+
+# the 2–10x reply-target roster (momentum-ranked, lastRepliedAt per author) — $0
+curl -s "$STRATUS_BASE_URL/x/voice/targets" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq '.targets[0:10]'
+```
+
 ### E) Reply drafts (Grok-backed)
 
 Detailed flows in [references/replies.md](references/replies.md), including the full `context` payload shape. Quickstart:
@@ -209,7 +250,7 @@ curl -sX POST "$STRATUS_BASE_URL/x/replies/generate" \
   -d @context.json
 ```
 
-The endpoint only **drafts** — copy/paste to X, then PATCH the draft to `posted` to record it in history.
+The endpoint only **drafts** — copy/paste to X, then PATCH the draft to `posted` (ideally with `postedTweetId`) to record it in history. It is **band-gated**: a dead target (`skip`/`null` band) returns `422 band_gate` with no Grok spend; resend with `"override": true` if the user insists. The call returns **two variants** (`variants` array, tagged extends/contrarian/debate); `replyText` is the primary pick. `GET /x/replies/outcomes` joins posted drafts to their measured views/likes/profileVisits — the $0 "did it work" read.
 
 ### F) Cost dashboard
 
@@ -218,7 +259,47 @@ curl -s "$STRATUS_BASE_URL/cost/today" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
 ```
 
-UTC day. Returns `{ from, to, totalUsd, totalCalls, byPlatform: [{platform, costUsd, calls, byEndpoint}] }`. Useful for sanity-checking before a voice-pull run.
+UTC day. Returns `{ from, to, totalUsd, totalCalls, byPlatform: [{platform, costUsd, calls, byEndpoint}] }`; platforms with a soft budget also carry `dailyBudgetUsd`/`overBudget`. `GET /cost/daily?days=30` gives the zero-filled trailing series.
+
+### G) Draft posts, threads, and self-quote re-ups (Grok)
+
+```bash
+# three register-distinct drafts (plain/spicy/reflective) into the calendar, ~$0.006
+curl -sX POST "$STRATUS_BASE_URL/x/posts/draft" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"pillar":2,"idea":"optional steer — Romanian OK","voiceTweetId":"179…"}' | jq
+
+# quote-tweet re-up of MY OWN tweet (404 not_own_tweet otherwise)
+curl -sX POST "$STRATUS_BASE_URL/x/posts/reup" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"tweetId":"179…","idea":"what changed since I posted this"}' | jq
+
+# thread as one schedulable unit (2–25 segments; URL allowed in tails only)
+curl -sX POST "$STRATUS_BASE_URL/x/posts/threads" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"segments":["hook","meat","close — link here"],"scheduledFor":"2026-06-12T07:14:00Z","status":"pending"}' | jq
+```
+
+Drafter/re-up rows land `status='draft'` with their `pillar` — **nothing posts until a human PATCHes a row to `pending` with a time.** Thread tails are `status='segment'`: text is editable, but schedule/status/delete ride with the head; the publisher posts the chain as self-replies ~500 ms apart ($0.015/segment).
+
+### H) Daily brief & mention inbox
+
+```bash
+# the growth-coach payload behind the extension's Today tab ($0)
+curl -s "$STRATUS_BASE_URL/x/brief?tzOffsetMin=-180" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+# tzOffsetMin = JS getTimezoneOffset() (UTC − local; -180 for UTC+3)
+
+# unanswered mentions, oldest debt first
+curl -s "$STRATUS_BASE_URL/x/mentions?status=unanswered" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+
+# pull fresh mentions now (owned reads ~$0.001/result; server caps 6 refreshes/day)
+curl -sX POST "$STRATUS_BASE_URL/x/mentions/refresh" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+```
+
+Mention replies are drafted through the same `/x/replies/generate` pipeline (send `override: true` — mention metrics are zeros — and the optional `context.parent` block with my post's text). Posting stays manual paste; PATCH the mention to `answered` with `answeredDraftId` when done.
 
 ## Output etiquette
 

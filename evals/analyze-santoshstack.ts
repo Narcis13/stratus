@@ -7,7 +7,7 @@
 //
 // run: bun run evals/analyze-santoshstack.ts
 
-import { classifyBand, type TweetSignals } from '../extension/src/replyBand.ts';
+import { type TweetSignals, classifyBand } from '../src/shared/replyBand.ts';
 
 // ---------------------------------------------------------------- CSV parsing
 
@@ -17,12 +17,12 @@ function parseCsv(text: string): string[][] {
   let field = '';
   let inQuotes = false;
   // strip BOM
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
+  const src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
     if (inQuotes) {
       if (c === '"') {
-        if (text[i + 1] === '"') {
+        if (src[i + 1] === '"') {
           field += '"';
           i++;
         } else inQuotes = false;
@@ -32,7 +32,7 @@ function parseCsv(text: string): string[][] {
       row.push(field);
       field = '';
     } else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
+      if (c === '\r' && src[i + 1] === '\n') i++;
       row.push(field);
       field = '';
       if (row.length > 1 || row[0] !== '') rows.push(row);
@@ -103,7 +103,9 @@ const allRows: Row[] = cells
 const SELF = '@santoshstack';
 const selfRows = allRows.filter((r) => r.handle.toLowerCase() === SELF.toLowerCase());
 const rows = allRows.filter((r) => r.handle.toLowerCase() !== SELF.toLowerCase());
-console.log(`\nExcluded ${selfRows.length} self-replies (handle ${SELF}); ${rows.length} reply-target rows remain`);
+console.log(
+  `\nExcluded ${selfRows.length} self-replies (handle ${SELF}); ${rows.length} reply-target rows remain`,
+);
 
 // ----------------------------------------------------------- derive + classify
 
@@ -156,7 +158,9 @@ console.log(
     Math.max(...allReplyViews),
   )}`,
 );
-console.log(`mean reply views ${fmt(mean(allReplyViews))}  |  mean reply likes ${mean(scored.map((s) => s.replyLikes)).toFixed(2)}`);
+console.log(
+  `mean reply views ${fmt(mean(allReplyViews))}  |  mean reply likes ${mean(scored.map((s) => s.replyLikes)).toFixed(2)}`,
+);
 
 // Define a "hit": a reply that actually got seen. Use the dataset's own p75 as
 // the bar so it's calibrated to this account, not a guess.
@@ -181,14 +185,18 @@ for (const b of bands) {
   console.log(
     `${String(b).padEnd(6)} ${String(g.length).padEnd(5)} ${((g.length / scored.length) * 100)
       .toFixed(1)
-      .padStart(5)}%   ${fmt(median(rv)).padStart(10)}   ${fmt(mean(rv)).padStart(9)}   ${(hitRate * 100)
+      .padStart(5)}%   ${fmt(median(rv)).padStart(10)}   ${fmt(mean(rv)).padStart(9)}   ${(
+      hitRate * 100
+    )
       .toFixed(0)
-      .padStart(6)}%   ${median(g.map((s) => s.replyLikes)).toFixed(1).padStart(7)}   ${(likeRate * 100)
-      .toFixed(0)
-      .padStart(8)}%`,
+      .padStart(6)}%   ${median(g.map((s) => s.replyLikes))
+      .toFixed(1)
+      .padStart(7)}   ${(likeRate * 100).toFixed(0).padStart(8)}%`,
   );
 }
-console.log(`(base rate: ${(LIKED * 100).toFixed(0)}% of all reply-target replies got at least 1 like)`);
+console.log(
+  `(base rate: ${(LIKED * 100).toFixed(0)}% of all reply-target replies got at least 1 like)`,
+);
 
 // ------------------------------------------------- does the model rank-order?
 
@@ -216,13 +224,17 @@ const misses = passed
   .filter((s) => s.replyViews >= HIT)
   .sort((a, b) => b.replyViews - a.replyViews)
   .slice(0, 12);
-console.log(`\n=== TOP MISSES: model passed, reply hit anyway (${passed.filter((s) => s.replyViews >= HIT).length} total) ===`);
+console.log(
+  `\n=== TOP MISSES: model passed, reply hit anyway (${passed.filter((s) => s.replyViews >= HIT).length} total) ===`,
+);
 console.log('band  origV   origR  age   vpm    replyV  rLikes  handle');
 for (const s of misses) {
   console.log(
-    `${String(s.band).padEnd(5)} ${fmt(s.origViews).padStart(6)} ${String(s.origReplies).padStart(5)} ${
-      (s.ageMin < 60 ? `${Math.round(s.ageMin)}m` : `${(s.ageMin / 60).toFixed(1)}h`).padStart(5)
-    } ${s.vpm.toFixed(0).padStart(5)} ${fmt(s.replyViews).padStart(7)} ${String(s.replyLikes).padStart(6)}  ${s.handle}`,
+    `${String(s.band).padEnd(5)} ${fmt(s.origViews).padStart(6)} ${String(s.origReplies).padStart(5)} ${(
+      s.ageMin < 60 ? `${Math.round(s.ageMin)}m` : `${(s.ageMin / 60).toFixed(1)}h`
+    ).padStart(
+      5,
+    )} ${s.vpm.toFixed(0).padStart(5)} ${fmt(s.replyViews).padStart(7)} ${String(s.replyLikes).padStart(6)}  ${s.handle}`,
   );
 }
 
@@ -232,14 +244,20 @@ const falseAlarms = scored
   .filter((s) => s.band === 'hot' && s.replyViews <= LOW)
   .sort((a, b) => a.replyViews - b.replyViews)
   .slice(0, 12);
-console.log(`\n=== TOP FALSE ALARMS: model said HOT, reply flopped (<= p25 = ${fmt(LOW)} views) ===`);
-console.log(`(${scored.filter((s) => s.band === 'hot' && s.replyViews <= LOW).length} of ${scored.filter((s) => s.band === 'hot').length} hot replies flopped)`);
+console.log(
+  `\n=== TOP FALSE ALARMS: model said HOT, reply flopped (<= p25 = ${fmt(LOW)} views) ===`,
+);
+console.log(
+  `(${scored.filter((s) => s.band === 'hot' && s.replyViews <= LOW).length} of ${scored.filter((s) => s.band === 'hot').length} hot replies flopped)`,
+);
 console.log('origV   origR  age    vpm   bait  replyV  handle');
 for (const s of falseAlarms) {
   console.log(
-    `${fmt(s.origViews).padStart(6)} ${String(s.origReplies).padStart(5)} ${
-      (s.ageMin < 60 ? `${Math.round(s.ageMin)}m` : `${(s.ageMin / 60).toFixed(1)}h`).padStart(6)
-    } ${s.vpm.toFixed(0).padStart(5)} ${String(s.bait).padStart(5)} ${fmt(s.replyViews).padStart(7)}  ${s.handle}`,
+    `${fmt(s.origViews).padStart(6)} ${String(s.origReplies).padStart(5)} ${(
+      s.ageMin < 60 ? `${Math.round(s.ageMin)}m` : `${(s.ageMin / 60).toFixed(1)}h`
+    ).padStart(
+      6,
+    )} ${s.vpm.toFixed(0).padStart(5)} ${String(s.bait).padStart(5)} ${fmt(s.replyViews).padStart(7)}  ${s.handle}`,
   );
 }
 
@@ -263,7 +281,9 @@ for (const [label, f] of viewBuckets) {
   console.log(
     `${label.padEnd(10)} ${String(g.length).padStart(3)}   ${fmt(median(g.map((s) => s.replyViews))).padStart(10)}  ${fmt(
       mean(g.map((s) => s.replyViews)),
-    ).padStart(9)}  ${mean(g.map((s) => s.replyLikes)).toFixed(2).padStart(9)}`,
+    ).padStart(9)}  ${mean(g.map((s) => s.replyLikes))
+      .toFixed(2)
+      .padStart(9)}`,
   );
 }
 

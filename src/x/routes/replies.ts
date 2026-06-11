@@ -2,7 +2,7 @@
 // Mounted under `/x` by `mountX` in ../index.ts.
 //
 // Routes:
-//   POST   /replies/generate   body: { context, idea?, systemPromptOverride?, model?, reasoningEffort? }
+//   POST   /replies/generate   body: { context, idea?, override?, systemPromptOverride?, model?, reasoningEffort? }
 //   GET    /replies            ?status=&sourceAuthor=&limit=&since=
 //   GET    /replies/outcomes   ?limit=&since=   posted drafts joined to their metrics
 //   GET    /replies/:id
@@ -18,6 +18,7 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import type { ReasoningEffort } from '../../grok/index.ts';
+import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import {
   type PostContext,
@@ -67,6 +68,7 @@ const MAX_OUTCOMES_LIMIT = 1000;
 interface RawBody {
   context?: unknown;
   idea?: unknown;
+  override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
   reasoningEffort?: unknown;
@@ -118,6 +120,26 @@ replies.post('/replies/generate', async (c) => {
     }
     reasoningEffort = r;
   }
+
+  let override = false;
+  if (body.override !== undefined && body.override !== null) {
+    if (typeof body.override !== 'boolean') return c.json({ error: 'invalid_override' }, 400);
+    override = body.override;
+  }
+
+  // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
+  // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
+  // escape hatch (the extension arms it on a second deliberate click).
+  const gateSignals = gateSignalsFor(ctx, Date.now());
+  const band = classifyBand(gateSignals);
+  if ((band === null || band === 'skip') && !override) {
+    return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
+  }
+
+  // Stamp the gate's verdict when the caller didn't send capture-time signals
+  // (CLI callers, older extension builds) — every draft stays a labeled
+  // training row for the BAND recalibration crosstab (§6.2).
+  if (!ctx.signals) ctx.signals = { band, ...gateSignals };
 
   const messages = buildGrokInput(ctx, systemOverride, idea);
 
@@ -534,6 +556,26 @@ function isStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
 }
 
+// Exported for unit tests (pure). Classifier inputs for the band gate: prefer
+// the capture-time raw inputs the extension stamped (DOM-aware bait, exact
+// age) but always recompute the band server-side — a stale extension build
+// doesn't get to spend the Grok call on its own verdict. Without signals the
+// inputs derive from metrics + postedAt + the shared text-only bait check.
+export function gateSignalsFor(ctx: PostContext, nowMs: number): TweetSignals {
+  if (ctx.signals) {
+    const { views, replies, ageMin, vpm, bait } = ctx.signals;
+    return { views, replies, ageMin, vpm, bait };
+  }
+  const ageMin = Math.max(0, (nowMs - new Date(ctx.postedAt).getTime()) / 60000);
+  return {
+    views: ctx.metrics.views,
+    replies: ctx.metrics.replies,
+    ageMin,
+    vpm: ctx.metrics.views / Math.max(ageMin, 1),
+    bait: textLooksLikeReplyBait(ctx.text),
+  };
+}
+
 // Exported for unit tests (pure).
 export function parseContext(value: unknown): PostContext | { error: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -597,6 +639,19 @@ export function parseContext(value: unknown): PostContext | { error: string } {
     signals = parsed.signals;
   }
 
+  // Optional thread context (§7.5): my post the target tweet replies to.
+  let parent: PostContext['parent'];
+  if (v.parent !== undefined && v.parent !== null) {
+    if (typeof v.parent !== 'object' || Array.isArray(v.parent)) {
+      return { error: 'invalid_context_parent' };
+    }
+    const p = v.parent as Record<string, unknown>;
+    if (typeof p.text !== 'string' || p.text.trim() === '') {
+      return { error: 'invalid_context_parent' };
+    }
+    parent = { text: p.text };
+  }
+
   return {
     tweetId,
     handle: handleRaw,
@@ -607,6 +662,7 @@ export function parseContext(value: unknown): PostContext | { error: string } {
     metrics,
     topComments,
     ...(signals ? { signals } : {}),
+    ...(parent ? { parent } : {}),
   };
 }
 

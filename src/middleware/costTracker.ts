@@ -44,8 +44,21 @@ export function makeOnCost(platform: string, opts: OnCostOptions = {}): (info: C
   return (info) => {
     // `info.items` is the result count xFetch read off the response body, so
     // per-result endpoints (search, own-timeline, batch lookup) bill by what X
-    // actually returned — not as one item. See `pricing.ts`.
-    const usd = price(info.endpoint, info.method, info.status, info.items);
+    // actually returned — not as one item. See `pricing.ts`. A call-site
+    // `costHint` wins on billed (2xx) calls — the call site knows about URL
+    // surcharges and owned-vs-other reads that the path alone can't reveal.
+    const usd =
+      info.status < 400 && info.costHint != null
+        ? info.costHint
+        : price(info.endpoint, info.method, info.status, info.items);
+
+    // A billed call pricing to $0 means the price table has a hole — the
+    // dashboard silently undercounts until someone greps for this (§9.1).
+    if (info.status < 400 && usd === 0) {
+      console.warn(
+        `costTracker: '${platform}' ${info.method} ${info.endpoint} returned ${info.status} but priced to $0 — unmapped endpoint? Add a branch to its pricing table.`,
+      );
+    }
 
     db.insert(costEvents)
       .values({

@@ -5,8 +5,8 @@
 Stratus is not a SaaS. It is **one person's growth machine** — mine — engineered the way a solo builder engineers their own tools: lean, observable, and ruthless about cost. It does three things, and only three things:
 
 1. **Schedules posts a week ahead** — a calendar plus a 60-second publisher worker that posts at minute-jittered times so the feed never looks like a cron job.
-2. **Tracks metrics over time** on every tweet you publish — through the scheduler *or* manually from the X app — via a daily reconcile pass plus a decaying polling cadence that retires each tweet after 30 days.
-3. **Stashes other people's tweets** (a "voice library") for style and structure analysis, with strict per-author cost guardrails.
+2. **Tracks metrics over time** on every tweet you publish — through the scheduler *or* manually from the X app — via a single daily 03:00 UTC pass that discovers new tweets, snapshots every non-retired one **exactly once** (~$0.001/tweet), and retires it.
+3. **Stashes other people's tweets** (a "voice library") for style and structure analysis — a $0 DOM-scrape swipe file fed by the Chrome extension, never the X API.
 
 On top of those three pillars sit two force-multipliers built later: a **Grok-backed Reply Master** that drafts high-signal replies (the single highest-leverage growth activity for a small account), and a **Chrome MV3 extension** that turns x.com itself into the cockpit — one-click tweet stashing, one-click reply drafting, and a full scheduling UI.
 
@@ -67,7 +67,7 @@ That single sentence is the design brief for the whole repository. Every decisio
 
 - **Tool-first independence.** No managed scheduler, no third-party analytics SaaS, no growth-hacking dashboard. You own the queue, the metrics history, and the wallet.
 - **Cost-consciousness as a first-class concern.** X API v2 bills per call — sometimes per *result*. A naive integration can burn real money in a single loop. Stratus treats cost as a load-bearing invariant, not an afterthought: there is a single chokepoint that prices every call, a Postgres ledger that records every cent, and hard guards that refuse the expensive mistakes (see [§8](#8-the-cost-model--read-this-before-you-touch-anything)).
-- **Pareto prioritization.** The codebase is small on purpose. Five workers, not a queue cluster. One bearer token, not multi-tenant auth. `setInterval`, not Redis + BullMQ. The 20% of infrastructure that delivers 80% of the outcome.
+- **Pareto prioritization.** The codebase is small on purpose. Two workers, not a queue cluster. One bearer token, not multi-tenant auth. `setInterval`, not Redis + BullMQ. The 20% of infrastructure that delivers 80% of the outcome.
 - **Build-in-public, zero fluff.** Stratus *is itself* a content pillar — the worked example of a lean tool that controls real costs. The voice it speaks in (in its Grok prompts, in its reply drafts) is the operator's voice: truth-seeking, lightly contrarian, useful before clever.
 
 If you are an indie hacker, a build-in-public creator, or a cost-aware engineer who wants a self-hosted growth cockpit you can read end-to-end in an afternoon and trust with your API key — this is for you. If you want a turnkey multi-account social suite, this is emphatically *not* for you, and that is by design.
@@ -82,10 +82,10 @@ Everything in Stratus exists to serve one of these three jobs:
 A calendar of drafted and queued tweets lives in Postgres (`scheduled_posts`). A `publisher` worker wakes every 60 seconds, finds the posts whose scheduled minute has arrived, and posts them to X. Times are **minute-jittered** (anchors at human hours, random minutes in `[5, 35]`) so the account never posts at a robotic `:00`/`:30`.
 
 ### Goal 2 — Track metrics over time
-Every tweet you actually publish — whether through Stratus or by hand in the X app — becomes a row in `posts_published`. A daily `ownReconcile` pass discovers tweets you posted manually; a `metricsPoll` worker samples each tweet's metrics on a **decaying cadence** (every 5 minutes when fresh, every 24 hours after a week, retired at 30 days), appending an immutable time-series to `metrics_snapshots`. You get a real performance history, not just a snapshot.
+Every tweet you actually publish — whether through Stratus or by hand in the X app — becomes a row in `posts_published`. A single `dailyMetrics` worker runs at **03:00 UTC**: it discovers tweets you posted manually (incremental `since_id` timeline pull), takes one `getMe()` account snapshot, snapshots **every non-retired tweet exactly once** by batched id lookup, and retires it — ~$0.001 per tweet total, appending an immutable row to `metrics_snapshots`. Tweets whose snapshot cleared `WINNER_REREAD_MIN_VIEWS` (default 500 views) earn exactly one bonus re-read at day 7+, capped at 5/day, so you can see which content compounds.
 
 ### Goal 3 — Stash other people's tweets (the voice library)
-Authors you want to learn from go into `tracked_authors`; their tweets are mirrored into `voice_tweets` (via the API or via one-click extension scraping), and — optionally, behind a cost gate — their public metrics are tracked over a 7-day window. This is your private corpus for studying *what actually works* in your niche, structurally and stylistically.
+Authors you want to learn from go into `voice_authors`; their tweets land in `voice_tweets` via **one-click DOM scraping in the Chrome extension** — never the X API, so every voice route is $0. An optional Grok pass distills each saved tweet's reusable *structure* (hook type, skeleton, line-break rhythm) for the remix workflow. This is your private corpus for studying *what actually works* in your niche, structurally and stylistically.
 
 ### The two force-multipliers (built on top)
 - **Reply Master** — Grok drafts a high-signal reply to any tweet you're looking at; you edit, copy, post manually, and record the result. Replies are the highest-ROI growth lever for a small account, and this is the tool that industrializes them. (See [§15](#15-the-reply-master-system).)
@@ -108,7 +108,7 @@ If one of these ever becomes genuinely necessary, the relevant section gets lift
 
 ## 3. Architecture at a glance
 
-Stratus is a single Bun process exposing a Hono HTTP API, fronted (in production) by Caddy for HTTPS, talking to a Neon Postgres database, with five `setInterval` workers running in-process. A Chrome MV3 extension is the primary human interface. An optional Grok integration powers reply drafting.
+Stratus is a single Bun process exposing a Hono HTTP API, fronted (in production) by Caddy for HTTPS, talking to a Neon Postgres database, with two `setInterval` workers running in-process. A Chrome MV3 extension is the primary human interface. An optional Grok integration powers reply and post drafting.
 
 ```
                        ┌────────────────────────────────────────────────────┐
@@ -116,12 +116,13 @@ Stratus is a single Bun process exposing a Hono HTTP API, fronted (in production
                        │  ┌────────────┐         ┌────────────────────────┐  │
    x.com / twitter.com │  │ side panel │         │  content script (x.com)│  │
    ────────────────────┼──┤ (React 19) │         │  "Save to stratus" +   │  │
-                       │  │ Calendar / │         │  "🪄 Reply Master"     │  │
-                       │  │ Composer / │         │  buttons, DOM scraping │  │
-                       │  │ Drafts /   │         └───────────┬────────────┘  │
-                       │  │ Voice /    │                     │ messages       │
-                       │  │ Replies /  │         ┌───────────▼────────────┐  │
-                       │  │ Settings   │         │  background worker      │  │
+                       │  │ Today /    │         │  "🪄 Reply Master"     │  │
+                       │  │ Calendar / │         │  buttons, DOM scraping │  │
+                       │  │ Composer / │         └───────────┬────────────┘  │
+                       │  │ Harvest /  │                     │ messages       │
+                       │  │ Voice /    │         ┌───────────▼────────────┐  │
+                       │  │ Replies /  │         │  background worker      │  │
+                       │  │ Settings   │         │                          │ │
                        │  └─────┬──────┘         │  (single auth chokepoint)│ │
                        │        │ direct fetch    └───────────┬────────────┘  │
                        └────────┼─────────────────────────────┼───────────────┘
@@ -137,13 +138,14 @@ Stratus is a single Bun process exposing a Hono HTTP API, fronted (in production
         │                                                                    │
         │  middleware:  cors → bearerAuth → (routes)                          │
         │                                                                    │
-        │  shared routes:   GET /healthz (public)   GET /cost/today           │
+        │  shared routes:   GET /healthz (public)   GET /cost/today|/daily    │
         │  grok route:      POST /grok/ask                                    │
-        │  X routes (/x):   calendar · metrics · posts · replies · voice      │
+        │  X routes (/x):   brief · calendar (+threads) · drafter · metrics   │
+        │                   posts · replies · voice (+extract) · harvest      │
+        │                   mentions                                          │
         │                                                                    │
-        │  in-process workers (setInterval):                                  │
-        │    publisher (60s) · ownReconcile (24h) · metricsPoll (60s)         │
-        │    voicePull (1h)  · voiceMetricsPoll (60s, opt-in)                 │
+        │  in-process workers (setInterval, heartbeat-monitored):             │
+        │    publisher (60s) · dailyMetrics (daily 03:00 UTC)                 │
         │                                                                    │
         │  one chokepoint out to X:   xFetch  (src/x/client.ts)              │
         │  one chokepoint out to Grok: askGrok (src/grok/client.ts)          │
@@ -153,8 +155,9 @@ Stratus is a single Bun process exposing a Hono HTTP API, fronted (in production
         ┌───────────────────────────────────────────────────────────────────┐
         │                     Neon Postgres (Drizzle ORM)                    │
         │  tokens · scheduled_posts · posts_published · metrics_snapshots     │
-        │  tracked_authors · voice_tweets · voice_metrics_snapshots           │
-        │  reply_drafts · cost_events                                          │
+        │  account_snapshots · voice_authors · voice_author_snapshots          │
+        │  voice_tweets · reply_drafts · mentions · harvest_runs               │
+        │  harvest_rows · cost_events                                          │
         └───────────────────────────────────────────────────────────────────┘
                                              ▲
                                              │  $0.001–$0.20 per call
@@ -198,7 +201,7 @@ This isolation is *the* reason the codebase can grow without rotting. Respect it
 | Process supervisor (prod) | **systemd** | — | `Restart=on-failure`, env file, sandboxing |
 | Host (prod) | **Hetzner Cloud CX23** | — | 2 vCPU / 4 GB / 40 GB Ubuntu |
 
-**Planned but not present:** anything beyond the above. No Redis, no BullMQ, no Docker, no Kubernetes, no Terraform. The whole point is that five `setInterval` calls in one Bun process, backed by `SELECT … FOR UPDATE SKIP LOCKED`, is enough for a single operator — and it is.
+**Planned but not present:** anything beyond the above. No Redis, no BullMQ, no Docker, no Kubernetes, no Terraform. The whole point is that two `setInterval` calls in one Bun process, backed by `SELECT … FOR UPDATE SKIP LOCKED`, is enough for a single operator — and it is.
 
 ### Compiler configuration (`tsconfig.json`)
 
@@ -263,27 +266,32 @@ stratus/
 │   │   ├── fields.ts             field-selection defaults (defaultPostParams)
 │   │   ├── errors.ts             XApiError + classify (RFC 7807 problem-details parsing)
 │   │   ├── pagination.ts         paginate(next_token) async iterator
-│   │   ├── endpoints.ts          getMe, getUserByUsername, getTweet, searchRecent,
-│   │   │                         getUserTweets, createPost, deletePost
+│   │   ├── endpoints.ts          getMe, getTweet, getTweetsByIds, searchRecent,
+│   │   │                         getUserTweets, getUserMentions, createPost, deletePost
 │   │   ├── pricing.ts            X price table (switch keyed off endpoint + method)
 │   │   ├── server.ts             Bun.serve OAuth callback — `bun run auth`
 │   │   ├── playground.ts         `bun run play` — example calls against your stored token
 │   │   ├── index.ts              mountX(app) + startXWorkers() — the only sanctioned boundary in
 │   │   ├── db/schema.ts          tokens, scheduled_posts, posts_published, metrics_snapshots,
-│   │   │                         tracked_authors, voice_tweets, voice_metrics_snapshots, reply_drafts
-│   │   ├── replies/prompt.ts     DEFAULT_SYSTEM_PROMPT + buildGrokInput (Reply Master persona)
+│   │   │                         account_snapshots, voice_authors, voice_author_snapshots,
+│   │   │                         voice_tweets, reply_drafts, mentions, harvest_runs, harvest_rows
+│   │   ├── replies/prompt.ts     REPLY_PROMPT_TEMPLATE + buildGrokInput (Reply Master prompt)
 │   │   ├── routes/
-│   │   │   ├── calendar.ts       /x/posts/scheduled CRUD
-│   │   │   ├── metrics.ts        /x/metrics/:tweetId
-│   │   │   ├── posts.ts          /x/posts/reconcile (createPostsRouter factory)
-│   │   │   ├── replies.ts        /x/replies/* (Grok-backed reply drafts)
-│   │   │   └── voice.ts          /x/voice/* (createVoiceRouter factory)
+│   │   │   ├── brief.ts          /x/brief — the daily growth-coach payload (Today tab)
+│   │   │   ├── calendar.ts       /x/posts/scheduled CRUD + /x/posts/threads
+│   │   │   ├── drafter.ts        /x/posts/draft + /x/posts/reup (Grok post drafts)
+│   │   │   ├── harvest.ts        /x/harvest/* (DOM-harvest ingestion, $0)
+│   │   │   ├── mentions.ts       /x/mentions inbox (list / refresh / status)
+│   │   │   ├── metrics.ts        /x/metrics/* (per-tweet, posts, replies, account,
+│   │   │   │                     best-times, pillars)
+│   │   │   ├── posts.ts          /x/posts/reconcile (one-shot dailyMetrics run)
+│   │   │   ├── replies.ts        /x/replies/* (Grok-backed reply drafts + outcomes)
+│   │   │   ├── voice.ts          /x/voice/* (swipe file + targets, all $0)
+│   │   │   └── voiceExtract.ts   /x/voice/*/extract (Grok template extraction)
 │   │   └── workers/
-│   │       ├── publisher.ts      60s: publish due scheduled_posts
-│   │       ├── ownReconcile.ts   24h: discover own tweets into posts_published
-│   │       ├── metricsPoll.ts    60s: sample own-tweet metrics on a decaying ladder
-│   │       ├── voicePull.ts      1h: mirror tracked authors' tweets
-│   │       └── voiceMetricsPoll.ts  60s (opt-in): sample voice-tweet metrics
+│   │       ├── publisher.ts      60s: publish due scheduled_posts (threads, self-quotes)
+│   │       └── dailyMetrics.ts   daily 03:00 UTC: account snapshot + discover +
+│   │                             once-only metrics snapshots + winner re-read + mentions
 │   │
 │   ├── my_niche.md               the operator's niche/positioning (feeds the Grok voice)
 │   └── test.test.ts              unit tests for the pure-function bits
@@ -297,7 +305,8 @@ stratus/
 │       ├── background.ts         service worker — the single auth chokepoint
 │       ├── content.ts            x.com content script — buttons + DOM scraping
 │       ├── shared/               messages.ts, bgClient.ts, types.ts
-│       └── sidepanel/            App, Calendar, Composer, Drafts, Voice, Replies, Settings,
+│       └── sidepanel/            App, Today (Inbox/Radar/Targets), Calendar, Composer,
+│                                 Harvest, Voice, Replies, Settings,
 │                                 api.ts, storage.ts, replyMasterStorage.ts, datetime.ts, main.tsx
 │
 ├── .claude/skills/stratus/       operator skill (drives the HTTP API from Claude)
@@ -387,7 +396,7 @@ bun run db:migrate     # apply the committed migrations to your database
 bun run db:studio      # (optional) inspect the schema visually
 ```
 
-After migrating you will have nine application tables (documented exhaustively in [§13](#13-database-schema--full-specification)) plus drizzle's own migration bookkeeping.
+After migrating you will have thirteen application tables (documented exhaustively in [§13](#13-database-schema--full-specification)) plus drizzle's own migration bookkeeping.
 
 ### 6.5 Connect your X account (OAuth)
 
@@ -413,7 +422,7 @@ To disconnect later (revoke + delete the row): `curl -X POST http://127.0.0.1:30
 bun run start     # = bun run src/app.ts
 ```
 
-You'll see `stratus listening on http://127.0.0.1:3000`, and the workers will announce themselves (publisher always on; reconcile / metrics / voice-pull on by default; voice-metrics-poll off unless opted in). The server also logs which optional features mounted (e.g. `/x/replies/*` only mounts if `XAI_API_KEY` is set).
+You'll see `stratus listening on http://127.0.0.1:3000`, and the workers will announce themselves (publisher always on; dailyMetrics on by default — disable with `DAILY_METRICS_ENABLED=false`). The server also logs which optional features mounted (e.g. `/x/replies/*`, `/x/posts/draft` and the voice extract routes only mount if `XAI_API_KEY` is set).
 
 ### 6.7 First smoke test
 
@@ -437,7 +446,7 @@ curl -s "http://127.0.0.1:3000/x/posts/scheduled?status=posted" \
   -H "Authorization: Bearer $API_TOKEN"
 ```
 
-When the row flips `pending → posted` and carries a `postedTweetId`, the full loop works: API → DB → 60s publisher tick → live tweet. (This exact loop was smoke-tested end-to-end on 2026-05-10.) From there, the metrics poller will begin sampling that tweet automatically.
+When the row flips `pending → posted` and carries a `postedTweetId`, the full loop works: API → DB → 60s publisher tick → live tweet. (This exact loop was smoke-tested end-to-end on 2026-05-10.) From there, the daily 03:00 UTC `dailyMetrics` pass will snapshot that tweet — once — automatically.
 
 ---
 
@@ -456,17 +465,15 @@ Stratus reads configuration exclusively from environment variables. Variables ma
 | `PORT` | No | `3000` | `src/app.ts`, `src/x/server.ts` | HTTP listen port. Caddy fronts this on 443 in production. |
 | `ALLOWED_ORIGINS` | No | `''` | `src/middleware/cors.ts` | Comma-separated extra web origins for CORS. The extension is matched automatically via `chrome-extension://*`. |
 | `XAI_API_KEY` | No | — | `src/grok/*`, `src/x/index.ts` | xAI/Grok API key. If unset, `/grok/ask` and `/x/replies/*` are **not mounted**. |
-| `OWN_RECONCILE_ENABLED` | No | `true` | `src/x/index.ts` | Set to `false` to disable the daily reconcile timer (manual `POST /x/posts/reconcile` still works). |
-| `METRICS_POLL_ENABLED` | No | `true` | `src/x/index.ts` | Set to `false` to disable own-tweet metrics polling. |
-| `VOICE_PULL_ENABLED` | No | `true` | `src/x/index.ts` | Set to `false` to disable the hourly voice pull. |
-| `VOICE_METRICS_POLL_ENABLED` | No | **`false`** | `src/x/index.ts` | **Opt-in.** Set to `true` to enable polling *other* authors' tweet metrics (other-user reads cost $0.005 each — gated for that reason). |
+| `DAILY_METRICS_ENABLED` | No | `true` | `src/x/index.ts` | Set to `false` to disable the daily 03:00 UTC metrics pass (manual `POST /x/posts/reconcile` still works). |
+| `X_DAILY_BUDGET_USD` | No | `0.15` | `src/x/index.ts` | Soft daily X budget. Crossing it logs a `BUDGET WATCHDOG` error on every billed call and stamps `dailyBudgetUsd`/`overBudget` into `/cost/today` — it never blocks calls. |
+| `WINNER_REREAD_MIN_VIEWS` | No | `500` | `src/x/workers/dailyMetrics.ts` | View threshold for the bounded day-7 winner re-read (one extra $0.001 read per qualifying tweet, max 5/day). |
+| `MENTION_API_REPLIES` | No | `false` | (nothing yet) | Documented verify-then-enable carve-out for API replies to mentions. **No code reads this flag** — mention replies stay manual paste. |
 | `X_BEARER_TOKEN` | No | — | (deploy/app-only reads) | Optional app-only bearer for read endpoints; referenced in the deploy runbook. |
+| `STRATUS_DEPLOY_HOST` | Deploy only | — | `scripts/deploy.sh` | Deploy target (`user@host`); the script also accepts the host as its first argument. |
 | `DOMAIN` | Deploy only | — | deploy scripts | Your public domain (or sslip.io) for Caddy + the OAuth callback. |
 
-**Worker gate semantics** are deliberately asymmetric:
-
-- The three "cheap" workers (`OWN_RECONCILE_ENABLED`, `METRICS_POLL_ENABLED`, `VOICE_PULL_ENABLED`) default **on** and you disable them with `=false`.
-- The one "expensive" worker (`VOICE_METRICS_POLL_ENABLED`) defaults **off** and you enable it with `=true`. This is a money safety: polling other people's metrics is 5× the cost of your own, so it never starts by accident.
+**Worker gate semantics:** the publisher is always on (it *is* the product). `dailyMetrics` defaults **on** and is disabled with `DAILY_METRICS_ENABLED=false`. There is no paid voice worker anymore — the voice library is fed by $0 DOM scraping in the extension, so there is nothing to gate.
 
 ---
 
@@ -484,7 +491,7 @@ X API v2 bills per call, and for some endpoints **per result returned**. Stratus
 | Own post / mention / like / followers / following / mute / block read | **$0.001** | 24h UTC dedup |
 | Bookmarks read | $0.005 | Billing bug — should be $0.001; defer bookmark sync |
 | Other-user post read, search results | **$0.005** | Per result |
-| Third-party user lookup | **$0.010** | `getUserByUsername` |
+| Third-party user lookup | **$0.010** | no wrapper anymore — voice authors come from DOM scrape |
 | Post create (no URL) | **$0.015** | |
 | **Post create (URL in text)** | **$0.20** | ⚠️ guarded in `createPost` |
 | Like / Repost / Bookmark write | $0.015 | (not exposed in v1) |
@@ -492,12 +499,13 @@ X API v2 bills per call, and for some endpoints **per result returned**. Stratus
 
 ### Cadence-derived budgets
 
-These are the per-tweet lifetime costs of the polling workers, derived from the cadence ladders in [§12](#12-the-background-workers):
+These are the lifetime costs of the daily pass (see [§12](#12-the-background-workers)):
 
-- **Own posts:** ~113 polls × $0.001 ≈ **$0.113 per tweet** over 30 days, then the row is retired and never polled again.
-- **Voice tweets:** ~18 polls × $0.005 ≈ **$0.09 per tweet** over 7 days, then retired.
-- **Per-author voice guardrail:** only the newest `max_polled_tweets` (default **20**) of a tracked author ever get enrolled for metrics polling. At the default, that's a ceiling of roughly 20 × $0.09 ≈ **$1.80 per author per 7-day window** — and only when `VOICE_METRICS_POLL_ENABLED=true`.
-- **Reply drafting (Grok):** ~$0.0019 per generation; ~$0.19 per 100 drafts. Too cheap to gate.
+- **Own posts (and own replies — a reply is your own tweet):** **1 snapshot × $0.001 ≈ $0.001 per tweet**, then the row is retired and never read again. Tweets whose snapshot cleared `WINNER_REREAD_MIN_VIEWS` (default 500 views) earn exactly one extra read at day 7+, capped at 5/day (≤ $0.005/day).
+- **Account KPI:** one `getMe()` per UTC day into `account_snapshots` = **$0.001/day**.
+- **Mention inbox:** **~$0.01–0.03/day** — owned reads at $0.001/result, incremental via the stored-rows `since_id` checkpoint; on-demand refreshes capped 6/day server-side.
+- **Voice library:** **$0** — DOM-scraped in the extension, never read through the X API. The optional Grok template extraction is ~$0.005/tweet, one-time.
+- **Reply drafting (Grok):** ~$0.002–0.004 per generation (two variants; doubles on the one automatic specificity retry). **Post drafting:** ~$0.006–0.01 per call (three register-distinct drafts).
 
 ### How spend is recorded
 
@@ -510,14 +518,15 @@ This insert is **fire-and-forget**: a failed cost-log is caught and logged but n
 
 `GET /cost/today` then aggregates `cost_events` over the current **UTC day** (X bills on UTC), grouped by platform and endpoint. The cost dashboard *is* the budget cap — there is no automatic enforcement, by design.
 
-### Known under-counting (be aware)
+### Pricing truthfulness
 
-The pricing layer can only see the request path, not the request body or the per-result count:
+The ledger records true prices (closed in Phase 9.1):
 
-- **The $0.20 URL surcharge** can't be inferred from `POST /2/tweets` alone, so a URL post currently records as $0.015 in the ledger. (The *guard* still blocks it at the call site — you just won't see the true price in `/cost/today`.)
-- **Per-result endpoints** (search, user-tweets) pass `items: null` today because `xFetch` doesn't yet thread the result count into the cost hook, so paged reads under-report. This is flagged in-file as future work.
+- **Per-result endpoints** (timeline pulls, batch tweet lookups, mentions, search) thread the response item count through `xFetch` into the price, so a page of N results bills N× the per-result rate in the ledger.
+- **The $0.20 URL surcharge** can't be inferred from `POST /2/tweets` alone, so `createPost` passes an explicit `costHint` — $0.20 only when the URL sits in standalone/thread-head text; a link in a reply (the link-in-first-reply pattern) bills the base $0.015. Owned single-tweet reads hint $0.001 (the path-only table prices them conservatively at $0.005).
+- `costTracker` warns on any $0-priced 2xx call (an unmapped endpoint), and `askGrok` warns on unknown models — gaps surface loudly instead of silently under-reporting.
 
-Neither gap costs you money silently at the API — they only make the *dashboard* conservative-low. The guards that actually prevent overspend (URL surcharge block, `max_results` clamps, retirement, per-author caps) are all live.
+The guards that actually prevent overspend (URL surcharge block, `max_results` clamps, retire-before-snapshot) are all live independently of the ledger.
 
 ---
 
@@ -633,9 +642,10 @@ Each function is a thin typed wrapper over `xFetch`. Added one at a time, only w
 
 | Function | Endpoint | Cost | Notes |
 |---|---|---|---|
-| `getMe(token)` | `GET /2/users/me` | $0.001 | Owned read; how you discover `SELF_X_USER_ID`. |
-| `getUserByUsername(token, username)` | `GET /2/users/by/username/:u` | $0.010 | Third-party lookup; resolves username → id for voice tracking. |
-| `getTweet(token, id, { ownedPrivate? })` | `GET /2/tweets/:id` | $0.001 owned / $0.005 other | Requests private metrics only when `ownedPrivate`. |
+| `getMe(token)` | `GET /2/users/me` | $0.001 | Owned read; how you discover `SELF_X_USER_ID`. Feeds the daily `account_snapshots` row. |
+| `getTweet(token, id, { owned?, ownedPrivate? })` | `GET /2/tweets/:id` | $0.001 owned / $0.005 other | Requests private metrics only when `ownedPrivate`; hints the true $0.001 price when owned. |
+| `getTweetsByIds(token, ids, { ownedPrivate? })` | `GET /2/tweets?ids=` | $0.001/result (owned) | Batched lookup, ≤100 ids/call — the daily snapshot pass. |
+| `getUserMentions(token, xUserId, opts)` | `GET /2/users/:id/mentions` | $0.001/result | Incremental via `sinceId`; default `maxResults` 50 so a checkpoint-less pull can't walk the 800-cap history. |
 | `searchRecent(token, query, { maxResults? })` | `GET /2/tweets/search/recent` | $0.005/result | 7-day window. **Clamps page size to `[10,100]`** (Invariant 5). |
 | `getUserTweets(token, xUserId, opts)` | `GET /2/users/:id/tweets` | $0.001 owned / $0.005 other per result | Clamps page size to `[5,100]`; supports `sinceId`, `ownedPrivate`; uses `pagination_token`; hard cap 3,200. |
 
@@ -655,8 +665,9 @@ Two consistency notes worth knowing: `searchRecent` clamps to `[10,100]` while `
 `priceFor(endpoint, method, status, items): number` — a switch keyed off `(method, path)`:
 
 - `status >= 400` → **$0** (X doesn't bill 4xx or retried 5xx).
-- `POST /2/tweets` → $0.015 · `DELETE /2/tweets/:id` → $0.010 · `GET /2/users/me` → $0.001 · `GET /2/tweets/:id` → $0.005 (conservatively priced as other-user) · `GET /2/tweets/search/recent` → $0.005 × `(items ?? 1)`.
-- Anything unmapped → **$0** (a grep-able "unknown endpoint" gap, never a fabricated price).
+- `POST /2/tweets` → $0.015 · `DELETE /2/tweets/:id` → $0.010 · `GET /2/users/me` → $0.001 · `GET /2/tweets/:id` → $0.005 (conservatively priced as other-user unless the call site hints owned) · `GET /2/tweets?ids=`, `GET /2/users/:id/tweets`, `GET /2/users/:id/mentions` → $0.001 × `items` (owned reads) · `GET /2/tweets/search/recent` → $0.005 × `(items ?? 1)`.
+- Call sites that know more than the path pass a **`costHint`** through `xFetch` (the URL surcharge in `createPost`, owned single-tweet reads) and `costTracker` prefers it over the table.
+- Anything unmapped → **$0** (a grep-able "unknown endpoint" gap, never a fabricated price — and `costTracker` logs a warning on a $0-priced 2xx).
 
 ### 10.9 `server.ts` & `playground.ts` — dev tools
 
@@ -676,56 +687,93 @@ All routes are served by the Hono app in `src/app.ts`. Middleware order is **COR
 
 | Method | Path | Auth | Description | Response |
 |---|---|---|---|---|
-| `GET` | `/healthz` | public | Runs `select 1`; reports app version. | `200 {ok:true,version}` or `503 {ok:false,version,error}` |
-| `GET` | `/cost/today` | bearer | Aggregates `cost_events` over the current UTC day, grouped by platform then endpoint. | `200 {from,to,totalUsd,totalCalls,byPlatform:[{platform,costUsd,calls,byEndpoint:[…]}]}` |
+| `GET` | `/healthz` | public | Runs `select 1`, checks worker heartbeats, reports app version + deployed `gitSha` (stamped by `deploy.sh`). DB failures return a generic `db_unreachable` (no raw error echo). | `200 {ok:true,version,gitSha,workers}` or `503 {ok:false,…,staleWorkers?}` |
+| `GET` | `/cost/today` | bearer | Aggregates `cost_events` over the current UTC day, grouped by platform then endpoint; platforms with a soft budget carry `dailyBudgetUsd`/`overBudget`. | `200 {from,to,totalUsd,totalCalls,byPlatform:[{platform,costUsd,calls,byEndpoint:[…]}]}` |
+| `GET` | `/cost/daily` | bearer | Trailing daily spend series (`?days=`, default 30, clamped 1–90), UTC days, zero-filled. | `200 {from,days,budgets,daily:[…]}` |
+| `GET` | `/x/brief` | bearer | The daily growth-coach payload behind the extension's Today tab: follower trend, yesterday's numbers, today's schedule + cadence gaps, reply quota, the week's 70/30 ratio, today's spend. `?tzOffsetMin=` sets the viewer's local-day boundaries (spend stays on the UTC billing day). $0 — pure SQL. | `200` brief JSON |
 
 ### 11.2 Calendar routes (`/x/posts/scheduled`) — table `scheduled_posts`
 
 | Method | Path | Body / Query | Behavior | Returns |
 |---|---|---|---|---|
-| `POST` | `/x/posts/scheduled` | `{ text, scheduledFor?, mediaIds?, status? }` | Creates a scheduled post. `text` required + non-empty. `scheduledFor` is UTC ISO or null. `status` may only be `draft` or `pending` on create; `pending` requires `scheduledFor`. If omitted, status defaults to `pending` when a time is set, else `draft`. | `201` the inserted row |
+| `POST` | `/x/posts/scheduled` | `{ text, scheduledFor?, mediaIds?, status? }` | Creates a scheduled post. `text` required + non-empty. `scheduledFor` is UTC ISO or null. `status` may only be `draft` or `pending` on create; `pending` requires `scheduledFor` and rejects URLs in `text` (`400 url_in_text`). If omitted, status defaults to `pending` when a time is set, else `draft`. | `201` the inserted row |
+| `POST` | `/x/posts/threads` | `{ segments: string[2..25], scheduledFor?, status?, pillar? }` | Creates a thread as **one schedulable unit**: the head (position 1) is a normal draft/pending row; tails land as `status='segment'` (schedule/status ride with the head, text editable until posted, DELETE via the head only — cascades). A URL in segment 1 is rejected when pending; URLs in tail segments are allowed — link-in-first-reply is the documented cheap pattern ($0.015 + $0.015 = $0.030 vs $0.20). | `201 {threadId, segments}` |
 | `GET` | `/x/posts/scheduled` | query `from`, `to`, `status` | Filters by `scheduledFor` window and/or status. Ordered `scheduledFor asc nulls last`, then `createdAt desc`. | `200` array |
-| `PATCH` | `/x/posts/scheduled/:id` | `{ text?, scheduledFor?, mediaIds?, status? }` | Edits a post. `:id` must be a UUID. **`409 cannot_edit_posted`** if already posted. Cannot set status to `posted` via PATCH. | `200` updated row |
-| `DELETE` | `/x/posts/scheduled/:id` | — | Hard-deletes. **`409 cannot_delete_posted`** if already posted. | `204` |
+| `GET` | `/x/posts/scheduled/:id` | — | Single row; a thread member also carries `thread: [...]` (all siblings, ordered by position). | `200` row |
+| `PATCH` | `/x/posts/scheduled/:id` | `{ text?, scheduledFor?, mediaIds?, status? }` | Edits a post. `:id` must be a UUID. **`409`** on worker-owned states (`cannot_edit_posted` / `cannot_edit_publishing`); `posted`/`publishing` are not settable via PATCH. Segment rows accept text edits only (`409 segment_schedule_rides_with_head` otherwise). Promoting to `pending` re-runs the URL guard. | `200` updated row |
+| `DELETE` | `/x/posts/scheduled/:id` | — | Hard-deletes. **`409`** if `posted`/`publishing`. Thread rows delete as a unit via the head (`409 thread_has_locked_segments` if any segment is locked). | `204` |
 
-**Status lifecycle:** `draft` → `pending` → `posted` (terminal, write-locked) / `failed` (editable, retryable) / `cancelled`.
+**Status lifecycle:** `draft` → `pending` → `publishing` (claimed by the worker, X call in flight) → `posted` (terminal, write-locked) / `failed` (editable, retryable) / `cancelled`. `segment` marks thread tails — the publisher drives them after the head posts. A row stuck in `publishing` means the X outcome is unknown (5xx/network mid-call) — never auto-retried; reconcile picks the tweet up if it actually shipped.
 
-### 11.3 Metrics route — tables `posts_published`, `metrics_snapshots`
+### 11.3 Metrics routes — tables `posts_published`, `metrics_snapshots`, `account_snapshots`
+
+All $0 — pure SQL over already-billed snapshots.
 
 | Method | Path | Behavior | Returns |
 |---|---|---|---|
 | `GET` | `/x/metrics/:tweetId` | Reads a published post plus its full snapshot history (oldest-first, chart-ready). `:tweetId` validated `^\d{1,32}$`; `404 not_found` if not tracked. | `200 {tweetId,postedAt,retired,pollCount,nextPollAt,lastSeenAt,snapshots:[{snapshotAt,publicMetrics,nonPublicMetrics,organicMetrics}]}` |
+| `GET` | `/x/metrics/posts` | My non-reply posts, newest first, each with its latest snapshot. `?limit=` (≤200, default 50). | `200 {count, posts}` |
+| `GET` | `/x/metrics/replies` | Same shape over my replies (`isReply=true`). | `200 {count, replies}` |
+| `GET` | `/x/metrics/account` | The follower-growth KPI series from `account_snapshots`, with per-day deltas joined against that window's posts/replies counts. | `200 {count, latest, series}` |
+| `GET` | `/x/metrics/best-times` | Engagement by posted UTC weekday × hour over my non-reply posts; views normalized to a per-day rate via `age_at_snapshot_min` so reads taken at different ages compare. | `200 {measuredPosts, top: [...5 best cells], cells: [{weekday(0=Sun), hour, posts, avgViews, avgViewsPerDay, avgLikes, avgProfileVisits}]}` |
+| `GET` | `/x/metrics/pillars` | Performance by content pillar — joins `scheduled_posts.pillar` (originals) and `reply_drafts.pillar` (replies) to each tweet's latest snapshot. | `200 {count, pillars: [{pillar, posts, replies, measured, views, avgViews, likes, profileVisits, avgProfileVisits}]}` |
 
-### 11.4 Posts / reconcile route — table `posts_published`
+### 11.4 Posts routes — reconcile & the Grok drafter
 
 | Method | Path | Body | Behavior | Returns |
 |---|---|---|---|---|
-| `POST` | `/x/posts/reconcile` | `{ fullScan?, maxResults? }` | One-shot invocation of the same logic as the daily `ownReconcile` worker — discovers own tweets not yet tracked. `maxResults` clamped to `min(3200, …)`. | `200 {scanned,inserted}` or `500 reconcile_failed` |
+| `POST` | `/x/posts/reconcile` | `{ fullScan?, maxResults? }` | One-shot run of the daily `dailyMetrics` pass (account snapshot + discovery + once-only snapshots + winner re-read + mentions pull). `maxResults` clamped to `min(3200, …)`. | `200 {scanned,discovered,snapshotted,retired,failed,accountSnapshotted,mentionsScanned,mentionsNew,mentionsAnswered,rereadWinners}` or `500 reconcile_failed` |
+| `POST` | `/x/posts/draft` | `{ pillar?, idea?, voiceTweetId?, model?, reasoningEffort? }` | One Grok structured-outputs call (~$0.006) returning **three register-distinct drafts** (plain/spicy/reflective), each landing as a `status='draft'` calendar row with its pillar (`1\|2\|3` or `'ai-craft'\|'builder-51'\|'unsexy-problems'`). Few-shot grounded in the top-5 own posts by measured views; `voiceTweetId` remixes a saved tweet's extracted structure; `idea` (≤2000 chars, Romanian OK) steers. Nothing posts without human scheduling. Mounted only with `XAI_API_KEY`. | `201 {drafts, winnersUsed, model, costUsd, requestId}` |
+| `POST` | `/x/posts/reup` | `{ tweetId, idea?, pillar?, model?, reasoningEffort? }` | Same pipeline steered to a **self-quote re-up**: `tweetId` must be an own published tweet (`404 not_own_tweet` otherwise); drafts carry `quoteTweetId` and the publisher re-verifies ownership at post time. | `201` same shape |
 
 ### 11.5 Replies routes (`/x/replies`) — table `reply_drafts` (mounted only if `XAI_API_KEY` set)
 
 | Method | Path | Body / Query | Behavior | Returns |
 |---|---|---|---|---|
-| `POST` | `/x/replies/generate` | `{ context, systemPromptOverride?, model?, reasoningEffort? }` | Validates the full `context` (tweetId, handle, author, text, url, postedAt, metrics, topComments), builds the Grok prompt, calls `askGrok` (max 280 output tokens, temp 0.7), and stores the draft (`status='generated'`). | `201` draft; upstream Grok errors mapped to `429`/`502` |
+| `POST` | `/x/replies/generate` | `{ context, idea?, override?, systemPromptOverride?, model?, reasoningEffort? }` | Validates the full `context` (tweetId, handle, author, text, url, postedAt, metrics, topComments; optionally capture-time `signals` and a `parent` block for mention threads), recomputes the reply band server-side and **refuses dead targets** (`422 band_gate` on `null`/`skip` — no Grok spend) unless `override: true`. Then makes one Grok structured-outputs call returning **two variants** tagged `extends`/`contrarian`/`debate`; a specificity gate burns at most one automatic regenerate; `idea` (≤2000 chars) steers the draft. Stores the draft (`status='generated'`). | `201` draft (with `variants`); upstream Grok errors mapped to `429`/`502` |
+| `GET` | `/x/replies/outcomes` | query `limit` (≤1000), `since` | Joins posted drafts → `posts_published` → latest snapshot on `postedTweetId`: views/likes/replies/`profileVisits` per reply, alongside the capture-time band `signals`. $0, pure SQL — the BAND calibration data. | `200 {count, measured, unlinked, outcomes}` |
 | `GET` | `/x/replies` | query `status`, `sourceAuthor`, `limit` (≤200, default 50), `since` | Lists drafts, newest-first. | `200` array |
 | `GET` | `/x/replies/:id` | — | Single draft (UUID). | `200` or `404` |
 | `PATCH` | `/x/replies/:id` | `{ replyTextEdited?, status?, postedTweetId? }` | Edits text / advances status. **Transitions enforced:** `generated → copied\|posted\|discarded`, `copied → posted\|discarded`, `posted → discarded`, `discarded` terminal (`409 invalid_status_transition` otherwise). `postedTweetId` requires final status `posted`. | `200` updated |
 | `DELETE` | `/x/replies/:id` | — | Hard-deletes. | `204` |
 
-### 11.6 Voice routes (`/x/voice`) — tables `tracked_authors`, `voice_tweets`, `voice_metrics_snapshots`
+### 11.6 Voice routes (`/x/voice`) — tables `voice_authors`, `voice_tweets`, `voice_author_snapshots`
+
+The voice library is a **pure DOM-scrape swipe file** (pivoted 2026-06-01): every route below is $0 — Postgres only, no X API. The old paid stack (`/x/voice/track`, `/x/voice/pull/:username`, `tracked_authors`, per-author `pullEnabled`/`metricsPollingEnabled`/`maxPolledTweets` flags, `voice_metrics_snapshots`) is **gone** — do not reintroduce API reads for voice content. The two extract routes are Grok-backed (xAI tokens, not X API) and mount only when `XAI_API_KEY` is set.
 
 | Method | Path | Body / Query | Behavior | Returns | Cost |
 |---|---|---|---|---|---|
-| `POST` | `/x/voice/track` | `{ username, maxPolledTweets? }` | Resolves username → id (`getUserByUsername`), upserts a `tracked_authors` row with `source='manual'` and both flags **on**. | `201` author | **$0.010** |
-| `GET` | `/x/voice/authors` | query `source` | Lists authors with a left-joined tweet count. | `200` array | free |
-| `PATCH` | `/x/voice/authors/:username` | `{ pullEnabled?, metricsPollingEnabled?, maxPolledTweets?, source? }` | Flips flags on an existing author (promote/demote). No API call. | `200` updated | free |
-| `DELETE` | `/x/voice/track/:username` | — | **Soft disable:** both flags off + retires all the author's voice tweets to stop spend. | `200 {author,retiredVoiceTweets}` | free |
-| `POST` | `/x/voice/pull/:username` | `{ fullScan?, maxResults? }` | On-demand pull of that author's tweets. | `200` pull result | $0.005/result |
-| `POST` | `/x/voice/scrape` | `{ original, replies?, pollMetrics? }` | **Extension DOM-scrape ingest.** Stores scraped tweets (content is free — no API read); for each *new* author does one `getUserByUsername` and inserts with `source='auto_from_scrape'` and both flags **off**. | `200` ingest summary | **$0.010 per new author only** |
-| `GET` | `/x/voice/tweets` | query `author`, `q`, `minLikes`, `includeReplies`, `limit` (≤200) | Lists stashed tweets joined to author + latest snapshot metrics. | `200` array | free |
-| `GET` | `/x/voice/metrics/:tweetId` | — | Snapshot history (public metrics only) for a voice tweet. | `200` history | free |
+| `POST` | `/x/voice/scrape` | `{ tweet, author? }` | **Extension DOM-scrape ingest.** Saves the tweet (text + `scrapedHtml`), stubs/fills the author from the handle + best-effort hover card. Re-scrape refreshes the tweet; author fills null columns only. | `201 {tweet, author}` | $0 |
+| `PUT` | `/x/voice/authors/:handle` | profile fields (`displayName`, `bio`, `followersCount`, …) | Authoritative enrich from the profile header ("Save author"); also **appends a `voice_author_snapshots` point** — the follower-momentum series. | `200` author | $0 |
+| `GET` | `/x/voice/authors` | query `retired=true` | Lists authors (profile fields) with a left-joined tweet count. | `200` array | $0 |
+| `PATCH` | `/x/voice/authors/:handle` | `{ retired }` | Soft archive toggle. | `200` updated | $0 |
+| `DELETE` | `/x/voice/authors/:handle` | — | Hard delete; `409 author_has_tweets` while tweets remain; drops the author's snapshot series in the same txn. | `200 {deleted}` | $0 |
+| `GET` | `/x/voice/targets` | — | The **2–10× reply-target roster**: non-retired authors banded against my latest follower count (`account_snapshots`), ranked by momentum (followers/day across the enrich series), each with `lastRepliedAt`/`postedReplies` joined from posted reply drafts. | `200 {myFollowers, measuredAt, band, targets}` | $0 |
+| `GET` | `/x/voice/tweets` | query `author`, `q`, `hook`, `extracted=true\|false`, `retired`, `limit` (≤200) | Lists stashed tweets joined to author. `hook` substring-matches the extracted `hookType`; `extracted` filters on template extraction. | `200` array | $0 |
+| `PATCH` | `/x/voice/tweets/:tweetId` | `{ retired }` | Soft archive toggle. | `200` updated | $0 |
+| `DELETE` | `/x/voice/tweets/:tweetId` | — | Hard delete. | `200 {deleted}` | $0 |
+| `POST` | `/x/voice/tweets/:tweetId/extract` | — | One Grok structured-output pass distilling `{hookType, skeleton, lineBreakPattern, templateLength, device}` into the row — structure only, never content. | `200 {tweet, costUsd}` | ~$0.005 (Grok) |
+| `POST` | `/x/voice/extract-batch` | `{ limit? }` (≤50) | Backfills un-extracted, non-retired tweets oldest-first. | `200 {requested, extracted, failures, costUsd, remaining}` | ~$0.005/tweet (Grok) |
 
-### 11.7 Grok route — table `cost_events` (mounted only if `XAI_API_KEY` set)
+### 11.7 Mention inbox routes (`/x/mentions`) — table `mentions`
+
+| Method | Path | Body / Query | Behavior | Returns |
+|---|---|---|---|---|
+| `GET` | `/x/mentions` | query `status`, `limit` | Lists mentions newest-first, each joined to my parent post as `parentText` for thread context. | `200 {counts:{unanswered}, mentions}` |
+| `POST` | `/x/mentions/refresh` | `{ maxResults? }` | On-demand incremental pull (owned reads, $0.001/result; the stored rows are the since_id checkpoint). Capped **6/day** server-side (`429 refresh_limit`). | `200` pull result + `refreshesRemaining` |
+| `PATCH` | `/x/mentions/:tweetId` | `{ status?, draftId? }` | Moves status (`unanswered`/`answered`/`dismissed`) / links the answering reply draft. | `200` updated |
+
+Replying stays **manual paste** — mentions are never auto-replied (the `MENTION_API_REPLIES` env flag is documentation only; nothing reads it).
+
+### 11.8 Harvest routes (`/x/harvest`) — tables `harvest_runs`, `harvest_rows` ($0)
+
+| Method | Path | Body / Query | Behavior | Returns |
+|---|---|---|---|---|
+| `POST` | `/x/harvest/runs` | `{ handle, mode: posts\|replies, scope: all\|today\|yesterday\|since-last }` | One run per extension harvest click. | `201` run row |
+| `POST` | `/x/harvest/rows` | `{ runId, rows: […] }` (≤500/call) | Batched ingest of DOM-harvested rows (capture-time counts, optional content-shape fields `hasPhoto`/`hasVideo`/`isQuote`/`textLen`/`lineBreaks`, replies-mode `orig` + `groupPosition`). Replies-mode rows reconcile against `reply_drafts` — an exact or text+time match links the row and **backfills the draft's missing `postedTweetId`**. | `201 {inserted, matched, backfilled}` |
+| `GET` | `/x/harvest/runs` | query `limit` | Recent runs newest-first with cumulative row counts. | `200` array |
+
+### 11.9 Grok route — table `cost_events` (mounted only if `XAI_API_KEY` set)
 
 | Method | Path | Body | Behavior | Returns |
 |---|---|---|---|---|
@@ -735,86 +783,66 @@ All routes are served by the Hono app in `src/app.ts`. Middleware order is **COR
 
 ## 12. The background workers
 
-Five workers run in-process via `setInterval`, started by `startXWorkers()` in `src/x/index.ts`. They all share the same defensive shape:
+Two workers run in-process via `setInterval`, started by `startXWorkers()` in `src/x/index.ts`. (The old `ownReconcile`, `metricsPoll`, `voicePull` and `voiceMetricsPoll` workers no longer exist — the first two were consolidated into the single `dailyMetrics` pass on 2026-06-05; the voice pair died with the 2026-06-01 DOM-scrape pivot.) Both share the same defensive shape:
 
 - A `running` re-entrancy flag — a tick is skipped entirely if the previous one hasn't finished.
 - The tick body wrapped in try/catch, so a thrown error logs but never kills the interval.
-- A returned disposer (`clearInterval`) collected into the `stop()` handle.
+- A disposer collected into the async `stop()` handle, which drains in-flight ticks — the SIGTERM/SIGINT handler in `app.ts` awaits it (30 s force-exit backstop).
+- A **heartbeat** (`src/heartbeats.ts`): each tick calls `beat()`, and `/healthz` returns 503 with `staleWorkers` when one stops beating (publisher stale after >5 min, dailyMetrics after >25 h) — so the deploy health check pages on a dead worker.
 
-Three of them — the ones that make a **paid X call inside a row lock** — use `SELECT … FOR UPDATE SKIP LOCKED` so no two ticks (or future replicas) ever double-process a row. The two reconcile-style pullers use idempotent insert-or-noop instead.
+The publisher claims rows under `SELECT … FOR UPDATE SKIP LOCKED` so no two ticks (or future replicas) ever double-process a row; the daily pass uses idempotent insert-or-noop plus retire-before-snapshot.
 
-`startXWorkers()` also installs the cost logger (`setDefaultOnCost(makeOnCost('x'))`) *before* any worker tick, so the very first X call is recorded.
+`startXWorkers()` also installs the cost logger (`setDefaultOnCost(makeOnCost('x', { dailyBudgetUsd }))`) *before* any worker tick, so the very first X call is recorded — the daily budget watchdog rides on the same callback.
 
 ### 12.1 `publisher` — publish due posts (60 s, always on)
 
-- Selects up to 10 `pending` posts where `scheduledFor <= now`, ordered by time, one at a time under `FOR UPDATE SKIP LOCKED` (lock held across the X call).
-- Calls `createPost(token, {text}, {selfXUserId})` — **$0.015**.
-- On success: inserts a `posts_published` row (`source='scheduled'`, `nextPollAt=now`, `onConflictDoNothing`) and flips the scheduled row to `posted` with `postedTweetId`.
-- On failure: sets `status='failed'`, records `errorClass` (via `classify`) and `errorDetail` (truncated 2000 chars). The row stays editable for retry.
+- Selects up to 10 `pending` posts where `scheduledFor <= now`, ordered by time, one at a time under `FOR UPDATE SKIP LOCKED`.
+- **Double-post hardening:** each row is claimed in its own transaction (`pending → publishing`, committed **before** the X call), then finalized. A definite X 4xx flips it to `failed` (with `errorClass` via `classify` and `errorDetail` truncated to 2000 chars — editable for retry); a 5xx/network error leaves it in `publishing` forever, because the outcome is ambiguous — the tweet may exist. Reconcile finds it if it shipped, and the publisher logs stuck `publishing` rows every tick.
+- Calls `createPost(token, {text}, {selfXUserId})` — **$0.015**. On success: inserts a `posts_published` row (`source='scheduled'`, `onConflictDoNothing`) and flips the scheduled row to `posted` with `postedTweetId`.
+- **Threads:** claiming a thread head posts the whole chain — head first, then each `segment` row as a self-reply to the previous segment's returned id, ~500 ms apart ($0.015/segment). One failed/ambiguous segment freezes the rest as `failed` (`errorClass='thread_frozen'`) — the already-posted prefix is never re-posted from the top.
+- **Self-quote re-ups:** a row with `quoteTweetId` posts as a quote tweet only after re-verifying the quoted id exists in `posts_published` (own tweet — the Feb 2026 policy guard).
 
-### 12.2 `ownReconcile` — discover own tweets (24 h, on by default)
+### 12.2 `dailyMetrics` — the single daily pass (03:00 UTC, on by default)
 
-- Purpose: find tweets you posted **manually in the X app** (and recover any publisher rows whose transaction rolled back after X committed — the accepted no-idempotency trade-off).
-- Computes a `sinceId` checkpoint = the newest `posts_published.tweetId` (bigint snowflake sort), so steady-state it reads ~0–5 tweets/day.
-- Calls `getUserTweets(token, selfXUserId, { maxResults, sinceId })` — **$0.001/tweet** (owned). Default `maxResults` 500; the route clamps user input to 3,200.
-- Inserts each new tweet into `posts_published` (`source='manual'`, `isReply` from `in_reply_to_user_id`, `inReplyToTweetId` from the `replied_to` referenced tweet, `conversationId`, `nextPollAt=now`, `onConflictDoNothing`).
-- Also callable one-shot via `POST /x/posts/reconcile`. No row lock needed (idempotent insert-or-noop).
+One worker replaces the old `ownReconcile` (24 h) + `metricsPoll` (60 s) pair. Gated by `DAILY_METRICS_ENABLED` (default on); the whole pass is also triggerable one-shot via `POST /x/posts/reconcile`. In order, each step isolated so one failure never kills the run:
 
-### 12.3 `metricsPoll` — own-tweet metrics cadence (60 s, on by default)
+1. **Account snapshot** — one `getMe()` (**$0.001/day**) into `account_snapshots` (follower/following/tweet/listed counts; max one row per UTC day, so boot catch-up runs can't double-write).
+2. **Discover** — incremental own-timeline pull via a `sinceId` checkpoint (= the newest `posts_published.tweetId`), inserting tweets you posted manually in the X app (`source='manual'`, `isReply`/`inReplyToTweetId`/`conversationId` from the referenced tweets, `onConflictDoNothing`) — **$0.001/tweet scanned**, default cap 500/pass. This is also what recovers a publisher row stuck in `publishing` whose tweet actually shipped.
+3. **Snapshot** — see 12.3.
+4. **Winner re-read** — see 12.3.
+5. **Mentions pull** — see 12.5.
 
-- Selects up to 10 rows where `retired=false AND nextPollAt <= now` under `FOR UPDATE SKIP LOCKED`.
-- Calls `getTweet(token, tweetId, { ownedPrivate })` — **$0.001**. `ownedPrivate` is true only while the tweet is < 30 days old (private/organic metrics null out after that).
-- Appends a `metrics_snapshots` row (public/non-public/organic) and bumps `pollCount` (only on a real snapshot).
-- **The cadence ladder** (`nextPollDelay(ageMs)`, unit-tested):
+### 12.3 The once-only snapshot + winner re-read (inside `dailyMetrics`)
 
-  | Tweet age | Next poll in | ~polls |
-  |---|---|---|
-  | < 30 min | +5 min | ~6 |
-  | 30 min – 6 h | +15 min | ~22 |
-  | 6 h – 48 h | +1 h | ~42 |
-  | 2 d – 7 d | +6 h | ~20 |
-  | 7 d – 30 d | +24 h | ~23 |
-  | ≥ 30 d | **retire** | — |
+There is **no decaying cadence ladder anymore** — the old `metricsPoll` cost ~113 polls ≈ $0.113/tweet over 30 days; the consolidation cut that to **~$0.001/tweet total**:
 
-  ≈ 113 polls × $0.001 ≈ **$0.113/tweet** over 30 days.
-- **Retirement:** at 30 days, or immediately on a 404/403 (deleted/suspended). Transient errors push `nextPollAt += 5 min` without crediting `pollCount`.
+- Every non-retired tweet — **regardless of age** — is read once by batched id lookup (`getTweetsByIds` → `GET /2/tweets?ids=`, ≤100 ids/call, $0.001/result). Whatever the metrics are at the 03:00 UTC pass is the single number kept.
+- Each batch is **retired in a committed transaction *before* its snapshots are inserted** (Invariant 7): a crash between retire and insert loses that batch's snapshots — a metrics gap — never a double charge. At-most-once by design.
+- Snapshots stamp `age_at_snapshot_min` (minutes since `postedAt`), so views are comparable across tweets read at 3 h vs 27 h old — `/x/metrics/best-times` normalizes with it.
+- Private metrics (`non_public_metrics`/`organic_metrics`, including `user_profile_clicks`) are requested only while the tweet is ≤28 days old (X nulls them at 30).
+- `nextPollAt` is still seeded to `postedAt + 24h` but is **informational only** — it no longer gates selection.
+- **Winner re-read (bounded, Phase 8.4):** tweets whose first snapshot cleared `WINNER_REREAD_MIN_VIEWS` (default 500, env-configurable) get exactly **one** extra read at day 7+, capped at 5/day (≤$0.005/day) — enough to see which content compounds without reopening unbounded polling.
 
-### 12.4 `voicePull` — mirror tracked authors (1 h, on by default)
+### 12.4 Voice library — no worker (DOM-scrape, $0)
 
-- Walks all `pullEnabled=true` authors, ordered `lastPulledAt asc nulls first` (never-pulled first; fair rotation). Per-author errors are isolated.
-- Per author: `sinceId` checkpoint = newest stored tweet for that author; `getUserTweets(token, authorXUserId, { maxResults, sinceId })` — **$0.005/tweet**. Default `maxResults` = the author's `maxTweetsPerPull`.
-- Buffers tweets newest-first and **enrolls only the first `maxPolledTweets`** (default 20) for metrics polling — *this* is the per-author cost guardrail. Inserts with `source='tracked_pull'`, `onConflictDoNothing`; only fresh inserts in the enrolled slice get `nextPollAt=now`, the rest `null`; existing rows only bump `lastSeenAt`.
-- Updates `tracked_authors.lastPulledAt`. Also callable per-author via `POST /x/voice/pull/:username`. Exports `retireAuthorVoiceTweets` (used by the soft-disable on `DELETE /x/voice/track`).
+The old hourly `voicePull` mirror is gone. Voice content enters exclusively through the extension's DOM scraping ("Save to stratus" on a tweet, "Save author" on a profile → `POST /x/voice/scrape` / `PUT /x/voice/authors/:handle`) — no X API, no schedule, no per-author flags. There is nothing for a worker to do.
 
-### 12.5 `voiceMetricsPoll` — voice-tweet metrics cadence (60 s, **opt-in**)
+### 12.5 Mentions pull (inside `dailyMetrics`)
 
-- Gated by `VOICE_METRICS_POLL_ENABLED=true` (the gate lives in `startXWorkers`, not the worker itself).
-- Selects up to 10 due rows under `FOR UPDATE SKIP LOCKED`; calls `getTweet(token, tweetId)` (never requests private metrics) — **$0.005**.
-- Appends a `voice_metrics_snapshots` row (public metrics only — the table has no private columns).
-- **The (lighter) cadence ladder** (`nextVoicePollDelay(ageMs)`, unit-tested):
-
-  | Tweet age | Next poll in | ~polls |
-  |---|---|---|
-  | < 6 h | +1 h | ~6 |
-  | 6 h – 48 h | +6 h | ~7 |
-  | 2 d – 7 d | +24 h | ~5 |
-  | ≥ 7 d | **retire** | — |
-
-  ≈ 18 polls × $0.005 ≈ **$0.09/tweet** over 7 days.
-- **Retirement:** at 7 days, or on a 404/403. Transient errors push `nextPollAt += 1 h`. The `maxPolledTweets` cap is enforced upstream in `voicePull` (only the top-N tweets ever get a `nextPollAt`); this worker only drains the queue.
+The old opt-in `voiceMetricsPoll` worker (other-user reads at $0.005) is gone too. The daily pass instead ends with a **mention-inbox pull** (`src/x/mentions.ts::pullMentions`): owned reads at **$0.001/result**, checkpointed on the max stored `mentions.tweet_id` — the inserted rows *are* the checkpoint, so an empty incremental pull bills ~$0 — with self-mentions skipped, followed by the $0 **answered backfill** (any `posts_published.in_reply_to_tweet_id` hitting an unanswered mention flips it to `answered`). Also runs on demand via `POST /x/mentions/refresh`, capped 6/day server-side. A failed pull means a stale inbox, never a crashed run. Budget: ~$0.01–0.03/day.
 
 ---
 
 ## 13. Database schema — full specification
 
-Stratus stores everything in Neon Postgres. The schema is defined in two Drizzle files — `src/db/shared-schema.ts` (the one cross-platform table) and `src/x/db/schema.ts` (all eight X tables) — and materialized by two generated migrations (`0000` created the initial eight; `0001` added `reply_drafts`). The Drizzle definitions are the single source of truth; the SQL migrations are faithful generated output with no drift.
+Stratus stores everything in Neon Postgres. The schema is defined in two Drizzle files — `src/db/shared-schema.ts` (the one cross-platform table) and `src/x/db/schema.ts` (the twelve X tables) — and materialized by the generated migrations under `src/db/migrations/`. The Drizzle definitions are the single source of truth; the SQL migrations are faithful generated output with no drift.
 
 A few schema-wide conventions:
 
 - **No check constraints and no unique constraints beyond primary keys.** State machines (the `status` columns) are enforced in application code, not the database.
 - **Natural keys as PKs where possible.** Business entities are keyed by their X-native ids (`tweet_id`, `x_user_id` as `text` PKs), which makes the reconcile/pull workers' upsert-by-id idempotent for free.
 - **Three PK strategies:** X-native text ids for entities; `bigserial` for append-only time-series and the ledger; `uuid` (`gen_random_uuid()`) for queue/draft rows.
-- **The polling pattern.** Two "live" tables (`posts_published`, `voice_tweets`) carry `next_poll_at` + `poll_count` + `retired`, each with a **partial index `WHERE retired = false`** so the workers' "what's due to poll" query stays cheap as retired rows pile up. Retirement is the cost-control backbone — it caps how long metered polling runs.
+- **The retirement pattern.** `posts_published` carries `next_poll_at` + `poll_count` + `retired`, with a **partial index `WHERE retired = false`** so the daily pass's candidate query stays cheap as retired rows pile up. A tweet is retired the moment its once-only snapshot is taken (or it's gone from X) — retirement is the cost-control backbone: a billed read must be unrepeatable (Invariant 7).
 
 ### 13.1 `tokens` — OAuth credential store
 
@@ -844,19 +872,23 @@ One row per drafted/queued tweet. The 60-second publisher reads from here.
 | `text` | text | no | — | tweet body |
 | `media_ids` | text[] | yes | — | media not yet supported |
 | `scheduled_for` | timestamptz | yes | — | publish time; null = unscheduled draft |
-| `status` | text | no | — | `draft`/`pending`/`posted`/`failed`/`cancelled` |
+| `status` | text | no | — | `draft`/`pending`/`segment`/`publishing`/`posted`/`failed`/`cancelled` |
 | `posted_tweet_id` | text | yes | — | set on publish |
-| `error_class` | text | yes | — | from `classify` |
+| `error_class` | text | yes | — | from `classify` (incl. `thread_frozen`) |
 | `error_detail` | text | yes | — | truncated failure detail |
-| `source` | text | no | `'api'` | api / extension |
+| `source` | text | no | `'api'` | api / extension / drafter |
+| `thread_id` | uuid | yes | — | thread membership (§8.2); shared by all segments |
+| `thread_position` | integer | yes | — | 1-based; position 1 is the schedulable head |
+| `pillar` | text | yes | — | content pillar declared by the drafter (feeds `/x/metrics/pillars`) |
+| `quote_tweet_id` | text | yes | — | self-quote re-up target; publisher re-verifies ownership |
 | `created_at` | timestamptz | no | `now()` | |
 | `updated_at` | timestamptz | no | `now()` | |
 
-**Index:** `scheduled_posts_status_scheduled_idx` on `(status, scheduled_for)` — the publisher's "find due pending rows" query. **Lifecycle:** created via the calendar route or extension; publisher transitions it to `posted` (+`posted_tweet_id`) or `failed`. **Relationship:** referenced by `posts_published.scheduled_post_id` (1 → 0..1).
+**Indexes:** `scheduled_posts_status_scheduled_idx` on `(status, scheduled_for)` — the publisher's "find due pending rows" query; `scheduled_posts_thread_idx` on `(thread_id, thread_position)`. **Lifecycle:** created via the calendar route, the threads route, the drafter, or the extension; publisher transitions it through `publishing` to `posted` (+`posted_tweet_id`) or `failed`. **Relationship:** referenced by `posts_published.scheduled_post_id` (1 → 0..1).
 
 ### 13.3 `posts_published` — own published tweets (Goal 2 root)
 
-One row per tweet you actually published — via the scheduler *or* manually (the reconcile pass discovers manual ones). This is the root the metrics poller walks.
+One row per tweet you actually published — via the scheduler *or* manually (the daily pass discovers manual ones). This is the root the daily snapshot walks.
 
 | Column | Type | Null | Default | Key |
 |---|---|---|---|---|
@@ -868,16 +900,16 @@ One row per tweet you actually published — via the scheduler *or* manually (th
 | `in_reply_to_tweet_id` | text | yes | — | |
 | `conversation_id` | text | yes | — | thread grouping |
 | `source` | text | no | — | scheduled / manual |
-| `next_poll_at` | timestamptz | yes | — | next metrics sample |
+| `next_poll_at` | timestamptz | yes | — | seeded `posted_at + 24h`; informational only — does not gate selection |
 | `poll_count` | integer | no | `0` | |
-| `retired` | boolean | no | `false` | true after ~30 days |
-| `last_seen_at` | timestamptz | yes | — | last reconcile/poll sighting |
+| `retired` | boolean | no | `false` | true after the once-only snapshot (or a 404/403) |
+| `last_seen_at` | timestamptz | yes | — | last discovery/snapshot sighting |
 
-**Index:** `posts_published_next_poll_idx` on `(next_poll_at)` **partial WHERE `retired = false`**. **Lifecycle:** created by the publisher or reconcile; the metrics poller advances `next_poll_at`, increments `poll_count`, and retires at 30 days. **Relationships:** child of `scheduled_posts`; parent of `metrics_snapshots`.
+**Index:** `posts_published_next_poll_idx` on `(next_poll_at)` **partial WHERE `retired = false`**. **Lifecycle:** created by the publisher or discovery; the daily pass retires the row in the same pass that snapshots it (winner re-read rows get one extra snapshot at day 7+ without un-retiring). **Relationships:** child of `scheduled_posts`; parent of `metrics_snapshots`.
 
 ### 13.4 `metrics_snapshots` — own-tweet metric time-series
 
-Append-only. One row per metrics poll of one owned tweet.
+Append-only. Normally one row per owned tweet (the once-only snapshot), plus at most one winner re-read row at day 7+.
 
 | Column | Type | Null | Default | Key |
 |---|---|---|---|---|
@@ -885,64 +917,65 @@ Append-only. One row per metrics poll of one owned tweet.
 | `tweet_id` | text | no | — | **FK → posts_published.tweet_id** |
 | `snapshot_at` | timestamptz | no | `now()` | |
 | `public_metrics` | jsonb | yes | — | likes/retweets/replies/impressions |
-| `non_public_metrics` | jsonb | yes | — | nulls after 30 days |
+| `non_public_metrics` | jsonb | yes | — | nulls after 30 days (incl. `user_profile_clicks`) |
 | `organic_metrics` | jsonb | yes | — | nulls after 30 days |
+| `age_at_snapshot_min` | integer | yes | — | minutes since `posted_at` — normalizes views across read ages (§8.4); null on older rows |
 
 **Index:** `metrics_snapshots_tweet_snapshot_idx` on `(tweet_id, snapshot_at DESC)`. **Lifecycle:** insert-only; never updated or deleted. **Relationship:** child of `posts_published`.
 
-### 13.5 `tracked_authors` — voice-library author registry (Goal 3)
+### 13.5 `voice_authors` — voice-library author registry (Goal 3)
 
-One row per author whose tweets you mirror. Carries the per-author cost guardrails.
+One row per author whose tweets you stash, keyed by **lowercased `@handle`** — the only stable id scrapeable without the API. (Replaced the old `tracked_authors` table and its `pull_enabled`/`metrics_polling_enabled`/`max_polled_tweets` cost flags in the 2026-06-01 pivot — there is no paid mirroring left to gate.)
 
 | Column | Type | Null | Default | Key |
 |---|---|---|---|---|
-| `x_user_id` | text | no | — | **PK** |
-| `username` | text | no | — | |
+| `handle` | text | no | — | **PK** (lowercased @handle) |
+| `x_user_id` | text | yes | — | filled opportunistically when the page exposes it |
+| `display_name` / `bio` | text | yes | — | |
+| `followers_count` / `following_count` | integer | yes | — | latest scraped counts |
+| `pinned_tweet_id` / `pinned_tweet_text` | text | yes | — | |
+| `profile_summary` / `profile_url` | text | yes | — | |
+| `source` | text | no | `'extension_scrape'` | `extension_scrape` / `profile_scrape` |
 | `added_at` | timestamptz | no | `now()` | |
-| `last_pulled_at` | timestamptz | yes | — | last `voicePull` |
-| `source` | text | no | `'manual'` | `manual` / `auto_from_scrape` |
-| `pull_enabled` | boolean | no | `true` | gate for `voicePull` |
-| `max_tweets_per_pull` | integer | no | `50` | per-pull fetch cap |
-| `metrics_polling_enabled` | boolean | no | `true` | gate for `voiceMetricsPoll` |
-| `max_polled_tweets` | integer | no | `20` | **cost guardrail** — caps metric-polled tweets |
+| `enriched_at` | timestamptz | yes | — | set when the full profile header was scraped ("Save author") |
+| `updated_at` | timestamptz | no | `now()` | |
+| `retired` | boolean | no | `false` | soft archive |
 
-**Lifecycle:** created manually (`/x/voice/track`, both flags on) or by extension scrape (`auto_from_scrape`, both flags **off** — you promote explicitly). Soft-disabling flips both flags off and retires the author's tweets. **Relationship:** parent of `voice_tweets`. **Index:** none (small registry).
+**Lifecycle:** stubbed by a tweet scrape (`POST /x/voice/scrape` fills null columns only) or enriched authoritatively by a profile scrape (`PUT /x/voice/authors/:handle`). **Relationships:** parent of `voice_tweets` and `voice_author_snapshots`. **Index:** none (small registry).
 
-### 13.6 `voice_tweets` — mirrored other-author tweets
+### 13.6 `voice_tweets` — DOM-scraped other-author tweets
 
-The stashed tweets themselves. Includes `scraped_html` for the extension-scraping path.
+The swipe file itself. `scraped_html` (the innerHTML of X's `tweetText` node) makes a saved tweet reusable as an emoji-/linebreak-faithful format template. No polling columns — voice metrics died with the pivot.
 
 | Column | Type | Null | Default | Key |
 |---|---|---|---|---|
 | `tweet_id` | text | no | — | **PK** |
-| `author_x_user_id` | text | no | — | **FK → tracked_authors.x_user_id** |
-| `text` | text | no | — | |
+| `author_handle` | text | no | — | **FK → voice_authors.handle** |
+| `text` | text | no | — | may be empty (image-only tweets) |
+| `scraped_html` | text | yes | — | rendered innerHTML |
 | `created_at` | timestamptz | no | — | the tweet's own post time |
-| `is_reply` | boolean | no | `false` | |
-| `in_reply_to_tweet_id` | text | yes | — | |
-| `conversation_id` | text | yes | — | |
-| `source` | text | no | — | `tracked_pull` / `extension_scrape` |
-| `scraped_html` | text | yes | — | raw HTML when scraped |
-| `fetched_at` | timestamptz | no | `now()` | |
-| `last_seen_at` | timestamptz | yes | — | |
-| `next_poll_at` | timestamptz | yes | — | next voice-metrics sample |
-| `poll_count` | integer | no | `0` | |
-| `retired` | boolean | no | `false` | true after ~7-day window |
+| `url` | text | yes | — | |
+| `source` | text | no | `'extension_scrape'` | |
+| `saved_at` | timestamptz | no | `now()` | |
+| `updated_at` | timestamptz | yes | — | bumped on re-scrape |
+| `retired` | boolean | no | `false` | soft archive |
+| `hook_type` / `skeleton` / `line_break_pattern` / `template_length` / `device` | text | yes | — | Grok template extraction (§8.3) — structure only, never content |
+| `template_extracted_at` | timestamptz | yes | — | set by the extract routes |
 
-**Indexes:** `voice_tweets_author_created_idx` on `(author_x_user_id, created_at DESC)`; `voice_tweets_next_poll_idx` on `(next_poll_at)` **partial WHERE `retired = false`**. **Lifecycle:** created by `voicePull` or scrape; `voiceMetricsPoll` advances/retires it. **Relationships:** child of `tracked_authors`; parent of `voice_metrics_snapshots`.
+**Index:** `voice_tweets_author_created_idx` on `(author_handle, created_at DESC)`. **Lifecycle:** created/refreshed by `POST /x/voice/scrape`; template columns filled by `POST /x/voice/tweets/:tweetId/extract` or `/x/voice/extract-batch`. **Relationship:** child of `voice_authors`.
 
-### 13.7 `voice_metrics_snapshots` — voice-tweet metric time-series
+### 13.7 `voice_author_snapshots` — append-only follower series
 
-Same shape as `metrics_snapshots`, but **public metrics only** (you can't see private metrics on tweets you don't own).
+One row per profile enrich (§7.4). Keeping every capture makes author **momentum** (followers/day) computable for the `GET /x/voice/targets` roster. Still $0 — rows only exist when you click "Save author".
 
 | Column | Type | Null | Default | Key |
 |---|---|---|---|---|
 | `id` | bigserial (bigint) | no | auto | **PK** |
-| `tweet_id` | text | no | — | **FK → voice_tweets.tweet_id** |
-| `snapshot_at` | timestamptz | no | `now()` | |
-| `public_metrics` | jsonb | yes | — | only public metrics exist |
+| `handle` | text | no | — | **FK → voice_authors.handle** |
+| `followers_count` | integer | no | — | |
+| `captured_at` | timestamptz | no | `now()` | |
 
-**Index:** `voice_metrics_snapshots_tweet_snapshot_idx` on `(tweet_id, snapshot_at DESC)`. **Lifecycle:** insert-only. **Relationship:** child of `voice_tweets`.
+**Index:** `voice_author_snapshots_handle_captured_idx` on `(handle, captured_at DESC)`. **Lifecycle:** insert-only; deleted with its author (same txn). **Relationship:** child of `voice_authors`.
 
 ### 13.8 `reply_drafts` — Grok-generated reply drafts (added in migration 0001)
 
@@ -958,8 +991,11 @@ Stores AI-drafted replies with full provenance of the source tweet, the prompt c
 | `source_url` | text | no | — | |
 | `source_posted_at` | timestamptz | yes | — | |
 | `context_snapshot` | jsonb | no | — | full context at generation time |
-| `reply_text` | text | no | — | Grok's draft |
+| `reply_text` | text | no | — | Grok's draft (the first gate-passing variant) |
 | `reply_text_edited` | text | yes | — | your edit |
+| `variants` | jsonb | yes | — | all `{text, angle}` variants from the two-variant call (§7.1); null on older rows |
+| `idea` | text | yes | — | the optional human steer sent with the generate call |
+| `pillar` | text | yes | — | content pillar (feeds `/x/metrics/pillars`) |
 | `model` | text | no | — | Grok model id |
 | `prompt_tokens` | integer | yes | — | |
 | `completion_tokens` | integer | yes | — | |
@@ -992,26 +1028,42 @@ The only non-X table; lives in `src/db/shared-schema.ts`. Every billable X *and*
 
 **Indexes:** `cost_events_ts_idx` on `(ts DESC)`; `cost_events_platform_ts_idx` on `(platform, ts DESC)`. **Lifecycle:** insert-only. **Relationship:** standalone — deliberately platform-agnostic (Invariant 6).
 
-### 13.10 Relationship map
+### 13.10 The newer tables — `account_snapshots`, `mentions`, `harvest_runs`, `harvest_rows`
+
+Compact specs for the tables added after the original eight:
+
+- **`account_snapshots`** — one row per UTC day from the daily `getMe()`: `id` (bigserial PK), `snapshot_at`, `followers_count`, `following_count`, `tweet_count`, `listed_count`. The follower-growth KPI series behind `/x/metrics/account`, `/x/brief`, and the `/x/voice/targets` banding.
+- **`mentions`** — the mention inbox (§7.5): `tweet_id` (text PK), author fields, `text`, `posted_at`, `conversation_id`, `in_reply_to_tweet_id`, `status` (`unanswered`/`answered`/`dismissed`), `answered_draft_id` (FK → reply_drafts.id), `answered_at`, `fetched_at`. Pulled incrementally; the stored rows are the since_id checkpoint.
+- **`harvest_runs`** — one row per extension harvest click: `id` (uuid PK), `handle`, `mode` (`posts`/`replies`), `scope` (`all`/`today`/`yesterday`/`since-last`), `row_count`, `created_at`.
+- **`harvest_rows`** — the DOM-harvested metric rows ($0): `run_id` (FK), `tweet_id`, `handle`, `text`, capture-time counts (comments/reposts/likes/bookmarks/views), `tweet_time`, `captured_at`, replies-mode `orig_*` columns (the tweet replied to), `matched_draft_id` (FK → reply_drafts — the API-free outcome reconcile), and the content-shape columns `has_photo`/`has_video`/`is_quote`/`text_len`/`line_breaks`/`group_position` (nullable; older extension builds don't send them). Repeated harvests of the same tweet create new rows **on purpose** — the `(tweet_id, captured_at)` series is the longitudinal view curve the once-only API snapshot can't give.
+
+### 13.11 Relationship map
 
 ```
 scheduled_posts ──1:0..1──> posts_published ──1:N──> metrics_snapshots
                             (scheduled_post_id FK,    (tweet_id FK)
                              null = manually posted)
 
-tracked_authors ──1:N──> voice_tweets ──1:N──> voice_metrics_snapshots
-                        (author_x_user_id FK)   (tweet_id FK)
+voice_authors ──1:N──> voice_tweets
+      └────────1:N──> voice_author_snapshots
 
-tokens         (standalone — OAuth credentials)
-cost_events    (standalone — cross-platform spend ledger)
-reply_drafts   (standalone — source_tweet_id is a loose, unconstrained reference)
+harvest_runs ──1:N──> harvest_rows ──0..1──> reply_drafts (matched_draft_id)
+mentions ──0..1──> reply_drafts (answered_draft_id)
+
+tokens             (standalone — OAuth credentials)
+account_snapshots  (standalone — daily follower KPI series)
+cost_events        (standalone — cross-platform spend ledger)
+reply_drafts       (standalone root — source_tweet_id is a loose, unconstrained reference)
 ```
 
-Four enforced foreign keys, all `ON DELETE no action ON UPDATE no action`:
+Enforced foreign keys, all `ON DELETE no action ON UPDATE no action`:
 1. `metrics_snapshots.tweet_id → posts_published.tweet_id`
 2. `posts_published.scheduled_post_id → scheduled_posts.id` (nullable)
-3. `voice_metrics_snapshots.tweet_id → voice_tweets.tweet_id`
-4. `voice_tweets.author_x_user_id → tracked_authors.x_user_id`
+3. `voice_tweets.author_handle → voice_authors.handle`
+4. `voice_author_snapshots.handle → voice_authors.handle`
+5. `harvest_rows.run_id → harvest_runs.id`
+6. `harvest_rows.matched_draft_id → reply_drafts.id` (nullable)
+7. `mentions.answered_draft_id → reply_drafts.id` (nullable)
 
 ---
 
@@ -1070,23 +1122,21 @@ Replies are the single highest-leverage growth activity for a small account (see
 
 1. On an x.com tweet-detail page, the extension's content script attaches a **🪄 Reply Master** button to the focused tweet's action row.
 2. Click → the content script scrapes a rich `PostContext` (tweet text, author, metrics parsed from the action-row `aria-label`, and up to 10 top comments) → sends it through the background worker → `POST /x/replies/generate`.
-3. The server builds the Grok prompt (`buildGrokInput`), calls `askGrok` (max 280 output tokens, temperature 0.7, reasoning effort `low` by default), and stores a `reply_drafts` row (`status='generated'`).
+3. The server recomputes the **reply band** from the context and refuses dead posts with `422 band_gate` before spending the Grok call (the button arms a 5 s "Dead post — click to force" window; a second click resends with `override: true`). For live targets it builds the Grok prompt (`buildGrokInput`), makes one **structured-outputs** call (max 350 output tokens, temperature 0.7, reasoning effort `low` by default) returning **two variants** tagged `extends`/`contrarian`/`debate` — a specificity gate (digit OR first-person OR named tool) burns at most one automatic regenerate — and stores a `reply_drafts` row (`status='generated'`, all variants in `variants`).
 4. The returned reply text is **copied to your clipboard** and written to a `chrome.storage.local` handoff slot.
 5. The side panel's **Replies** tab sees the storage change and swaps the new draft into its editor (a "live" badge). You edit (debounced `PATCH`), Copy (→ `copied`), Regenerate, Mark posted (optional tweet-id → `posted`), or Discard.
 6. You paste and post the reply by hand on X, then record the result. **Nothing in this loop touches X's composer programmatically.**
 
-### 15.2 The persona (`src/x/replies/prompt.ts`)
+### 15.2 The prompt (`src/x/replies/prompt.ts`)
 
-`DEFAULT_SYSTEM_PROMPT` defines a sharp, opinionated voice — a solo indie builder, "Grok-coded, truth-seeking, zero fluff, lightly contrarian, cost-conscious" — with:
+`REPLY_PROMPT_TEMPLATE` is the verbatim `reply prompt.md` from the repo root, embedded in code so it ships with the deploy (a bun:test asserts the two stay byte-identical). Highlights:
 
-- **An objective:** every reply must elevate the original and earn a profile visit.
-- **A 3-part architecture:** HOOK → UNIQUE NUGGET → ENGAGEMENT HOOK, in 2–3 sentences.
-- **Hard constraints:** ≤270 characters, one idea, no threads/lists, no "Hot take:"-style label prefixes, no hashtags/emoji unless the original used them, output the reply text only.
-- **Death traps:** no "Great post!", no self-promo / link drops, no rage-bait.
+- **An objective:** every reply must elevate the original and *earn* a profile visit — no "follow me", CTA only when the steer asks.
+- **A deliberately thin persona** (stripped 2026-06-10): exactly three inferable facts — solopreneur; passionate about programming/AI/marketing; builds in public. Inventing biography or numbers is forbidden; stance and observation only, unless the human steer supplies a fact.
+- **Hard constraints:** ≤270 characters, bias to ONE punchy line, reply-specific forbidden agreement-openers, no hashtags/emoji unless the original used them.
+- **Two angles per call**, tagged `extends`/`contrarian`/`debate`, leaning punchy/dividing/lightly-controversial plus extend-the-post.
 
-`buildGrokInput(ctx, override?)` returns a two-message array (system + a rendered user turn with the original tweet, an engagement line `likes= reposts= replies= views=`, and the top replies, up to `MAX_TOP_COMMENTS = 10`). The prompt lives in code (not the DB) so it's testable without standing up the route, and is overridable per-request via `systemPromptOverride` (the extension persists your override across generations).
-
-The default prompt is the worked expression of the operator's niche (§1) — which is exactly why it's worth tuning to your own.
+`buildGrokInput(ctx, override?, idea?)` renders the template with all variable content ({{TWEET_CONTEXT}}, the optional `<idea>` steer — Romanian in, English out) at the very end, so the instruction block is a stable cached prefix (`prompt_cache_key`); a draft costs ~$0.002–0.004. Up to `MAX_TOP_COMMENTS = 10` top replies ride along, plus an optional `parent` block ("MY POST — the tweet below is a reply to it") for mention-inbox thread context. The prompt is overridable per-request via `systemPromptOverride` (the extension persists your override across generations).
 
 ### 15.3 The status machine
 
@@ -1096,31 +1146,34 @@ The default prompt is the worked expression of the operator's niche (§1) — wh
 
 ## 16. The voice library
 
-The voice library is your private corpus for studying what works in your niche. Its mental model is a three-level hierarchy:
+The voice library is your private corpus for studying what works in your niche. Since the **2026-06-01 pivot** it is a **pure DOM-scrape swipe file**: the Chrome extension reads tweets and author profiles straight off x.com and POSTs them to Stratus. **No X API is ever touched — every `/x/voice/*` route is $0.** The old paid mirroring stack (`tracked_authors`, the hourly `voicePull`, the opt-in `voiceMetricsPoll`, the per-author `pullEnabled`/`metricsPollingEnabled`/`maxPolledTweets` flags, `/x/voice/track`, `/x/voice/pull`) is **gone** — do not reintroduce X-API reads for voice content; other-user reads are 5× owned reads, which is exactly why the pivot happened.
 
 ```
-tracked_authors  →  voice_tweets  →  voice_metrics_snapshots
+voice_authors  ──>  voice_tweets              (the stash)
+      └──────────>  voice_author_snapshots    (append-only follower series, one point per enrich)
 ```
 
-### 16.1 Two ways an author enters the library
+### 16.1 How content enters (the extension, not the API)
 
-| Source | How | Default flags | Cost |
-|---|---|---|---|
-| `manual` | `POST /x/voice/track {username}` (or the side-panel) | `pull_enabled` + `metrics_polling_enabled` **on** | $0.010 lookup |
-| `auto_from_scrape` | The extension's "Save to stratus" button on x.com | both flags **off** (you promote later) | $0.010 per *new* author only; content free |
+- **"Save to stratus"** on any tweet → `POST /x/voice/scrape`. Stores the text *and* `scrapedHtml` (the innerHTML of X's `tweetText` node — emoji `<img>`, line breaks, links exactly as rendered), so a saved tweet doubles as a format template. The author is stubbed from the handle plus a best-effort hover card; re-scrapes only fill null author columns.
+- **"Save author"** on a profile page → `PUT /x/voice/authors/:handle`. Authoritative enrich (bio, follower/following counts, pinned tweet) — and each enrich **appends a `voice_author_snapshots` point**, so follower momentum accrues for free.
 
-This asymmetry is a money safety. Manually tracking an author is an explicit, paid decision to actively mirror them. Scraping a tweet in passing should *not* silently enroll its author for paid pulls — so scraped authors land paused, visible in the side panel's "promote to actively track" list, and you opt them in deliberately.
+Authors are keyed by lowercased `@handle` (the only id scrapeable without the API); the numeric `xUserId` fills in opportunistically.
 
-### 16.2 Cost guardrails
+### 16.2 The target roster (`GET /x/voice/targets`)
 
-- `voicePull` (hourly) reads at **$0.005/tweet**; `max_tweets_per_pull` (default 50) bounds each pull.
-- `voiceMetricsPoll` is **opt-in** (`VOICE_METRICS_POLL_ENABLED=true`) and only ever polls the newest `max_polled_tweets` (default 20) of each author. At the default that's ≈ 20 × $0.09 ≈ **$1.80/author per 7-day window**.
-- **Soft-disabling** an author (`DELETE /x/voice/track/:username`) flips both flags off *and retires their tweets*, stopping all spend while keeping the history. Re-tracking re-enables.
-- **Promote-via-PATCH** is cheaper than re-tracking because it skips the $0.010 username lookup.
+The REPLY GUIDE's "private list of 10–20 top voices" as a living view: non-retired voice authors banded to **2–10× your own follower count** (from the latest `account_snapshots` row), ranked by **momentum** (followers/day between oldest and newest snapshot; authors with <2 points sink below measured ones, smallest first — small in-band accounts reply back likeliest). Each row carries `lastRepliedAt`/`postedReplies` joined from posted reply drafts, so neglected targets surface. The extension's Today tab renders it as the **Targets** section.
 
-### 16.3 Browsing
+### 16.3 Template extraction (Grok, optional)
 
-`GET /x/voice/tweets` joins each stashed tweet to its author and its latest metrics snapshot (via a correlated subquery), with substring search (`q`, wildcards escaped), a `minLikes` floor (on the latest snapshot, NULL→0), an `includeReplies` toggle, and a limit (≤200, default 50). The side panel's **Voice** tab is the UI for all of this.
+`POST /x/voice/tweets/:tweetId/extract` and `POST /x/voice/extract-batch {limit? ≤50}` (mounted only when `XAI_API_KEY` is set) run one Grok structured-output pass per saved tweet, distilling `{hookType, skeleton, lineBreakPattern, templateLength, device}` into `voice_tweets` columns — **structure only, never content** (~$0.005/tweet, one-time, xAI tokens not X API). From there:
+
+- `GET /x/voice/tweets?hook=stat&extracted=true` makes the swipe file queryable by structure.
+- `POST /x/posts/draft {voiceTweetId}` remixes a saved tweet's extracted skeleton into a new draft — transform, never reproduce.
+
+### 16.4 Browsing & curating
+
+`GET /x/voice/tweets` joins each stashed tweet to its author, with substring search (`q`, wildcards escaped), the `hook`/`extracted` template filters, a `retired=true` toggle for archived rows, and a limit (≤200, default 50). `retired` is a soft archive on both authors and tweets; deleting an author 409s while tweets still reference it. The side panel's **Voice** tab is the UI for all of this.
 
 ---
 
@@ -1166,14 +1219,15 @@ The **background worker is the single auth chokepoint** for content-script traff
 
 ### 17.4 The side-panel tabs (`src/sidepanel/`)
 
+- **Today** (default) — the daily brief (`GET /x/brief`): follower trend, yesterday's numbers, today's schedule with cadence gaps, reply quota and the 70/30 ratio, spend — plus the **Inbox** (unanswered mentions with one-click Grok drafts), the **Radar** (the session's hot/warm band sightings, ranked), and **Targets** (the 2–10× roster with momentum and "last replied").
 - **Calendar** — a 7-day forward view, posts bucketed by local day with status badges; click a post to edit it in the Composer.
-- **Composer** — create/edit a scheduled post with a 280-char counter, a local-time picker (converted to UTC ISO), automatic draft↔pending status transitions, and a **client-side mirror of the URL-surcharge warning** (Invariant 1). Posted rows are locked read-only.
-- **Drafts** — lists `draft` posts (no scheduled time); click to open in the Composer.
-- **Voice** — the voice-library browser: author cards (manual vs auto, tracked vs paused), promote/pause actions, debounced tweet search, latest metrics per tweet.
+- **Composer** — create/edit a scheduled post with a 280-char counter, a local-time picker (converted to UTC ISO), automatic draft↔pending status transitions, and a **client-side mirror of the URL-surcharge warning** (Invariant 1). Posted rows are locked read-only. Also hosts the Grok post drafter (pillar/idea/remix → three drafts).
+- **Harvest** — the DOM harvester for a profile's posts/replies (scopes all/today/yesterday/since-last): CSV download plus the "Send to stratus" toggle that ships rows to `/x/harvest/*`.
+- **Voice** — the voice-library browser: author cards, debounced tweet search, archive/unarchive, template extraction, and the Remix button that seeds the Composer's drafter.
 - **Replies** — "Reply Master": the live draft editor (auto-swaps in new drafts from the content-script button via the `replyMaster:lastDraft` storage slot), debounced edits, Copy/Regenerate/Mark-posted/Discard, day-grouped history ("Today"/"Yesterday") with status filters and per-status counts, and a persisted system-prompt override.
 - **Settings** — `apiUrl`, `bearer` (= server `API_TOKEN`), and `replyHarvestLimit` (0–10 surrounding tweets to also save on a status page). Until both URL and bearer are set, every other tab is disabled and the app force-routes here.
 
-Cross-tab state lives in `App.tsx`: `editingId` (clicking a post anywhere jumps to the Composer in edit mode) and `refreshKey` (bumped on save to remount Calendar/Drafts/Replies).
+Cross-tab state lives in `App.tsx`: `editingId` (clicking a post anywhere jumps to the Composer in edit mode), `remixTweetId` (the Voice tab's Remix button seeds the Composer's drafter), and `refreshKey` (bumped on save to remount the data tabs).
 
 ### 17.5 The content script (`src/content.ts`)
 
@@ -1202,7 +1256,7 @@ Everything is `chrome.storage.local` (no `sync`, no `session`), with `onChanged`
 
 ### 18.1 `SKILL.md`
 
-Connects to `$STRATUS_BASE_URL` (deployed default, falling back to `http://127.0.0.1:3000`) with `Authorization: Bearer $STRATUS_API_TOKEN`. It documents the full 24-route surface and six workflows (A–F): schedule a week, audit/edit the calendar, read tweet metrics, manage the voice library, draft replies, and read the cost dashboard. Its preflight discipline: source env → `curl /healthz` → stop on 503/401 (never retry a 401). It encodes the five "learned-the-expensive-way" safety rules (URL surcharge, reply-to-others policy, UTC ISO scheduling, voice cost reminders, posted-row write-lock) and never echoes the bearer.
+Connects to `$STRATUS_BASE_URL` (deployed default, falling back to `http://127.0.0.1:3000`) with `Authorization: Bearer $STRATUS_API_TOKEN`. It documents the full route surface and its workflows: schedule a week, audit/edit the calendar, read tweet metrics, manage the voice library, draft replies and posts, and read the cost dashboard. Its preflight discipline: source env → `curl /healthz` → stop on 503/401 (never retry a 401). It encodes the "learned-the-expensive-way" safety rules (URL surcharge, reply-to-others policy, UTC ISO scheduling, the $0 DOM-only voice model, posted-row write-lock) and never echoes the bearer.
 
 ### 18.2 `references/scheduling.md` & `md_to_schedule.ts`
 
@@ -1228,19 +1282,19 @@ These mirror §15 and §16 — the reply status machine and full context schema,
 ## 19. Testing
 
 ```bash
-bun test            # runs src/test.test.ts
+bun test            # runs src/test.test.ts + src/shared/replyBand.test.ts (+ extension tests)
 bun run typecheck   # tsc --noEmit
 bun run lint        # biome check .
 ```
 
-The unit tests cover exactly the **pure-function money/lockout/policy invariants** — no network, no DB, by design:
+The unit tests cover exactly the **pure-function money/lockout/policy invariants** — no network, no DB, by design. Highlights:
 
 1. `containsUrl` — the URL-surcharge detector (flags http/https/HTTPS anywhere; ignores plain text and `undefined`).
 2. `defaultPostParams` — private-metric field toggling.
 3. `errors.classify` — 401 → `auth_invalid`, 403+"not permitted" → `reply_restriction`, 403+"Duplicate" → `duplicate_content`, 5xx → `server_error`.
-4. `pricing.priceFor` — every priced endpoint, the search per-result multiply, the **4xx-returns-$0** rule, query-string stripping, and the unknown-endpoint-returns-$0 gap.
-5. `metricsPoll` cadence ladder (`nextPollDelay`) — every boundary up to retirement at 30 days.
-6. `voiceMetricsPoll` cadence ladder (`nextVoicePollDelay`) — every boundary up to retirement at 7 days.
+4. `pricing.priceFor` — every priced endpoint, the per-result multiplies, the **4xx-returns-$0** rule, query-string stripping, and the unknown-endpoint-returns-$0 gap.
+5. `dailyMetrics` scheduling + heartbeats — the daily-tick math and the `/healthz` staleness flags.
+6. The shared reply-band classifier (`src/shared/replyBand.ts`) and the server-side band gate, the reply/post prompts, the specificity gate, harvest row parsing + draft matching, brief helpers (anchors/gaps/trend), voice target banding/momentum/ranking, `buildBestTimes`, `aggregatePillars`, `parseExtractedTemplate`, and the `createPost` URL/self-reply/self-quote gates.
 7. `cors.matchOrigin` — any `chrome-extension://*` allowed, static set exact-match only (trailing slash fails), empty origin rejected, no scheme-smuggling.
 8. PKCE — verifier ≥43 chars, challenge differs, both base64url; authorize URL contains `S256` + `offline.access` + `tweet.write`.
 
@@ -1262,12 +1316,10 @@ Caddy auto-issues certificates because X requires HTTPS for OAuth callbacks (exc
 
 ### 20.2 The two scripts
 
-`DEPLOY.html` describes two idempotent bash scripts under `scripts/`:
+Two idempotent bash scripts live under `scripts/`:
 
 - **`bootstrap.sh`** (run once) — SSHes in as root; installs packages; configures a UFW firewall (deny incoming, allow 22/80/443); creates a non-root `stratus` user with `/home/stratus/app`; installs Bun and Caddy; writes the `Caddyfile` (`$DOMAIN { encode zstd gzip; reverse_proxy 127.0.0.1:3000 }`); and writes the systemd unit.
-- **`deploy.sh`** (rerun every change) — `rsync -az --delete` (excluding `.git`, `node_modules`, `extension/node_modules`, `extension/dist`, `.env`, `.env.local`, `.tokens.json`) → `/home/stratus/app`; one-time `scp .env` then `chmod 600`; `bun install --frozen-lockfile`; `systemctl restart stratus.service`; health check via `systemctl is-active` + `curl -fsS http://127.0.0.1:3000/healthz`.
-
-> **Note:** verify these scripts exist in your checkout before relying on them — `DEPLOY.html` was written when they were still to-be-created. There is a recent `scripts` commit in the history; confirm its contents.
+- **`deploy.sh`** (rerun every change) — resolves the host from **arg > `STRATUS_DEPLOY_HOST` env > `STRATUS_DEPLOY_HOST` in `.env`** (no hardcoded IP); `rsync -az --delete` (excluding `.git`, `node_modules`, `extension/node_modules`, `extension/dist`, `.env`, `.env.local`, `.tokens.json`) → `/home/stratus/app`; **stamps the git SHA into `.git-sha`** so `/healthz` reports exactly what's running (`-dirty` suffix on an unclean tree); one-time `scp .env` then `chmod 600` (and warns when the server `.env` is missing keys vs `.env.example`); `bun install --frozen-lockfile`; **`drizzle-kit migrate` before restart**; `systemctl restart stratus.service`; health check via `systemctl is-active` + `curl -fsS http://127.0.0.1:3000/healthz`.
 
 ### 20.3 The systemd unit
 
@@ -1295,7 +1347,7 @@ Side panel → **Settings** → API base URL = `https://$DOMAIN` (no trailing sl
 | Server snapshot | `hcloud server create-image …` |
 | DB backups | Neon snapshots Postgres itself |
 
-**Disabling a worker without redeploying code** is just an env change + restart: set `METRICS_POLL_ENABLED=false` (or any gate) in `.env` and `systemctl restart stratus`. The manual `POST /x/posts/reconcile` still works even with the reconcile timer off.
+**Disabling the daily pass without redeploying code** is just an env change + restart: set `DAILY_METRICS_ENABLED=false` in `.env` and `systemctl restart stratus`. The manual `POST /x/posts/reconcile` still works even with the timer off. `/healthz` reports a 503 with `staleWorkers` when a worker stops beating, and `scripts/deploy.sh` stamps the git SHA into `/healthz` so you can confirm which build is live.
 
 ---
 
@@ -1312,7 +1364,8 @@ Side panel → **Settings** → API base URL = `https://$DOMAIN` (no trailing sl
 | Extension shows `unconfigured` | `apiUrl`/`bearer` not set in Settings | Fill both in the Settings tab. |
 | Extension fetch to a remote host is blocked | Remote origin not in `host_permissions` | Add it to the manifest (§17.1) and reload the extension. |
 | "Save to stratus" returns `http_404` | The `/x/voice/scrape` server endpoint isn't deployed in your build | Update the server. |
-| Cost dashboard looks low for a URL post or a search | Known under-counting (§8) | Expected — the *guards* still prevent overspend; only the ledger is conservative. |
+| A `cost_events` row shows $0 on a 2xx call | Unmapped endpoint in `src/x/pricing.ts` | `costTracker` logs a warning for these — add a price branch when a new endpoint lands. |
+| `POST /x/replies/generate` returns `422 band_gate` | The target tweet scored `skip`/`null` — the server refuses to spend the Grok call on a dead post | Deliberate. Re-send with `override: true` if you really want the draft. |
 | `getValidAccessToken` errors after a refresh | Possible token-rotation race | Never bypass the `FOR UPDATE` transaction in `token-store.ts` (Invariant 3). |
 
 ---
@@ -1336,13 +1389,14 @@ The canonical build plan is `PLAN.md`; the authoritative "what's actually wired"
 | Phase | Scope | Status |
 |---|---|---|
 | **1 — Plumbing + Calendar** | Hono app, bearer + CORS, Drizzle/Neon, Postgres token store, pricing + costTracker, calendar routes, publisher worker | ✅ done |
-| **2 — Metrics + own-reconcile** | `posts_published`, `getUserTweets`, `ownReconcile` + `metricsPoll`, `/x/metrics`, `/x/posts/reconcile`, cost dashboard | ✅ done |
-| **3 — Voice library** | voice routes, `voicePull` (hourly), `voiceMetricsPoll` (opt-in) | ✅ done |
+| **2 — Metrics + own-reconcile** | `posts_published`, `getUserTweets`, `/x/metrics`, `/x/posts/reconcile`, cost dashboard | ✅ done — then **consolidated (2026-06-05)** into the single daily `dailyMetrics` pass (03:00 UTC, once-only snapshots at ~$0.001/tweet) |
+| **3 — Voice library** | voice routes | ✅ done — then **pivoted (2026-06-01)** to a $0 DOM-scrape swipe file (no API reads, no voice workers) |
 | **4 — Extension MVP** | Vite + React side panel, calendar/composer/drafts, CORS; smoke-tested end-to-end 2026-05-10 | ✅ done |
-| **5 — Extension scraping → voice library** | MutationObserver "Save to stratus" buttons, `/x/voice/scrape` | 🟡 wired (scrape route + buttons exist; confirm everywhere the extension points) |
+| **5 — Extension scraping → voice library** | MutationObserver "Save to stratus"/"Save author" buttons, `/x/voice/scrape`, profile enrich | ✅ done (2026-06-01) |
 | **6 — Reply Master** (per `REPLY-MASTER-PLAN.md`) | `reply_drafts`, `/x/replies/*`, Grok integration, in-page reply button, side-panel Replies tab | ✅ done |
+| **Overhauls 6.x–9.x** (per `OVERHAUL-PLAN.md`) | reply outcomes + harvest ingestion + daily brief + heartbeats/budget watchdog (6.x); prompt surgery, Radar, server-side band gate, target roster, mention inbox (7.x); post drafter/threads/self-quote re-up, template extraction, best-times/pillars, winner re-read (8.x); pricing truthfulness, content-shape harvest fields, deploy hardening (9.x) | ✅ done |
 
-After Phase 5, the original plan says: **stop — analysis of the voice library is a separate project.** The growth-strategy and future-enhancement sections below are *my* recommendations for what comes next, not committed scope.
+The growth-strategy and future-enhancement sections below are *my* recommendations for what comes next, not committed scope.
 
 ---
 
@@ -1395,9 +1449,10 @@ The operating ratio: **70/30 — 70% strategic replies, 30% original posts**, un
 
 The voice library isn't for hoarding tweets — it's for *reverse-engineering what works in your exact niche*:
 
-- Track the 10–20 accounts from your reply target list.
-- Once a week, browse `voice_tweets` sorted by `minLikes` and study the **structure** of the top performers: how they open, how long they are, where the hook lands, whether they ask a question. Feed those patterns back into your own drafts and into the Grok system prompt.
-- Promote (to paid metrics polling) only the handful of authors whose *velocity* you genuinely want to study over time. Keep the rest as a free content reference, and remember every promoted author can cost up to ~$1.80/7 days.
+- Save the 10–20 accounts from your reply target list ("Save author" on their profiles) and let `GET /x/voice/targets` keep the roster honest — band, momentum, and "last replied" at a glance, all $0.
+- Once a week, run the template extraction over new saves and browse by **structure** (`GET /x/voice/tweets?hook=…&extracted=true`): how the winners open, how long they are, where the hook lands, whether they ask a question. Feed those patterns back into your own drafts.
+- Remix deliberately: `POST /x/posts/draft {voiceTweetId}` lifts a saved tweet's extracted skeleton — never its content — into a new draft in your voice.
+- Re-enrich an author every couple of weeks; each "Save author" click appends a follower snapshot, and momentum (followers/day) tells you who is *rising* — reply to them while they rise.
 
 ### 25.6 Close the loop with data
 
@@ -1419,35 +1474,25 @@ The whole machine exists to make this arc *cheap to run and impossible to fake*.
 
 These are *my* recommendations for where the machine should grow next — ordered roughly by leverage-per-unit-effort, and consistent with the scope ceiling. None of this is committed; it's a strategist-engineer's backlog.
 
-### 26.1 Close the cost-accounting gaps (small effort, real correctness)
-- **Thread `items` through `xFetch`** so per-result endpoints (search, user-tweets) record their true cost in `cost_events` instead of `null`. The pricing function already accepts `items`; the cost hook just needs to pass it.
-- **Body-aware pricing for the URL surcharge** so a URL post records $0.20 (not $0.015) in the ledger. A `costHint` on `createPost` would do it. Today the *guard* is right but the *dashboard* under-reports.
-- **A weekly/monthly cost rollup** (`/cost/week`, `/cost/month`) and a small chart in the extension. The dashboard is the budget cap — make it impossible to ignore.
+### 26.1 Close the cost-accounting gaps — ✅ shipped (Phase 9.1 + Overhaul 6.5)
+`xFetch` now threads the per-result `items` count into pricing, `createPost` stamps the true URL-surcharge price via `costHint`, `GET /cost/daily?days=` provides the rolling series, and the budget watchdog flags `/cost/today` when the soft daily cap is crossed. What remains: a small spend chart in the extension beyond the Today tab's spend block.
 
-### 26.2 Make the metrics actually visible (medium effort, high motivation payoff)
-- **A metrics tab in the extension** that charts `metrics_snapshots` over time per tweet — impressions, likes, and (crucially) profile-clicks in the first 30 days. The data is already collected; it just isn't surfaced.
-- **A "what converted" view** that correlates replies with subsequent profile-visit spikes. This is the single most strategically useful thing the data can tell a small account, and nothing in the UI shows it yet.
-- **Best-time-to-post analysis** from your own history, feeding back into the scheduler's anchor hours.
+### 26.2 Make the metrics actually visible — largely shipped
+`GET /x/metrics/best-times` (age-normalized weekday × hour cells), `GET /x/metrics/pillars`, `GET /x/replies/outcomes` (the "what converted" view), and the Today tab brief all exist now. What remains: per-tweet snapshot *charts* in the extension (the data is one `GET /x/metrics/:tweetId` away).
 
-### 26.3 Finish and harden Phase 5 (voice scraping)
-- Confirm `/x/voice/scrape` is deployed everywhere the extension points (the content script currently can surface `http_404` against older builds).
+### 26.3 Harden the extension deployment story
 - **Promote the extension's `host_permissions`** to include the production domain (or make it configurable), so the cockpit works against the deployed instance without manifest edits.
-- **Dedup and thread-reconstruction** on scraped threads so `conversation_id` chains are navigable in the Voice tab.
+- **Dedup and thread-reconstruction** on scraped threads so conversation chains are navigable in the Voice tab.
 
-### 26.4 Turn the voice library into a coach (the "separate project" the plan deferred)
-This is where the real differentiated value is, and it's squarely in the operator's niche:
-- **Structural analysis of top-performing voice tweets** — length, hook pattern, question-presence, opener type — surfaced as patterns, not raw text.
-- **A "draft in the style of my best performers" mode** that feeds the voice library's winners into the Grok prompt as few-shot examples.
-- **Velocity tracking** — which tracked authors are *accelerating*, so you reply to them while they're rising.
-
-Keep this behind the existing cost gates; other-user reads are 5× and the per-author cap is load-bearing.
+### 26.4 Turn the voice library into a coach — ✅ shipped, at $0
+What was deferred as "a separate project" landed inside the scope ceiling, cheaper than planned: structural analysis is the Grok template extraction (§16.3), "draft in the style of winners" is the drafter's measured-winners few-shot plus the `voiceTweetId` remix, and velocity tracking is the targets roster's momentum ranking — all without reintroducing other-user API reads. What remains: aggregate pattern reporting across the swipe file (e.g. "which hooks dominate my niche this month").
 
 ### 26.5 Reply Master, leveled up
 - **A fast-model variant** (cheaper Grok tier) for high-volume first-pass drafts, reserving `grok-4.3` for the ones you'll actually post.
 - **Self-tweet awareness** so the context scrape hides your own tweets in a thread.
 - **Quoted-tweet context** so replies to QTs understand what's being quoted.
 - **A lightweight regenerate rate-limit** so a frustrated click-storm doesn't run up token cost.
-- **Reply outcome learning** — record which posted replies earned profile visits, and feed that signal back into prompt tuning.
+- ~~Reply outcome learning~~ — ✅ shipped: `GET /x/replies/outcomes` + capture-time band signals make every posted draft a labeled training row; `evals/analyze-own-replies.ts` runs the crosstab (recalibrate `BAND` at ≥100 measured).
 
 ### 26.6 Resilience & observability (when one process stops being enough)
 - The architecture is honest that it's one process with `setInterval` workers. *Before* reaching for Redis/BullMQ, the `FOR UPDATE SKIP LOCKED` pattern already makes a second replica safe — so horizontal scale is a deploy change, not a rewrite. Document the two-replica story.
@@ -1531,50 +1576,55 @@ curl -s "$BASE/x/metrics/1799999999999999999" -H "$(auth)" \
 
 If a tweet you posted manually isn't tracked yet, reconcile first (A.6).
 
-### A.6 Force a reconcile (discover manually-posted tweets)
+### A.6 Force a reconcile (run the daily pass now)
 
 ```bash
 curl -s -X POST "$BASE/x/posts/reconcile" \
   -H "$(auth)" -H 'Content-Type: application/json' \
   -d '{"maxResults": 50}' | jq
-# → {"scanned": 12, "inserted": 3}
+# → {"scanned":12,"discovered":3,"snapshotted":9,"retired":9,"failed":0,
+#    "accountSnapshotted":false,"mentionsScanned":4,"mentionsNew":1,
+#    "mentionsAnswered":1,"rereadWinners":0}
 ```
 
-Use `{"fullScan": true}` only when you deliberately want to re-walk history (it ignores the `sinceId` checkpoint and is more expensive).
+This runs the full `dailyMetrics` pass one-shot. Use `{"fullScan": true}` only when you deliberately want to re-walk history (it ignores the `sinceId` checkpoint and is more expensive).
 
-### A.7 Track an author into the voice library
+### A.7 Browse the voice library & the target roster ($0)
 
 ```bash
-# $0.010 username lookup; both flags default ON
-curl -s -X POST "$BASE/x/voice/track" \
-  -H "$(auth)" -H 'Content-Type: application/json' \
-  -d '{"username":"someindiehacker","maxPolledTweets":20}' | jq
+# substring search across the swipe file
+curl -s "$BASE/x/voice/tweets?q=leverage&limit=20" \
+  -H "$(auth)" | jq -r '.[] | "@\(.authorHandle)  \(.text[0:70])"'
 
-# pull their recent tweets on demand ($0.005/result)
-curl -s -X POST "$BASE/x/voice/pull/someindiehacker" \
-  -H "$(auth)" -H 'Content-Type: application/json' \
-  -d '{"maxResults":30}' | jq
+# the 2–10x reply-target roster, ranked by momentum
+curl -s "$BASE/x/voice/targets" -H "$(auth)" \
+  | jq '{myFollowers, band, top: [.targets[0:5][] | {handle, followersCount, momentum, lastRepliedAt}]}'
 ```
 
-### A.8 Browse the voice library by performance
+Content enters via the extension ("Save to stratus" on a tweet, "Save author" on a profile) — there is no API-side fetch.
+
+### A.8 Query the swipe file by structure (after extraction)
 
 ```bash
-# top tweets from a tracked author, by latest-snapshot likes
-curl -s "$BASE/x/voice/tweets?author=someindiehacker&minLikes=100&limit=20" \
-  -H "$(auth)" | jq -r '.[] | "♥\(.latestPublicMetrics.like_count // 0)  \(.text[0:70])"'
+# extract templates for up to 20 un-extracted saves (~$0.005/tweet, Grok)
+curl -s -X POST "$BASE/x/voice/extract-batch" \
+  -H "$(auth)" -H 'Content-Type: application/json' -d '{"limit":20}' | jq
+
+# then: all stat-hook tweets
+curl -s "$BASE/x/voice/tweets?hook=stat&extracted=true&limit=20" \
+  -H "$(auth)" | jq -r '.[] | "\(.hookType)  \(.text[0:70])"'
 ```
 
-### A.9 Pause an author (stop spend, keep history)
+### A.9 Archive an author (hide it, keep history — $0)
 
 ```bash
-# soft-disable: flips both flags off AND retires their tweets
-curl -s -X DELETE "$BASE/x/voice/track/someindiehacker" -H "$(auth)" | jq
-# → {"author": {...}, "retiredVoiceTweets": 18}
-
-# promote a scrape-discovered author to active tracking (cheaper than re-track — no lookup)
+# soft archive
 curl -s -X PATCH "$BASE/x/voice/authors/someindiehacker" \
   -H "$(auth)" -H 'Content-Type: application/json' \
-  -d '{"source":"manual","pullEnabled":true,"metricsPollingEnabled":true}' | jq
+  -d '{"retired":true}' | jq
+
+# hard delete (409 author_has_tweets while tweets remain — retire/delete them first)
+curl -s -X DELETE "$BASE/x/voice/authors/someindiehacker" -H "$(auth)" | jq
 ```
 
 ### A.10 Draft a reply with Grok
@@ -1623,6 +1673,28 @@ curl -s -X POST "$BASE/grok/ask" \
 curl -s "$BASE/cost/today" -H "$(auth)" \
   | jq '{totalUsd, totalCalls, byPlatform: [.byPlatform[] | {platform, costUsd, calls}]}'
 ```
+
+### A.13 Draft posts and a thread with Grok
+
+```bash
+# three register-distinct drafts (~$0.006), landing as status=draft calendar rows
+curl -s -X POST "$BASE/x/posts/draft" \
+  -H "$(auth)" -H 'Content-Type: application/json' \
+  -d '{"pillar":2,"idea":"the daily metrics pass reads each tweet exactly once — cost discipline as architecture"}' \
+  | jq '{winnersUsed, costUsd, drafts: [.drafts[] | {id, register, pillar, text: .text[0:60]}]}'
+
+# schedule a 3-segment thread (head pending; tails post as self-replies ~500ms apart)
+curl -s -X POST "$BASE/x/posts/threads" \
+  -H "$(auth)" -H 'Content-Type: application/json' \
+  -d '{"segments":["the hook tweet","the meat","the close — link goes here, not in tweet 1: https://example.com"],"scheduledFor":"2026-06-12T07:14:00Z","status":"pending"}' | jq
+
+# self-quote re-up of one of my published tweets
+curl -s -X POST "$BASE/x/posts/reup" \
+  -H "$(auth)" -H 'Content-Type: application/json' \
+  -d '{"tweetId":"1799999999999999999","idea":"what changed since I posted this"}' | jq
+```
+
+A URL is allowed in tail segments (link-in-first-reply, $0.030 total) but rejected in segment 1 of a pending thread (`400 url_in_text`).
 
 ---
 
@@ -1714,13 +1786,13 @@ order by usd desc
 limit 10;
 ```
 
-**Tweets currently live in the metrics poller (not retired) and when they next poll:**
+**Tweets still awaiting their once-only snapshot (next 03:00 UTC pass reads these):**
 
 ```sql
-select tweet_id, poll_count, next_poll_at
+select tweet_id, posted_at, poll_count
 from posts_published
 where retired = false
-order by next_poll_at
+order by posted_at
 limit 20;
 ```
 
@@ -1745,11 +1817,12 @@ limit 20;
 **Voice library: authors and how many of their tweets you've stashed:**
 
 ```sql
-select a.username, a.source, a.pull_enabled, a.metrics_polling_enabled,
+select a.handle, a.source, a.followers_count, a.enriched_at is not null as enriched,
        count(t.tweet_id) as tweets
-from tracked_authors a
-left join voice_tweets t on t.author_x_user_id = a.x_user_id
-group by a.x_user_id
+from voice_authors a
+left join voice_tweets t on t.author_handle = a.handle
+where a.retired = false
+group by a.handle
 order by tweets desc;
 ```
 
@@ -1769,18 +1842,21 @@ limit 20;
 
 ## 27. Glossary
 
-- **Anchor hours** — the human posting times (09/13/18 or 08/12/16/20 local) that the scheduler jitters around.
-- **Cadence ladder** — the decaying schedule on which a tweet's metrics are polled (fast when fresh, slow when old, retired at the end).
+- **Anchor hours** — the human posting times (09/13/18 or 08/12/16/20 local) that the scheduler jitters around; the brief's cadence-gap detection uses the same ladders.
+- **Band (hot/warm/skip)** — the reply-target verdict the extension badge and the server-side gate compute from views/replies/age/velocity/bait (`src/shared/replyBand.ts`).
 - **Cost event** — one row in `cost_events`; a single billable API call, priced and platform-tagged.
+- **Daily pass** — the 03:00 UTC `dailyMetrics` run: account snapshot, own-tweet discovery, once-only metrics snapshots, winner re-reads, mentions pull.
 - **`FOR UPDATE SKIP LOCKED`** — the Postgres row-locking pattern that lets workers (and replicas) safely claim one row without stepping on each other.
 - **Jitter** — the random minute offset (`[5,35]`) applied to each scheduled post so it doesn't fire at a robotic `:00`/`:30`.
 - **Owned read** — a $0.001 read of your *own* data (vs. $0.005 for other-user reads).
-- **Reconcile** — the daily pass that discovers tweets you posted manually and brings them under metrics tracking.
-- **Retirement** — when a tweet's metrics polling stops permanently (30 days for owned, 7 for voice), capping its lifetime cost.
+- **Reconcile / discovery** — the half of the daily pass that finds tweets you posted manually and brings them under metrics tracking (also one-shot via `POST /x/posts/reconcile`).
+- **Retirement** — taking a tweet out of the read candidate set permanently, in the same transaction that precedes its snapshot — the guarantee that a billed read is unrepeatable (Invariant 7).
 - **Self-reply** — a reply to your own tweet (always allowed), as opposed to a reply to others (policy-blocked on self-serve).
-- **URL surcharge** — the 13× ($0.20 vs $0.015) penalty X charges for a post whose text contains a URL.
-- **Voice library** — your private corpus of other people's tweets, stashed for style/structure study.
-- **Voice tweet** — a mirrored tweet from a tracked author (`voice_tweets`), as opposed to one of your own published tweets (`posts_published`).
+- **Template extraction** — the one-time Grok pass that distills a saved tweet's structure (hook/skeleton/line breaks/length/device) into `voice_tweets` columns.
+- **URL surcharge** — the 13× ($0.20 vs $0.015) penalty X charges for a standalone post whose text contains a URL (a link in a reply bills the base $0.015).
+- **Voice library** — your private corpus of other people's tweets, DOM-scraped and stashed for style/structure study ($0).
+- **Voice tweet** — a DOM-scraped tweet from a voice author (`voice_tweets`), as opposed to one of your own published tweets (`posts_published`).
+- **Winner re-read** — the bounded second snapshot (day 7+, max 5/day) for tweets whose first read cleared `WINNER_REREAD_MIN_VIEWS`.
 - **xFetch / askGrok** — the single chokepoints through which all X / Grok calls flow (retries, errors, cost logging).
 
 ---
@@ -1789,15 +1865,15 @@ limit 20;
 
 **Why Postgres for tokens instead of a file?** Because the deployed server and your laptop share one database. OAuth on the laptop with a `127.0.0.1` redirect, and the rotated refresh token is immediately available to the server — no token copying, no lockout risk from a stale file.
 
-**Why `setInterval` workers instead of a queue?** One operator, low write volume. Five timers in one Bun process with `FOR UPDATE SKIP LOCKED` is correct, observable, and a fraction of the operational weight of Redis + BullMQ. The plan is explicit: don't reach for a queue unless something *actually* breaks at one process.
+**Why `setInterval` workers instead of a queue?** One operator, low write volume. Two timers in one Bun process with `FOR UPDATE SKIP LOCKED` (and heartbeats surfacing through `/healthz`) is correct, observable, and a fraction of the operational weight of Redis + BullMQ. The plan is explicit: don't reach for a queue unless something *actually* breaks at one process.
 
 **Why does the publisher silently fail URL posts?** Because the URL surcharge is 13× and the publisher never opts into it (Invariant 1). It's a guard, not a bug — keep URLs out of scheduled text. The Composer warns you before you save.
 
 **Can Stratus auto-reply to other people for me?** No, and it won't — X's Feb 2026 policy blocks programmatic replies to others on self-serve tiers (Invariant 2). Reply Master drafts; you post by hand.
 
-**Why is voice-metrics polling off by default?** Because reading other people's metrics is 5× the cost of your own. It's the one worker that defaults off, enabled only with `VOICE_METRICS_POLL_ENABLED=true`, and even then bounded by the per-author `max_polled_tweets` cap.
+**Why doesn't the voice library read the X API?** Because other-user reads are 5× owned reads ($0.005 vs $0.001). The 2026-06-01 pivot replaced the paid mirroring/polling stack with $0 DOM scraping in the extension — content and author profiles come straight off the page. Don't reintroduce API reads for voice content without a budget conversation.
 
-**How much does this cost to run?** Pennies, if you respect the guards. Your own metrics tracking is ~$0.113/tweet over its 30-day life; reply drafts are ~$0.0019 each; scheduled posts are $0.015 each. The expensive path (voice metrics) is gated and capped. `/cost/today` is the live truth.
+**How much does this cost to run?** Pennies, if you respect the guards. Your own metrics tracking is ~$0.001/tweet (one snapshot, plus at most one $0.001 winner re-read); the account KPI is $0.001/day; mentions are ~$0.01–0.03/day; reply drafts are ~$0.002–0.004 each; post-draft calls ~$0.006–0.01; scheduled posts are $0.015 each. The voice library is $0. `/cost/today` is the live truth, and the budget watchdog shouts past `X_DAILY_BUDGET_USD`.
 
 **Can I add LinkedIn?** Architecturally, yes — a `src/linkedin/` sibling slice with the same shape. But only when there's a real reason; the scope ceiling is deliberate.
 

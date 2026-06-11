@@ -1,15 +1,28 @@
-// Typed thin client over the stratus API. The side panel calls this directly
-// using bearer + apiUrl from chrome.storage.local; the background-routed
-// client lives in shared/bgClient.ts and is what content scripts use.
+// Typed thin client over the stratus API. Since §9.5 every call routes through
+// the background service worker (shared/messages.ts ApiRequest) — one transport,
+// one place that reads the bearer token and stamps the Authorization header.
+// The `Settings` parameter stays in the signatures so callers keep gating on
+// configuration, but the background loads its own copy from chrome.storage.
 
+import type { ApiRequest, ApiResponse } from '../shared/messages.ts';
 import {
   ApiError,
   type AuthorProfile,
   type Brief,
   type BriefTweet,
   type CreateBody,
+  type CreateThreadBody,
+  type CreateThreadResponse,
   type ListOpts,
+  type Mention,
+  type MentionPatchBody,
+  type MentionStatus,
+  type MentionsRefreshResult,
+  type MentionsResponse,
   type PostContext,
+  type PostDraftBody,
+  type PostDraftResponse,
+  type PostReupBody,
   type PostStatus,
   type RepliesListOpts,
   type ReplyDraft,
@@ -17,10 +30,14 @@ import {
   type ReplyGenerateBody,
   type ReplyPatchBody,
   type ScheduledPost,
+  type ScheduledPostWithThread,
   type ScrapeBody,
   type TopComment,
   type UpdateBody,
   type VoiceAuthor,
+  type VoiceExtractBatchResult,
+  type VoiceTarget,
+  type VoiceTargets,
   type VoiceTweet,
   type VoiceTweetsOpts,
 } from '../shared/types.ts';
@@ -32,8 +49,18 @@ export type {
   Brief,
   BriefTweet,
   CreateBody,
+  CreateThreadBody,
+  CreateThreadResponse,
   ListOpts,
+  Mention,
+  MentionPatchBody,
+  MentionStatus,
+  MentionsRefreshResult,
+  MentionsResponse,
   PostContext,
+  PostDraftBody,
+  PostDraftResponse,
+  PostReupBody,
   PostStatus,
   RepliesListOpts,
   ReplyDraft,
@@ -41,35 +68,34 @@ export type {
   ReplyGenerateBody,
   ReplyPatchBody,
   ScheduledPost,
+  ScheduledPostWithThread,
   ScrapeBody,
   TopComment,
   UpdateBody,
   VoiceAuthor,
+  VoiceExtractBatchResult,
+  VoiceTarget,
+  VoiceTargets,
   VoiceTweet,
   VoiceTweetsOpts,
 };
 
-async function request<T>(s: Settings, path: string, init: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${s.bearer}`,
-    ...((init.headers as Record<string, string> | undefined) ?? {}),
+interface RequestInitLite {
+  method?: ApiRequest['method'];
+  body?: unknown;
+}
+
+async function request<T>(_s: Settings, path: string, init: RequestInitLite = {}): Promise<T> {
+  const payload: ApiRequest = {
+    type: 'stratus/api',
+    method: init.method ?? 'GET',
+    path,
+    ...(init.body !== undefined && init.body !== null ? { body: init.body } : {}),
   };
-  if (init.body !== undefined && init.body !== null) {
-    headers['Content-Type'] = 'application/json';
-  }
-  const r = await fetch(`${s.apiUrl}${path}`, { ...init, headers });
-  if (!r.ok) {
-    let code = `http_${r.status}`;
-    try {
-      const body = (await r.json()) as { error?: unknown };
-      if (typeof body.error === 'string') code = body.error;
-    } catch {
-      // body wasn't JSON — keep generic code
-    }
-    throw new ApiError(r.status, code);
-  }
-  if (r.status === 204) return undefined as T;
-  return (await r.json()) as T;
+  const res = (await chrome.runtime.sendMessage(payload)) as ApiResponse<T> | undefined;
+  if (!res) throw new ApiError(0, 'no_response');
+  if (!res.ok) throw new ApiError(res.status, res.code);
+  return res.data;
 }
 
 export const api = {
@@ -88,22 +114,37 @@ export const api = {
     return request<ScheduledPost[]>(s, `/x/posts/scheduled${qs ? `?${qs}` : ''}`);
   },
 
+  // Single-row fetch (§9.5) — thread members carry their siblings.
+  get(s: Settings, id: string): Promise<ScheduledPostWithThread> {
+    return request<ScheduledPostWithThread>(s, `/x/posts/scheduled/${id}`);
+  },
+
   create(s: Settings, body: CreateBody): Promise<ScheduledPost> {
-    return request<ScheduledPost>(s, '/x/posts/scheduled', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    return request<ScheduledPost>(s, '/x/posts/scheduled', { method: 'POST', body });
+  },
+
+  createThread(s: Settings, body: CreateThreadBody): Promise<CreateThreadResponse> {
+    return request<CreateThreadResponse>(s, '/x/posts/threads', { method: 'POST', body });
   },
 
   update(s: Settings, id: string, body: UpdateBody): Promise<ScheduledPost> {
-    return request<ScheduledPost>(s, `/x/posts/scheduled/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    });
+    return request<ScheduledPost>(s, `/x/posts/scheduled/${id}`, { method: 'PATCH', body });
   },
 
   remove(s: Settings, id: string): Promise<void> {
     return request<void>(s, `/x/posts/scheduled/${id}`, { method: 'DELETE' });
+  },
+
+  drafts: {
+    // §8.1 — three register-distinct drafts land as draft rows in the calendar.
+    generate(s: Settings, body: PostDraftBody): Promise<PostDraftResponse> {
+      return request<PostDraftResponse>(s, '/x/posts/draft', { method: 'POST', body });
+    },
+
+    // §8.5 — quote-tweet re-up of one of my published posts.
+    reup(s: Settings, body: PostReupBody): Promise<PostDraftResponse> {
+      return request<PostDraftResponse>(s, '/x/posts/reup', { method: 'POST', body });
+    },
   },
 
   voice: {
@@ -112,10 +153,16 @@ export const api = {
       return request<VoiceAuthor[]>(s, `/x/voice/authors${qs}`);
     },
 
+    targets(s: Settings): Promise<VoiceTargets> {
+      return request<VoiceTargets>(s, '/x/voice/targets');
+    },
+
     listTweets(s: Settings, opts: VoiceTweetsOpts = {}): Promise<VoiceTweet[]> {
       const q = new URLSearchParams();
       if (opts.author) q.set('author', opts.author);
       if (opts.q) q.set('q', opts.q);
+      if (opts.hook) q.set('hook', opts.hook);
+      if (opts.extracted !== undefined) q.set('extracted', String(opts.extracted));
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       if (opts.retired) q.set('retired', 'true');
       const qs = q.toString();
@@ -123,20 +170,35 @@ export const api = {
     },
 
     scrape(s: Settings, body: ScrapeBody): Promise<{ tweet: VoiceTweet; author: VoiceAuthor }> {
-      return request(s, '/x/voice/scrape', { method: 'POST', body: JSON.stringify(body) });
+      return request(s, '/x/voice/scrape', { method: 'POST', body });
     },
 
     enrichAuthor(s: Settings, handle: string, profile: AuthorProfile): Promise<VoiceAuthor> {
       return request<VoiceAuthor>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'PUT',
-        body: JSON.stringify(profile),
+        body: profile,
+      });
+    },
+
+    // §8.3 — one Grok structured-output pass distilling the tweet's skeleton.
+    extractTemplate(s: Settings, tweetId: string): Promise<{ tweet: VoiceTweet; costUsd: number }> {
+      return request(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}/extract`, {
+        method: 'POST',
+        body: {},
+      });
+    },
+
+    extractBatch(s: Settings, limit?: number): Promise<VoiceExtractBatchResult> {
+      return request<VoiceExtractBatchResult>(s, '/x/voice/extract-batch', {
+        method: 'POST',
+        body: limit !== undefined ? { limit } : {},
       });
     },
 
     retireTweet(s: Settings, tweetId: string, retired: boolean): Promise<VoiceTweet> {
       return request<VoiceTweet>(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ retired }),
+        body: { retired },
       });
     },
 
@@ -149,13 +211,40 @@ export const api = {
     retireAuthor(s: Settings, handle: string, retired: boolean): Promise<VoiceAuthor> {
       return request<VoiceAuthor>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'PATCH',
-        body: JSON.stringify({ retired }),
+        body: { retired },
       });
     },
 
     deleteAuthor(s: Settings, handle: string): Promise<unknown> {
       return request<unknown>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
+      });
+    },
+  },
+
+  mentions: {
+    list(
+      s: Settings,
+      opts: { status?: MentionStatus; limit?: number } = {},
+    ): Promise<MentionsResponse> {
+      const q = new URLSearchParams();
+      if (opts.status) q.set('status', opts.status);
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<MentionsResponse>(s, `/x/mentions${qs ? `?${qs}` : ''}`);
+    },
+
+    refresh(s: Settings): Promise<MentionsRefreshResult> {
+      return request<MentionsRefreshResult>(s, '/x/mentions/refresh', {
+        method: 'POST',
+        body: {},
+      });
+    },
+
+    patch(s: Settings, tweetId: string, body: MentionPatchBody): Promise<Mention> {
+      return request<Mention>(s, `/x/mentions/${encodeURIComponent(tweetId)}`, {
+        method: 'PATCH',
+        body,
       });
     },
   },
@@ -176,16 +265,13 @@ export const api = {
     },
 
     generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraft> {
-      return request<ReplyDraft>(s, '/x/replies/generate', {
-        method: 'POST',
-        body: JSON.stringify(body),
-      });
+      return request<ReplyDraft>(s, '/x/replies/generate', { method: 'POST', body });
     },
 
     patch(s: Settings, id: string, body: ReplyPatchBody): Promise<ReplyDraft> {
       return request<ReplyDraft>(s, `/x/replies/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        body: JSON.stringify(body),
+        body,
       });
     },
 

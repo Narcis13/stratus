@@ -23,11 +23,12 @@
 // a predictable daily window at owned-read prices ($0.001/result), and a missed
 // run simply leaves rows for the next pass (still read exactly once each).
 
-import { asc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { beat } from '../../heartbeats.ts';
 import { accountSnapshots, metricsSnapshots, postsPublished } from '../db/schema.ts';
 import { getMe, getTweetsByIds, getUserTweets } from '../endpoints.ts';
+import { pullMentions } from '../mentions.ts';
 import { getValidAccessToken } from '../token-store.ts';
 
 export interface DailyMetricsDeps {
@@ -62,6 +63,14 @@ export interface RunResult {
   /** Whether this run wrote the daily account_snapshots row (false = already
    *  written today, or the getMe read failed). */
   accountSnapshotted: boolean;
+  /** Mentions returned by the inbox pull (§7.5). */
+  mentionsScanned: number;
+  /** New `mentions` rows this run. */
+  mentionsNew: number;
+  /** Mentions auto-flipped to answered by the published-reply backfill. */
+  mentionsAnswered: number;
+  /** Day-7 winner re-reads this run (§8.4, capped at 5/day). */
+  rereadWinners: number;
 }
 
 export const DAILY_METRICS_HEARTBEAT = 'x.dailyMetrics';
@@ -70,6 +79,12 @@ const DEFAULT_MAX_RESULTS = 500;
 const SNAPSHOT_BATCH = 100; // GET /2/tweets?ids= accepts ≤100 ids
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_HOUR_UTC = 3;
+// Bounded winner re-read (§8.4): tweets whose first snapshot cleared this view
+// count get ONE extra read at day 7+ — which content compounds is worth
+// exactly ≤ 5 × $0.001/day, no more.
+const WINNER_REREAD_MIN_VIEWS = Number(process.env.WINNER_REREAD_MIN_VIEWS ?? '500');
+const WINNER_REREAD_CAP = 5;
+const WINNER_REREAD_MIN_AGE_MS = 7 * DAY_MS;
 // X nulls non_public/organic on owned posts after 30 days and can return them
 // unstorable past that. Now that we snapshot regardless of age, only request the
 // private fields for tweets still inside the window (2-day margin). This is the
@@ -87,6 +102,10 @@ export async function runDailyMetrics(
     retired: 0,
     failed: 0,
     accountSnapshotted: false,
+    mentionsScanned: 0,
+    mentionsNew: 0,
+    mentionsAnswered: 0,
+    rereadWinners: 0,
   };
 
   const token = await getValidAccessToken({
@@ -102,11 +121,25 @@ export async function runDailyMetrics(
   // table before snapshotDue reads every non-retired row regardless of age.
   await discover(token, deps.selfXUserId, runOpts, result);
   await snapshotDue(token, result);
+  await rereadWinners(token, result);
+
+  // Mention inbox pull (§7.5) — after discover so the answered backfill sees
+  // replies I made from the X app that discovery just found. A failed pull is
+  // a stale inbox until tomorrow (or a manual refresh), never a crashed run.
+  try {
+    const pulled = await pullMentions(token, deps.selfXUserId);
+    result.mentionsScanned = pulled.scanned;
+    result.mentionsNew = pulled.inserted;
+    result.mentionsAnswered = pulled.answered;
+  } catch (err) {
+    console.error(`dailyMetrics: mentions pull failed: ${describe(err)}`);
+  }
 
   console.log(
     `dailyMetrics: scanned=${result.scanned} discovered=${result.discovered} ` +
       `snapshotted=${result.snapshotted} retired=${result.retired} failed=${result.failed} ` +
-      `account=${result.accountSnapshotted}`,
+      `account=${result.accountSnapshotted} mentions=${result.mentionsNew}/${result.mentionsScanned} ` +
+      `mentionsAnswered=${result.mentionsAnswered} rereadWinners=${result.rereadWinners}`,
   );
   return result;
 }
@@ -211,6 +244,7 @@ async function snapshotDue(token: string, result: RunResult): Promise<void> {
   const nowMs = Date.now();
   const fresh = rows.filter((r) => nowMs - r.postedAt.getTime() < PRIVATE_FIELDS_MAX_AGE_MS);
   const stale = rows.filter((r) => nowMs - r.postedAt.getTime() >= PRIVATE_FIELDS_MAX_AGE_MS);
+  const postedAtById = new Map(rows.map((r) => [r.tweetId, r.postedAt]));
 
   for (const [group, ownedPrivate] of [
     [fresh, true],
@@ -272,12 +306,89 @@ async function snapshotDue(token: string, result: RunResult): Promise<void> {
             publicMetrics: tweet.public_metrics ?? null,
             nonPublicMetrics: tweet.non_public_metrics ?? null,
             organicMetrics: tweet.organic_metrics ?? null,
+            ageAtSnapshotMin: ageMinutes(postedAtById.get(tweet.id), now),
           });
           result.snapshotted++;
         } catch (err) {
           console.error(`dailyMetrics: snapshot insert failed ${tweet.id}: ${describe(err)}`);
         }
       }
+    }
+  }
+}
+
+// Minutes between postedAt and the snapshot (§8.4) — what makes view counts
+// comparable across tweets the daily pass read at different ages.
+function ageMinutes(postedAt: Date | undefined, at: Date): number | null {
+  if (!postedAt) return null;
+  return Math.max(0, Math.round((at.getTime() - postedAt.getTime()) / 60_000));
+}
+
+// Bounded winner re-read (§8.4): tweets whose one-and-only snapshot cleared
+// WINNER_REREAD_MIN_VIEWS get exactly one more read at day 7+ — the
+// "which content compounds" series. Same money discipline as snapshotDue, but
+// claim-BEFORE-read: candidates require poll_count = 1, so bumping the count
+// in a committed txn before the billed call removes them from the candidate
+// set forever. A crash between claim and read loses one re-read (≤ $0.005),
+// never repeats one.
+async function rereadWinners(token: string, result: RunResult): Promise<void> {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - WINNER_REREAD_MIN_AGE_MS);
+
+  let candidates: Array<{ tweetId: string; postedAt: Date }>;
+  try {
+    candidates = await db
+      .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
+      .from(postsPublished)
+      .innerJoin(metricsSnapshots, eq(metricsSnapshots.tweetId, postsPublished.tweetId))
+      .where(
+        and(
+          eq(postsPublished.retired, true),
+          eq(postsPublished.pollCount, 1),
+          lte(postsPublished.postedAt, cutoff),
+          // Stay inside the 30-day private-fields window; a candidate older
+          // than that missed its re-read on purpose (bounded by design).
+          gte(postsPublished.postedAt, new Date(now.getTime() - PRIVATE_FIELDS_MAX_AGE_MS)),
+          sql`(${metricsSnapshots.publicMetrics}->>'impression_count')::int >= ${WINNER_REREAD_MIN_VIEWS}`,
+        ),
+      )
+      .orderBy(sql`(${metricsSnapshots.publicMetrics}->>'impression_count')::int desc`)
+      .limit(WINNER_REREAD_CAP);
+  } catch (err) {
+    console.error(`dailyMetrics: winner re-read candidate query failed: ${describe(err)}`);
+    return;
+  }
+  if (candidates.length === 0) return;
+
+  // Claim before the billed call: poll_count 1 → 2 drops them out of the
+  // candidate predicate permanently.
+  const ids = candidates.map((c) => c.tweetId);
+  await db
+    .update(postsPublished)
+    .set({ pollCount: 2, lastSeenAt: now })
+    .where(inArray(postsPublished.tweetId, ids));
+
+  let found: Awaited<ReturnType<typeof getTweetsByIds>>['found'];
+  try {
+    ({ found } = await getTweetsByIds(token, ids, { ownedPrivate: true }));
+  } catch (err) {
+    console.error(`dailyMetrics: winner re-read failed: ${describe(err)}`);
+    return;
+  }
+
+  const postedAtById = new Map(candidates.map((c) => [c.tweetId, c.postedAt]));
+  for (const tweet of found) {
+    try {
+      await db.insert(metricsSnapshots).values({
+        tweetId: tweet.id,
+        publicMetrics: tweet.public_metrics ?? null,
+        nonPublicMetrics: tweet.non_public_metrics ?? null,
+        organicMetrics: tweet.organic_metrics ?? null,
+        ageAtSnapshotMin: ageMinutes(postedAtById.get(tweet.id), now),
+      });
+      result.rereadWinners++;
+    } catch (err) {
+      console.error(`dailyMetrics: winner re-read insert failed ${tweet.id}: ${describe(err)}`);
     }
   }
 }

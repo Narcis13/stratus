@@ -8,11 +8,14 @@ import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
+import { drafter } from './routes/drafter.ts';
 import { harvest } from './routes/harvest.ts';
+import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { replies } from './routes/replies.ts';
 import { createVoiceRouter } from './routes/voice.ts';
+import { voiceExtract } from './routes/voiceExtract.ts';
 import { DAILY_METRICS_HEARTBEAT, startDailyMetrics } from './workers/dailyMetrics.ts';
 import { PUBLISHER_HEARTBEAT, startPublisher } from './workers/publisher.ts';
 
@@ -38,11 +41,16 @@ export function mountX(app: Hono): void {
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
+  app.route('/x', createMentionsRouter(cfg));
   // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
   if (process.env.XAI_API_KEY) {
     app.route('/x', replies);
+    app.route('/x', drafter);
+    app.route('/x', voiceExtract);
   } else {
-    console.log('x/replies: XAI_API_KEY not set — /x/replies/* not mounted');
+    console.log(
+      'x/replies: XAI_API_KEY not set — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
+    );
   }
 }
 

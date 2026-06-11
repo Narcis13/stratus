@@ -21,9 +21,11 @@
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
 import { initHarvest } from './harvester.ts';
-import { BAND_LABEL, classifyBand, formatCount } from './replyBand.ts';
+import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
 import type { Band, TweetSignals } from './replyBand.ts';
-import type { ApiRequest, ApiResponse } from './shared/messages.ts';
+import type { ApiRequest, ApiResponse, RadarReport } from './shared/messages.ts';
+import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
+import type { RadarBand, RadarSighting } from './shared/radar.ts';
 import type {
   AuthorProfile,
   PostContext,
@@ -619,20 +621,13 @@ function syncAuthorButton(): void {
 // --------------------------------------------------------------- reply master
 
 // X renders action-row aria-label like "12 replies, 5 reposts, 100 likes, ..."
-// Pull each metric independently — order isn't guaranteed across locales/A-B tests.
+// Locale-hardened parsing lives in shared/metricsAria.ts (§9.3) — a non-English
+// UI used to silently zero every metric, poisoning the band model. An aria
+// label with numbers nothing matched is reported loudly, never swallowed.
 function parseMetricsLabel(label: string): PostContext['metrics'] {
-  const n = (re: RegExp): number => {
-    const m = label.match(re);
-    if (!m || !m[1]) return 0;
-    const v = Number(m[1].replace(/[,.\s]/g, ''));
-    return Number.isFinite(v) ? v : 0;
-  };
-  return {
-    replies: n(/([\d.,]+)\s+repl/i),
-    reposts: n(/([\d.,]+)\s+repost/i),
-    likes: n(/([\d.,]+)\s+like/i),
-    views: n(/([\d.,]+)\s+view/i),
-  };
+  const m = parseMetricsAria(label);
+  if (m.unparsed) reportUnparsed('content', label);
+  return { replies: m.replies, reposts: m.reposts, likes: m.likes, views: m.views };
 }
 
 function scrapeTopComment(article: Element, focusedTweetId: string): TopComment | null {
@@ -704,14 +699,21 @@ function setReplyState(
   btn.textContent = label;
 }
 
-function scheduleReplyReset(btn: HTMLButtonElement): void {
+function scheduleReplyReset(btn: HTMLButtonElement, ms = STATUS_PERSIST_MS): void {
   setTimeout(() => {
-    if (btn.isConnected) setReplyState(btn, 'idle', REPLY_BTN_LABEL);
-  }, STATUS_PERSIST_MS);
+    if (!btn.isConnected) return;
+    delete btn.dataset.force; // band-gate override expires with the prompt
+    setReplyState(btn, 'idle', REPLY_BTN_LABEL);
+  }, ms);
 }
 
 async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   if (btn.dataset.state === 'working') return;
+
+  // Set when the previous click was refused by the server band gate (§7.3);
+  // a deliberate re-click inside the prompt window forces the draft.
+  const force = btn.dataset.force === '1';
+  delete btn.dataset.force;
 
   const focusedId = focusedTweetIdFromUrl();
   if (!focusedId) {
@@ -755,6 +757,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
       context: ctx,
       ...(systemPromptOverride ? { systemPromptOverride } : {}),
       ...(idea ? { idea } : {}),
+      ...(force ? { override: true } : {}),
     },
   };
 
@@ -767,6 +770,14 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   if (!res || !res.ok) {
     const code = res && !res.ok ? res.code : 'no_response';
+    if (code === 'band_gate') {
+      // Server refused a dead (null/skip-band) target. Arm a short window in
+      // which a second deliberate click resends with override: true.
+      btn.dataset.force = '1';
+      setReplyState(btn, 'failed', 'Dead post — click to force');
+      scheduleReplyReset(btn, STATUS_PERSIST_MS * 2);
+      return;
+    }
     setReplyState(btn, 'failed', `Failed: ${code}`);
     scheduleReplyReset(btn);
     return;
@@ -825,13 +836,9 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
 // replying to early. Every signal is read from the DOM ($0). The scoring model
 // lives in replyBand.ts; the rationale is in evals/reply-eval-*.md.
 
-const BAIT_PHRASES =
-  /\b(agree or disagree|what'?s your|which one|be honest|your take|hot take|thoughts\??|am i wrong|change my mind|guess the)\b/i;
-
 function looksLikeReplyBait(article: Element): boolean {
   const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
-  if (/\?$/.test(text)) return true; // ends on a question
-  if (BAIT_PHRASES.test(text)) return true;
+  if (textLooksLikeReplyBait(text)) return true;
   // Best-effort poll detection — selector may drift across X redesigns.
   if (article.querySelector('[role="radiogroup"], [data-testid*="poll" i]')) return true;
   return false;
@@ -890,6 +897,72 @@ function applyBand(article: HTMLElement): void {
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
   renderBandBadge(article, band, sig);
+  if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+}
+
+// --------------------------------------------------------------- radar (§7.2)
+
+// Hot/warm verdicts used to evaporate as you scrolled past. Stream them to the
+// background's session ring buffer so the side panel can show a worked queue.
+// Batched (one message per flush window, deduped by tweetId) and per-tweet
+// throttled — applyBand re-runs on every mutation burst, but the queue only
+// needs a fresh number once a minute, sooner if the band itself changes.
+
+const RADAR_FLUSH_MS = 2000;
+const RADAR_RESEND_MS = 60_000;
+
+const pendingRadar = new Map<string, RadarSighting>();
+const radarSentAt = new Map<string, { at: number; band: RadarBand }>();
+let radarFlushTimer: number | null = null;
+
+function recordRadarSighting(article: Element, band: RadarBand, sig: TweetSignals): void {
+  const permalink = findPermalink(article);
+  if (!permalink) return;
+  const sent = radarSentAt.get(permalink.tweetId);
+  if (sent && sent.band === band && Date.now() - sent.at < RADAR_RESEND_MS) return;
+
+  const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  const userNameEl = article.querySelector('[data-testid="User-Name"]');
+  const author = userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  const now = new Date().toISOString();
+
+  pendingRadar.set(permalink.tweetId, {
+    tweetId: permalink.tweetId,
+    url: permalink.url,
+    handle: permalink.username,
+    author,
+    text: text.slice(0, 200),
+    band,
+    signals: { ...sig, ageMin: Math.round(sig.ageMin), vpm: Math.round(sig.vpm * 10) / 10 },
+    firstSeenAt: now,
+    lastSeenAt: now,
+  });
+  if (radarFlushTimer === null) {
+    radarFlushTimer = window.setTimeout(flushRadar, RADAR_FLUSH_MS);
+  }
+}
+
+function flushRadar(): void {
+  radarFlushTimer = null;
+  if (pendingRadar.size === 0) return;
+  const sightings = [...pendingRadar.values()];
+  pendingRadar.clear();
+
+  // Throttle map grows one entry per distinct hot/warm tweet this session;
+  // reset rather than prune if a marathon scroll ever gets it huge (the only
+  // cost of forgetting is one early re-send per tweet).
+  if (radarSentAt.size > 3000) radarSentAt.clear();
+  const at = Date.now();
+  for (const s of sightings) radarSentAt.set(s.tweetId, { at, band: s.band });
+
+  const msg: RadarReport = { type: 'stratus/radar-report', sightings };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar report failed', err);
+    }
+  })();
 }
 
 // --------------------------------------------------------------- scan loop

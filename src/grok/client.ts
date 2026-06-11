@@ -14,7 +14,7 @@
 
 import { db } from '../db/client.ts';
 import { costEvents } from '../db/shared-schema.ts';
-import { type TokenUsage, priceFor } from './pricing.ts';
+import { type TokenUsage, isKnownModel, priceFor } from './pricing.ts';
 
 const GROK_API_BASE = 'https://api.x.ai/v1';
 const DEFAULT_MODEL = 'grok-4.3';
@@ -151,6 +151,13 @@ export async function askGrok(opts: AskGrokOptions): Promise<AskGrokResult> {
         const text = data.output_text ?? extractText(data) ?? '';
         const usage = readUsage(data);
         const costUsd = priceFor(model, usage);
+        // §9.1 pricing truthfulness: an unmapped model silently bills $0 —
+        // shout so the price table gets a row before the spend dashboard lies.
+        if (!isKnownModel(model) && usage.totalTokens > 0) {
+          console.warn(
+            `grok: model '${model}' has no price-table entry — this call logged $0. Add it to src/grok/pricing.ts.`,
+          );
+        }
 
         logCost({
           status: res.status,

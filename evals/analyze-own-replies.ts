@@ -18,7 +18,7 @@
 // run: bun run evals/analyze-own-replies.ts
 // env: STRATUS_BASE_URL + API_TOKEN (Bun auto-loads .env from the repo root)
 
-import { type Band, type TweetSignals, classifyBand } from '../extension/src/replyBand.ts';
+import { type Band, type TweetSignals, classifyBand } from '../src/shared/replyBand.ts';
 
 // ------------------------------------------------------------------ fetch
 

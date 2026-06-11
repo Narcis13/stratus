@@ -185,12 +185,8 @@
           "name": "metrics_snapshots_tweet_id_posts_published_tweet_id_fk",
           "tableFrom": "metrics_snapshots",
           "tableTo": "posts_published",
-          "columnsFrom": [
-            "tweet_id"
-          ],
-          "columnsTo": [
-            "tweet_id"
-          ],
+          "columnsFrom": ["tweet_id"],
+          "columnsTo": ["tweet_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -304,12 +300,8 @@
           "name": "posts_published_scheduled_post_id_scheduled_posts_id_fk",
           "tableFrom": "posts_published",
           "tableTo": "scheduled_posts",
-          "columnsFrom": [
-            "scheduled_post_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["scheduled_post_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -803,12 +795,8 @@
           "name": "voice_metrics_snapshots_tweet_id_voice_tweets_tweet_id_fk",
           "tableFrom": "voice_metrics_snapshots",
           "tableTo": "voice_tweets",
-          "columnsFrom": [
-            "tweet_id"
-          ],
-          "columnsTo": [
-            "tweet_id"
-          ],
+          "columnsFrom": ["tweet_id"],
+          "columnsTo": ["tweet_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -956,12 +944,8 @@
           "name": "voice_tweets_author_x_user_id_tracked_authors_x_user_id_fk",
           "tableFrom": "voice_tweets",
           "tableTo": "tracked_authors",
-          "columnsFrom": [
-            "author_x_user_id"
-          ],
-          "columnsTo": [
-            "x_user_id"
-          ],
+          "columnsFrom": ["author_x_user_id"],
+          "columnsTo": ["x_user_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }

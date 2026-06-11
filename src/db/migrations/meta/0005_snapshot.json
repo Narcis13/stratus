@@ -345,12 +345,8 @@
           "name": "harvest_rows_run_id_harvest_runs_id_fk",
           "tableFrom": "harvest_rows",
           "tableTo": "harvest_runs",
-          "columnsFrom": [
-            "run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         },
@@ -358,12 +354,8 @@
           "name": "harvest_rows_matched_draft_id_reply_drafts_id_fk",
           "tableFrom": "harvest_rows",
           "tableTo": "reply_drafts",
-          "columnsFrom": [
-            "matched_draft_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["matched_draft_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -496,12 +488,8 @@
           "name": "metrics_snapshots_tweet_id_posts_published_tweet_id_fk",
           "tableFrom": "metrics_snapshots",
           "tableTo": "posts_published",
-          "columnsFrom": [
-            "tweet_id"
-          ],
-          "columnsTo": [
-            "tweet_id"
-          ],
+          "columnsFrom": ["tweet_id"],
+          "columnsTo": ["tweet_id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -615,12 +603,8 @@
           "name": "posts_published_scheduled_post_id_scheduled_posts_id_fk",
           "tableFrom": "posts_published",
           "tableTo": "scheduled_posts",
-          "columnsFrom": [
-            "scheduled_post_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["scheduled_post_id"],
+          "columnsTo": ["id"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
@@ -1198,12 +1182,8 @@
           "name": "voice_tweets_author_handle_voice_authors_handle_fk",
           "tableFrom": "voice_tweets",
           "tableTo": "voice_authors",
-          "columnsFrom": [
-            "author_handle"
-          ],
-          "columnsTo": [
-            "handle"
-          ],
+          "columnsFrom": ["author_handle"],
+          "columnsTo": ["handle"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }

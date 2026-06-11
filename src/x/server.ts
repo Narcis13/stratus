@@ -6,11 +6,11 @@
 // per-user storage, signed cookie state, CSRF, etc.
 
 import {
+  SCOPES,
   buildAuthorizeUrl,
   exchangeCodeForTokens,
   generatePkcePair,
   revokeToken,
-  SCOPES,
 } from './auth.ts';
 import { deleteStore, readStore, writeStore } from './token-store.ts';
 

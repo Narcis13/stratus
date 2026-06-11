@@ -4,29 +4,41 @@ import type { Settings } from './storage.ts';
 
 interface Props {
   settings: Settings;
+  /** §8.3 Remix: send a saved tweet's structure to the Composer drafter. */
+  onRemix: (tweetId: string) => void;
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
 const TWEET_LIMIT = 100;
 
-export function VoicePanel({ settings }: Props): JSX.Element {
+export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
   const [authors, setAuthors] = useState<VoiceAuthor[]>([]);
   const [tweets, setTweets] = useState<VoiceTweet[]>([]);
   const [authorFilter, setAuthorFilter] = useState<string>('');
   const [searchInput, setSearchInput] = useState<string>('');
   const [search, setSearch] = useState<string>('');
+  const [hookInput, setHookInput] = useState<string>('');
+  const [hook, setHook] = useState<string>('');
+  const [extractedFilter, setExtractedFilter] = useState<'' | 'true' | 'false'>('');
   const [showRetired, setShowRetired] = useState(false);
   const [renderHtml, setRenderHtml] = useState(false);
   const [loadingAuthors, setLoadingAuthors] = useState(true);
   const [loadingTweets, setLoadingTweets] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [batchRunning, setBatchRunning] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setHook(hookInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [hookInput]);
 
   const loadAuthors = useCallback(async () => {
     setLoadingAuthors(true);
@@ -47,6 +59,8 @@ export function VoicePanel({ settings }: Props): JSX.Element {
       const opts: VoiceTweetsOpts = { limit: TWEET_LIMIT, retired: showRetired };
       if (authorFilter) opts.author = authorFilter;
       if (search) opts.q = search;
+      if (hook) opts.hook = hook;
+      if (extractedFilter !== '') opts.extracted = extractedFilter === 'true';
       const rows = await api.voice.listTweets(settings, opts);
       setTweets(rows);
     } catch (e) {
@@ -54,7 +68,7 @@ export function VoicePanel({ settings }: Props): JSX.Element {
     } finally {
       setLoadingTweets(false);
     }
-  }, [settings, authorFilter, search, showRetired]);
+  }, [settings, authorFilter, search, hook, extractedFilter, showRetired]);
 
   useEffect(() => {
     void loadAuthors();
@@ -137,6 +151,38 @@ export function VoicePanel({ settings }: Props): JSX.Element {
     }
   };
 
+  // §8.3 — one Grok pass distilling the tweet's structure (~$0.005).
+  const extractTweet = async (tweet: VoiceTweet): Promise<void> => {
+    setBusy(`extract:${tweet.tweetId}`);
+    setError(null);
+    try {
+      const res = await api.voice.extractTemplate(settings, tweet.tweetId);
+      setTweets((prev) => prev.map((t) => (t.tweetId === res.tweet.tweetId ? res.tweet : t)));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Extract failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const extractBatch = async (): Promise<void> => {
+    setBatchRunning(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.voice.extractBatch(settings);
+      setNotice(
+        `Extracted ${res.extracted}/${res.requested} ($${res.costUsd.toFixed(4)}); ` +
+          `${res.remaining ?? '?'} still un-extracted.`,
+      );
+      void loadTweets();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Batch extract failed');
+    } finally {
+      setBatchRunning(false);
+    }
+  };
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -147,6 +193,7 @@ export function VoicePanel({ settings }: Props): JSX.Element {
       </div>
 
       {error && <div className="error">{error}</div>}
+      {notice && <div className="ok">{notice}</div>}
 
       <div className="voice-controls">
         <label className="field">
@@ -159,6 +206,33 @@ export function VoicePanel({ settings }: Props): JSX.Element {
             spellCheck={false}
           />
         </label>
+
+        <label className="field">
+          <span>Hook type</span>
+          <input
+            type="search"
+            placeholder="e.g. stat, contrast…"
+            value={hookInput}
+            onChange={(e) => setHookInput(e.target.value)}
+            spellCheck={false}
+          />
+        </label>
+
+        <label className="field">
+          <span>Template</span>
+          <select
+            value={extractedFilter}
+            onChange={(e) => setExtractedFilter(e.target.value as '' | 'true' | 'false')}
+          >
+            <option value="">all</option>
+            <option value="true">extracted</option>
+            <option value="false">not extracted</option>
+          </select>
+        </label>
+
+        <button type="button" onClick={() => void extractBatch()} disabled={batchRunning}>
+          {batchRunning ? 'Extracting…' : 'Extract templates (~$0.005/tweet)'}
+        </button>
 
         <label className="field">
           <span>Author</span>
@@ -221,11 +295,14 @@ export function VoicePanel({ settings }: Props): JSX.Element {
                 tweet={t}
                 renderHtml={renderHtml}
                 busy={busy === `tweet:${t.tweetId}`}
+                extractBusy={busy === `extract:${t.tweetId}`}
                 confirmingDelete={confirming === `tweet:${t.tweetId}`}
                 onToggleRetired={() => void toggleTweetRetired(t)}
                 onRequestDelete={() => setConfirming(`tweet:${t.tweetId}`)}
                 onCancelDelete={() => setConfirming(null)}
                 onConfirmDelete={() => void removeTweet(t)}
+                onExtract={() => void extractTweet(t)}
+                onRemix={() => onRemix(t.tweetId)}
               />
             </li>
           ))}
@@ -316,22 +393,28 @@ interface TweetRowProps {
   tweet: VoiceTweet;
   renderHtml: boolean;
   busy: boolean;
+  extractBusy: boolean;
   confirmingDelete: boolean;
   onToggleRetired: () => void;
   onRequestDelete: () => void;
   onCancelDelete: () => void;
   onConfirmDelete: () => void;
+  onExtract: () => void;
+  onRemix: () => void;
 }
 
 function TweetRow({
   tweet,
   renderHtml,
   busy,
+  extractBusy,
   confirmingDelete,
   onToggleRetired,
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
+  onExtract,
+  onRemix,
 }: TweetRowProps): JSX.Element {
   const url = tweet.url ?? `https://x.com/${tweet.authorHandle}/status/${tweet.tweetId}`;
   const hasHtml = renderHtml && tweet.scrapedHtml;
@@ -368,10 +451,30 @@ function TweetRow({
         <div className="voice-tweet-text">{tweet.text || <em className="muted">(no text)</em>}</div>
       )}
 
+      {tweet.templateExtractedAt && (
+        <div className="voice-tweet-template muted">
+          {[
+            tweet.hookType,
+            tweet.skeleton,
+            tweet.lineBreakPattern,
+            tweet.templateLength,
+            tweet.device,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
+        </div>
+      )}
+
       <div className="voice-tweet-actions">
         <a href={url} target="_blank" rel="noreferrer">
           open ↗
         </a>
+        <button type="button" onClick={onRemix} title="Send this structure to the Composer drafter">
+          remix
+        </button>
+        <button type="button" onClick={onExtract} disabled={extractBusy}>
+          {extractBusy ? '…' : tweet.templateExtractedAt ? 're-extract' : 'extract'}
+        </button>
         <button type="button" onClick={onToggleRetired} disabled={busy}>
           {busy ? '…' : tweet.retired ? 'unretire' : 'retire'}
         </button>

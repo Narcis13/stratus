@@ -23,11 +23,13 @@ import {
   type HarvestMode,
   type HarvestOptions,
   type HarvestScope,
+  harvestCursorKey,
   isHarvestContextRequest,
   isRepliesPath,
   profileHandleFromUrl,
 } from './shared/harvest.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
+import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 
 // ----------------------------------------------------------------- randomness
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -127,6 +129,11 @@ interface Extracted {
   pinned: boolean;
   isRepost: boolean;
   metrics: MetricSet;
+  // Content-shape signals (§9.4) — "which formats earn views" needs these.
+  hasPhoto: boolean;
+  hasVideo: boolean;
+  isQuote: boolean;
+  lineBreaks: number;
 }
 
 function profileHandle(): string | null {
@@ -134,19 +141,19 @@ function profileHandle(): string | null {
 }
 
 function parseMetrics(aria: string | null): MetricSet {
-  // aria like: "19 replies, 4 reposts, 38 likes, 2 bookmarks, 845 views"
-  const res: MetricSet = { comments: 0, reposts: 0, likes: 0, bookmarks: 0, views: 0 };
-  if (!aria) return res;
-  const g = (re: RegExp): number => {
-    const m = aria.match(re);
-    return m?.[1] ? Number.parseInt(m[1].replace(/,/g, ''), 10) : 0;
+  // aria like: "19 replies, 4 reposts, 38 likes, 2 bookmarks, 845 views" — in
+  // an English UI. The locale-hardened parser (§9.3) covers the rest; a label
+  // with numbers nothing matched is reported loudly (zeros would silently
+  // pollute the calibration data).
+  const m = parseMetricsAria(aria);
+  if (m.unparsed && aria) reportUnparsed('harvester', aria);
+  return {
+    comments: m.replies,
+    reposts: m.reposts,
+    likes: m.likes,
+    bookmarks: m.bookmarks,
+    views: m.views,
   };
-  res.comments = g(/([\d,]+)\s+repl/i);
-  res.reposts = g(/([\d,]+)\s+repost/i);
-  res.likes = g(/([\d,]+)\s+like/i);
-  res.bookmarks = g(/([\d,]+)\s+bookmark/i);
-  res.views = g(/([\d,]+)\s+view/i);
-  return res;
 }
 
 function idFrom(art: Element): { handle: string; id: string; url: string } | null {
@@ -173,16 +180,23 @@ function extractArticle(art: Element): Extracted {
   const pinned = /pin|fixat|épingl|anclado|fijado|festgeh|gepin/i.test(socialContext);
   const iso = time?.getAttribute('datetime') ?? '';
   const ms = iso ? Date.parse(iso) : Number.NaN;
+  const rawText = txtEl ? (txtEl as HTMLElement).innerText : '';
   return {
     handle: id ? id.handle : null,
     id: id ? id.id : null,
     url: id ? id.url : '',
-    text: txtEl ? (txtEl as HTMLElement).innerText.replace(/\s*\n\s*/g, ' ').trim() : '',
+    text: rawText.replace(/\s*\n\s*/g, ' ').trim(),
     time: iso,
     timeMs: Number.isNaN(ms) ? null : ms,
     pinned,
     isRepost,
     metrics: parseMetrics(grp ? grp.getAttribute('aria-label') : ''),
+    hasPhoto: art.querySelector('[data-testid="tweetPhoto"]') !== null,
+    hasVideo: art.querySelector('video, [data-testid="videoPlayer"]') !== null,
+    // A quoted tweet renders as a nested tweetText inside a role="link" card.
+    isQuote: art.querySelector('div[role="link"] [data-testid="tweetText"]') !== null,
+    // Counted on the raw innerText, before line breaks collapse to spaces.
+    lineBreaks: (rawText.match(/\n/g) ?? []).length,
   };
 }
 
@@ -223,6 +237,41 @@ function scopeWindow(scope: HarvestScope): DayWindow | null {
   return null;
 }
 
+// 'since-last' (§9.4): window opens at the previous completed run's newest
+// item for this handle+mode. First run (no cursor) scrapes like 'all'.
+async function readCursorMs(handle: string, mode: HarvestMode): Promise<number | null> {
+  try {
+    const key = harvestCursorKey(handle, mode);
+    const out = await chrome.storage.local.get(key);
+    const v = out[key];
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCursorMs(handle: string, mode: HarvestMode, ms: number): Promise<void> {
+  try {
+    const key = harvestCursorKey(handle, mode);
+    const existing = await readCursorMs(handle, mode);
+    if (existing === null || ms > existing) await chrome.storage.local.set({ [key]: ms });
+  } catch {
+    // cursor is an optimization — never fail the harvest over it
+  }
+}
+
+async function windowFor(
+  handle: string,
+  mode: HarvestMode,
+  scope: HarvestScope,
+): Promise<DayWindow | null> {
+  if (scope !== 'since-last') return scopeWindow(scope);
+  const cursor = await readCursorMs(handle, mode);
+  if (cursor === null) return null; // first run — full scrape
+  // Strictly newer than the cursor; endMs unbounded.
+  return { startMs: cursor + 1, endMs: Number.POSITIVE_INFINITY };
+}
+
 function inWindow(timeMs: number | null, win: DayWindow | null): boolean {
   if (!win) return true;
   if (timeMs === null) return false;
@@ -240,6 +289,10 @@ interface PostRow {
   time: string;
   handle: string;
   url: string;
+  hasPhoto: boolean;
+  hasVideo: boolean;
+  isQuote: boolean;
+  lineBreaks: number;
 }
 
 // Fields beyond the CSV columns (o_id, r_reposts, r_bookmarks) exist for the
@@ -260,6 +313,15 @@ interface ReplyRow {
   r_bookmarks: number;
   r_views: number;
   r_time: string;
+  // 1-based index of the reply inside its rendered group (§9.4). Position 1
+  // sits directly under the true original; deeper positions mark self-threads/
+  // chains where the items[k-1] pairing mislabels the "original" — calibration
+  // analysis can filter or downweight them.
+  r_position: number;
+  hasPhoto: boolean;
+  hasVideo: boolean;
+  isQuote: boolean;
+  lineBreaks: number;
 }
 
 interface HarvestCtx<R> {
@@ -299,6 +361,10 @@ function harvestPosts(ctx: HarvestCtx<PostRow>): number {
         time: p.time,
         handle: p.handle ?? '',
         url: p.url,
+        hasPhoto: p.hasPhoto,
+        hasVideo: p.hasVideo,
+        isQuote: p.isQuote,
+        lineBreaks: p.lineBreaks,
       };
     }
   }
@@ -332,6 +398,11 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
         r_bookmarks: reply.metrics.bookmarks,
         r_views: reply.metrics.views,
         r_time: reply.time,
+        r_position: k,
+        hasPhoto: reply.hasPhoto,
+        hasVideo: reply.hasVideo,
+        isQuote: reply.isQuote,
+        lineBreaks: reply.lineBreaks,
       };
     }
   }
@@ -339,7 +410,14 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
 }
 
 // ----------------------------------------------------------------- CSV build
-const esc = (s: unknown): string => `"${String(s).replace(/"/g, '""')}"`;
+// Formula-escape (§9.4): a scraped tweet starting with =, +, - or @ would
+// execute as a formula when the CSV opens in Excel/Sheets. Prefix with ' —
+// the standard CSV-injection guard.
+const esc = (s: unknown): string => {
+  let v = String(s);
+  if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
+  return `"${v.replace(/"/g, '""')}"`;
+};
 
 function postsCSV(store: Record<string, PostRow>): string {
   const header = [
@@ -427,6 +505,11 @@ function postsIngestRows(store: Record<string, PostRow>): HarvestIngestRow[] {
     bookmarks: r.bookmarks,
     views: r.views,
     time: r.time || null,
+    hasPhoto: r.hasPhoto,
+    hasVideo: r.hasVideo,
+    isQuote: r.isQuote,
+    textLen: r.text.length,
+    lineBreaks: r.lineBreaks,
   }));
 }
 
@@ -441,6 +524,12 @@ function repliesIngestRows(profile: string, store: Record<string, ReplyRow>): Ha
     bookmarks: r.r_bookmarks,
     views: r.r_views,
     time: r.r_time || null,
+    hasPhoto: r.hasPhoto,
+    hasVideo: r.hasVideo,
+    isQuote: r.isQuote,
+    textLen: r.r_text.length,
+    lineBreaks: r.lineBreaks,
+    groupPosition: r.r_position,
     orig: {
       tweetId: r.o_id || null,
       handle: r.o_handle || null,
@@ -530,7 +619,8 @@ function localDateStamp(): string {
 }
 
 function scopeSuffix(scope: HarvestScope): string {
-  return scope === 'all' ? '' : `_${scope}`;
+  if (scope === 'all') return '';
+  return `_${scope.replace(/-/g, '_')}`;
 }
 
 function postEvent(port: chrome.runtime.Port, e: HarvestEvent): void {
@@ -558,7 +648,7 @@ async function runHarvest<R>(
   }
 
   const cfg = PRESETS[options.pace] ?? PRESETS.human;
-  const win = scopeWindow(options.scope);
+  const win = await windowFor(profile, mode, options.scope);
   const ctx: HarvestCtx<R> = { store: {}, profile, window: win, oldestSeenMs: null };
 
   emit({ type: 'started', handle: profile, mode, scope: options.scope });
@@ -637,6 +727,14 @@ async function runHarvest<R>(
   if (rows.length > 0 && options.sendToStratus !== false) {
     emit({ type: 'sending', rows: rows.length });
     ingest = await shipToStratus(profile, mode, options.scope, toIngest(profile, ctx.store));
+  }
+
+  // Advance the per-handle cursor only on a COMPLETED run (§9.4) — a cancelled
+  // partial scroll would otherwise skip everything it never reached.
+  if (!cancelled && rows.length > 0) {
+    const newest = times[times.length - 1];
+    const newestMs = newest ? Date.parse(newest) : Number.NaN;
+    if (!Number.isNaN(newestMs)) await writeCursorMs(profile, mode, newestMs);
   }
 
   emit({

@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # scripts/deploy.sh — push current working tree to the server and restart.
 #
-#   usage:  ./scripts/deploy.sh                  # defaults to root@116.203.39.245
+#   usage:  ./scripts/deploy.sh                  # defaults to $STRATUS_DEPLOY_HOST
 #           ./scripts/deploy.sh root@1.2.3.4     # different host
+#
+# Host resolution (§9.8): arg > STRATUS_DEPLOY_HOST env > STRATUS_DEPLOY_HOST
+# in .env. No hardcoded IP — the box can move without editing this script.
 #
 # Safe to run repeatedly. On first run it also uploads .env (then never again).
 
 set -euo pipefail
 
-REMOTE="${1:-root@116.203.39.245}"
 APPDIR=/home/stratus/app
 LOCAL_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -18,6 +20,19 @@ if [[ ! -f .env ]]; then
   echo "ERROR: $LOCAL_ROOT/.env not found — create it before deploying." >&2
   exit 1
 fi
+
+REMOTE="${1:-${STRATUS_DEPLOY_HOST:-$(grep -E '^STRATUS_DEPLOY_HOST=' .env | cut -d= -f2- || true)}}"
+if [[ -z "$REMOTE" ]]; then
+  echo "ERROR: no deploy host. Pass one (./scripts/deploy.sh root@host) or set STRATUS_DEPLOY_HOST in .env." >&2
+  exit 1
+fi
+
+# Stamp the deployed commit so /healthz can report exactly what's running.
+GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+  GIT_SHA="${GIT_SHA}-dirty"
+fi
+echo "==> deploying $GIT_SHA"
 
 echo "==> rsync code to $REMOTE:$APPDIR"
 rsync -az --delete \
@@ -30,6 +45,9 @@ rsync -az --delete \
   --exclude '.env.local' \
   --exclude '.DS_Store' \
   ./ "$REMOTE":"$APPDIR/"
+
+echo "==> stamp git SHA"
+ssh "$REMOTE" "echo 'GIT_SHA=$GIT_SHA' > $APPDIR/.git-sha"
 
 echo "==> fix ownership"
 ssh "$REMOTE" "chown -R stratus:stratus $APPDIR"
@@ -57,6 +75,15 @@ fi
 echo "==> bun install"
 ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && bun install --frozen-lockfile'"
 
+# Migration status BEFORE restart (§9.8): a restart against an un-migrated
+# schema is the silent way to crash every worker tick. drizzle-kit migrate is
+# idempotent — applied migrations are skipped.
+echo "==> run migrations (idempotent)"
+ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && bunx drizzle-kit migrate' " || {
+  echo "ERROR: migrations failed — NOT restarting the service." >&2
+  exit 1
+}
+
 echo "==> restart service"
 ssh "$REMOTE" "systemctl restart stratus.service"
 
@@ -68,4 +95,4 @@ ssh "$REMOTE" "systemctl is-active stratus.service" || {
   exit 1
 }
 ssh "$REMOTE" "curl -fsS http://127.0.0.1:3000/healthz && echo"
-echo "==> deployed."
+echo "==> deployed $GIT_SHA."

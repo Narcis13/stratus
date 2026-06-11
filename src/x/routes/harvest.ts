@@ -24,7 +24,7 @@ const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MODES = ['posts', 'replies'] as const;
-const SCOPES = ['all', 'today', 'yesterday'] as const;
+const SCOPES = ['all', 'today', 'yesterday', 'since-last'] as const;
 type Mode = (typeof MODES)[number];
 type Scope = (typeof SCOPES)[number];
 
@@ -150,6 +150,12 @@ harvest.post('/harvest/rows', async (c) => {
         origLikes: r.orig?.likes ?? null,
         origViews: r.orig?.views ?? null,
         matchedDraftId: matchedDraftByTweet.get(r.tweetId) ?? null,
+        hasPhoto: r.hasPhoto,
+        hasVideo: r.hasVideo,
+        isQuote: r.isQuote,
+        textLen: r.textLen,
+        lineBreaks: r.lineBreaks,
+        groupPosition: r.groupPosition,
       })),
     );
     for (const b of backfills) {
@@ -214,6 +220,13 @@ export interface IngestRow {
   bookmarks: number;
   views: number;
   tweetTime: Date | null;
+  // Content-shape columns (§9.4) — null from pre-9.4 extension builds.
+  hasPhoto: boolean | null;
+  hasVideo: boolean | null;
+  isQuote: boolean | null;
+  textLen: number | null;
+  lineBreaks: number | null;
+  groupPosition: number | null;
   orig: IngestOrig | null;
 }
 
@@ -250,6 +263,32 @@ export function parseIngestRow(value: unknown): IngestRow | { error: string } {
 
   const tweetTime = optDate(v.time);
   if (tweetTime !== null && 'error' in tweetTime) return { error: 'invalid_row_time' };
+
+  // Content-shape fields (§9.4) — all optional; reject only wrong types.
+  const flags: Record<'hasPhoto' | 'hasVideo' | 'isQuote', boolean | null> = {
+    hasPhoto: null,
+    hasVideo: null,
+    isQuote: null,
+  };
+  for (const k of ['hasPhoto', 'hasVideo', 'isQuote'] as const) {
+    const b = v[k];
+    if (b === undefined || b === null) continue;
+    if (typeof b !== 'boolean') return { error: `invalid_row_${k}` };
+    flags[k] = b;
+  }
+  const optInts: Record<'textLen' | 'lineBreaks' | 'groupPosition', number | null> = {
+    textLen: null,
+    lineBreaks: null,
+    groupPosition: null,
+  };
+  for (const k of ['textLen', 'lineBreaks', 'groupPosition'] as const) {
+    const n = v[k];
+    if (n === undefined || n === null) continue;
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+      return { error: `invalid_row_${k}` };
+    }
+    optInts[k] = Math.floor(n);
+  }
 
   let orig: IngestOrig | null = null;
   if (v.orig !== undefined && v.orig !== null) {
@@ -292,7 +331,7 @@ export function parseIngestRow(value: unknown): IngestRow | { error: string } {
     };
   }
 
-  return { tweetId, handle, text: v.text, ...metrics, tweetTime, orig };
+  return { tweetId, handle, text: v.text, ...metrics, tweetTime, ...flags, ...optInts, orig };
 }
 
 // ---------------------------------------------------------------- reconcile

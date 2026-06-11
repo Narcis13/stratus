@@ -46,7 +46,7 @@ Either way, **render as UTC ISO 8601** (`YYYY-MM-DDTHH:MM:SSZ`) before POSTing. 
 
 For each draft:
 
-1. **URL guard** — refuse if `text` matches `/(^|\s)https?:\/\//`. The publisher worker calls `createPost` *without* `allowUrlSurcharge`, so URL-bearing posts crash at the 60s tick and end up `status='failed'`. There is no API knob to bypass this. Tell the user to strip the link or post manually.
+1. **URL guard** — refuse if `text` matches `/(^|\s)https?:\/\//`. The server now rejects any `pending` row with a URL up front (`400 url_in_text` — a URL post bills $0.20 instead of $0.015), and the publisher's `createPost` refuses the surcharge as the backstop. There is no API knob to bypass this for a standalone post. Tell the user to strip the link, post manually, or use a **thread** — a URL in a tail segment of `POST /x/posts/threads` is allowed (link-in-first-reply, $0.030 total).
 2. **Length** — `text.length > 280` → reject. Warn at >270 to leave slack.
 3. **Empty/whitespace-only** → reject (the API will too: `400 text_required`).
 4. **Time monotonicity (optional)** — within a day, sort by `scheduledFor` ascending. The publisher doesn't care, but it makes the calendar list readable.
@@ -130,12 +130,17 @@ curl -s "$STRATUS_BASE_URL/x/posts/scheduled?from=$START&to=$END&status=pending"
 
 Show the user the totals grouped by date.
 
+## Scheduling a thread
+
+`POST /x/posts/threads` takes `{ "segments": ["…", "…"], "scheduledFor": "…", "status": "pending" }` (2–25 segments) and creates the thread as **one schedulable unit**: the head is a normal pending row, tails land as `status='segment'` and the publisher posts them as self-replies ~500 ms apart ($0.015 each). The URL guard applies to segment 1 only — put any link in a later segment. Tails are locked to the head: text is editable, but schedule/status changes and deletes go through the head (delete cascades).
+
 ## Editing after the fact
 
 - **Reschedule one row**: `PATCH /x/posts/scheduled/:id` with `{ "scheduledFor": "…" }`. Time can move past or future.
 - **Cancel one row**: `PATCH … { "status": "cancelled" }`. Soft — row stays in DB.
-- **Hard delete**: `DELETE /x/posts/scheduled/:id` (200 only when status ≠ `posted`).
+- **Hard delete**: `DELETE /x/posts/scheduled/:id` (`204`; refused with `409` on `posted`/`publishing` rows, and thread members delete via the head).
 - **Retry a failed row**: PATCH `{ "status": "pending", "scheduledFor": "…" }`. The publisher will retry at the new time. Don't bother editing `errorClass` / `errorDetail` — the worker rewrites them on the next attempt.
+- **A row stuck in `publishing`** means the X outcome is unknown (5xx/network mid-call). It is locked from edits and never auto-retried; the daily reconcile picks the tweet up if it actually shipped.
 
 ## Bulk cancel
 

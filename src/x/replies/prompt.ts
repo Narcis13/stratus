@@ -7,14 +7,16 @@
 // `reply prompt.md` and this literal together so the two stay in sync.
 
 import type { GrokMessage } from '../../grok/index.ts';
+import type { Band } from '../../shared/replyBand.ts';
 
 // Band verdict + the exact classifier inputs, frozen at capture time by the
-// extension (replyBand.ts). Optional: older extension builds don't send it.
-// Never rendered into the prompt — it exists so every draft persisted via
-// contextSnapshot is a labeled row for recalibrating BAND from own outcomes
-// (OVERHAUL-PLAN §6.2, evals/analyze-own-replies.ts).
+// extension (src/shared/replyBand.ts). Optional in the request: older
+// extension builds don't send it, and the band gate stamps a server-derived
+// one when absent (§7.3). Never rendered into the prompt — it exists so every
+// draft persisted via contextSnapshot is a labeled row for recalibrating BAND
+// from own outcomes (OVERHAUL-PLAN §6.2, evals/analyze-own-replies.ts).
 export interface PostSignals {
-  band: 'hot' | 'warm' | 'skip' | null;
+  band: Band;
   views: number;
   replies: number;
   ageMin: number;
@@ -32,6 +34,8 @@ export interface PostContext {
   metrics: { views: number; replies: number; reposts: number; likes: number };
   topComments: { author: string; handle: string; text: string }[];
   signals?: PostSignals;
+  /** Thread context (§7.5 mention inbox): my post the target tweet replies to. */
+  parent?: { text: string };
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
@@ -201,14 +205,22 @@ function renderContext(ctx: PostContext): string {
   const handle = stripAt(ctx.handle);
   const relative = relativeTime(ctx.postedAt);
   const m = ctx.metrics;
-  const lines: string[] = [
+  const lines: string[] = [];
+
+  // Mention-inbox drafts (§7.5): the tweet below is a reply to MY post — give
+  // Grok the thread so the reply lands in context instead of cold.
+  if (ctx.parent) {
+    lines.push('MY POST (the tweet below is a reply to it)', ctx.parent.text, '');
+  }
+
+  lines.push(
     'ORIGINAL TWEET',
     `@${handle} (${ctx.author}, ${relative}):`,
     ctx.text,
     '',
     'ENGAGEMENT',
     `likes=${m.likes} reposts=${m.reposts} replies=${m.replies} views=${m.views}`,
-  ];
+  );
 
   if (ctx.topComments.length > 0) {
     const limited = ctx.topComments.slice(0, MAX_TOP_COMMENTS);

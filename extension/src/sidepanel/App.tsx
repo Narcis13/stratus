@@ -24,6 +24,7 @@ export function App(): JSX.Element {
   const { settings, loading } = useSettings();
   const [tab, setTab] = useState<Tab>('today');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [remixTweetId, setRemixTweetId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const startEdit = (id: string) => {
@@ -31,6 +32,12 @@ export function App(): JSX.Element {
     setTab('composer');
   };
   const clearEdit = () => setEditingId(null);
+  // §8.3 → §8.1: Voice tab's Remix button seeds the Composer drafter.
+  const startRemix = (tweetId: string) => {
+    setEditingId(null);
+    setRemixTweetId(tweetId);
+    setTab('composer');
+  };
   const onSaved = () => setRefreshKey((k) => k + 1);
 
   const configured = isConfigured(settings);
@@ -73,13 +80,15 @@ export function App(): JSX.Element {
           <ComposerPanel
             settings={settings}
             editingId={editingId}
+            remixTweetId={remixTweetId}
+            onClearRemix={() => setRemixTweetId(null)}
             onClearEdit={clearEdit}
             onSaved={onSaved}
           />
         ) : activeTab === 'harvest' ? (
           <HarvestPanel />
         ) : activeTab === 'voice' ? (
-          <VoicePanel settings={settings} />
+          <VoicePanel settings={settings} onRemix={startRemix} />
         ) : activeTab === 'replies' ? (
           <RepliesPanel key={`replies-${refreshKey}`} settings={settings} />
         ) : (

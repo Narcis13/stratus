@@ -1,9 +1,13 @@
 // The Today tab (OVERHAUL-PLAN §6.4): the growth-coach surface. One GET
 // /x/brief render — follower trend, today's slots + gaps, reply quota,
 // yesterday's numbers, and spend, so opening the panel answers "what do I
-// do next" without clicking around.
+// do next" without clicking around. Plus the Radar (§7.2): the session's
+// hot/warm reply opportunities, fed by the content script, $0.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { InboxSection } from './Inbox.tsx';
+import { RadarSection } from './Radar.tsx';
+import { TargetsSection } from './Targets.tsx';
 import { ApiError, type Brief, type BriefTweet, api } from './api.ts';
 import { formatTime } from './datetime.ts';
 import type { Settings } from './storage.ts';
@@ -44,13 +48,22 @@ export function TodayPanel({ settings }: Props): JSX.Element {
 
       {error && <div className="error">{error}</div>}
 
+      {/* Mention inbox (§7.5) — the 75x chain: people who replied to me. */}
+      <InboxSection settings={settings} />
+
+      {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
+      <RadarSection />
+
+      {/* The 2–10x reply-target roster (§7.4) — its own $0 fetch. */}
+      <TargetsSection settings={settings} />
+
       {brief && (
         <>
           <FollowersCard brief={brief} />
           <TodayPlan brief={brief} />
           <ReplyQuota brief={brief} />
           <Yesterday brief={brief} />
-          <Leaders tweets={brief.yesterday.profileClickLeaders} />
+          <Leaders settings={settings} tweets={brief.yesterday.profileClickLeaders} />
           <SpendLine brief={brief} />
         </>
       )}
@@ -173,11 +186,37 @@ function Yesterday({ brief }: { brief: Brief }): JSX.Element {
   );
 }
 
-function Leaders({ tweets }: { tweets: BriefTweet[] }): JSX.Element | null {
+function Leaders({
+  settings,
+  tweets,
+}: {
+  settings: Settings;
+  tweets: BriefTweet[];
+}): JSX.Element | null {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
   if (tweets.length === 0) return null;
+
+  // §8.5 — quote-tweet re-up of a proven winner, drafted by the §8.1 pipeline.
+  // Drafts land in the calendar; nothing posts without a human scheduling one.
+  const reup = async (tweetId: string): Promise<void> => {
+    setBusyId(tweetId);
+    setNote(null);
+    try {
+      const res = await api.drafts.reup(settings, { tweetId });
+      setNote(`${res.drafts.length} quote drafts in the calendar ($${res.costUsd.toFixed(4)}).`);
+    } catch (e) {
+      setNote(e instanceof ApiError ? `Re-up failed: ${e.message}` : 'Re-up failed');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <section className="brief-section">
       <h3>Profile click leaders (7d)</h3>
+      {note && <div className="status-line">{note}</div>}
       <ul className="brief-tweets">
         {tweets.map((t) => (
           <li key={t.tweetId} className="brief-tweet">
@@ -186,6 +225,16 @@ function Leaders({ tweets }: { tweets: BriefTweet[] }): JSX.Element | null {
               <strong>{fmtNum(t.metrics?.profileVisits ?? 0)} profile visits</strong>
               <span>{fmtNum(t.metrics?.views ?? null)} views</span>
               <span>{t.isReply ? 'reply' : 'post'}</span>
+              {!t.isReply && (
+                <button
+                  type="button"
+                  onClick={() => void reup(t.tweetId)}
+                  disabled={busyId === t.tweetId}
+                  title="Quote it with a new take — drafts land in the calendar"
+                >
+                  {busyId === t.tweetId ? '…' : 'quote re-up'}
+                </button>
+              )}
             </div>
           </li>
         ))}

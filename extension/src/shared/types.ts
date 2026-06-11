@@ -1,7 +1,14 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
-export type PostStatus = 'draft' | 'pending' | 'publishing' | 'posted' | 'failed' | 'cancelled';
+export type PostStatus =
+  | 'draft'
+  | 'pending'
+  | 'segment'
+  | 'publishing'
+  | 'posted'
+  | 'failed'
+  | 'cancelled';
 
 export interface ScheduledPost {
   id: string;
@@ -13,8 +20,20 @@ export interface ScheduledPost {
   errorClass: string | null;
   errorDetail: string | null;
   source: string;
+  /** Thread membership (§8.2); null on standalone posts. */
+  threadId: string | null;
+  threadPosition: number | null;
+  /** Content pillar declared by the drafter (§8.4). */
+  pillar: string | null;
+  /** Self-quote re-up target (§8.5). */
+  quoteTweetId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** GET /x/posts/scheduled/:id on a thread member carries its siblings. */
+export interface ScheduledPostWithThread extends ScheduledPost {
+  thread?: ScheduledPost[];
 }
 
 export interface CreateBody {
@@ -22,6 +41,43 @@ export interface CreateBody {
   scheduledFor?: string | null;
   status?: 'draft' | 'pending';
   mediaIds?: string[] | null;
+}
+
+export interface CreateThreadBody {
+  segments: string[];
+  scheduledFor?: string | null;
+  status?: 'draft' | 'pending';
+  pillar?: string | null;
+}
+
+export interface CreateThreadResponse {
+  threadId: string;
+  segments: ScheduledPost[];
+}
+
+// --------------------------------------------------------------- drafter §8.1
+
+export type PostPillar = 'ai-craft' | 'builder-51' | 'unsexy-problems';
+export type PostRegister = 'plain' | 'spicy' | 'reflective';
+
+export interface PostDraftBody {
+  pillar?: PostPillar;
+  idea?: string;
+  voiceTweetId?: string;
+}
+
+export interface PostReupBody {
+  tweetId: string;
+  idea?: string;
+  pillar?: PostPillar;
+}
+
+export interface PostDraftResponse {
+  drafts: Array<ScheduledPost & { register: PostRegister | null }>;
+  winnersUsed: number;
+  model: string;
+  costUsd: number;
+  requestId: string | null;
 }
 
 export interface UpdateBody {
@@ -76,13 +132,60 @@ export interface VoiceTweet {
   savedAt: string;
   updatedAt: string | null;
   retired: boolean;
+  // Template extraction (§8.3) — null until extracted.
+  hookType: string | null;
+  skeleton: string | null;
+  lineBreakPattern: string | null;
+  templateLength: string | null;
+  device: string | null;
+  templateExtractedAt: string | null;
 }
 
 export interface VoiceTweetsOpts {
   author?: string;
   q?: string;
+  hook?: string;
+  extracted?: boolean;
   limit?: number;
   retired?: boolean;
+}
+
+export interface VoiceExtractBatchResult {
+  requested: number;
+  extracted: number;
+  failures: Array<{ tweetId: string; error: string }>;
+  costUsd: number;
+  remaining: number | null;
+}
+
+// --- target roster (GET /x/voice/targets, §7.4) ---
+
+// Followers/day computed from the append-only enrich series.
+export interface TargetMomentum {
+  delta: number;
+  days: number;
+  perDay: number;
+}
+
+export interface VoiceTarget {
+  handle: string;
+  displayName: string | null;
+  followersCount: number;
+  followingCount: number | null;
+  profileUrl: string | null;
+  enrichedAt: string | null;
+  ratio: number;
+  momentum: TargetMomentum | null;
+  snapshotCount: number;
+  lastRepliedAt: string | null;
+  postedReplies: number;
+}
+
+export interface VoiceTargets {
+  myFollowers: number | null;
+  measuredAt: string | null;
+  band: { min: number; max: number } | null;
+  targets: VoiceTarget[];
 }
 
 // --- scrape payloads (content script → server) ---
@@ -165,6 +268,8 @@ export interface PostContext {
   metrics: PostContextMetrics;
   topComments: TopComment[];
   signals?: PostSignals;
+  /** Thread context (§7.5 mention inbox): my post the target tweet replies to. */
+  parent?: { text: string };
 }
 
 export type ReplyAngle = 'extends' | 'contrarian' | 'debate';
@@ -212,6 +317,8 @@ export interface ReplyGenerateBody {
   context: PostContext;
   /** Optional steer (may be Romanian) substituted into the prompt's <idea> tag. */
   idea?: string;
+  /** Skip the server-side band gate (§7.3) — mentions are never band-gated. */
+  override?: boolean;
   systemPromptOverride?: string;
   model?: string;
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
@@ -221,6 +328,48 @@ export interface ReplyPatchBody {
   replyTextEdited?: string | null;
   status?: ReplyDraftStatus;
   postedTweetId?: string | null;
+}
+
+// -------------------------------------------------------------- mentions
+
+// Mention inbox rows (§7.5) as returned by GET /x/mentions — mirrors the
+// server's `mentions` table plus the joined parentText (my post the mention
+// replies to, when it's one of mine).
+
+export type MentionStatus = 'unanswered' | 'answered' | 'dismissed';
+
+export interface Mention {
+  tweetId: string;
+  authorId: string | null;
+  authorUsername: string | null;
+  authorName: string | null;
+  text: string;
+  postedAt: string;
+  conversationId: string | null;
+  inReplyToTweetId: string | null;
+  status: MentionStatus;
+  answeredDraftId: string | null;
+  answeredAt: string | null;
+  fetchedAt: string;
+  parentText: string | null;
+}
+
+export interface MentionsResponse {
+  counts: { unanswered: number };
+  mentions: Mention[];
+}
+
+export interface MentionsRefreshResult {
+  scanned: number;
+  inserted: number;
+  selfSkipped: number;
+  answered: number;
+  refreshesRemaining: number;
+}
+
+export interface MentionPatchBody {
+  status?: MentionStatus;
+  draftId?: string | null;
 }
 
 // ---------------------------------------------------------------- brief

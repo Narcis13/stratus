@@ -34,11 +34,21 @@ async function q<T = Record<string, unknown>>(text: string, params: unknown[] = 
   return res.rows as T[];
 }
 
+// Aggregate queries always return exactly one row; make that explicit for
+// noUncheckedIndexedAccess.
+function one<T>(rows: T[]): T {
+  const r = rows[0];
+  if (r === undefined) throw new Error('expected one row, got none');
+  return r;
+}
+
 async function main() {
   console.log(`\n=== cost_events backfill (${APPLY ? 'APPLY' : 'DRY RUN'}) ===\n`);
 
-  const [totals] = await q<{ n: string; sum: string }>(
-    'SELECT count(*) n, coalesce(sum(cost_usd),0) sum FROM cost_events',
+  const totals = one(
+    await q<{ n: string; sum: string }>(
+      'SELECT count(*) n, coalesce(sum(cost_usd),0) sum FROM cost_events',
+    ),
   );
   console.log(`Total rows: ${totals.n}, total logged: ${usd(totals.sum)}\n`);
 
@@ -72,25 +82,29 @@ async function main() {
   }
 
   // --- A: over-reported owned single-tweet reads -----------------------------
-  const [a] = await q<{ n: string; cur_sum: string }>(
-    `SELECT count(*) n, coalesce(sum(cost_usd),0) cur_sum
+  const a = one(
+    await q<{ n: string; cur_sum: string }>(
+      `SELECT count(*) n, coalesce(sum(cost_usd),0) cur_sum
      FROM cost_events
      WHERE platform='x' AND endpoint ~ $1 AND cost_usd = $2`,
-    [OWNED_SINGLE_READ_RE, OVER_REPORTED],
+      [OWNED_SINGLE_READ_RE, OVER_REPORTED],
+    ),
   );
   const aN = Number(a.n);
   const aCur = Number(a.cur_sum);
   const aNew = aN * Number(CORRECTED);
 
   // Ownership confirmation: does each read's tweet-id exist in posts_published?
-  const [own] = await q<{ owned: string; not_owned: string }>(
-    `SELECT count(*) FILTER (WHERE pp.tweet_id IS NOT NULL) AS owned,
+  const own = one(
+    await q<{ owned: string; not_owned: string }>(
+      `SELECT count(*) FILTER (WHERE pp.tweet_id IS NOT NULL) AS owned,
             count(*) FILTER (WHERE pp.tweet_id IS NULL)     AS not_owned
      FROM cost_events ce
      LEFT JOIN posts_published pp
        ON pp.tweet_id = substring(ce.endpoint from $1)
      WHERE ce.platform='x' AND ce.endpoint ~ $2 AND ce.cost_usd = $3`,
-    ['^/2/tweets/([0-9]+)$', OWNED_SINGLE_READ_RE, OVER_REPORTED],
+      ['^/2/tweets/([0-9]+)$', OWNED_SINGLE_READ_RE, OVER_REPORTED],
+    ),
   );
 
   console.log('\n--- A. Over-reported owned single-tweet reads (5x) ---');
@@ -101,12 +115,14 @@ async function main() {
   console.log(`  ownership:   ${own.owned} match posts_published, ${own.not_owned} not found`);
 
   // --- B: under-reported reconcile reads (not reconstructable) ---------------
-  const [b] = await q<{ n: string; sum: string; with_items: string }>(
-    `SELECT count(*) n, coalesce(sum(cost_usd),0) sum,
+  const b = one(
+    await q<{ n: string; sum: string; with_items: string }>(
+      `SELECT count(*) n, coalesce(sum(cost_usd),0) sum,
             count(*) FILTER (WHERE items IS NOT NULL) AS with_items
      FROM cost_events
      WHERE platform='x' AND endpoint ~ $1`,
-    [USER_TWEETS_RE],
+      [USER_TWEETS_RE],
+    ),
   );
   console.log('\n--- B. Under-reported reconcile reads (GET /2/users/:id/tweets) ---');
   console.log(`  rows:        ${b.n}`);
@@ -137,7 +153,9 @@ async function main() {
     );
     const remaining = Number(verify.rows[0].n);
     if (remaining !== 0) {
-      throw new Error(`expected 0 over-reported rows after update, found ${remaining} — rolling back`);
+      throw new Error(
+        `expected 0 over-reported rows after update, found ${remaining} — rolling back`,
+      );
     }
     await client.query('COMMIT');
     console.log(`  updated ${res.rowCount} row(s); 0 over-reported rows remain. COMMIT.`);
@@ -149,8 +167,10 @@ async function main() {
     client.release();
   }
 
-  const [after] = await q<{ n: string; sum: string }>(
-    'SELECT count(*) n, coalesce(sum(cost_usd),0) sum FROM cost_events',
+  const after = one(
+    await q<{ n: string; sum: string }>(
+      'SELECT count(*) n, coalesce(sum(cost_usd),0) sum FROM cost_events',
+    ),
   );
   console.log(`\nNew total logged: ${usd(after.sum)} across ${after.n} rows.\n`);
 }
