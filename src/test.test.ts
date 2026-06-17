@@ -12,6 +12,7 @@ import {
   type BatchTweet,
   type PostContext,
   REPLY_PROMPT_TEMPLATE,
+  blankLineBetweenPropositions,
   buildBatchGrokInput,
   buildGrokInput,
   parseBatchReplies,
@@ -378,6 +379,25 @@ describe('reply prompt (§7.1)', () => {
     ]);
   });
 
+  test('blankLineBetweenPropositions inserts a blank line between propositions', () => {
+    // single newline → blank line between
+    expect(blankLineBetweenPropositions('line one\nline two')).toBe('line one\n\nline two');
+    // already blank-line-separated → unchanged
+    expect(blankLineBetweenPropositions('a\n\nb')).toBe('a\n\nb');
+    // collapses extra blank lines and strips per-line + outer whitespace
+    expect(blankLineBetweenPropositions('  a  \n\n\n  b  ')).toBe('a\n\nb');
+    // a single proposition is left alone
+    expect(blankLineBetweenPropositions('just one line')).toBe('just one line');
+    // three propositions each get a blank line
+    expect(blankLineBetweenPropositions('a\nb\nc')).toBe('a\n\nb\n\nc');
+  });
+
+  test('parseReplyVariants blank-line-separates multi-line replies', () => {
+    expect(parseReplyVariants('{"replies":[{"text":"hook\\npunch","angle":"debate"}]}')).toEqual([
+      { text: 'hook\n\npunch', angle: 'debate' },
+    ]);
+  });
+
   test('parseReplyVariants coerces unknown angles and rejects garbage', () => {
     expect(parseReplyVariants('{"replies":[{"text":"x","angle":"weird"}]}')).toEqual([
       { text: 'x', angle: 'extends' },
@@ -431,6 +451,12 @@ describe('batch replies (Radar §7.2)', () => {
       { tweetId: '111', text: 'hot take', angle: 'contrarian' },
       { tweetId: '222', text: 'x', angle: 'extends' },
     ]);
+  });
+
+  test('parseBatchReplies blank-line-separates multi-line replies', () => {
+    expect(
+      parseBatchReplies('{"replies":[{"id":"111","text":"a\\nb\\nc","angle":"extends"}]}'),
+    ).toEqual([{ tweetId: '111', text: 'a\n\nb\n\nc', angle: 'extends' }]);
   });
 
   test('parseBatchReplies rejects garbage and blank text', () => {

@@ -10,12 +10,14 @@
 
 import { type JSX, useEffect, useState } from 'react';
 import { formatCount } from '../replyBand.ts';
-import type { RadarDismiss, RadarReplies } from '../shared/messages.ts';
+import type { RadarClick, RadarDismiss, RadarReplies } from '../shared/messages.ts';
 import {
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
+  groupQueue,
   isRadarSightings,
   rankSightings,
+  splitClicked,
 } from '../shared/radar.ts';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
 import type { Settings } from './storage.ts';
@@ -66,13 +68,33 @@ function dismiss(tweetIds: string[]): void {
   })();
 }
 
+// Mark a reply-ready row clicked (its reply was copied) — the background stamps
+// clickedAt and the row moves from the queue to the Clicked view.
+function markClicked(tweetId: string): void {
+  const msg: RadarClick = {
+    type: 'stratus/radar-click',
+    tweetId,
+    clickedAt: new Date().toISOString(),
+  };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar click failed', err);
+    }
+  })();
+}
+
 export function RadarSection({ settings }: { settings: Settings }): JSX.Element {
   const ranked = rankSightings(useRadarSightings());
+  const { queue, clicked } = splitClicked(ranked);
+  const { ready, fresh } = groupQueue(queue);
+  const [view, setView] = useState<'queue' | 'clicked'>('queue');
   const [drafting, setDrafting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
-  // Draft only the tweets that don't already have a reply, newest-ranked first.
-  const undrafted = ranked.filter((s) => !s.reply).slice(0, RADAR_DRAFT_CAP);
+  // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
+  const undrafted = fresh.slice(0, RADAR_DRAFT_CAP);
 
   const draftReplies = async (): Promise<void> => {
     if (undrafted.length === 0) return;
@@ -102,12 +124,14 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
     }
   };
 
+  const shown = view === 'queue' ? queue : clicked;
+
   return (
     <section className="brief-section">
       <div className="radar-head">
-        <h3>Radar{ranked.length > 0 && ` (${ranked.length})`}</h3>
-        {ranked.length > 0 && (
-          <div className="radar-actions">
+        <h3>Radar</h3>
+        <div className="radar-actions">
+          {view === 'queue' && (
             <button
               type="button"
               className="radar-draft"
@@ -119,22 +143,54 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
                 ? 'Drafting…'
                 : `Draft replies${undrafted.length ? ` (${undrafted.length})` : ''}`}
             </button>
+          )}
+          {shown.length > 0 && (
             <button
               type="button"
               className="radar-clear"
-              onClick={() => dismiss(ranked.map((s) => s.tweetId))}
+              onClick={() => dismiss(shown.map((s) => s.tweetId))}
             >
               Clear
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      <div className="radar-tabs">
+        <button
+          type="button"
+          className={`radar-tab${view === 'queue' ? ' active' : ''}`}
+          onClick={() => setView('queue')}
+        >
+          Queue{queue.length > 0 ? ` (${queue.length})` : ''}
+        </button>
+        <button
+          type="button"
+          className={`radar-tab${view === 'clicked' ? ' active' : ''}`}
+          onClick={() => setView('clicked')}
+        >
+          Clicked{clicked.length > 0 ? ` (${clicked.length})` : ''}
+        </button>
+      </div>
+
       {note && <div className="status-line">{note}</div>}
-      {ranked.length === 0 ? (
-        <div className="muted">Browse X — hot/warm tweets you scroll past queue up here.</div>
+
+      {view === 'queue' ? (
+        queue.length === 0 ? (
+          <div className="muted">Browse X — hot/warm tweets you scroll past queue up here.</div>
+        ) : (
+          <>
+            {ready.length > 0 && (
+              <RadarGroup label={`Reply ready (${ready.length})`} rows={ready} />
+            )}
+            {fresh.length > 0 && <RadarGroup label={`New (${fresh.length})`} rows={fresh} />}
+          </>
+        )
+      ) : clicked.length === 0 ? (
+        <div className="muted">Replies you copy land here — most recent first.</div>
       ) : (
         <ul className="radar-list">
-          {ranked.map((s) => (
+          {clicked.map((s) => (
             <RadarRow key={s.tweetId} s={s} />
           ))}
         </ul>
@@ -143,13 +199,28 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
   );
 }
 
+function RadarGroup({ label, rows }: { label: string; rows: RadarSighting[] }): JSX.Element {
+  return (
+    <>
+      <div className="radar-group-label">{label}</div>
+      <ul className="radar-list">
+        {rows.map((s) => (
+          <RadarRow key={s.tweetId} s={s} />
+        ))}
+      </ul>
+    </>
+  );
+}
+
 function RadarRow({ s }: { s: RadarSighting }): JSX.Element {
   const [copied, setCopied] = useState(false);
 
-  // Opening a drafted tweet copies its reply (user gesture → clipboard allowed);
-  // the anchor's default still opens the tweet in a new tab.
+  // Opening a drafted tweet copies its reply (user gesture → clipboard allowed)
+  // and moves the row to the Clicked view; the anchor's default still opens the
+  // tweet in a new tab.
   const onOpen = (): void => {
     if (!s.reply) return;
+    markClicked(s.tweetId);
     void navigator.clipboard
       .writeText(s.reply)
       .then(() => {

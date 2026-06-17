@@ -4,9 +4,11 @@ import {
   RADAR_DISMISSED_CAP,
   type RadarSighting,
   appendDismissed,
+  groupQueue,
   isRadarSightings,
   mergeSightings,
   rankSightings,
+  splitClicked,
 } from './radar.ts';
 
 function sighting(id: string, over: Partial<RadarSighting> = {}): RadarSighting {
@@ -63,6 +65,15 @@ describe('mergeSightings', () => {
     const drafted = sighting('1', { reply: 'old' });
     const updated = sighting('1', { reply: 'new' });
     expect(mergeSightings([drafted], [updated], [])[0]?.reply).toBe('new');
+  });
+
+  test('a re-sighting keeps clickedAt the panel stamped (stays in Clicked view)', () => {
+    const clicked = sighting('1', { reply: 'r', clickedAt: '2026-06-10T12:00:00.000Z' });
+    const resighted = sighting('1', { lastSeenAt: '2026-06-10T13:00:00.000Z' });
+    const merged = mergeSightings([clicked], [resighted], []);
+    expect(merged[0]?.clickedAt).toBe('2026-06-10T12:00:00.000Z');
+    expect(merged[0]?.reply).toBe('r');
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T13:00:00.000Z');
   });
 
   test('caps the buffer by evicting least-recently-seen', () => {
@@ -130,6 +141,39 @@ describe('rankSightings', () => {
     const rows = [sighting('1', { band: 'warm' }), sighting('2', { band: 'hot' })];
     rankSightings(rows);
     expect(rows[0]?.tweetId).toBe('1');
+  });
+});
+
+describe('splitClicked', () => {
+  test('clicked rows leave the queue, sorted most-recently-clicked first', () => {
+    const ranked = [
+      sighting('a'),
+      sighting('b', { clickedAt: '2026-06-10T10:00:00.000Z' }),
+      sighting('c'),
+      sighting('d', { clickedAt: '2026-06-10T11:00:00.000Z' }),
+    ];
+    const { queue, clicked } = splitClicked(ranked);
+    expect(queue.map((s) => s.tweetId)).toEqual(['a', 'c']);
+    expect(clicked.map((s) => s.tweetId)).toEqual(['d', 'b']);
+  });
+
+  test('preserves the incoming queue order (rank)', () => {
+    const ranked = [sighting('first'), sighting('second'), sighting('third')];
+    expect(splitClicked(ranked).queue.map((s) => s.tweetId)).toEqual(['first', 'second', 'third']);
+  });
+});
+
+describe('groupQueue', () => {
+  test('splits reply-ready from freshly-discovered, keeping order within each', () => {
+    const queue = [
+      sighting('ready-1', { reply: 'r1' }),
+      sighting('new-1'),
+      sighting('ready-2', { reply: 'r2' }),
+      sighting('new-2'),
+    ];
+    const { ready, fresh } = groupQueue(queue);
+    expect(ready.map((s) => s.tweetId)).toEqual(['ready-1', 'ready-2']);
+    expect(fresh.map((s) => s.tweetId)).toEqual(['new-1', 'new-2']);
   });
 });
 

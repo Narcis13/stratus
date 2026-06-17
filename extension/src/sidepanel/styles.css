@@ -732,6 +732,32 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   padding: 2px 8px;
 }
+.radar-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0 6px;
+}
+.radar-tab {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+.radar-tab.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.14);
+}
+.radar-group-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 8px 0 4px;
+}
 .radar-list {
   list-style: none;
   margin: 0;

@@ -26,6 +26,10 @@ export interface RadarSighting {
   // by the background after a "Draft replies" run. Survives re-sightings so a
   // drafted reply isn't wiped when the content script re-reports the tweet.
   reply?: string;
+  // ISO time the user clicked a reply-ready row (its reply was copied). A
+  // clicked sighting leaves the live queue for the "Clicked" view so the queue
+  // stays the not-yet-worked set. Survives re-sightings like `reply`.
+  clickedAt?: string;
 }
 
 // chrome.storage.session keys — cleared when the browser closes, which is
@@ -55,15 +59,14 @@ export function mergeSightings(
       byId.set(s.tweetId, s);
       continue;
     }
-    // Re-sighting from the content script carries no reply — keep the one the
-    // background attached earlier (incoming.reply wins only if it has one).
+    // Re-sighting from the content script carries no reply/clickedAt — keep the
+    // ones the panel/background set earlier (incoming wins only if it has one).
     const reply = s.reply ?? prev.reply;
-    byId.set(
-      s.tweetId,
-      reply !== undefined
-        ? { ...s, firstSeenAt: prev.firstSeenAt, reply }
-        : { ...s, firstSeenAt: prev.firstSeenAt },
-    );
+    const clickedAt = s.clickedAt ?? prev.clickedAt;
+    const merged: RadarSighting = { ...s, firstSeenAt: prev.firstSeenAt };
+    if (reply !== undefined) merged.reply = reply;
+    if (clickedAt !== undefined) merged.clickedAt = clickedAt;
+    byId.set(s.tweetId, merged);
   }
   const all = [...byId.values()];
   if (all.length <= RADAR_CAP) return all;
@@ -88,6 +91,33 @@ export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
     if (a.signals.vpm !== b.signals.vpm) return b.signals.vpm - a.signals.vpm;
     return b.lastSeenAt.localeCompare(a.lastSeenAt);
   });
+}
+
+// A clicked sighting (its reply was copied) leaves the live queue for the
+// "Clicked" view, most-recently-clicked first. The queue keeps the caller's
+// existing rank.
+export function splitClicked(ranked: RadarSighting[]): {
+  queue: RadarSighting[];
+  clicked: RadarSighting[];
+} {
+  const queue: RadarSighting[] = [];
+  const clicked: RadarSighting[] = [];
+  for (const s of ranked) (s.clickedAt ? clicked : queue).push(s);
+  clicked.sort((a, b) => (b.clickedAt ?? '').localeCompare(a.clickedAt ?? ''));
+  return { queue, clicked };
+}
+
+// Within the live queue, keep reply-ready and freshly-discovered tweets in
+// separate blocks so they don't interleave. Order inside each block is the
+// caller's rank.
+export function groupQueue(queue: RadarSighting[]): {
+  ready: RadarSighting[];
+  fresh: RadarSighting[];
+} {
+  const ready: RadarSighting[] = [];
+  const fresh: RadarSighting[] = [];
+  for (const s of queue) (s.reply ? ready : fresh).push(s);
+  return { ready, fresh };
 }
 
 export function isRadarSightings(v: unknown): v is RadarSighting[] {

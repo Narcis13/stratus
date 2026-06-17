@@ -140,6 +140,22 @@ export const REPLY_VARIANTS_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+// X reply formatting: a reply with more than one proposition reads better with
+// a blank line between each. The prompt asks the model to separate propositions
+// with newlines, but it does so inconsistently (a single \n, sometimes none of
+// the blank line it's told to use). This normalizes every newline run between
+// non-empty lines to exactly one blank line, drops stray blank lines and
+// per-line trailing space, and leaves a single-proposition reply untouched.
+// Applied to every generated reply (Reply Master + Radar batch) so what gets
+// stored and copied to the clipboard is the ship-ready spacing.
+export function blankLineBetweenPropositions(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n\n');
+}
+
 // Strict-mode structured outputs guarantee the shape, but the parse still
 // lives behind a validator: a truncated body (max_output_tokens) or a future
 // non-strict call must degrade to null, never to a malformed draft row.
@@ -162,7 +178,7 @@ export function parseReplyVariants(raw: string): ReplyVariant[] | null {
     const angle = (REPLY_ANGLES as readonly string[]).includes(v.angle as string)
       ? (v.angle as ReplyAngle)
       : 'extends';
-    out.push({ text: v.text.trim(), angle });
+    out.push({ text: blankLineBetweenPropositions(v.text), angle });
   }
   return out;
 }
@@ -321,7 +337,7 @@ export function parseBatchReplies(raw: string): BatchReply[] | null {
     const angle = (REPLY_ANGLES as readonly string[]).includes(v.angle as string)
       ? (v.angle as ReplyAngle)
       : 'extends';
-    out.push({ tweetId: id, text: v.text.trim(), angle });
+    out.push({ tweetId: id, text: blankLineBetweenPropositions(v.text), angle });
   }
   return out;
 }

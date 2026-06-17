@@ -8,6 +8,7 @@ import {
   type ApiRequest,
   type ApiResponse,
   isApiRequest,
+  isRadarClick,
   isRadarDismiss,
   isRadarReplies,
   isRadarReport,
@@ -139,6 +140,15 @@ async function attachReplies(items: { tweetId: string; reply: string }[]): Promi
   });
 }
 
+// Stamp a sighting clicked (§7.2 Clicked view). Single writer, same as the
+// others — a sighting evicted between click and write is simply skipped.
+async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
+  const { sightings } = await readRadar();
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, clickedAt } : s)),
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (isApiRequest(msg)) {
     void handleApiRequest(msg).then(
@@ -168,6 +178,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (isRadarReplies(msg)) {
     void enqueueRadar(() => attachReplies(msg.replies)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarClick(msg)) {
+    void enqueueRadar(() => markClicked(msg.tweetId, msg.clickedAt)).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );

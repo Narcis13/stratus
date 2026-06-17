@@ -45,6 +45,15 @@ export interface RadarReplies {
   replies: { tweetId: string; reply: string }[];
 }
 
+// User clicked a reply-ready Radar row (its reply was copied). Routed through
+// the background so it stays the single writer: the sighting is stamped
+// clickedAt and moves from the queue to the "Clicked" view.
+export interface RadarClick {
+  type: 'stratus/radar-click';
+  tweetId: string;
+  clickedAt: string;
+}
+
 export function isRadarReport(msg: unknown): msg is RadarReport {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
@@ -61,4 +70,14 @@ export function isRadarReplies(msg: unknown): msg is RadarReplies {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
   return m.type === 'stratus/radar-replies' && Array.isArray(m.replies);
+}
+
+export function isRadarClick(msg: unknown): msg is RadarClick {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return (
+    m.type === 'stratus/radar-click' &&
+    typeof m.tweetId === 'string' &&
+    typeof m.clickedAt === 'string'
+  );
 }
