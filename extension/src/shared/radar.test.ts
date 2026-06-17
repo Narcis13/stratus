@@ -51,6 +51,20 @@ describe('mergeSightings', () => {
     expect(merged.map((s) => s.tweetId).sort()).toEqual(['1', '3']);
   });
 
+  test('a re-sighting without a reply keeps the one the background attached (§7.2)', () => {
+    const drafted = sighting('1', { reply: 'my sharp take' });
+    const resighted = sighting('1', { lastSeenAt: '2026-06-10T11:00:00.000Z' });
+    const merged = mergeSightings([drafted], [resighted], []);
+    expect(merged[0]?.reply).toBe('my sharp take');
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z');
+  });
+
+  test('a fresh reply on the incoming sighting wins', () => {
+    const drafted = sighting('1', { reply: 'old' });
+    const updated = sighting('1', { reply: 'new' });
+    expect(mergeSightings([drafted], [updated], [])[0]?.reply).toBe('new');
+  });
+
   test('caps the buffer by evicting least-recently-seen', () => {
     const old = Array.from({ length: RADAR_CAP }, (_, i) =>
       sighting(`old-${i}`, {

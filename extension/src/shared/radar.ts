@@ -22,6 +22,10 @@ export interface RadarSighting {
   signals: TweetSignals; // as measured at lastSeenAt — age keeps ticking after
   firstSeenAt: string;
   lastSeenAt: string;
+  // Batch-drafted Grok reply (§7.2 Radar reply drafting), attached client-side
+  // by the background after a "Draft replies" run. Survives re-sightings so a
+  // drafted reply isn't wiped when the content script re-reports the tweet.
+  reply?: string;
 }
 
 // chrome.storage.session keys — cleared when the browser closes, which is
@@ -47,7 +51,19 @@ export function mergeSightings(
   for (const s of incoming) {
     if (gone.has(s.tweetId)) continue;
     const prev = byId.get(s.tweetId);
-    byId.set(s.tweetId, prev ? { ...s, firstSeenAt: prev.firstSeenAt } : s);
+    if (!prev) {
+      byId.set(s.tweetId, s);
+      continue;
+    }
+    // Re-sighting from the content script carries no reply — keep the one the
+    // background attached earlier (incoming.reply wins only if it has one).
+    const reply = s.reply ?? prev.reply;
+    byId.set(
+      s.tweetId,
+      reply !== undefined
+        ? { ...s, firstSeenAt: prev.firstSeenAt, reply }
+        : { ...s, firstSeenAt: prev.firstSeenAt },
+    );
   }
   const all = [...byId.values()];
   if (all.length <= RADAR_CAP) return all;

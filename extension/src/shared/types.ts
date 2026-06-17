@@ -324,6 +324,39 @@ export interface ReplyGenerateBody {
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
 }
 
+// Batch reply drafting (Radar §7.2): one Grok call, one reply per queued
+// tweet, anchored by tweetId. Not persisted server-side — the replies attach
+// to the session radar buffer.
+export interface BatchReplyTweet {
+  tweetId: string;
+  handle: string;
+  author: string;
+  text: string;
+  url?: string;
+}
+
+export interface BatchReplyGenerateBody {
+  tweets: BatchReplyTweet[];
+  idea?: string;
+  model?: string;
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+}
+
+export interface BatchReplyItem {
+  tweetId: string;
+  text: string;
+  angle: ReplyAngle;
+}
+
+export interface BatchReplyResponse {
+  replies: BatchReplyItem[];
+  count: number;
+  requested: number;
+  costUsd: number;
+  model: string;
+  requestId: string | null;
+}
+
 export interface ReplyPatchBody {
   replyTextEdited?: string | null;
   status?: ReplyDraftStatus;

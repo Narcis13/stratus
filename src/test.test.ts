@@ -9,9 +9,12 @@ import { defaultPostParams } from './x/fields.ts';
 import { POST_PROMPT_TEMPLATE, buildPostDraftInput, parsePostDrafts } from './x/posts/prompt.ts';
 import { priceFor } from './x/pricing.ts';
 import {
+  type BatchTweet,
   type PostContext,
   REPLY_PROMPT_TEMPLATE,
+  buildBatchGrokInput,
   buildGrokInput,
+  parseBatchReplies,
   parseReplyVariants,
   passesSpecificityGate,
 } from './x/replies/prompt.ts';
@@ -36,6 +39,7 @@ import {
   takeRefreshSlot,
 } from './x/routes/mentions.ts';
 import { aggregatePillars, buildAccountSeries, buildBestTimes } from './x/routes/metrics.ts';
+import { parseBatchTweets } from './x/routes/replies.ts';
 import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
 import {
   type FollowerSnapshotPoint,
@@ -394,6 +398,70 @@ describe('reply prompt (§7.1)', () => {
   test('specificity gate: generic agreement fails', () => {
     expect(passesSpecificityGate('That take lands. People underestimate this.')).toBe(false);
     expect(passesSpecificityGate('Hard agree — the future belongs to builders.')).toBe(false);
+  });
+});
+
+describe('batch replies (Radar §7.2)', () => {
+  const tweets: BatchTweet[] = [
+    { tweetId: '111', handle: 'alice', author: 'Alice', text: 'shipping beats planning' },
+    { tweetId: '222', handle: 'bob', author: 'Bob', text: 'AI will replace junior devs' },
+  ];
+
+  test('buildBatchGrokInput anchors each post by id and keeps the steer last', () => {
+    const [msg] = buildBatchGrokInput(tweets, 'fii contrarian');
+    expect(msg?.content).toContain('id: 111');
+    expect(msg?.content).toContain('id: 222');
+    expect(msg?.content).toContain('@alice (Alice):');
+    // reuses the master persona/voice block
+    expect(msg?.content).toContain('solopreneur');
+    // variable content sits at the very end (cacheable prefix)
+    expect(msg?.content.trimEnd().endsWith('<idea>fii contrarian</idea>')).toBe(true);
+  });
+
+  test('buildBatchGrokInput leaves an empty idea tag when none given', () => {
+    const [msg] = buildBatchGrokInput(tweets);
+    expect(msg?.content.trimEnd().endsWith('<idea></idea>')).toBe(true);
+  });
+
+  test('parseBatchReplies maps id→tweetId, trims, coerces unknown angles', () => {
+    const out = parseBatchReplies(
+      '{"replies":[{"id":"111","text":" hot take ","angle":"contrarian"},{"id":"222","text":"x","angle":"weird"}]}',
+    );
+    expect(out).toEqual([
+      { tweetId: '111', text: 'hot take', angle: 'contrarian' },
+      { tweetId: '222', text: 'x', angle: 'extends' },
+    ]);
+  });
+
+  test('parseBatchReplies rejects garbage and blank text', () => {
+    expect(parseBatchReplies('not json')).toBeNull();
+    expect(parseBatchReplies('{"replies":[{"id":"1","text":"   ","angle":"extends"}]}')).toBeNull();
+    expect(parseBatchReplies('{"replies":[{"text":"x","angle":"extends"}]}')).toBeNull();
+    // empty array is a valid (if useless) batch response, not a parse failure
+    expect(parseBatchReplies('{"replies":[]}')).toEqual([]);
+  });
+
+  test('parseBatchTweets validates, dedups by id, and clamps the batch', () => {
+    const ok = parseBatchTweets([
+      { tweetId: '111', handle: '@alice', author: 'Alice', text: 'a' },
+      { tweetId: '111', handle: 'alice', author: 'Alice', text: 'dup dropped' },
+      { tweetId: '222', handle: 'bob', text: 'no author falls back to handle' },
+    ]);
+    if ('error' in ok) throw new Error(ok.error);
+    expect(ok.tweets.map((t) => t.tweetId)).toEqual(['111', '222']);
+    expect(ok.tweets[0]?.handle).toBe('alice');
+    expect(ok.tweets[1]?.author).toBe('bob');
+
+    expect(parseBatchTweets([])).toEqual({ error: 'empty_tweets' });
+    expect(parseBatchTweets('nope')).toEqual({ error: 'invalid_tweets' });
+    expect(parseBatchTweets([{ tweetId: 'abc', handle: 'a', text: 'x' }])).toEqual({
+      error: 'invalid_tweet_id_0',
+    });
+    expect(
+      parseBatchTweets(
+        Array.from({ length: 26 }, (_, i) => ({ tweetId: String(i), handle: 'a', text: 'x' })),
+      ),
+    ).toEqual({ error: 'too_many_tweets' });
   });
 });
 

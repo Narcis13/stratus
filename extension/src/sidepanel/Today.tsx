@@ -51,7 +51,7 @@ export function TodayPanel({ settings }: Props): JSX.Element {
           code remain intact; the section is just no longer rendered here. */}
 
       {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
-      <RadarSection />
+      <RadarSection settings={settings} />
 
       {/* The 2–10x reply-target roster (§7.4) — its own $0 fetch. */}
       <TargetsSection settings={settings} />

@@ -9,6 +9,7 @@ import {
   type ApiResponse,
   isApiRequest,
   isRadarDismiss,
+  isRadarReplies,
   isRadarReport,
 } from './shared/messages.ts';
 import {
@@ -125,6 +126,19 @@ async function dismissSightings(tweetIds: string[]): Promise<void> {
   });
 }
 
+// Attach batch-drafted replies onto matching sightings (§7.2). Single writer,
+// same as add/dismiss — a sighting evicted between draft and attach is simply
+// skipped (the panel only renders what's in the buffer).
+async function attachReplies(items: { tweetId: string; reply: string }[]): Promise<void> {
+  const { sightings } = await readRadar();
+  const byId = new Map(items.map((i) => [i.tweetId, i.reply]));
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) =>
+      byId.has(s.tweetId) ? { ...s, reply: byId.get(s.tweetId) } : s,
+    ),
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (isApiRequest(msg)) {
     void handleApiRequest(msg).then(
@@ -147,6 +161,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (isRadarDismiss(msg)) {
     void enqueueRadar(() => dismissSightings(msg.tweetIds)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarReplies(msg)) {
+    void enqueueRadar(() => attachReplies(msg.replies)).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );

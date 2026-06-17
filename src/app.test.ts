@@ -141,3 +141,35 @@ describe.if(authed && Boolean(process.env.XAI_API_KEY))('drafter guards (§8.1/�
     expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
   });
 });
+
+describe.if(authed)('batch reply guards (Radar §7.2)', () => {
+  test('non-array tweets → 400 invalid_tweets before any Grok spend', async () => {
+    const res = await app.request('/x/replies/generate-batch', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ tweets: 'nope' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweets');
+  });
+
+  test('empty tweets → 400 empty_tweets', async () => {
+    const res = await app.request('/x/replies/generate-batch', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ tweets: [] }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('empty_tweets');
+  });
+
+  test('a non-numeric tweet id is rejected', async () => {
+    const res = await app.request('/x/replies/generate-batch', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ tweets: [{ tweetId: 'abc', handle: 'a', text: 'x' }] }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id_0');
+  });
+});

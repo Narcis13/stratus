@@ -931,7 +931,9 @@ function recordRadarSighting(article: Element, band: RadarBand, sig: TweetSignal
     url: permalink.url,
     handle: permalink.username,
     author,
-    text: text.slice(0, 200),
+    // Wider than the 2-line UI clamp on purpose: batch reply drafting (§7.2)
+    // feeds this text to Grok, so keep enough of a longer tweet to reply to.
+    text: text.slice(0, 500),
     band,
     signals: { ...sig, ageMin: Math.round(sig.ageMin), vpm: Math.round(sig.vpm * 10) / 10 },
     firstSeenAt: now,

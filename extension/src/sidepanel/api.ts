@@ -8,6 +8,10 @@ import type { ApiRequest, ApiResponse } from '../shared/messages.ts';
 import {
   ApiError,
   type AuthorProfile,
+  type BatchReplyGenerateBody,
+  type BatchReplyItem,
+  type BatchReplyResponse,
+  type BatchReplyTweet,
   type Brief,
   type BriefTweet,
   type CreateBody,
@@ -46,6 +50,10 @@ import type { Settings } from './storage.ts';
 export { ApiError };
 export type {
   AuthorProfile,
+  BatchReplyGenerateBody,
+  BatchReplyItem,
+  BatchReplyResponse,
+  BatchReplyTweet,
   Brief,
   BriefTweet,
   CreateBody,
@@ -266,6 +274,11 @@ export const api = {
 
     generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraft> {
       return request<ReplyDraft>(s, '/x/replies/generate', { method: 'POST', body });
+    },
+
+    // §7.2 — one Grok call drafts a reply per queued Radar tweet (not persisted).
+    generateBatch(s: Settings, body: BatchReplyGenerateBody): Promise<BatchReplyResponse> {
+      return request<BatchReplyResponse>(s, '/x/replies/generate-batch', { method: 'POST', body });
     },
 
     patch(s: Settings, id: string, body: ReplyPatchBody): Promise<ReplyDraft> {

@@ -181,6 +181,151 @@ export function passesSpecificityGate(text: string): boolean {
   return DIGIT_RE.test(text) || FIRST_PERSON_RE.test(text) || NAMED_TOOL_RE.test(text);
 }
 
+// ------------------------------------------------------ batch (Radar §7.2)
+//
+// The Radar drafts replies for a whole queue of hot/warm tweets in ONE Grok
+// call. It reuses the reply-master VOICE/persona verbatim (sliced out of
+// REPLY_PROMPT_TEMPLATE so the two can never drift) but swaps the job and the
+// output: one reply per tweet, each anchored to its tweetId, instead of two
+// variants for a single post.
+
+const VOICE_BLOCK_START = '## Who I am';
+const VOICE_BLOCK_END = '## The two variants';
+
+export interface BatchTweet {
+  tweetId: string;
+  handle: string;
+  author: string;
+  text: string;
+  url?: string;
+}
+
+export interface BatchReply {
+  tweetId: string;
+  text: string;
+  angle: ReplyAngle;
+}
+
+// The persona + "How the replies sound" + forbidden lists, lifted verbatim
+// from the single-reply template so any edit to the master voice propagates
+// here without a second copy to maintain.
+function sharedVoiceBlock(): string {
+  const start = REPLY_PROMPT_TEMPLATE.indexOf(VOICE_BLOCK_START);
+  const end = REPLY_PROMPT_TEMPLATE.indexOf(VOICE_BLOCK_END);
+  if (start === -1 || end === -1) return REPLY_PROMPT_TEMPLATE;
+  return REPLY_PROMPT_TEMPLATE.slice(start, end).trimEnd();
+}
+
+// Everything before the variable tail (the posts + idea). Kept as a stable
+// cacheable prefix — same prompt-cache discipline as the single-reply path.
+function batchReplyHead(): string {
+  return `## The job
+
+You are replying to a batch of X posts. For EACH post below, write ONE sharp reply that makes a stranger scrolling past stop, read it, and tap my profile. Replies are my single biggest growth lever on X — a sharp reply under a bigger account puts me in front of their audience for free.
+
+The profile visit must be **earned by curiosity** — never ask for a follow or a profile visit. A literal "check my profile" or "follow me" reads as slop and kills the click it begs for. Only when my steer explicitly asks for a call to action may you include one, and even then keep it soft and specific.
+
+---
+
+${sharedVoiceBlock()}
+
+---
+
+## The reply for each post
+
+Produce **exactly one reply per post**, anchored to that post's \`id\`. Pick the angle that earns the most attention for that specific post — lean spicy:
+
+- **extends** — push the post's idea further: the next step, the sharper consequence, the part the author left unsaid.
+- **contrarian** — lightly controversial. Disagree with a sharp, defensible claim and give the reason. Heat, not hate.
+- **debate** — dividing. Reframe so people in the replies have to pick a side. Tension, not aggression.
+
+**Hard rules for each reply:**
+
+- **ONE punchy proposition is the default.** The first line is the hook and must stand alone.
+- Length: tight — usually under ~280 chars. This is a reply, not a thread.
+- Specific beats generic, but every specific must come from that post, common knowledge, or my steer — never invented.
+- Fit the actual context of each post. Each reply stands on its own post; never bleed one post's topic into another.
+- Ship-ready. Final reply text, nothing to polish.
+
+---
+
+## Output
+
+Return JSON of the shape \`{"replies": [{"id": "<post id>", "text": "…", "angle": "…"}, …]}\` — exactly one object per post, the \`id\` copied verbatim from the post it answers, \`angle\` one of \`extends\`, \`contrarian\`, \`debate\`. Each \`text\` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary. Include every post; never merge two posts into one reply.
+
+**My optional steer** comes in the \`<idea>\` tag. If it has content, let it shape the angle of every reply, in English (it may be in Romanian; translate the intent). If empty, you decide each angle from the post and the rules above.`;
+}
+
+function renderBatchTweet(t: BatchTweet, i: number): string {
+  return [`POST ${i + 1} (id: ${t.tweetId})`, `@${stripAt(t.handle)} (${t.author}):`, t.text].join(
+    '\n',
+  );
+}
+
+// Builds the single user message: stable instruction head, then the posts and
+// the optional steer at the very end (cacheable-prefix layout).
+export function buildBatchGrokInput(
+  tweets: BatchTweet[],
+  idea?: string,
+  override?: string,
+): GrokMessage[] {
+  const head = override && override.trim().length > 0 ? override : batchReplyHead();
+  const rendered = tweets.map((t, i) => renderBatchTweet(t, i)).join('\n\n');
+  const ideaText = idea?.trim() ?? '';
+  const content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
+  return [{ role: 'user', content }];
+}
+
+export const BATCH_REPLY_SCHEMA = {
+  type: 'object',
+  properties: {
+    replies: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'The post id this reply answers, copied verbatim' },
+          text: { type: 'string', description: 'Raw reply text exactly as it appears on X' },
+          angle: { type: 'string', enum: [...REPLY_ANGLES] },
+        },
+        required: ['id', 'text', 'angle'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['replies'],
+  additionalProperties: false,
+} as const;
+
+// Mirrors parseReplyVariants: strict-mode guarantees the shape, but a truncated
+// body (maxOutputTokens) or a future non-strict call must degrade to null, not
+// to a malformed row. Maps the wire field `id` to `tweetId`.
+export function parseBatchReplies(raw: string): BatchReply[] | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const replies = (parsed as Record<string, unknown>).replies;
+  if (!Array.isArray(replies)) return null;
+
+  const out: BatchReply[] = [];
+  for (const r of replies) {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+    const v = r as Record<string, unknown>;
+    const id = typeof v.id === 'string' ? v.id.trim() : '';
+    if (id === '') return null;
+    if (typeof v.text !== 'string' || v.text.trim() === '') return null;
+    const angle = (REPLY_ANGLES as readonly string[]).includes(v.angle as string)
+      ? (v.angle as ReplyAngle)
+      : 'extends';
+    out.push({ tweetId: id, text: v.text.trim(), angle });
+  }
+  return out;
+}
+
 export function buildGrokInput(ctx: PostContext, override?: string, idea?: string): GrokMessage[] {
   const template = override && override.trim().length > 0 ? override : REPLY_PROMPT_TEMPLATE;
   const context = renderContext(ctx);

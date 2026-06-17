@@ -21,11 +21,15 @@ import type { ReasoningEffort } from '../../grok/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import {
+  BATCH_REPLY_SCHEMA,
+  type BatchTweet,
   type PostContext,
   type PostSignals,
   REPLY_VARIANTS_SCHEMA,
   type ReplyVariant,
+  buildBatchGrokInput,
   buildGrokInput,
+  parseBatchReplies,
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
@@ -41,6 +45,9 @@ const MAX_IDEA_LENGTH = 2000;
 // Stable key so repeat drafts land on the same xAI server — the ~17.5KB
 // template is a cacheable prefix (context + idea sit at the very end).
 const PROMPT_CACHE_KEY = 'stratus-x-reply-draft';
+// Batch (Radar §7.2): one Grok call drafts a reply per queued hot/warm tweet.
+const BATCH_PROMPT_CACHE_KEY = 'stratus-x-reply-batch';
+const MAX_BATCH_TWEETS = 25;
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -229,6 +236,159 @@ replies.post('/replies/generate', async (c) => {
 
   return c.json(row, 201);
 });
+
+// --------------------------------------------------------- batch (Radar §7.2)
+//
+// One Grok call drafts a reply for a whole queue of hot/warm tweets the Radar
+// collected. Unlike /replies/generate this does NOT persist drafts or run the
+// band gate (the Radar already filtered to hot/warm): the replies live in the
+// extension's session ring buffer, copied to the clipboard when the user opens
+// a tweet. Cheap, ephemeral, re-runnable as the queue grows.
+
+interface BatchBody {
+  tweets?: unknown;
+  idea?: unknown;
+  systemPromptOverride?: unknown;
+  model?: unknown;
+  reasoningEffort?: unknown;
+}
+
+replies.post('/replies/generate-batch', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as BatchBody;
+
+  const parsed = parseBatchTweets(body.tweets);
+  if ('error' in parsed) return c.json({ error: parsed.error }, 400);
+  const tweets = parsed.tweets;
+
+  let systemOverride: string | undefined;
+  if (body.systemPromptOverride !== undefined && body.systemPromptOverride !== null) {
+    if (typeof body.systemPromptOverride !== 'string') {
+      return c.json({ error: 'invalid_system_prompt_override' }, 400);
+    }
+    systemOverride = body.systemPromptOverride;
+  }
+
+  let idea: string | undefined;
+  if (body.idea !== undefined && body.idea !== null) {
+    if (typeof body.idea !== 'string' || body.idea.length > MAX_IDEA_LENGTH) {
+      return c.json({ error: 'invalid_idea' }, 400);
+    }
+    const trimmed = body.idea.trim();
+    if (trimmed !== '') idea = trimmed;
+  }
+
+  let model: string | undefined;
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== 'string' || body.model.trim() === '') {
+      return c.json({ error: 'invalid_model' }, 400);
+    }
+    model = body.model;
+  }
+
+  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
+    const r = body.reasoningEffort;
+    if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
+      return c.json({ error: 'invalid_reasoning_effort' }, 400);
+    }
+    reasoningEffort = r;
+  }
+
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride);
+  // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
+  const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
+
+  let result: Awaited<ReturnType<typeof askGrok>>;
+  try {
+    result = await askGrok({
+      ...(model !== undefined ? { model } : {}),
+      messages,
+      reasoningEffort,
+      maxOutputTokens,
+      temperature: DEFAULT_TEMPERATURE,
+      jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
+      promptCacheKey: BATCH_PROMPT_CACHE_KEY,
+    });
+  } catch (err) {
+    if (err instanceof GrokApiError) {
+      return c.json(
+        {
+          error: 'grok_upstream_error',
+          status: err.status,
+          type: err.type,
+          code: err.code,
+          message: err.message,
+          requestId: err.requestId,
+        },
+        err.status === 429 ? 429 : 502,
+      );
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/replies/generate-batch failed:', detail);
+    return c.json({ error: 'generate_failed', detail }, 502);
+  }
+
+  const batch = parseBatchReplies(result.text);
+  if (batch === null) {
+    return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+  }
+
+  // Anchor: keep only replies whose id is one we asked for, first occurrence
+  // wins (a model that doubled up on an id can't shadow the right tweet).
+  const wanted = new Set(tweets.map((t) => t.tweetId));
+  const seen = new Set<string>();
+  const out: { tweetId: string; text: string; angle: string }[] = [];
+  for (const r of batch) {
+    if (!wanted.has(r.tweetId) || seen.has(r.tweetId)) continue;
+    seen.add(r.tweetId);
+    out.push({ tweetId: r.tweetId, text: r.text, angle: r.angle });
+  }
+
+  return c.json({
+    replies: out,
+    count: out.length,
+    requested: tweets.length,
+    costUsd: result.costUsd,
+    model: result.model,
+    requestId: result.requestId,
+  });
+});
+
+// Pure validator — exported for unit tests. Dedups by id, clamps the batch.
+export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { error: string } {
+  if (!Array.isArray(value)) return { error: 'invalid_tweets' };
+  if (value.length === 0) return { error: 'empty_tweets' };
+  if (value.length > MAX_BATCH_TWEETS) return { error: 'too_many_tweets' };
+
+  const tweets: BatchTweet[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < value.length; i++) {
+    const t = value[i];
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return { error: `invalid_tweet_${i}` };
+    const r = t as Record<string, unknown>;
+
+    const tweetId = typeof r.tweetId === 'string' ? r.tweetId.trim() : '';
+    if (!TWEET_ID_RE.test(tweetId)) return { error: `invalid_tweet_id_${i}` };
+    if (seen.has(tweetId)) continue;
+
+    const handleRaw = typeof r.handle === 'string' ? r.handle.trim().replace(/^@/, '') : '';
+    if (!USERNAME_RE.test(handleRaw)) return { error: `invalid_tweet_handle_${i}` };
+    if (typeof r.text !== 'string' || r.text.trim() === '') {
+      return { error: `invalid_tweet_text_${i}` };
+    }
+
+    seen.add(tweetId);
+    const author =
+      typeof r.author === 'string' && r.author.trim() !== '' ? r.author.trim() : handleRaw;
+    const url = typeof r.url === 'string' ? r.url : undefined;
+    tweets.push({ tweetId, handle: handleRaw, author, text: r.text, ...(url ? { url } : {}) });
+  }
+  return { tweets };
+}
 
 // ---------------------------------------------------------------- list/get
 

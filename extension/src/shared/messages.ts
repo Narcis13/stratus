@@ -38,6 +38,13 @@ export interface RadarDismiss {
   tweetIds: string[];
 }
 
+// Batch-drafted replies attached to existing sightings (§7.2). Routed through
+// the background so it stays the single writer of the session ring buffer.
+export interface RadarReplies {
+  type: 'stratus/radar-replies';
+  replies: { tweetId: string; reply: string }[];
+}
+
 export function isRadarReport(msg: unknown): msg is RadarReport {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
@@ -48,4 +55,10 @@ export function isRadarDismiss(msg: unknown): msg is RadarDismiss {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
   return m.type === 'stratus/radar-dismiss' && Array.isArray(m.tweetIds);
+}
+
+export function isRadarReplies(msg: unknown): msg is RadarReplies {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/radar-replies' && Array.isArray(m.replies);
 }
