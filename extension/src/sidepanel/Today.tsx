@@ -5,7 +5,6 @@
 // hot/warm reply opportunities, fed by the content script, $0.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
-import { InboxSection } from './Inbox.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
 import { ApiError, type Brief, type BriefTweet, api } from './api.ts';
@@ -48,8 +47,8 @@ export function TodayPanel({ settings }: Props): JSX.Element {
 
       {error && <div className="error">{error}</div>}
 
-      {/* Mention inbox (§7.5) — the 75x chain: people who replied to me. */}
-      <InboxSection settings={settings} />
+      {/* Mention inbox (§7.5) decoupled from the UI — Inbox.tsx + /x/mentions
+          code remain intact; the section is just no longer rendered here. */}
 
       {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
       <RadarSection />

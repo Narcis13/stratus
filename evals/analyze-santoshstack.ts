@@ -6,6 +6,12 @@
 // would have shown predict whether the reply got seen?
 //
 // run: bun run evals/analyze-santoshstack.ts
+//      bun run evals/analyze-santoshstack.ts <path-to-harvested.csv> [@self-handle]
+//
+// Any harvested replies CSV (extension Harvest tab, replies mode) shares this
+// exact 11-column shape, so point arg 1 at one to validate the model against a
+// different creator's outcomes. Arg 2 is that creator's @handle, excluded as
+// self-replies (defaults to the most frequent handle in the file).
 
 import { type TweetSignals, classifyBand } from '../src/shared/replyBand.ts';
 
@@ -75,7 +81,12 @@ interface Row {
   repliedAt: number;
 }
 
-const raw = await Bun.file(new URL('./santoshstack_replies.csv', import.meta.url)).text();
+const csvArg = process.argv[2];
+const csvSource = csvArg
+  ? Bun.file(csvArg)
+  : Bun.file(new URL('./santoshstack_replies.csv', import.meta.url));
+console.log(`Reading ${csvArg ?? 'evals/santoshstack_replies.csv'}`);
+const raw = await csvSource.text();
 const cells = parseCsv(raw);
 const header = cells[0];
 const allRows: Row[] = cells
@@ -100,7 +111,26 @@ const allRows: Row[] = cells
 // The band model decides which OTHER people's posts to reply to; self-replies
 // always work (CLAUDE.md invariant #2) and aren't a targeting decision. They
 // also carry tiny "original" views with huge reply views and skew every bucket.
-const SELF = '@santoshstack';
+// Arg 2 overrides; otherwise assume the most frequent original-post handle is
+// the harvested creator's own self-replies.
+function mostFrequentHandle(rs: Row[]): string {
+  const counts = new Map<string, number>();
+  for (const r of rs) {
+    const h = r.handle.toLowerCase();
+    counts.set(h, (counts.get(h) ?? 0) + 1);
+  }
+  let best = '';
+  let bestN = 0;
+  for (const [h, n] of counts) {
+    if (n > bestN) {
+      best = h;
+      bestN = n;
+    }
+  }
+  return best;
+}
+const selfArg = process.argv[3];
+const SELF = (selfArg ?? (csvArg ? mostFrequentHandle(allRows) : '@santoshstack')).toLowerCase();
 const selfRows = allRows.filter((r) => r.handle.toLowerCase() === SELF.toLowerCase());
 const rows = allRows.filter((r) => r.handle.toLowerCase() !== SELF.toLowerCase());
 console.log(
