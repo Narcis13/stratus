@@ -1249,3 +1249,78 @@ button.danger:hover:not(:disabled) {
   background: rgba(90, 209, 154, 0.15);
   color: var(--ok);
 }
+
+/* Voice → Pillars subtab (§8.6) */
+.voice-pillars {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.voice-pillars-head {
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+.voice-pillars-head p {
+  margin: 0;
+  font-size: 11px;
+}
+.pillar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pillar-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.pillar-card.pillar-inactive {
+  opacity: 0.6;
+}
+.pillar-card-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pillar-slug {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.pillar-card textarea {
+  resize: vertical;
+  min-height: 70px;
+}
+.pillar-card-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.pillar-tweak,
+.pillar-ai-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.pillar-tweak input,
+.pillar-ai-row input {
+  flex: 1 1 auto;
+  min-width: 140px;
+}
+.pillar-add-bar {
+  margin-top: 4px;
+}
+.pillar-card.pillar-add {
+  border-style: dashed;
+}

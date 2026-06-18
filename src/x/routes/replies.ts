@@ -33,6 +33,7 @@ import {
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
+import { getActivePillars } from './pillars.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
 // (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
@@ -79,6 +80,9 @@ interface RawBody {
   systemPromptOverride?: unknown;
   model?: unknown;
   reasoningEffort?: unknown;
+  // §8.6 opt-in (default off, set by the extension Settings toggle): steer the
+  // reply toward one of the active content pillars.
+  applyPillars?: unknown;
 }
 
 export const replies = new Hono();
@@ -134,6 +138,13 @@ replies.post('/replies/generate', async (c) => {
     override = body.override;
   }
 
+  let applyPillars = false;
+  if (body.applyPillars !== undefined && body.applyPillars !== null) {
+    if (typeof body.applyPillars !== 'boolean')
+      return c.json({ error: 'invalid_apply_pillars' }, 400);
+    applyPillars = body.applyPillars;
+  }
+
   // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
   // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
   // escape hatch (the extension arms it on a second deliberate click).
@@ -148,7 +159,8 @@ replies.post('/replies/generate', async (c) => {
   // training row for the BAND recalibration crosstab (§6.2).
   if (!ctx.signals) ctx.signals = { band, ...gateSignals };
 
-  const messages = buildGrokInput(ctx, systemOverride, idea);
+  const pillarDefs = applyPillars ? await getActivePillars() : undefined;
+  const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs);
 
   const callGrok = (): ReturnType<typeof askGrok> =>
     askGrok({
@@ -251,6 +263,7 @@ interface BatchBody {
   systemPromptOverride?: unknown;
   model?: unknown;
   reasoningEffort?: unknown;
+  applyPillars?: unknown;
 }
 
 replies.post('/replies/generate-batch', async (c) => {
@@ -298,7 +311,15 @@ replies.post('/replies/generate-batch', async (c) => {
     reasoningEffort = r;
   }
 
-  const messages = buildBatchGrokInput(tweets, idea, systemOverride);
+  let applyPillars = false;
+  if (body.applyPillars !== undefined && body.applyPillars !== null) {
+    if (typeof body.applyPillars !== 'boolean')
+      return c.json({ error: 'invalid_apply_pillars' }, 400);
+    applyPillars = body.applyPillars;
+  }
+
+  const pillarDefs = applyPillars ? await getActivePillars() : undefined;
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs);
   // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
   const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
 

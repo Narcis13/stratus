@@ -12,6 +12,7 @@ import { drafter } from './routes/drafter.ts';
 import { harvest } from './routes/harvest.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
+import { pillars } from './routes/pillars.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { replies } from './routes/replies.ts';
 import { createVoiceRouter } from './routes/voice.ts';
@@ -38,6 +39,7 @@ export function mountX(app: Hono): void {
   app.route('/x', brief);
   app.route('/x', calendar);
   app.route('/x', metrics);
+  app.route('/x', pillars);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);

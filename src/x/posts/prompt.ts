@@ -9,6 +9,7 @@
 // stable, cacheable prefix for xAI prefix caching.
 
 import type { GrokMessage } from '../../grok/index.ts';
+import { DEFAULT_PILLARS, DEFAULT_PILLAR_SLUGS, type PillarDef, renderPillars } from './pillars.ts';
 
 export const POST_PROMPT_TEMPLATE = `## The job
 
@@ -67,16 +68,9 @@ These facts are the ONLY biography you may use. Never invent or imply anything e
 
 ---
 
-## 4. The 3 locked pillars (each post declares which one it serves)
+## 4. Content pillars (each post declares which one it serves)
 
-**ai-craft** — *AI-native craft* — the WHAT.
-Daily lab journal: AI agents, Claude Code, skills, judgment encoded in code. Why only me: 30 years of code + active AI power-user who actually writes skills for agents. Dominant register: plain; spicy when taking a stance against a popular pattern. Avoid tutorial-speak — state the pattern/judgment, show I live with it. Concrete commit/skill/workflow > generic advice.
-
-**builder-51** — *The 51-year-old builder* — the WHO / WHY.
-Atypical solopreneur journal; the reverse of the 22-year-old-SF-founder template. Rarity = memorability; I lived the 386→2026 arc, juniors can't fabricate it. Dominant register: reflective. Flashback → reframe → punchy landing. A specific tech reference (Turbo Pascal, DOS 3.1, 386) beats "back in my day." Don't overdo nostalgia. Real constraints (08–15 hospital job, Romania, building post-50) → forced creativity.
-
-**unsexy-problems** — *Unsexy problems* — the WHERE / WHAT-FOR.
-Real SMB and public-system problems, far from the VC echo chamber — where leverage actually lives. Why only me: two real laboratories (the hospital, the ~20 SMB accounting clients). Dominant register: spicy. Specific observation > generic critique. **Name the unsexy thing**: an ANAF report, an Excel reconciliation, a hospital procurement form. Abstraction kills the angle.
+The active pillars (slug → what each covers) are listed at the end of this prompt under **PILLARS**. Each post declares which one it serves — use only the slugs listed there.
 
 ---
 
@@ -151,7 +145,11 @@ Produce **exactly three genuinely different drafts** — one per register (§8):
 
 ## Output
 
-Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar": "…"}]} — exactly three posts; register one of plain / spicy / reflective (one each); pillar one of ai-craft / builder-51 / unsexy-problems. Each text is ONLY the raw post text, exactly as it should appear on X — real newlines, no surrounding quotes, no markdown, no commentary.
+Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar": "…"}]} — exactly three posts; register one of plain / spicy / reflective (one each); pillar one of the slugs listed under PILLARS. Each text is ONLY the raw post text, exactly as it should appear on X — real newlines, no surrounding quotes, no markdown, no commentary.
+
+**PILLARS** (the active content pillars — each post's \`pillar\` must be one of these slugs):
+
+{{PILLARS}}
 
 **My proven posts** (measured winners off my own feed — match this voice and energy, never copy them):
 
@@ -166,8 +164,9 @@ Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar":
 <pillar>{{PILLAR}}</pillar>
 <idea>{{IDEA}}</idea>`;
 
-export const POST_PILLARS = ['ai-craft', 'builder-51', 'unsexy-problems'] as const;
-export type PostPillar = (typeof POST_PILLARS)[number];
+// Pillars are dynamic now (DB-backed `content_pillars`, §8.6) — the slug is an
+// arbitrary string declared by the active set, not a closed union.
+export type PostPillar = string;
 
 export const POST_REGISTERS = ['plain', 'spicy', 'reflective'] as const;
 export type PostRegister = (typeof POST_REGISTERS)[number];
@@ -178,32 +177,40 @@ export interface PostDraftVariant {
   pillar: PostPillar;
 }
 
-// Grok structured-outputs schema for the three register-distinct drafts —
-// passed via askGrok's jsonSchema option, same shape the prompt states in prose.
-export const POST_DRAFTS_SCHEMA = {
-  type: 'object',
-  properties: {
-    posts: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          text: { type: 'string', description: 'Raw post text exactly as it appears on X' },
-          register: { type: 'string', enum: [...POST_REGISTERS] },
-          pillar: { type: 'string', enum: [...POST_PILLARS] },
+// Grok structured-outputs schema for the three register-distinct drafts — built
+// per-call so the `pillar` enum reflects the live slug set. Passed via askGrok's
+// jsonSchema option, same shape the prompt states in prose.
+export function buildPostDraftsSchema(slugs: string[] = DEFAULT_PILLAR_SLUGS) {
+  return {
+    type: 'object',
+    properties: {
+      posts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            text: { type: 'string', description: 'Raw post text exactly as it appears on X' },
+            register: { type: 'string', enum: [...POST_REGISTERS] },
+            pillar: { type: 'string', enum: slugs },
+          },
+          required: ['text', 'register', 'pillar'],
+          additionalProperties: false,
         },
-        required: ['text', 'register', 'pillar'],
-        additionalProperties: false,
       },
     },
-  },
-  required: ['posts'],
-  additionalProperties: false,
-} as const;
+    required: ['posts'],
+    additionalProperties: false,
+  } as const;
+}
 
 // Strict-mode structured outputs guarantee the shape, but a truncated body
 // (max_output_tokens) must degrade to null, never to malformed draft rows.
-export function parsePostDrafts(raw: string): PostDraftVariant[] | null {
+// `allowedSlugs` defaults to the seed set so existing callers/tests keep working;
+// an unknown pillar falls back to the first allowed slug.
+export function parsePostDrafts(
+  raw: string,
+  allowedSlugs: string[] = DEFAULT_PILLAR_SLUGS,
+): PostDraftVariant[] | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -214,6 +221,7 @@ export function parsePostDrafts(raw: string): PostDraftVariant[] | null {
   const posts = (parsed as Record<string, unknown>).posts;
   if (!Array.isArray(posts) || posts.length === 0) return null;
 
+  const fallbackPillar = allowedSlugs[0] ?? DEFAULT_PILLAR_SLUGS[0] ?? 'ai-craft';
   const out: PostDraftVariant[] = [];
   for (const p of posts) {
     if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
@@ -222,9 +230,9 @@ export function parsePostDrafts(raw: string): PostDraftVariant[] | null {
     const register = (POST_REGISTERS as readonly string[]).includes(v.register as string)
       ? (v.register as PostRegister)
       : 'plain';
-    const pillar = (POST_PILLARS as readonly string[]).includes(v.pillar as string)
-      ? (v.pillar as PostPillar)
-      : 'ai-craft';
+    const pillar = allowedSlugs.includes(v.pillar as string)
+      ? (v.pillar as string)
+      : fallbackPillar;
     out.push({ text: v.text.trim(), register, pillar });
   }
   return out;
@@ -250,6 +258,7 @@ export interface RemixSource {
   rawText: string | null;
 }
 
+const PILLARS_PLACEHOLDER = '{{PILLARS}}';
 const WINNERS_PLACEHOLDER = '{{MY_WINNERS}}';
 const REMIX_PLACEHOLDER = '{{REMIX}}';
 const PILLAR_PLACEHOLDER = '{{PILLAR}}';
@@ -261,12 +270,17 @@ export interface BuildPostDraftOptions {
   remix?: RemixSource | null;
   pillar?: PostPillar;
   idea?: string;
+  /** Active pillars rendered into the PILLARS block. Defaults to the seed set
+   *  so the prompt is never pillar-less even on a fresh/empty DB. */
+  pillars?: PillarDef[];
 }
 
 export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] {
   // split/join (not replace) so '$' in user content can't trigger
   // String.prototype.replace's special replacement patterns.
-  let content = POST_PROMPT_TEMPLATE.split(WINNERS_PLACEHOLDER).join(renderWinners(opts.winners));
+  const pillars = opts.pillars && opts.pillars.length > 0 ? opts.pillars : DEFAULT_PILLARS;
+  let content = POST_PROMPT_TEMPLATE.split(PILLARS_PLACEHOLDER).join(renderPillars(pillars));
+  content = content.split(WINNERS_PLACEHOLDER).join(renderWinners(opts.winners));
   content = content.split(REMIX_PLACEHOLDER).join(renderRemix(opts.remix ?? null));
   content = content.split(PILLAR_PLACEHOLDER).join(opts.pillar ?? '');
   content = content.split(IDEA_PLACEHOLDER).join(opts.idea?.trim() ?? '');

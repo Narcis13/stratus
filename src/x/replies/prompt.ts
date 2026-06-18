@@ -8,6 +8,7 @@
 
 import type { GrokMessage } from '../../grok/index.ts';
 import type { Band } from '../../shared/replyBand.ts';
+import { type PillarDef, renderPillars } from '../posts/pillars.ts';
 
 // Band verdict + the exact classifier inputs, frozen at capture time by the
 // extension (src/shared/replyBand.ts). Optional in the request: older
@@ -154,9 +155,8 @@ export const REPLY_VARIANTS_SCHEMA = {
 // never matches; an ellipsis ("Hmm... ") is a run of ≥2 dots and is kept whole
 // (it signals continuation, not a sentence end).
 export function blankLineBetweenPropositions(text: string): string {
-  const withBreaks = text.replace(
-    /([.!?]+)\s+(?=["'(@#]?[A-Z0-9])/g,
-    (m, punct: string) => (/^\.{2,}$/.test(punct) ? m : `${punct}\n`),
+  const withBreaks = text.replace(/([.!?]+)\s+(?=["'(@#]?[A-Z0-9])/g, (m, punct: string) =>
+    /^\.{2,}$/.test(punct) ? m : `${punct}\n`,
   );
   return withBreaks
     .split('\n')
@@ -293,12 +293,21 @@ export function buildBatchGrokInput(
   tweets: BatchTweet[],
   idea?: string,
   override?: string,
+  pillars?: PillarDef[],
 ): GrokMessage[] {
   const head = override && override.trim().length > 0 ? override : batchReplyHead();
   const rendered = tweets.map((t, i) => renderBatchTweet(t, i)).join('\n\n');
   const ideaText = idea?.trim() ?? '';
-  const content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
+  let content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
+  if (pillars && pillars.length > 0) content += `\n\n${renderReplyPillarsBlock(pillars)}`;
   return [{ role: 'user', content }];
+}
+
+// §8.6 opt-in: appended to the reply prompt only when the user enables "apply
+// pillars to replies" (default off). Render-time append — the reply prompt
+// template / reply prompt.md stay untouched (their byte-sync test is unaffected).
+function renderReplyPillarsBlock(pillars: PillarDef[]): string {
+  return `## Content pillars to honor (optional)\nWhere it fits naturally, align this reply's stance with ONE of my content pillars below. Never force it — a reply that fits none is fine.\n\n${renderPillars(pillars)}`;
 }
 
 export const BATCH_REPLY_SCHEMA = {
@@ -351,7 +360,12 @@ export function parseBatchReplies(raw: string): BatchReply[] | null {
   return out;
 }
 
-export function buildGrokInput(ctx: PostContext, override?: string, idea?: string): GrokMessage[] {
+export function buildGrokInput(
+  ctx: PostContext,
+  override?: string,
+  idea?: string,
+  pillars?: PillarDef[],
+): GrokMessage[] {
   const template = override && override.trim().length > 0 ? override : REPLY_PROMPT_TEMPLATE;
   const context = renderContext(ctx);
   // split/join (not replace) so a '$' in the context can't trigger
@@ -365,6 +379,9 @@ export function buildGrokInput(ctx: PostContext, override?: string, idea?: strin
   } else if (ideaText !== '') {
     // Custom overrides may predate the {{IDEA}} token — still honor the steer.
     content = `${content}\n\n<idea>${ideaText}</idea>`;
+  }
+  if (pillars && pillars.length > 0) {
+    content = `${content}\n\n${renderReplyPillarsBlock(pillars)}`;
   }
   return [{ role: 'user', content }];
 }

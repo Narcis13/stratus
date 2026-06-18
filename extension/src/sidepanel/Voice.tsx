@@ -1,4 +1,5 @@
 import { type JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import { PillarsPanel } from './Pillars.tsx';
 import { ApiError, type VoiceAuthor, type VoiceTweet, type VoiceTweetsOpts, api } from './api.ts';
 import type { Settings } from './storage.ts';
 
@@ -12,6 +13,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 const TWEET_LIMIT = 100;
 
 export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
+  const [view, setView] = useState<'tweets' | 'pillars'>('tweets');
   const [authors, setAuthors] = useState<VoiceAuthor[]>([]);
   const [tweets, setTweets] = useState<VoiceTweet[]>([]);
   const [authorFilter, setAuthorFilter] = useState<string>('');
@@ -187,126 +189,151 @@ export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
     <div className="panel">
       <div className="panel-header">
         <h2>Voice</h2>
-        <button type="button" onClick={refresh} disabled={loadingAuthors || loadingTweets}>
-          {loadingAuthors || loadingTweets ? 'Loading…' : 'Refresh'}
+        {view === 'tweets' && (
+          <button type="button" onClick={refresh} disabled={loadingAuthors || loadingTweets}>
+            {loadingAuthors || loadingTweets ? 'Loading…' : 'Refresh'}
+          </button>
+        )}
+      </div>
+
+      <div className="radar-tabs">
+        <button
+          type="button"
+          className={`radar-tab${view === 'tweets' ? ' active' : ''}`}
+          onClick={() => setView('tweets')}
+        >
+          Tweets
+        </button>
+        <button
+          type="button"
+          className={`radar-tab${view === 'pillars' ? ' active' : ''}`}
+          onClick={() => setView('pillars')}
+        >
+          Pillars
         </button>
       </div>
 
-      {error && <div className="error">{error}</div>}
-      {notice && <div className="ok">{notice}</div>}
-
-      <div className="voice-controls">
-        <label className="field">
-          <span>Search</span>
-          <input
-            type="search"
-            placeholder="text contains…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            spellCheck={false}
-          />
-        </label>
-
-        <label className="field">
-          <span>Hook type</span>
-          <input
-            type="search"
-            placeholder="e.g. stat, contrast…"
-            value={hookInput}
-            onChange={(e) => setHookInput(e.target.value)}
-            spellCheck={false}
-          />
-        </label>
-
-        <label className="field">
-          <span>Template</span>
-          <select
-            value={extractedFilter}
-            onChange={(e) => setExtractedFilter(e.target.value as '' | 'true' | 'false')}
-          >
-            <option value="">all</option>
-            <option value="true">extracted</option>
-            <option value="false">not extracted</option>
-          </select>
-        </label>
-
-        <button type="button" onClick={() => void extractBatch()} disabled={batchRunning}>
-          {batchRunning ? 'Extracting…' : 'Extract templates (~$0.005/tweet)'}
-        </button>
-
-        <label className="field">
-          <span>Author</span>
-          <select
-            value={authorFilter}
-            onChange={(e) => setAuthorFilter(e.target.value)}
-            disabled={loadingAuthors}
-          >
-            <option value="">All authors ({authors.length})</option>
-            {authors.map((a) => (
-              <option key={a.handle} value={a.handle}>
-                @{a.handle} · {a.tweetCount}
-                {a.retired ? ' · retired' : ''}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="row voice-toggles">
-          <label className="row voice-toggle">
-            <input
-              type="checkbox"
-              checked={renderHtml}
-              onChange={(e) => setRenderHtml(e.target.checked)}
-            />
-            <span>Render HTML</span>
-          </label>
-          <label className="row voice-toggle">
-            <input
-              type="checkbox"
-              checked={showRetired}
-              onChange={(e) => setShowRetired(e.target.checked)}
-            />
-            <span>Show retired</span>
-          </label>
-        </div>
-      </div>
-
-      {selectedAuthor && (
-        <AuthorCard
-          author={selectedAuthor}
-          busy={busy === `author:${selectedAuthor.handle}`}
-          confirmingDelete={confirming === `author:${selectedAuthor.handle}`}
-          onToggleRetired={() => void toggleAuthorRetired(selectedAuthor)}
-          onRequestDelete={() => setConfirming(`author:${selectedAuthor.handle}`)}
-          onCancelDelete={() => setConfirming(null)}
-          onConfirmDelete={() => void removeAuthor(selectedAuthor)}
-        />
-      )}
-
-      {loadingTweets && tweets.length === 0 ? (
-        <p className="muted">Loading tweets…</p>
-      ) : tweets.length === 0 ? (
-        <p className="muted">No saved tweets match these filters.</p>
+      {view === 'pillars' ? (
+        <PillarsPanel settings={settings} />
       ) : (
-        <ul className="voice-tweet-list">
-          {tweets.map((t) => (
-            <li key={t.tweetId}>
-              <TweetRow
-                tweet={t}
-                renderHtml={renderHtml}
-                busy={busy === `tweet:${t.tweetId}`}
-                extractBusy={busy === `extract:${t.tweetId}`}
-                confirmingDelete={confirming === `tweet:${t.tweetId}`}
-                onToggleRetired={() => void toggleTweetRetired(t)}
-                onRequestDelete={() => setConfirming(`tweet:${t.tweetId}`)}
-                onCancelDelete={() => setConfirming(null)}
-                onConfirmDelete={() => void removeTweet(t)}
-                onExtract={() => void extractTweet(t)}
-                onRemix={() => onRemix(t.tweetId)}
+        <>
+          {error && <div className="error">{error}</div>}
+          {notice && <div className="ok">{notice}</div>}
+
+          <div className="voice-controls">
+            <label className="field">
+              <span>Search</span>
+              <input
+                type="search"
+                placeholder="text contains…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                spellCheck={false}
               />
-            </li>
-          ))}
-        </ul>
+            </label>
+
+            <label className="field">
+              <span>Hook type</span>
+              <input
+                type="search"
+                placeholder="e.g. stat, contrast…"
+                value={hookInput}
+                onChange={(e) => setHookInput(e.target.value)}
+                spellCheck={false}
+              />
+            </label>
+
+            <label className="field">
+              <span>Template</span>
+              <select
+                value={extractedFilter}
+                onChange={(e) => setExtractedFilter(e.target.value as '' | 'true' | 'false')}
+              >
+                <option value="">all</option>
+                <option value="true">extracted</option>
+                <option value="false">not extracted</option>
+              </select>
+            </label>
+
+            <button type="button" onClick={() => void extractBatch()} disabled={batchRunning}>
+              {batchRunning ? 'Extracting…' : 'Extract templates (~$0.005/tweet)'}
+            </button>
+
+            <label className="field">
+              <span>Author</span>
+              <select
+                value={authorFilter}
+                onChange={(e) => setAuthorFilter(e.target.value)}
+                disabled={loadingAuthors}
+              >
+                <option value="">All authors ({authors.length})</option>
+                {authors.map((a) => (
+                  <option key={a.handle} value={a.handle}>
+                    @{a.handle} · {a.tweetCount}
+                    {a.retired ? ' · retired' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="row voice-toggles">
+              <label className="row voice-toggle">
+                <input
+                  type="checkbox"
+                  checked={renderHtml}
+                  onChange={(e) => setRenderHtml(e.target.checked)}
+                />
+                <span>Render HTML</span>
+              </label>
+              <label className="row voice-toggle">
+                <input
+                  type="checkbox"
+                  checked={showRetired}
+                  onChange={(e) => setShowRetired(e.target.checked)}
+                />
+                <span>Show retired</span>
+              </label>
+            </div>
+          </div>
+
+          {selectedAuthor && (
+            <AuthorCard
+              author={selectedAuthor}
+              busy={busy === `author:${selectedAuthor.handle}`}
+              confirmingDelete={confirming === `author:${selectedAuthor.handle}`}
+              onToggleRetired={() => void toggleAuthorRetired(selectedAuthor)}
+              onRequestDelete={() => setConfirming(`author:${selectedAuthor.handle}`)}
+              onCancelDelete={() => setConfirming(null)}
+              onConfirmDelete={() => void removeAuthor(selectedAuthor)}
+            />
+          )}
+
+          {loadingTweets && tweets.length === 0 ? (
+            <p className="muted">Loading tweets…</p>
+          ) : tweets.length === 0 ? (
+            <p className="muted">No saved tweets match these filters.</p>
+          ) : (
+            <ul className="voice-tweet-list">
+              {tweets.map((t) => (
+                <li key={t.tweetId}>
+                  <TweetRow
+                    tweet={t}
+                    renderHtml={renderHtml}
+                    busy={busy === `tweet:${t.tweetId}`}
+                    extractBusy={busy === `extract:${t.tweetId}`}
+                    confirmingDelete={confirming === `tweet:${t.tweetId}`}
+                    onToggleRetired={() => void toggleTweetRetired(t)}
+                    onRequestDelete={() => setConfirming(`tweet:${t.tweetId}`)}
+                    onCancelDelete={() => setConfirming(null)}
+                    onConfirmDelete={() => void removeTweet(t)}
+                    onExtract={() => void extractTweet(t)}
+                    onRemix={() => onRemix(t.tweetId)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   );

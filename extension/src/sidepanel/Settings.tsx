@@ -4,6 +4,7 @@ import { type Settings, getSettings, saveSettings } from './storage.ts';
 export function SettingsPanel(): JSX.Element {
   const [apiUrl, setApiUrl] = useState('');
   const [bearer, setBearer] = useState('');
+  const [applyPillarsToReplies, setApplyPillarsToReplies] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -11,6 +12,7 @@ export function SettingsPanel(): JSX.Element {
     getSettings().then((s) => {
       setApiUrl(s.apiUrl);
       setBearer(s.bearer);
+      setApplyPillarsToReplies(s.applyPillarsToReplies);
     });
   }, []);
 
@@ -18,7 +20,7 @@ export function SettingsPanel(): JSX.Element {
     e.preventDefault();
     setSaving(true);
     setSaved(false);
-    const next: Settings = { apiUrl, bearer };
+    const next: Settings = { apiUrl, bearer, applyPillarsToReplies };
     await saveSettings(next);
     setSaving(false);
     setSaved(true);
@@ -54,6 +56,15 @@ export function SettingsPanel(): JSX.Element {
           spellCheck={false}
           autoComplete="off"
         />
+      </label>
+
+      <label className="row voice-toggle" style={{ marginTop: 8 }}>
+        <input
+          type="checkbox"
+          checked={applyPillarsToReplies}
+          onChange={(e) => setApplyPillarsToReplies(e.target.checked)}
+        />
+        <span>Apply content pillars to reply drafting (default off)</span>
       </label>
 
       <div className="row">

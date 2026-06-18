@@ -64,6 +64,13 @@
       "when": 1781122754535,
       "tag": "0008_modern_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1781818019393,
+      "tag": "0009_stale_sharon_carter",
+      "breakpoints": true
     }
   ]
 }

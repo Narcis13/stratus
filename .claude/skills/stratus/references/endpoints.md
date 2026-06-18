@@ -271,7 +271,7 @@ Mounts only when `XAI_API_KEY` is set. Both routes make one Grok structured-outp
 
 Body (all optional):
 
-- `pillar` — `1|2|3` or `'ai-craft'|'builder-51'|'unsexy-problems'` (`400 invalid_pillar`). Omit to let Grok pick per draft.
+- `pillar` — a slug from the active pillar set (`GET /x/pillars`) or `1|2|3` by sort order (`400 invalid_pillar`). Pillars are editable (§8.6); the seed set is `ai-craft|builder-51|unsexy-problems`. Omit to let Grok pick per draft.
 - `idea` (string, ≤2000 chars) — human steer; Romanian in, English out.
 - `voiceTweetId` (digits) — remix: lifts the saved tweet's extracted structure (hook/skeleton/line breaks/length/device) into the prompt (`404 voice_tweet_not_found`). Falls back to the raw text if the tweet was never extracted.
 - `model`, `reasoningEffort` (`none|low|medium|high`, default `low`).
@@ -281,6 +281,20 @@ Returns `201 { drafts: [rows + register], winnersUsed, model, costUsd, requestId
 ### POST /x/posts/reup
 
 Same pipeline steered toward a **self-quote re-up**. Body: `{ tweetId (required, must be MY published tweet — 404 not_own_tweet otherwise), idea?, pillar?, model?, reasoningEffort? }`. Drafts carry `quoteTweetId`; the publisher re-verifies ownership at post time and posts with a verified self-quote (Feb 2026 policy — non-self quotes are refused).
+
+---
+
+## Content pillars (§8.6)
+
+Editable taxonomy the post drafter writes against — DB-backed (`content_pillars`), seeded with `ai-craft|builder-51|unsexy-problems`. Editing a pillar's body changes how Grok drafts (it's injected into the post prompt; the structured-output `pillar` enum is built from the active slugs). CRUD routes are always mounted; only `/pillars/draft` needs `XAI_API_KEY`.
+
+- `GET /x/pillars?active=true|false` — list (sortOrder asc); omit `active` for all.
+- `POST /x/pillars` — `{ slug, label, body, sortOrder?, active? }`. Slug is kebab-case 2–41 chars (`400 invalid_slug`); duplicate → `409 slug_exists`.
+- `PATCH /x/pillars/:slug` — partial `{ label?, body?, sortOrder?, active? }`. Deactivating the last active pillar → `409 last_active_pillar`.
+- `DELETE /x/pillars/:slug` — `409 last_active_pillar` if it's the only active one; historical `pillar` text on posts/replies is untouched.
+- `POST /x/pillars/draft` — `{ mode:'new'|'tweak', idea?, slug?, instruction? }` → `{ proposal:{slug,label,body}, model, costUsd, requestId }` (~$0.003). **Proposal only — not saved**; review then `POST`/`PATCH`. `503 grok_not_configured` when no key.
+
+Replies can optionally honor pillars: `/x/replies/generate` + `/generate-batch` accept `applyPillars?` (default off; the extension Settings toggle sets it).
 
 ---
 

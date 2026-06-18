@@ -39,12 +39,11 @@ const SLOT_HORIZON_DAYS = 7;
 
 type DraftCard = PostDraftResponse['drafts'][number];
 
-const PILLARS: Array<{ value: PostPillar | ''; label: string }> = [
-  { value: '', label: 'any pillar (Grok declares)' },
-  { value: 'ai-craft', label: 'ai-craft — AI-native craft' },
-  { value: 'builder-51', label: 'builder-51 — the 51-year-old builder' },
-  { value: 'unsexy-problems', label: 'unsexy-problems — real SMB/public-system problems' },
-];
+// "any pillar" stays static; the rest are fetched live (§8.6 editable pillars).
+const ANY_PILLAR: { value: string; label: string } = {
+  value: '',
+  label: 'any pillar (Grok declares)',
+};
 
 const REGISTER_LABEL: Record<PostRegister, string> = {
   plain: 'plain',
@@ -75,9 +74,32 @@ export function ComposerPanel({
   // Drafter (§8.1)
   const [idea, setIdea] = useState('');
   const [pillar, setPillar] = useState<PostPillar | ''>('');
+  const [pillarOpts, setPillarOpts] = useState<Array<{ value: string; label: string }>>([
+    ANY_PILLAR,
+  ]);
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
+
+  // §8.6 — the pillar dropdown follows the editable DB set, not a hardcoded list.
+  useEffect(() => {
+    let alive = true;
+    api.pillars
+      .list(settings, { active: true })
+      .then((rows) => {
+        if (!alive) return;
+        setPillarOpts([
+          ANY_PILLAR,
+          ...rows.map((p) => ({ value: p.slug, label: `${p.slug} — ${p.label}` })),
+        ]);
+      })
+      .catch(() => {
+        /* dropdown falls back to "any pillar"; Grok still declares one */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
 
   const isEditing = editingId !== null;
   const isThreadEdit = isEditing && original?.threadId != null;
@@ -571,8 +593,8 @@ export function ComposerPanel({
           )}
           <label className="field">
             <span>Pillar</span>
-            <select value={pillar} onChange={(e) => setPillar(e.target.value as PostPillar | '')}>
-              {PILLARS.map((p) => (
+            <select value={pillar} onChange={(e) => setPillar(e.target.value)}>
+              {pillarOpts.map((p) => (
                 <option key={p.value} value={p.value}>
                   {p.label}
                 </option>

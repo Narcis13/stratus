@@ -142,6 +142,40 @@ describe.if(authed && Boolean(process.env.XAI_API_KEY))('drafter guards (§8.1/�
   });
 });
 
+describe.if(authed)('pillars guards (§8.6)', () => {
+  test('invalid slug → 400 before any DB write', async () => {
+    const res = await app.request('/x/pillars', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ slug: 'Bad Slug!', label: 'L', body: 'B' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_slug');
+  });
+
+  test('missing label/body → 400', async () => {
+    const res = await app.request('/x/pillars', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ slug: 'valid-slug' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_label_or_body');
+  });
+});
+
+describe.if(authed && Boolean(process.env.XAI_API_KEY))('pillar draft guard (§8.6)', () => {
+  test('invalid mode → 400 before any Grok spend', async () => {
+    const res = await app.request('/x/pillars/draft', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ mode: 'sideways' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_mode');
+  });
+});
+
 describe.if(authed)('batch reply guards (Radar §7.2)', () => {
   test('non-array tweets → 400 invalid_tweets before any Grok spend', async () => {
     const res = await app.request('/x/replies/generate-batch', {

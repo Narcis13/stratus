@@ -27,15 +27,16 @@ import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import type { ReasoningEffort } from '../../grok/index.ts';
 import { metricsSnapshots, postsPublished, scheduledPosts, voiceTweets } from '../db/schema.ts';
+import { type PillarDef, parsePillar } from '../posts/pillars.ts';
 import {
-  POST_DRAFTS_SCHEMA,
-  POST_PILLARS,
   type PostPillar,
   type RemixSource,
   type WinnerPost,
   buildPostDraftInput,
+  buildPostDraftsSchema,
   parsePostDrafts,
 } from '../posts/prompt.ts';
+import { getActivePillars } from './pillars.ts';
 
 // Three posts of JSON run ~300 tokens; xAI doesn't count reasoning tokens
 // against the cap (verified live on the reply route under a 350 cap).
@@ -63,7 +64,11 @@ interface RawBody {
 export const drafter = new Hono();
 
 drafter.post('/posts/draft', async (c) => {
-  const parsed = await parseCommon(c.req.raw);
+  const pillars = await getActivePillars();
+  const parsed = await parseCommon(
+    c.req.raw,
+    pillars.map((p) => p.slug),
+  );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
   const { body, pillar, idea, model, reasoningEffort } = parsed;
 
@@ -94,11 +99,16 @@ drafter.post('/posts/draft', async (c) => {
     model,
     reasoningEffort,
     quoteTweetId: null,
+    pillars,
   });
 });
 
 drafter.post('/posts/reup', async (c) => {
-  const parsed = await parseCommon(c.req.raw);
+  const pillars = await getActivePillars();
+  const parsed = await parseCommon(
+    c.req.raw,
+    pillars.map((p) => p.slug),
+  );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
   const { body, pillar, idea, model, reasoningEffort } = parsed;
 
@@ -122,6 +132,7 @@ drafter.post('/posts/reup', async (c) => {
     model,
     reasoningEffort,
     quoteTweetId: tweetId,
+    pillars,
   });
 });
 
@@ -134,13 +145,16 @@ interface GenerateOptions {
   model: string | undefined;
   reasoningEffort: ReasoningEffort;
   quoteTweetId: string | null;
+  pillars: PillarDef[];
 }
 
 async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Response> {
   const winners = await topWinners();
+  const slugs = opts.pillars.map((p) => p.slug);
   const messages = buildPostDraftInput({
     winners,
     remix: opts.remix,
+    pillars: opts.pillars,
     ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
   });
@@ -153,7 +167,7 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
       reasoningEffort: opts.reasoningEffort,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
-      jsonSchema: { name: 'post_drafts', schema: POST_DRAFTS_SCHEMA },
+      jsonSchema: { name: 'post_drafts', schema: buildPostDraftsSchema(slugs) },
       promptCacheKey: PROMPT_CACHE_KEY,
     });
   } catch (err) {
@@ -175,7 +189,7 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
     return c.json({ error: 'draft_failed', detail }, 502);
   }
 
-  const variants = parsePostDrafts(result.text);
+  const variants = parsePostDrafts(result.text, slugs);
   if (variants === null) {
     return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
   }
@@ -267,27 +281,17 @@ interface ParsedCommon {
   reasoningEffort: ReasoningEffort;
 }
 
-// Pillar accepts the canonical slug or 1/2/3 shorthand (the prompt's §4 order).
-export function parsePillar(value: unknown): PostPillar | undefined | 'invalid' {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value === 'number') {
-    const byIndex = POST_PILLARS[value - 1];
-    return byIndex ?? 'invalid';
-  }
-  if (typeof value === 'string' && (POST_PILLARS as readonly string[]).includes(value)) {
-    return value as PostPillar;
-  }
-  return 'invalid';
-}
-
-async function parseCommon(req: Request): Promise<ParsedCommon | { error: string }> {
+async function parseCommon(
+  req: Request,
+  slugs: string[],
+): Promise<ParsedCommon | { error: string }> {
   const raw = await req.json().catch(() => null);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return { error: 'invalid_body' };
   }
   const body = raw as RawBody;
 
-  const pillar = parsePillar(body.pillar);
+  const pillar = parsePillar(body.pillar, slugs);
   if (pillar === 'invalid') return { error: 'invalid_pillar' };
 
   let idea: string | undefined;

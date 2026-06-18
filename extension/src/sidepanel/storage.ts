@@ -5,22 +5,27 @@ import { useEffect, useState } from 'react';
 
 const KEY_API_URL = 'apiUrl';
 const KEY_BEARER = 'bearer';
+// §8.6 opt-in: when on, reply drafting steers toward the active content pillars.
+const KEY_APPLY_PILLARS_REPLIES = 'applyPillarsToReplies';
 
 export interface Settings {
   apiUrl: string;
   bearer: string;
+  applyPillarsToReplies: boolean;
 }
 
 export const EMPTY_SETTINGS: Settings = {
   apiUrl: '',
   bearer: '',
+  applyPillarsToReplies: false,
 };
 
 export async function getSettings(): Promise<Settings> {
-  const out = await chrome.storage.local.get([KEY_API_URL, KEY_BEARER]);
+  const out = await chrome.storage.local.get([KEY_API_URL, KEY_BEARER, KEY_APPLY_PILLARS_REPLIES]);
   return {
     apiUrl: typeof out[KEY_API_URL] === 'string' ? out[KEY_API_URL] : '',
     bearer: typeof out[KEY_BEARER] === 'string' ? out[KEY_BEARER] : '',
+    applyPillarsToReplies: out[KEY_APPLY_PILLARS_REPLIES] === true,
   };
 }
 
@@ -28,6 +33,7 @@ export async function saveSettings(s: Settings): Promise<void> {
   await chrome.storage.local.set({
     [KEY_API_URL]: s.apiUrl.trim().replace(/\/$/, ''),
     [KEY_BEARER]: s.bearer.trim(),
+    [KEY_APPLY_PILLARS_REPLIES]: s.applyPillarsToReplies === true,
   });
 }
 
@@ -52,7 +58,12 @@ export function useSettings(): { settings: Settings; loading: boolean } {
       area: chrome.storage.AreaName,
     ) => {
       if (area !== 'local') return;
-      if (!(KEY_API_URL in changes) && !(KEY_BEARER in changes)) return;
+      if (
+        !(KEY_API_URL in changes) &&
+        !(KEY_BEARER in changes) &&
+        !(KEY_APPLY_PILLARS_REPLIES in changes)
+      )
+        return;
       getSettings().then((s) => alive && setSettings(s));
     };
     chrome.storage.onChanged.addListener(onChanged);

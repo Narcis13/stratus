@@ -57,7 +57,9 @@ export interface CreateThreadResponse {
 
 // --------------------------------------------------------------- drafter §8.1
 
-export type PostPillar = 'ai-craft' | 'builder-51' | 'unsexy-problems';
+// Pillars are DB-backed and editable (§8.6) — a slug is any active pillar's id,
+// no longer a closed union. Kept as a string alias for readability.
+export type PostPillar = string;
 export type PostRegister = 'plain' | 'spicy' | 'reflective';
 
 export interface PostDraftBody {
@@ -70,6 +72,47 @@ export interface PostReupBody {
   tweetId: string;
   idea?: string;
   pillar?: PostPillar;
+}
+
+// --------------------------------------------------------------- pillars §8.6
+
+export interface ContentPillar {
+  slug: string;
+  label: string;
+  body: string;
+  sortOrder: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PillarCreateBody {
+  slug: string;
+  label: string;
+  body: string;
+  sortOrder?: number;
+  active?: boolean;
+}
+
+export interface PillarUpdateBody {
+  label?: string;
+  body?: string;
+  sortOrder?: number;
+  active?: boolean;
+}
+
+export interface PillarDraftBody {
+  mode: 'new' | 'tweak';
+  idea?: string;
+  slug?: string;
+  instruction?: string;
+}
+
+export interface PillarDraftResult {
+  proposal: { slug: string; label: string; body: string };
+  model: string;
+  costUsd: number;
+  requestId: string | null;
 }
 
 export interface PostDraftResponse {

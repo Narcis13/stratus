@@ -6,7 +6,20 @@ import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
-import { POST_PROMPT_TEMPLATE, buildPostDraftInput, parsePostDrafts } from './x/posts/prompt.ts';
+import { buildPillarDraftInput, parsePillarProposal } from './x/posts/pillarDraft.ts';
+import {
+  DEFAULT_PILLARS,
+  type PillarDef,
+  isValidPillarSlug,
+  parsePillar,
+  renderPillars,
+} from './x/posts/pillars.ts';
+import {
+  POST_PROMPT_TEMPLATE,
+  buildPostDraftInput,
+  buildPostDraftsSchema,
+  parsePostDrafts,
+} from './x/posts/prompt.ts';
 import { priceFor } from './x/pricing.ts';
 import {
   type BatchTweet,
@@ -27,7 +40,6 @@ import {
   localMinuteOfDay,
   pickAnchors,
 } from './x/routes/brief.ts';
-import { parsePillar } from './x/routes/drafter.ts';
 import {
   type UnlinkedDraft,
   matchUnlinkedDraft,
@@ -395,7 +407,9 @@ describe('reply prompt (§7.1)', () => {
       'Sentence one.\n\nSentence two.',
     );
     // ? and ! end sentences too
-    expect(blankLineBetweenPropositions('Really? Yes! Ship it.')).toBe('Really?\n\nYes!\n\nShip it.');
+    expect(blankLineBetweenPropositions('Really? Yes! Ship it.')).toBe(
+      'Really?\n\nYes!\n\nShip it.',
+    );
     // a decimal is not a sentence boundary
     expect(blankLineBetweenPropositions('I shipped 3.5 features today. It worked.')).toBe(
       'I shipped 3.5 features today.\n\nIt worked.',
@@ -1111,7 +1125,7 @@ describe('post prompt (§8.1)', () => {
     expect(POST_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
   });
 
-  test('buildPostDraftInput substitutes all four placeholders', () => {
+  test('buildPostDraftInput substitutes every placeholder, incl. pillars', () => {
     const [msg] = buildPostDraftInput({
       winners: [{ text: 'won post', views: 412, profileVisits: 9 }],
       remix: {
@@ -1124,17 +1138,28 @@ describe('post prompt (§8.1)', () => {
       },
       pillar: 'builder-51',
       idea: 'ceva despre spitale',
+      pillars: [{ slug: 'edge-cases', label: 'Edge cases — the GAP', body: 'body of edge-cases' }],
     });
     const content = msg?.content ?? '';
     expect(content).not.toContain('{{MY_WINNERS}}');
     expect(content).not.toContain('{{REMIX}}');
     expect(content).not.toContain('{{PILLAR}}');
     expect(content).not.toContain('{{IDEA}}');
+    expect(content).not.toContain('{{PILLARS}}');
     expect(content).toContain('won post');
     expect(content).toContain('412 views · 9 profile clicks');
     expect(content).toContain('hook -> list of 3 -> question close');
     expect(content).toContain('<pillar>builder-51</pillar>');
     expect(content).toContain('<idea>ceva despre spitale</idea>');
+    // The injected pillar (not a default) appears in the PILLARS block.
+    expect(content).toContain('**edge-cases** — Edge cases — the GAP');
+    expect(content).toContain('body of edge-cases');
+  });
+
+  test('buildPostDraftInput falls back to the seed pillars when none passed', () => {
+    const [msg] = buildPostDraftInput({ winners: [] });
+    const content = msg?.content ?? '';
+    for (const p of DEFAULT_PILLARS) expect(content).toContain(`**${p.slug}** — ${p.label}`);
   });
 
   test('no winners renders the empty marker, $ in idea is safe', () => {
@@ -1190,6 +1215,96 @@ describe('post prompt (§8.1)', () => {
     expect(parsePillar(undefined)).toBeUndefined();
     expect(parsePillar(0)).toBe('invalid');
     expect(parsePillar('growth')).toBe('invalid');
+  });
+});
+
+describe('content pillars (§8.6)', () => {
+  const SLUGS = ['growth', 'edge-cases', 'tooling'];
+
+  test('parsePillar honors a dynamic slug list (slug + 1/2/3 index)', () => {
+    expect(parsePillar('edge-cases', SLUGS)).toBe('edge-cases');
+    expect(parsePillar(1, SLUGS)).toBe('growth');
+    expect(parsePillar(3, SLUGS)).toBe('tooling');
+    expect(parsePillar(4, SLUGS)).toBe('invalid');
+    // A default slug is not valid against a different live set.
+    expect(parsePillar('ai-craft', SLUGS)).toBe('invalid');
+    expect(parsePillar(undefined, SLUGS)).toBeUndefined();
+  });
+
+  test('parsePostDrafts validates pillar against the allowed slugs, falls back to first', () => {
+    const out = parsePostDrafts(
+      JSON.stringify({ posts: [{ text: 'x', register: 'spicy', pillar: 'nope' }] }),
+      SLUGS,
+    );
+    expect(out?.[0]).toEqual({ text: 'x', register: 'spicy', pillar: 'growth' });
+    const ok = parsePostDrafts(
+      JSON.stringify({ posts: [{ text: 'y', register: 'plain', pillar: 'tooling' }] }),
+      SLUGS,
+    );
+    expect(ok?.[0]?.pillar).toBe('tooling');
+  });
+
+  test('buildPostDraftsSchema reflects the live slug set in the enum', () => {
+    const schema = buildPostDraftsSchema(SLUGS);
+    expect(schema.properties.posts.items.properties.pillar.enum).toEqual(SLUGS);
+    // Default schema (no args) keeps the seed slugs.
+    expect(buildPostDraftsSchema().properties.posts.items.properties.pillar.enum).toEqual(
+      DEFAULT_PILLARS.map((p) => p.slug),
+    );
+  });
+
+  test('renderPillars formats the block, empty set is marked', () => {
+    const pillars: PillarDef[] = [
+      { slug: 'tooling', label: 'Tooling — the HOW', body: 'guidance' },
+    ];
+    expect(renderPillars(pillars)).toBe('**tooling** — Tooling — the HOW\nguidance');
+    expect(renderPillars([])).toContain('no pillars configured');
+  });
+
+  test('isValidPillarSlug enforces kebab-case', () => {
+    expect(isValidPillarSlug('ai-craft')).toBe(true);
+    expect(isValidPillarSlug('a1')).toBe(true);
+    expect(isValidPillarSlug('A')).toBe(false);
+    expect(isValidPillarSlug('x')).toBe(false); // too short (min 2)
+    expect(isValidPillarSlug('-lead')).toBe(false);
+    expect(isValidPillarSlug('has space')).toBe(false);
+    expect(isValidPillarSlug(42)).toBe(false);
+  });
+
+  test('parsePillarProposal coerces near-miss slugs, forces the tweak slug, rejects empties', () => {
+    expect(
+      parsePillarProposal(JSON.stringify({ slug: 'Edge Cases', label: 'L', body: 'B' })),
+    ).toEqual({ slug: 'edge-cases', label: 'L', body: 'B' });
+    // forceSlug (tweak) wins over whatever the model returned.
+    expect(
+      parsePillarProposal(JSON.stringify({ slug: 'renamed', label: 'L', body: 'B' }), 'ai-craft'),
+    ).toEqual({ slug: 'ai-craft', label: 'L', body: 'B' });
+    expect(parsePillarProposal('not json')).toBeNull();
+    expect(
+      parsePillarProposal(JSON.stringify({ slug: 'ok-slug', label: '', body: 'B' })),
+    ).toBeNull();
+  });
+
+  test('buildPillarDraftInput grounds new vs tweak distinctly', () => {
+    const newMsg = buildPillarDraftInput({
+      mode: 'new',
+      existing: DEFAULT_PILLARS,
+      idea: 'despre AI',
+    });
+    expect(newMsg[0]?.content).toContain('Propose ONE new content pillar');
+    expect(newMsg[0]?.content).toContain('despre AI');
+    expect(newMsg[0]?.content).toContain('**ai-craft**'); // existing pillars grounded in
+
+    const target: PillarDef = { slug: 'ai-craft', label: 'AI', body: 'old body' };
+    const tweakMsg = buildPillarDraftInput({
+      mode: 'tweak',
+      existing: DEFAULT_PILLARS,
+      target,
+      instruction: 'make it spicier',
+    });
+    expect(tweakMsg[0]?.content).toContain('Revise this existing content pillar');
+    expect(tweakMsg[0]?.content).toContain('Keep its slug exactly as "ai-craft"');
+    expect(tweakMsg[0]?.content).toContain('make it spicier');
   });
 });
 

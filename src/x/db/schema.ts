@@ -23,6 +23,23 @@ export const tokens = pgTable('tokens', {
   lastRefreshAt: timestamp('last_refresh_at', { withTimezone: true }),
 });
 
+// Editable content pillars (Authoring 2.0 follow-up). Seeded with the original
+// three (ai-craft / builder-51 / unsexy-problems) but now first-class rows: the
+// post drafter renders the active set into its prompt and builds the
+// structured-output enum from these slugs, so an edit here changes how Grok
+// drafts. `scheduled_posts.pillar` / `reply_drafts.pillar` reference the slug as
+// plain text (no FK) — `aggregatePillars` groups by arbitrary string, so
+// deleting/renaming a pillar never orphans historical metrics.
+export const contentPillars = pgTable('content_pillars', {
+  slug: text('slug').primaryKey(),
+  label: text('label').notNull(),
+  body: text('body').notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: boolean('active').default(true).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+});
+
 export const scheduledPosts = pgTable(
   'scheduled_posts',
   {

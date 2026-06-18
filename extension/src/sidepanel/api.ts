@@ -14,6 +14,7 @@ import {
   type BatchReplyTweet,
   type Brief,
   type BriefTweet,
+  type ContentPillar,
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
@@ -23,6 +24,10 @@ import {
   type MentionStatus,
   type MentionsRefreshResult,
   type MentionsResponse,
+  type PillarCreateBody,
+  type PillarDraftBody,
+  type PillarDraftResult,
+  type PillarUpdateBody,
   type PostContext,
   type PostDraftBody,
   type PostDraftResponse,
@@ -56,11 +61,16 @@ export type {
   BatchReplyTweet,
   Brief,
   BriefTweet,
+  ContentPillar,
   CreateBody,
   CreateThreadBody,
   CreateThreadResponse,
   ListOpts,
   Mention,
+  PillarCreateBody,
+  PillarDraftBody,
+  PillarDraftResult,
+  PillarUpdateBody,
   MentionPatchBody,
   MentionStatus,
   MentionsRefreshResult,
@@ -152,6 +162,34 @@ export const api = {
     // §8.5 — quote-tweet re-up of one of my published posts.
     reup(s: Settings, body: PostReupBody): Promise<PostDraftResponse> {
       return request<PostDraftResponse>(s, '/x/posts/reup', { method: 'POST', body });
+    },
+  },
+
+  // §8.6 — editable content pillars (Voice → Pillars subtab + Composer dropdown).
+  pillars: {
+    list(s: Settings, opts: { active?: boolean } = {}): Promise<ContentPillar[]> {
+      const qs = opts.active === undefined ? '' : `?active=${opts.active}`;
+      return request<ContentPillar[]>(s, `/x/pillars${qs}`);
+    },
+
+    create(s: Settings, body: PillarCreateBody): Promise<ContentPillar> {
+      return request<ContentPillar>(s, '/x/pillars', { method: 'POST', body });
+    },
+
+    update(s: Settings, slug: string, body: PillarUpdateBody): Promise<ContentPillar> {
+      return request<ContentPillar>(s, `/x/pillars/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, slug: string): Promise<unknown> {
+      return request<unknown>(s, `/x/pillars/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    },
+
+    // Grok proposal (not persisted) — review/edit, then create/update to save.
+    draft(s: Settings, body: PillarDraftBody): Promise<PillarDraftResult> {
+      return request<PillarDraftResult>(s, '/x/pillars/draft', { method: 'POST', body });
     },
   },
 
@@ -273,12 +311,19 @@ export const api = {
     },
 
     generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraft> {
-      return request<ReplyDraft>(s, '/x/replies/generate', { method: 'POST', body });
+      // §8.6: the Settings toggle rides along centrally so no call site changes.
+      return request<ReplyDraft>(s, '/x/replies/generate', {
+        method: 'POST',
+        body: { ...body, applyPillars: s.applyPillarsToReplies },
+      });
     },
 
     // §7.2 — one Grok call drafts a reply per queued Radar tweet (not persisted).
     generateBatch(s: Settings, body: BatchReplyGenerateBody): Promise<BatchReplyResponse> {
-      return request<BatchReplyResponse>(s, '/x/replies/generate-batch', { method: 'POST', body });
+      return request<BatchReplyResponse>(s, '/x/replies/generate-batch', {
+        method: 'POST',
+        body: { ...body, applyPillars: s.applyPillarsToReplies },
+      });
     },
 
     patch(s: Settings, id: string, body: ReplyPatchBody): Promise<ReplyDraft> {

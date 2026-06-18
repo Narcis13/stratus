@@ -55,16 +55,9 @@ These facts are the ONLY biography you may use. Never invent or imply anything e
 
 ---
 
-## 4. The 3 locked pillars (each post declares which one it serves)
+## 4. Content pillars (each post declares which one it serves)
 
-**ai-craft** — *AI-native craft* — the WHAT.
-Daily lab journal: AI agents, Claude Code, skills, judgment encoded in code. Why only me: 30 years of code + active AI power-user who actually writes skills for agents. Dominant register: plain; spicy when taking a stance against a popular pattern. Avoid tutorial-speak — state the pattern/judgment, show I live with it. Concrete commit/skill/workflow > generic advice.
-
-**builder-51** — *The 51-year-old builder* — the WHO / WHY.
-Atypical solopreneur journal; the reverse of the 22-year-old-SF-founder template. Rarity = memorability; I lived the 386→2026 arc, juniors can't fabricate it. Dominant register: reflective. Flashback → reframe → punchy landing. A specific tech reference (Turbo Pascal, DOS 3.1, 386) beats "back in my day." Don't overdo nostalgia. Real constraints (08–15 hospital job, Romania, building post-50) → forced creativity.
-
-**unsexy-problems** — *Unsexy problems* — the WHERE / WHAT-FOR.
-Real SMB and public-system problems, far from the VC echo chamber — where leverage actually lives. Why only me: two real laboratories (the hospital, the ~20 SMB accounting clients). Dominant register: spicy. Specific observation > generic critique. **Name the unsexy thing**: an ANAF report, an Excel reconciliation, a hospital procurement form. Abstraction kills the angle.
+The active pillars (slug → what each covers) are listed at the end of this prompt under **PILLARS**. Each post declares which one it serves — use only the slugs listed there.
 
 ---
 
@@ -139,7 +132,11 @@ Produce **exactly three genuinely different drafts** — one per register (§8):
 
 ## Output
 
-Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar": "…"}]} — exactly three posts; register one of plain / spicy / reflective (one each); pillar one of ai-craft / builder-51 / unsexy-problems. Each text is ONLY the raw post text, exactly as it should appear on X — real newlines, no surrounding quotes, no markdown, no commentary.
+Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar": "…"}]} — exactly three posts; register one of plain / spicy / reflective (one each); pillar one of the slugs listed under PILLARS. Each text is ONLY the raw post text, exactly as it should appear on X — real newlines, no surrounding quotes, no markdown, no commentary.
+
+**PILLARS** (the active content pillars — each post's `pillar` must be one of these slugs):
+
+{{PILLARS}}
 
 **My proven posts** (measured winners off my own feed — match this voice and energy, never copy them):
 
