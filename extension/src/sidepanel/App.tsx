@@ -84,6 +84,7 @@ export function App(): JSX.Element {
             onClearRemix={() => setRemixTweetId(null)}
             onClearEdit={clearEdit}
             onSaved={onSaved}
+            onEdit={startEdit}
           />
         ) : activeTab === 'harvest' ? (
           <HarvestPanel />

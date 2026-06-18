@@ -22,6 +22,12 @@ function formatLocal(d: Date): string {
   )}:${pad(d.getMinutes())}`;
 }
 
+/** A Date → the `<input type="datetime-local">` value string (local zone). */
+export function dateToLocalInput(d: Date): string {
+  if (Number.isNaN(d.getTime())) return '';
+  return formatLocal(d);
+}
+
 export function startOfLocalDay(date: Date): Date {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);

@@ -1180,3 +1180,72 @@ button.danger:hover:not(:disabled) {
   margin-top: 4px;
   font-style: italic;
 }
+
+/* ---- Composer enhancements: suggest slot, cost preview, inline drafts ---- */
+.schedule-row {
+  align-items: stretch;
+}
+.schedule-row input {
+  flex: 1;
+}
+.thread-total {
+  font-size: 11px;
+}
+.cost-preview {
+  font-size: 12px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.cost-preview-warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.draft-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.draft-meta {
+  font-size: 11px;
+}
+.draft-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.draft-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.draft-card-head .counter {
+  margin-left: auto;
+}
+.draft-card-text {
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.draft-card-actions {
+  gap: 6px;
+}
+.draft-card-actions button {
+  padding: 4px 10px;
+}
+.badge-register {
+  background: rgba(79, 140, 255, 0.15);
+  color: var(--accent);
+}
+.badge-spicy {
+  background: rgba(224, 85, 109, 0.15);
+  color: var(--danger);
+}
+.badge-reflective {
+  background: rgba(90, 209, 154, 0.15);
+  color: var(--ok);
+}

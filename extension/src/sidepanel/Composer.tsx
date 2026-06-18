@@ -1,13 +1,21 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
-import type { PostPillar } from '../shared/types.ts';
+import type { PostPillar, PostRegister } from '../shared/types.ts';
 import {
   ApiError,
+  type PostDraftResponse,
   type ScheduledPost,
   type ScheduledPostWithThread,
   type UpdateBody,
   api,
 } from './api.ts';
-import { isoToLocalInput, localInputToIso } from './datetime.ts';
+import { estimatePostCostUsd, splitIntoThread, suggestSlotDate } from './composerLogic.ts';
+import {
+  addDays,
+  dateToLocalInput,
+  isoToLocalInput,
+  localInputToIso,
+  startOfLocalDay,
+} from './datetime.ts';
 import type { Settings } from './storage.ts';
 
 interface Props {
@@ -18,12 +26,18 @@ interface Props {
   onClearRemix: () => void;
   onClearEdit: () => void;
   onSaved: (post: ScheduledPost) => void;
+  /** Open one of the just-generated drafts in the editor (no calendar trip). */
+  onEdit: (id: string) => void;
 }
 
 const TWEET_LIMIT = 280;
 const URL_RE = /(^|\s)https?:\/\//i;
 // Matches each URL for the move-link-to-reply affordance (§8.2).
 const URL_EXTRACT_RE = /https?:\/\/\S+/g;
+// How far ahead "Suggest slot" scans the calendar for open anchors.
+const SLOT_HORIZON_DAYS = 7;
+
+type DraftCard = PostDraftResponse['drafts'][number];
 
 const PILLARS: Array<{ value: PostPillar | ''; label: string }> = [
   { value: '', label: 'any pillar (Grok declares)' },
@@ -32,6 +46,12 @@ const PILLARS: Array<{ value: PostPillar | ''; label: string }> = [
   { value: 'unsexy-problems', label: 'unsexy-problems — real SMB/public-system problems' },
 ];
 
+const REGISTER_LABEL: Record<PostRegister, string> = {
+  plain: 'plain',
+  spicy: 'spicy',
+  reflective: 'reflective',
+};
+
 export function ComposerPanel({
   settings,
   editingId,
@@ -39,12 +59,14 @@ export function ComposerPanel({
   onClearRemix,
   onClearEdit,
   onSaved,
+  onEdit,
 }: Props): JSX.Element {
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
   const [segments, setSegments] = useState<string[]>(['', '']);
   const [scheduledFor, setScheduledFor] = useState('');
   const [loading, setLoading] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [original, setOriginal] = useState<ScheduledPostWithThread | null>(null);
@@ -54,6 +76,8 @@ export function ComposerPanel({
   const [idea, setIdea] = useState('');
   const [pillar, setPillar] = useState<PostPillar | ''>('');
   const [drafting, setDrafting] = useState(false);
+  const [drafts, setDrafts] = useState<DraftCard[]>([]);
+  const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
 
   const isEditing = editingId !== null;
   const isThreadEdit = isEditing && original?.threadId != null;
@@ -68,6 +92,8 @@ export function ComposerPanel({
     setThread([]);
     setError(null);
     setNotice(null);
+    setDrafts([]);
+    setDraftMeta(null);
   }, []);
 
   useEffect(() => {
@@ -100,6 +126,16 @@ export function ComposerPanel({
   }, [editingId, settings, reset]);
 
   const headHasUrl = threadMode ? URL_RE.test(segments[0] ?? '') : URL_RE.test(text);
+  const overLimitSingle = !threadMode && !isEditing && text.length > TWEET_LIMIT;
+
+  // Live cost preview (invariant #1) — what this post will bill before you save.
+  const costPreview = estimatePostCostUsd(
+    isThreadEdit
+      ? { threadMode: true, text: '', segments: thread.map((s) => s.text) }
+      : threadMode && !isEditing
+        ? { threadMode: true, text: '', segments }
+        : { threadMode: false, text, segments: [] },
+  );
 
   // §8.2 affordance: a link in tweet 1 costs $0.20; in the first reply, $0.015.
   const moveLinkToReply = (): void => {
@@ -112,6 +148,44 @@ export function ComposerPanel({
     setSegments([stripped, urls.join('\n')]);
     setThreadMode(true);
     setNotice('Link moved to the first reply — $0.030 total instead of $0.20.');
+  };
+
+  // Break a >280 blob into a clean thread at natural boundaries.
+  const splitToThread = (): void => {
+    const segs = splitIntoThread(text, TWEET_LIMIT);
+    if (segs.length < 2) return;
+    setSegments(segs);
+    setThreadMode(true);
+    setNotice(`Split into ${segs.length} segments.`);
+  };
+
+  // Propose the next open, jittered anchor slot (never top-of-hour).
+  const suggestSlot = async (): Promise<void> => {
+    setSuggesting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const now = new Date();
+      const pending = await api.list(settings, {
+        status: 'pending',
+        from: startOfLocalDay(now).toISOString(),
+        to: addDays(now, SLOT_HORIZON_DAYS + 1).toISOString(),
+      });
+      const slotted = pending
+        .filter((p) => p.scheduledFor)
+        .map((p) => new Date(p.scheduledFor as string))
+        .filter((d) => !Number.isNaN(d.getTime()));
+      const slot = suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS);
+      if (!slot) {
+        setError(`No open slot in the next ${SLOT_HORIZON_DAYS} days — every anchor is filled.`);
+        return;
+      }
+      setScheduledFor(dateToLocalInput(slot));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not read the calendar');
+    } finally {
+      setSuggesting(false);
+    }
   };
 
   const submitSingle = async (): Promise<ScheduledPost> => {
@@ -201,30 +275,44 @@ export function ComposerPanel({
     }
   };
 
-  // §8.1 — three register-distinct drafts straight into the calendar.
-  const generateDrafts = async () => {
+  // §8.1 — three register-distinct drafts. They land as calendar draft rows AND
+  // come back in the response, so we render them inline as pickable cards. A
+  // regenerate (or "more like") throws away the previous, unpicked candidates.
+  const generateDrafts = async (seedIdea?: string) => {
+    const replacing = drafts;
     setDrafting(true);
     setError(null);
     setNotice(null);
     try {
+      const effectiveIdea = seedIdea !== undefined ? seedIdea : idea.trim();
       const res = await api.drafts.generate(settings, {
         ...(pillar ? { pillar } : {}),
-        ...(idea.trim() ? { idea: idea.trim() } : {}),
+        ...(effectiveIdea ? { idea: effectiveIdea } : {}),
         ...(remixTweetId ? { voiceTweetId: remixTweetId } : {}),
       });
-      setNotice(
-        `${res.drafts.length} drafts added to the calendar ` +
-          `(${res.winnersUsed} winners as voice anchors, $${res.costUsd.toFixed(4)}).`,
-      );
-      setIdea('');
+      setDrafts(res.drafts);
+      setDraftMeta({ winnersUsed: res.winnersUsed, costUsd: res.costUsd });
+      if (seedIdea !== undefined) setIdea(seedIdea);
       onClearRemix();
       const first = res.drafts[0];
       if (first) onSaved(first);
+      // Best-effort cleanup of the candidates we just replaced, so regenerating
+      // doesn't pile orphan drafts into the calendar.
+      await Promise.allSettled(replacing.map((d) => api.remove(settings, d.id)));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Draft failed');
     } finally {
       setDrafting(false);
     }
+  };
+
+  // Pick a generated draft → open it in the editor (it already exists as a draft
+  // row); the user sets a time and Saves, promoting it to pending. No round-trip
+  // through the Calendar tab.
+  const useDraft = (id: string): void => {
+    setDrafts([]);
+    setDraftMeta(null);
+    onEdit(id);
   };
 
   const updateSegment = (i: number, value: string): void => {
@@ -253,6 +341,10 @@ export function ComposerPanel({
     : threadMode && !isEditing
       ? segments.filter((s) => s.trim() !== '').length >= 2
       : text.trim() !== '' && TWEET_LIMIT - text.length >= 0;
+
+  const threadSegments = isThreadEdit ? thread.map((s) => s.text) : segments;
+  const threadCharTotal = threadSegments.reduce((n, s) => n + s.length, 0);
+  const threadFilledCount = threadSegments.filter((s) => s.trim() !== '').length;
 
   return (
     <form className="panel" onSubmit={submit}>
@@ -379,11 +471,27 @@ export function ComposerPanel({
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={6}
-            maxLength={TWEET_LIMIT * 2}
+            maxLength={TWEET_LIMIT * 4}
             placeholder="What are you posting?"
             disabled={isLocked}
           />
         </label>
+      )}
+
+      {(threadMode || isThreadEdit) && (
+        <div className="thread-total muted">
+          {threadFilledCount} segment{threadFilledCount === 1 ? '' : 's'} · {threadCharTotal} chars
+          total
+        </div>
+      )}
+
+      {overLimitSingle && (
+        <div className="warn">
+          ⚠ {text.length}/{TWEET_LIMIT} — too long for one tweet.{' '}
+          <button type="button" onClick={splitToThread}>
+            Split into thread ({splitIntoThread(text, TWEET_LIMIT).length})
+          </button>
+        </div>
       )}
 
       {headHasUrl && (
@@ -399,18 +507,37 @@ export function ComposerPanel({
 
       <label className="field">
         <span>Scheduled for (local time)</span>
-        <input
-          type="datetime-local"
-          value={scheduledFor}
-          onChange={(e) => setScheduledFor(e.target.value)}
-          disabled={isLocked}
-        />
+        <div className="row schedule-row">
+          <input
+            type="datetime-local"
+            value={scheduledFor}
+            onChange={(e) => setScheduledFor(e.target.value)}
+            disabled={isLocked}
+          />
+          {!isLocked && (
+            <button type="button" onClick={() => void suggestSlot()} disabled={suggesting}>
+              {suggesting ? '…' : 'Suggest slot'}
+            </button>
+          )}
+          {scheduledFor && !isLocked && (
+            <button type="button" onClick={() => setScheduledFor('')} title="Clear → save as draft">
+              ✕
+            </button>
+          )}
+        </div>
         <small className="muted">
           {scheduledFor
             ? 'Will save as pending and ship at this minute.'
             : 'Empty → saved as draft.'}
         </small>
       </label>
+
+      {costPreview.usd > 0 && (
+        <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
+          ≈ ${costPreview.usd.toFixed(3)}
+          {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
+        </div>
+      )}
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="ok">{notice}</div>}
@@ -463,12 +590,55 @@ export function ComposerPanel({
             />
           </label>
           <button type="button" onClick={() => void generateDrafts()} disabled={drafting}>
-            {drafting ? 'Drafting…' : 'Generate 3 drafts (~$0.01)'}
+            {drafting
+              ? 'Drafting…'
+              : drafts.length > 0
+                ? 'Regenerate 3 drafts (~$0.01)'
+                : 'Generate 3 drafts (~$0.01)'}
           </button>
-          <small className="muted">
-            One plain, one spicy, one reflective — landing as calendar drafts. Nothing posts until
-            you schedule one.
-          </small>
+
+          {drafts.length > 0 ? (
+            <div className="draft-cards">
+              {draftMeta && (
+                <div className="muted draft-meta">
+                  {drafts.length} drafts · {draftMeta.winnersUsed} winners as voice anchors · $
+                  {draftMeta.costUsd.toFixed(4)}. Pick one to set a time, or regenerate.
+                </div>
+              )}
+              {drafts.map((d) => (
+                <div className="draft-card" key={d.id}>
+                  <div className="draft-card-head">
+                    {d.register && (
+                      <span className={`badge badge-register badge-${d.register}`}>
+                        {REGISTER_LABEL[d.register]}
+                      </span>
+                    )}
+                    {d.pillar && <span className="badge badge-pillar">{d.pillar}</span>}
+                    <span className="counter">{d.text.length}</span>
+                  </div>
+                  <div className="draft-card-text">{d.text}</div>
+                  <div className="row draft-card-actions">
+                    <button type="button" className="primary" onClick={() => useDraft(d.id)}>
+                      Use this →
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void generateDrafts(d.text)}
+                      disabled={drafting}
+                      title="Feed this draft back as the seed for three fresh takes"
+                    >
+                      More like this
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <small className="muted">
+              One plain, one spicy, one reflective — pick one inline to schedule, the rest stay as
+              calendar drafts. Nothing posts until you schedule it.
+            </small>
+          )}
         </section>
       )}
     </form>
