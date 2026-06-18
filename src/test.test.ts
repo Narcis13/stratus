@@ -390,6 +390,22 @@ describe('reply prompt (§7.1)', () => {
     expect(blankLineBetweenPropositions('just one line')).toBe('just one line');
     // three propositions each get a blank line
     expect(blankLineBetweenPropositions('a\nb\nc')).toBe('a\n\nb\n\nc');
+    // sentences sharing one line are split (the common model output)
+    expect(blankLineBetweenPropositions('Sentence one. Sentence two.')).toBe(
+      'Sentence one.\n\nSentence two.',
+    );
+    // ? and ! end sentences too
+    expect(blankLineBetweenPropositions('Really? Yes! Ship it.')).toBe('Really?\n\nYes!\n\nShip it.');
+    // a decimal is not a sentence boundary
+    expect(blankLineBetweenPropositions('I shipped 3.5 features today. It worked.')).toBe(
+      'I shipped 3.5 features today.\n\nIt worked.',
+    );
+    // an ellipsis signals continuation — kept whole
+    expect(blankLineBetweenPropositions('Hmm... Maybe it works.')).toBe('Hmm... Maybe it works.');
+    // already-split sentences are not doubled up
+    expect(blankLineBetweenPropositions('Sentence one.\n\nSentence two.')).toBe(
+      'Sentence one.\n\nSentence two.',
+    );
   });
 
   test('parseReplyVariants blank-line-separates multi-line replies', () => {

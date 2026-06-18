@@ -141,15 +141,24 @@ export const REPLY_VARIANTS_SCHEMA = {
 } as const;
 
 // X reply formatting: a reply with more than one proposition reads better with
-// a blank line between each. The prompt asks the model to separate propositions
-// with newlines, but it does so inconsistently (a single \n, sometimes none of
-// the blank line it's told to use). This normalizes every newline run between
-// non-empty lines to exactly one blank line, drops stray blank lines and
-// per-line trailing space, and leaves a single-proposition reply untouched.
-// Applied to every generated reply (Reply Master + Radar batch) so what gets
-// stored and copied to the clipboard is the ship-ready spacing.
+// a blank line between each. The model is inconsistent — it returns multiple
+// sentences on a single line as often as it uses a lone \n where a blank line
+// was asked for. So we do it deterministically: first break each sentence onto
+// its own line (a run of .!? followed by whitespace and a new-sentence start),
+// then normalize every newline run between non-empty lines to exactly one blank
+// line and strip stray blanks / per-line trailing space. A single-proposition
+// reply is left untouched. Applied to every generated reply (Reply Master +
+// Radar batch) so what gets stored and copied to the clipboard is ship-ready.
+//
+// Guards against false splits: a decimal ("3.5") has no space after the dot so
+// never matches; an ellipsis ("Hmm... ") is a run of ≥2 dots and is kept whole
+// (it signals continuation, not a sentence end).
 export function blankLineBetweenPropositions(text: string): string {
-  return text
+  const withBreaks = text.replace(
+    /([.!?]+)\s+(?=["'(@#]?[A-Z0-9])/g,
+    (m, punct: string) => (/^\.{2,}$/.test(punct) ? m : `${punct}\n`),
+  );
+  return withBreaks
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
