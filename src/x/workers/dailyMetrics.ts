@@ -191,7 +191,7 @@ async function discover(
     const [latest] = await db
       .select({ tweetId: postsPublished.tweetId })
       .from(postsPublished)
-      .orderBy(sql`${postsPublished.tweetId}::bigint desc`)
+      .orderBy(sql`CAST(${postsPublished.tweetId} AS INTEGER) desc`)
       .limit(1);
     sinceId = latest?.tweetId;
   }
@@ -273,23 +273,23 @@ async function snapshotDue(token: string, result: RunResult): Promise<void> {
       const foundIds = found.map((t) => t.id);
       const foundSet = new Set(foundIds);
       const unserved = ids.filter((id) => !foundSet.has(id));
-      await db.transaction(async (tx) => {
+      db.transaction((tx) => {
         if (foundIds.length > 0) {
-          await tx
-            .update(postsPublished)
+          tx.update(postsPublished)
             .set({
               pollCount: sql`${postsPublished.pollCount} + 1`,
               lastSeenAt: now,
               nextPollAt: null,
               retired: true,
             })
-            .where(inArray(postsPublished.tweetId, foundIds));
+            .where(inArray(postsPublished.tweetId, foundIds))
+            .run();
         }
         if (unserved.length > 0) {
-          await tx
-            .update(postsPublished)
+          tx.update(postsPublished)
             .set({ retired: true, lastSeenAt: now })
-            .where(inArray(postsPublished.tweetId, unserved));
+            .where(inArray(postsPublished.tweetId, unserved))
+            .run();
         }
       });
       result.retired += ids.length;
@@ -349,10 +349,12 @@ async function rereadWinners(token: string, result: RunResult): Promise<void> {
           // Stay inside the 30-day private-fields window; a candidate older
           // than that missed its re-read on purpose (bounded by design).
           gte(postsPublished.postedAt, new Date(now.getTime() - PRIVATE_FIELDS_MAX_AGE_MS)),
-          sql`(${metricsSnapshots.publicMetrics}->>'impression_count')::int >= ${WINNER_REREAD_MIN_VIEWS}`,
+          sql`CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER) >= ${WINNER_REREAD_MIN_VIEWS}`,
         ),
       )
-      .orderBy(sql`(${metricsSnapshots.publicMetrics}->>'impression_count')::int desc`)
+      .orderBy(
+        sql`CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER) desc`,
+      )
       .limit(WINNER_REREAD_CAP);
   } catch (err) {
     console.error(`dailyMetrics: winner re-read candidate query failed: ${describe(err)}`);

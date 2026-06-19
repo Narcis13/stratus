@@ -36,7 +36,7 @@ healthz.get('/healthz', async (c) => {
 
   let dbOk = true;
   try {
-    await db.execute(sql`select 1`);
+    db.run(sql`select 1`);
   } catch (err) {
     dbOk = false;
     console.error('healthz: db check failed:', err instanceof Error ? err.message : err);

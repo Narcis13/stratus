@@ -33,37 +33,55 @@ export async function deleteStore(): Promise<void> {
   await db.delete(tokens).where(eq(tokens.id, ROW_ID));
 }
 
+// Serializes the refresh+persist critical section. The old Postgres path held a
+// `SELECT … FOR UPDATE` row lock across the network refresh — impossible on the
+// synchronous SQLite driver (you can't keep a transaction open across an await).
+// Single process now, so an in-process promise chain is the correct lock: it
+// guarantees two concurrent callers can't both POST /oauth2/token with the same
+// rotating refresh_token (the loser would 4xx and its new token would be lost,
+// locking the account out permanently — invariant #3).
+let refreshGate: Promise<unknown> = Promise.resolve();
+
+function runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+  // Chain regardless of the previous run's outcome; keep the tail non-rejecting
+  // so one failed refresh can't poison the gate for every later caller.
+  const run = refreshGate.then(fn, fn);
+  refreshGate = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 /**
  * Read tokens, refresh if expired, persist BEFORE returning the access token.
- *
- * Holds a `SELECT … FOR UPDATE` row lock across the refresh + write so two
- * concurrent callers can't both POST /oauth2/token with the same refresh_token.
- * X rotates the refresh_token on every call — the loser would 4xx and the new
- * token would never be persisted, locking the account out permanently.
+ * The persist-before-return ordering is invariant #3: X rotates the
+ * refresh_token on every refresh, so the new one must hit disk before we hand
+ * back the access token.
  */
 export async function getValidAccessToken(args: {
   clientId: string;
   clientSecret: string;
 }): Promise<string> {
-  return db.transaction(async (tx) => {
-    const rows = await tx.select().from(tokens).where(eq(tokens.id, ROW_ID)).for('update');
-    const row = rows[0];
-    if (!row) throw new Error(`no tokens row (id=${ROW_ID}) — run \`bun run auth\` first`);
+  const current = await readStore();
+  if (!current) throw new Error(`no tokens row (id=${ROW_ID}) — run \`bun run auth\` first`);
+  if (current.expiresAt > Date.now() + REFRESH_BUFFER_MS) return current.accessToken;
 
-    const stored = rowToStored(row);
-    if (stored.expiresAt > Date.now() + REFRESH_BUFFER_MS) {
-      return stored.accessToken;
-    }
+  return runExclusive(async () => {
+    // Re-read inside the critical section — a queued refresh may have already
+    // rotated the token while we waited on the gate.
+    const latest = await readStore();
+    if (!latest) throw new Error(`no tokens row (id=${ROW_ID}) — run \`bun run auth\` first`);
+    if (latest.expiresAt > Date.now() + REFRESH_BUFFER_MS) return latest.accessToken;
 
     const fresh = await refreshTokens({
       clientId: args.clientId,
       clientSecret: args.clientSecret,
-      refreshToken: stored.refreshToken,
+      refreshToken: latest.refreshToken,
     });
 
-    const next: StoredTokens = { ...stored, ...fresh, lastRefreshAt: Date.now() };
-
-    await tx.update(tokens).set(storedToRow(next)).where(eq(tokens.id, ROW_ID));
+    const next: StoredTokens = { ...latest, ...fresh, lastRefreshAt: Date.now() };
+    await writeStore(next); // persist the rotated refresh token BEFORE returning
     return next.accessToken;
   });
 }

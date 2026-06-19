@@ -23,7 +23,8 @@ Hard scope ceiling: if a feature isn't in service of those three, it doesn't get
 - Bun ≥ 1.1, TypeScript strict (`allowImportingTsExtensions`, `noEmit`)
 - Native `fetch`, `Bun.serve`, `Bun.file`, `bun:test`
 - Biome for lint/format
-- **Planned (not yet present):** Hono (HTTP), Neon Postgres + Drizzle ORM (state), in-process `setInterval` workers (no Redis/BullMQ), Chrome MV3 side-panel extension (Vite + React).
+- **State:** local **SQLite via `bun:sqlite`** + Drizzle ORM (`sqlite-core`). Migrated off Neon Postgres 2026-06-19 — see the migration entry in Phase status and `MIGRATION-RUNBOOK.md`. The driver is **synchronous**: DB transactions take sync callbacks (`.all()`/`.get()`/`.run()`, no `await` inside) and you can't bind a JS `Date` in a raw `sql\`\`` template (use `.getTime()`).
+- In-process `setInterval` workers (no Redis/BullMQ), Chrome MV3 side-panel extension (Vite + React).
 
 ## Repo map
 
@@ -37,9 +38,11 @@ src/
 
   x/              all X-specific code (Phase 1 relocation done — pure move, no behavior change)
     auth.ts         OAuth 2.0 PKCE — pair gen, authorize URL, exchange, refresh, scopes
-    token-store.ts  Postgres-backed single-row token store (tokens.id='default');
+    token-store.ts  SQLite-backed single-row token store (tokens.id='default');
                     getValidAccessToken persists the rotated refresh token before
-                    returning the access token (legacy .tokens.json deleted 2026-06-10)
+                    returning the access token, serialized through an in-process
+                    promise-chain mutex (the old Postgres FOR UPDATE lock can't
+                    hold across the HTTP refresh on the sync SQLite driver — §3)
     client.ts       xFetch — the ONE place all X API calls go through; exposes onCost
     fields.ts       field-selection defaults (defaultPostParams)
     errors.ts       XApiError + classify (RFC 7807 problem-details parsing)
@@ -57,7 +60,7 @@ The repo grows in **per-platform vertical slices**. X gets its own folder; futur
 src/
   app.ts                 Hono app — mounts platform routers, shared middleware, starts workers
   middleware/            auth (bearer), cors (chrome-extension://*), costTracker (platform-tagged)
-  db/                    Neon + Drizzle singletons, shared-schema.ts (cost_events), migrations/
+  db/                    bun:sqlite + Drizzle singletons (auto-migrate at boot), shared-schema.ts (cost_events), migrations/
   routes/                cost.ts (cross-platform spend), healthz.ts
   x/
     …existing primitives…
@@ -108,6 +111,8 @@ When LinkedIn arrives later: create `src/linkedin/` with the same shape, registe
 
 - **Overhaul 8.6 — Editable content pillars (2026-06-19, $0 + ~$0.003/AI draft):** the three pillars are no longer hardcoded in the post prompt — they're DB-backed and editable from the extension. New `content_pillars` table (slug PK, label, body, sortOrder, active; seeded with the original 3 via the migration's INSERT, mirrored by `DEFAULT_PILLARS` in `src/x/posts/pillars.ts`). **`post prompt.md` §4 + `POST_PROMPT_TEMPLATE` changed together** (still byte-asserted): §4 is now a pointer to a `{{PILLARS}}` block injected at the **variable tail** (keeps the instruction block a stable cacheable prefix), and the drafter builds the structured-output `pillar` enum from the live slug set (`buildPostDraftsSchema(slugs)`); `parsePillar`/`parsePostDrafts` validate against the active slugs (the seed set is the default arg, so old call sites/tests still pass). New `src/x/routes/pillars.ts` (always mounted — the Composer dropdown needs it without XAI): `GET/POST/PATCH/DELETE /x/pillars` (last-active delete/deactivate guarded with 409 so the enum is never empty) + `POST /x/pillars/draft` (`{mode:'new'|'tweak', idea?, slug?, instruction?}` → one Grok structured-output `{slug,label,body}` **proposal, not persisted**; runtime XAI check → 503; grounded on a compact persona + the existing pillars; `src/x/posts/pillarDraft.ts`). **Replies opt-in** (`OVERHAUL` posts+replies, default OFF): `/x/replies/generate` + `/generate-batch` accept `applyPillars?` (the extension Settings toggle `applyPillarsToReplies` rides along centrally via `api.replies`), and `buildGrokInput`/`buildBatchGrokInput` append a "Content pillars to honor" section at render time — `reply prompt.md`/`REPLY_PROMPT_TEMPLATE` untouched (their sync test is unaffected). Extension: **Voice tab gained a Tweets|Pillars subtab** (`Pillars.tsx` — edit label/body, Save/Reset, activate toggle, delete, per-pillar AI tweak, AI-draft a new one for review-then-save); the Composer pillar dropdown now fetches `GET /x/pillars?active=true`. `scripts/smoke-pillars.ts` is the rerunnable check ($0 CRUD; `--live` adds one draft ~$0.003). `parsePillar` moved to `src/x/posts/pillars.ts` (was in `drafter.ts`).
 
+- **Infra — Neon → SQLite (2026-06-19, $0):** Neon's free-tier compute quota locked the project out, so state moved from Neon Postgres to **local SQLite (`bun:sqlite`)** — a clean fit for a single-process, single-user, low-write service (no daemon, negligible RAM, no monthly compute meter that an always-on worker exhausts). `src/db/client.ts` is now a `bun:sqlite` Database (WAL, `foreign_keys=ON`, auto-migrate at boot via the bun-sqlite migrator); both schema files are `sqlite-core`. Type mapping: `timestamptz`→`integer({mode:'timestamp_ms'})`, `jsonb`/`text[]`→`text({mode:'json'})`, `boolean`→`integer({mode:'boolean'})`, `uuid` PK→`text().$defaultFn(crypto.randomUUID)`, `bigserial`→`integer autoIncrement`, `numeric`→`real`. The **synchronous driver** forced: (a) all 6 DB transactions to sync callbacks with explicit `.all()`/`.get()`/`.run()` terminals; (b) `token-store` off the `FOR UPDATE` lock onto an in-process mutex (invariant #3); (c) raw `sql\`\`` date comparisons to `.getTime()` (bun:sqlite can't bind a `Date`); plus Postgres-isms rewritten — `::bigint`→`CAST(… AS INTEGER)`, `jsonb ->> …::int`→`CAST(json_extract(…) AS INTEGER)`, `ilike`→`like … escape '\\'`, `to_char(… at time zone 'UTC')`→`strftime`. The historical Neon data is intact but unreadable until the quota resets (~start of next billing month) or an upgrade; **`scripts/migrate-neon-to-sqlite.ts`** is the one-shot idempotent copy, with the full runbook in `MIGRATION-RUNBOOK.md`. The Hetzner `stratus.service` was stopped+disabled during the wait (re-enabled by `deploy.sh`). Local `DATABASE_URL` is now copy-only; runtime never touches Postgres. `bun test` runs against `SQLITE_PATH=:memory:`.
+
 Authoritative source for what's actually wired is `src/x/index.ts` (`mountX` + `startXWorkers`). See `PLAN.md` §"Phased build" for the full breakdown.
 
 ## Non-negotiable invariants
@@ -121,7 +126,7 @@ A post whose `text` matches `/(^|\s)https?:\/\//i` is billed at $0.20, not $0.01
 Self-replies (own threads) always work. Replying to others via `in_reply_to_tweet_id` is **blocked on self-serve tiers** unless the original author @-mentioned the app or quoted it. `createPost` requires `selfXUserId` so the caller can't accidentally reply to a non-self tweet. Largest open product question — see X plan §13.1. (PLAN.md v1 explicitly excludes replies to non-self tweets and cross-account quote tweets for this reason.)
 
 ### 3. Token rotation atomicity
-X rotates the **refresh token on every refresh**. If we lose the new refresh token between issuance and persistence, the user is permanently locked out. `token-store.ts::getValidAccessToken` writes the new token to disk *before* returning the access token. If you change that order, you'll burn someone's account. The Phase 1 swap to a Postgres-backed token store must preserve this ordering (write new refresh token in the same transaction *before* returning the access token).
+X rotates the **refresh token on every refresh**. If we lose the new refresh token between issuance and persistence, the user is permanently locked out. `token-store.ts::getValidAccessToken` writes the new token to disk *before* returning the access token. If you change that order, you'll burn someone's account. On SQLite (sync driver) the old `SELECT … FOR UPDATE` lock is gone — you can't hold a DB transaction across the network refresh — so the refresh+persist critical section is serialized by an **in-process promise-chain mutex** (`runExclusive`). Two concurrent callers can't both POST the same rotating refresh_token, and the rotated token is always persisted before return. Single-process only; if this ever becomes multi-process, this guarantee needs a real distributed lock.
 
 ### 4. One place to call X
 Every X call goes through `xFetch` in `src/x/client.ts`. That's where retries, error parsing, rate-limit headers, and `onCost` live. Don't sprinkle direct `fetch('https://api.x.com/...')` around the codebase — not in workers, not in routes, not in scripts.

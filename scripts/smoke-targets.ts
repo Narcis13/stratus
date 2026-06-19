@@ -6,7 +6,7 @@
 
 import { eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, pool } from '../src/db/client.ts';
+import { db } from '../src/db/client.ts';
 import { accountSnapshots, voiceAuthorSnapshots } from '../src/x/db/schema.ts';
 import { createVoiceRouter } from '../src/x/routes/voice.ts';
 
@@ -84,12 +84,11 @@ if (after.targets[0]?.handle !== HANDLE) {
 const del = await app.request(`/x/voice/authors/${HANDLE}`, { method: 'DELETE' });
 if (del.status !== 200) fail(`delete returned ${del.status}: ${await del.text()}`);
 const [left] = await db
-  .select({ n: sql<number>`count(*)::int` })
+  .select({ n: sql<number>`count(*)` })
   .from(voiceAuthorSnapshots)
   .where(eq(voiceAuthorSnapshots.handle, HANDLE));
 if (left?.n !== 0) fail(`${left?.n} snapshot rows survived the delete`);
 console.log('delete: author + snapshot series removed');
 
 console.log('SMOKE OK');
-await pool.end();
 process.exit(0);

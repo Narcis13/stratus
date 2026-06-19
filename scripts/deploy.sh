@@ -41,6 +41,10 @@ rsync -az --delete \
   --exclude 'extension/node_modules' \
   --exclude 'extension/dist' \
   --exclude '.tokens.json' \
+  --exclude 'stratus.db' \
+  --exclude 'stratus.db-wal' \
+  --exclude 'stratus.db-shm' \
+  --exclude '*.sqlite' \
   --exclude '.env' \
   --exclude '.env.local' \
   --exclude '.DS_Store' \
@@ -77,15 +81,19 @@ ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && bun install --frozen-l
 
 # Migration status BEFORE restart (§9.8): a restart against an un-migrated
 # schema is the silent way to crash every worker tick. drizzle-kit migrate is
-# idempotent — applied migrations are skipped.
+# idempotent — applied migrations are skipped. Sourcing .env makes drizzle-kit
+# (SQLite now) target the same SQLITE_PATH the service uses; the app also
+# auto-migrates at boot, so this is belt-and-suspenders.
 echo "==> run migrations (idempotent)"
-ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && bunx drizzle-kit migrate' " || {
+ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && set -a && . ./.env && set +a && bunx drizzle-kit migrate' " || {
   echo "ERROR: migrations failed — NOT restarting the service." >&2
   exit 1
 }
 
-echo "==> restart service"
-ssh "$REMOTE" "systemctl restart stratus.service"
+echo "==> enable + restart service"
+# enable corrects the 2026-06-19 manual `systemctl disable` (done to stop the
+# crash-looping Neon-era service during the SQLite migration window).
+ssh "$REMOTE" "systemctl enable stratus.service >/dev/null 2>&1 || true; systemctl restart stratus.service"
 
 echo "==> health check"
 sleep 2

@@ -121,9 +121,12 @@ async function warnStuckPublishing(): Promise<void> {
   }
 }
 
-async function claimOne(): Promise<typeof scheduledPosts.$inferSelect | null> {
-  return db.transaction(async (tx) => {
-    const rows = await tx
+// Synchronous claim transaction (SQLite is a single writer, so there's no
+// concurrent claimer to race — `FOR UPDATE SKIP LOCKED` is gone). The claim
+// still commits BEFORE the X call: a crash mid-call can never re-select the row.
+function claimOne(): typeof scheduledPosts.$inferSelect | null {
+  return db.transaction((tx) => {
+    const rows = tx
       .select()
       .from(scheduledPosts)
       .where(
@@ -131,15 +134,15 @@ async function claimOne(): Promise<typeof scheduledPosts.$inferSelect | null> {
       )
       .orderBy(asc(scheduledPosts.scheduledFor))
       .limit(1)
-      .for('update', { skipLocked: true });
+      .all();
 
     const row = rows[0];
     if (!row) return null;
 
-    await tx
-      .update(scheduledPosts)
+    tx.update(scheduledPosts)
       .set({ status: 'publishing', updatedAt: new Date() })
-      .where(eq(scheduledPosts.id, row.id));
+      .where(eq(scheduledPosts.id, row.id))
+      .run();
     return row;
   });
 }
@@ -318,13 +321,12 @@ async function postOne(
   }
 
   const now = new Date();
-  await db.transaction(async (tx) => {
+  db.transaction((tx) => {
     // onConflictDoNothing guards against a tight race where the reconciler
     // inserted this tweet first (saw it on X before our txn committed). The
     // existing row stays as-is — possibly mislabeled `'manual'` — but the
     // scheduled_posts row still flips to 'posted' below, which is correct.
-    await tx
-      .insert(postsPublished)
+    tx.insert(postsPublished)
       .values({
         tweetId: out.id,
         scheduledPostId: row.id,
@@ -338,9 +340,9 @@ async function postOne(
         // non-retired row regardless of age. See workers/dailyMetrics.ts.
         nextPollAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
       })
-      .onConflictDoNothing();
-    await tx
-      .update(scheduledPosts)
+      .onConflictDoNothing()
+      .run();
+    tx.update(scheduledPosts)
       .set({
         status: 'posted',
         postedTweetId: out.id,
@@ -348,7 +350,8 @@ async function postOne(
         errorDetail: null,
         updatedAt: now,
       })
-      .where(eq(scheduledPosts.id, row.id));
+      .where(eq(scheduledPosts.id, row.id))
+      .run();
   });
   console.log(`publisher: ${row.id} → ${out.id}`);
   return { kind: 'posted', tweetId: out.id };

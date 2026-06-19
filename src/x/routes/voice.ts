@@ -25,7 +25,6 @@ import {
   desc,
   eq,
   gte,
-  ilike,
   inArray,
   isNotNull,
   isNull,
@@ -170,7 +169,7 @@ export function createVoiceRouter(): Hono {
   router.get('/voice/authors', async (c) => {
     const includeRetired = c.req.query('retired') === 'true';
 
-    const tweetCount = sql<number>`count(${voiceTweets.tweetId})::int`.as('tweet_count');
+    const tweetCount = sql<number>`count(${voiceTweets.tweetId})`.as('tweet_count');
 
     const rows = await db
       .select({
@@ -224,7 +223,7 @@ export function createVoiceRouter(): Hono {
     if (!handle) return c.json({ error: 'invalid_handle' }, 400);
 
     const [countRow] = await db
-      .select({ count: sql<number>`count(*)::int` })
+      .select({ count: sql<number>`count(*)` })
       .from(voiceTweets)
       .where(eq(voiceTweets.authorHandle, handle));
     const tweetCount = countRow?.count ?? 0;
@@ -232,12 +231,13 @@ export function createVoiceRouter(): Hono {
 
     // The follower series is derived data of the author — drop it with them
     // (it FK-references the handle, so it must go first).
-    const deleted = await db.transaction(async (tx) => {
-      await tx.delete(voiceAuthorSnapshots).where(eq(voiceAuthorSnapshots.handle, handle));
+    const deleted = db.transaction((tx) => {
+      tx.delete(voiceAuthorSnapshots).where(eq(voiceAuthorSnapshots.handle, handle)).run();
       return tx
         .delete(voiceAuthors)
         .where(eq(voiceAuthors.handle, handle))
-        .returning({ handle: voiceAuthors.handle });
+        .returning({ handle: voiceAuthors.handle })
+        .all();
     });
 
     if (deleted.length === 0) return c.json({ error: 'not_found' }, 404);
@@ -310,7 +310,7 @@ export function createVoiceRouter(): Hono {
                 sql`max(${replyDrafts.updatedAt}) filter (where ${replyDrafts.status} = 'posted')`.mapWith(
                   replyDrafts.updatedAt,
                 ),
-              postedReplies: sql<number>`count(*) filter (where ${replyDrafts.status} = 'posted')::int`,
+              postedReplies: sql<number>`count(*) filter (where ${replyDrafts.status} = 'posted')`,
             })
             .from(replyDrafts)
             .where(inArray(sql`lower(${replyDrafts.sourceAuthorUsername})`, handles))
@@ -369,15 +369,17 @@ export function createVoiceRouter(): Hono {
     }
 
     if (q) {
-      // ILIKE with escaped wildcards — keep the query as a substring match.
+      // Substring match with the user's %/_/\ taken literally. SQLite LIKE is
+      // case-insensitive for ASCII (stands in for Postgres ILIKE) but, unlike
+      // Postgres, has NO default escape char — so spell out `escape '\'`.
       const pattern = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-      filters.push(ilike(voiceTweets.text, pattern));
+      filters.push(sql`${voiceTweets.text} like ${pattern} escape '\\'`);
     }
 
     // Template filters (§8.3): "show me stat-hook tweets" becomes a query.
     if (hook) {
       const pattern = `%${hook.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-      filters.push(ilike(voiceTweets.hookType, pattern));
+      filters.push(sql`${voiceTweets.hookType} like ${pattern} escape '\\'`);
     }
     if (extractedParam !== undefined) {
       if (extractedParam !== 'true' && extractedParam !== 'false') {

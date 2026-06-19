@@ -127,47 +127,49 @@ harvest.post('/harvest/rows', async (c) => {
   }
 
   const now = new Date();
-  await db.transaction(async (tx) => {
-    await tx.insert(harvestRows).values(
-      rows.map((r) => ({
-        runId,
-        tweetId: r.tweetId,
-        handle: r.handle,
-        mode: run.mode,
-        text: r.text,
-        comments: r.comments,
-        reposts: r.reposts,
-        likes: r.likes,
-        bookmarks: r.bookmarks,
-        views: r.views,
-        tweetTime: r.tweetTime,
-        capturedAt: now,
-        origTweetId: r.orig?.tweetId ?? null,
-        origHandle: r.orig?.handle ?? null,
-        origText: r.orig?.text ?? null,
-        origTime: r.orig?.time ?? null,
-        origComments: r.orig?.comments ?? null,
-        origLikes: r.orig?.likes ?? null,
-        origViews: r.orig?.views ?? null,
-        matchedDraftId: matchedDraftByTweet.get(r.tweetId) ?? null,
-        hasPhoto: r.hasPhoto,
-        hasVideo: r.hasVideo,
-        isQuote: r.isQuote,
-        textLen: r.textLen,
-        lineBreaks: r.lineBreaks,
-        groupPosition: r.groupPosition,
-      })),
-    );
+  db.transaction((tx) => {
+    tx.insert(harvestRows)
+      .values(
+        rows.map((r) => ({
+          runId,
+          tweetId: r.tweetId,
+          handle: r.handle,
+          mode: run.mode,
+          text: r.text,
+          comments: r.comments,
+          reposts: r.reposts,
+          likes: r.likes,
+          bookmarks: r.bookmarks,
+          views: r.views,
+          tweetTime: r.tweetTime,
+          capturedAt: now,
+          origTweetId: r.orig?.tweetId ?? null,
+          origHandle: r.orig?.handle ?? null,
+          origText: r.orig?.text ?? null,
+          origTime: r.orig?.time ?? null,
+          origComments: r.orig?.comments ?? null,
+          origLikes: r.orig?.likes ?? null,
+          origViews: r.orig?.views ?? null,
+          matchedDraftId: matchedDraftByTweet.get(r.tweetId) ?? null,
+          hasPhoto: r.hasPhoto,
+          hasVideo: r.hasVideo,
+          isQuote: r.isQuote,
+          textLen: r.textLen,
+          lineBreaks: r.lineBreaks,
+          groupPosition: r.groupPosition,
+        })),
+      )
+      .run();
     for (const b of backfills) {
-      await tx
-        .update(replyDrafts)
+      tx.update(replyDrafts)
         .set({ postedTweetId: b.tweetId, updatedAt: now })
-        .where(eq(replyDrafts.id, b.draftId));
+        .where(eq(replyDrafts.id, b.draftId))
+        .run();
     }
-    await tx
-      .update(harvestRuns)
+    tx.update(harvestRuns)
       .set({ rowCount: run.rowCount + rows.length })
-      .where(eq(harvestRuns.id, runId));
+      .where(eq(harvestRuns.id, runId))
+      .run();
   });
 
   return c.json(

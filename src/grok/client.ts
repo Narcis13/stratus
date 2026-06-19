@@ -290,19 +290,20 @@ interface LogCost {
 function logCost(info: LogCost): void {
   // Fire-and-forget — same guarantees as src/middleware/costTracker.ts: a
   // failed insert must never break the caller of askGrok.
-  db.insert(costEvents)
-    .values({
-      platform: 'grok',
-      endpoint: '/v1/responses',
-      status: info.status,
-      items: info.totalTokens || null,
-      costUsd: info.costUsd.toFixed(5),
-      durationMs: Math.round(info.durationMs),
-      attempts: info.attempts,
-      requestId: info.requestId,
-    })
-    .execute()
-    .catch((err) => {
-      console.error('grok cost log failed:', err instanceof Error ? err.message : err);
-    });
+  try {
+    db.insert(costEvents)
+      .values({
+        platform: 'grok',
+        endpoint: '/v1/responses',
+        status: info.status,
+        items: info.totalTokens || null,
+        costUsd: Number(info.costUsd.toFixed(5)),
+        durationMs: Math.round(info.durationMs),
+        attempts: info.attempts,
+        requestId: info.requestId,
+      })
+      .run();
+  } catch (err) {
+    console.error('grok cost log failed:', err instanceof Error ? err.message : err);
+  }
 }

@@ -8,7 +8,7 @@
 
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, pool } from '../src/db/client.ts';
+import { db } from '../src/db/client.ts';
 import { contentPillars } from '../src/x/db/schema.ts';
 import { pillars } from '../src/x/routes/pillars.ts';
 
@@ -119,5 +119,4 @@ if (live) {
 }
 
 console.log('SMOKE OK');
-await pool.end();
 process.exit(0);

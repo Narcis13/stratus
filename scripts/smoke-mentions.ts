@@ -10,7 +10,7 @@
 
 import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, pool } from '../src/db/client.ts';
+import { db } from '../src/db/client.ts';
 import { mentions, postsPublished } from '../src/x/db/schema.ts';
 import { backfillAnswered } from '../src/x/mentions.ts';
 import { createMentionsRouter } from '../src/x/routes/mentions.ts';
@@ -155,5 +155,4 @@ if (LIVE) {
 }
 
 console.log('SMOKE OK');
-await pool.end();
 process.exit(0);

@@ -1,75 +1,12 @@
 {
   "version": "7",
-  "dialect": "postgresql",
+  "dialect": "sqlite",
   "entries": [
     {
       "idx": 0,
-      "version": "7",
-      "when": 1778321352278,
-      "tag": "0000_bumpy_rocket_raccoon",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1778498595730,
-      "tag": "0001_blushing_oracle",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1780330088531,
-      "tag": "0002_voice_swipe_file",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1781079560402,
-      "tag": "0003_wonderful_meltdown",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1781082161319,
-      "tag": "0004_nebulous_havok",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1781086490523,
-      "tag": "0005_lumpy_anthem",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1781112275914,
-      "tag": "0006_lame_yellowjacket",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1781113204565,
-      "tag": "0007_pale_mattie_franklin",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1781122754535,
-      "tag": "0008_modern_sabretooth",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1781818019393,
-      "tag": "0009_stale_sharon_carter",
+      "version": "6",
+      "when": 1781890128329,
+      "tag": "0000_quiet_bulldozer",
       "breakpoints": true
     }
   ]

@@ -60,22 +60,29 @@ export function makeOnCost(platform: string, opts: OnCostOptions = {}): (info: C
       );
     }
 
-    db.insert(costEvents)
-      .values({
-        platform,
-        endpoint: info.endpoint,
-        status: info.status,
-        items: info.items,
-        costUsd: usd.toFixed(5),
-        durationMs: Math.round(info.durationMs),
-        attempts: info.attempts,
-        requestId: null,
-      })
-      .execute()
-      .then(() => checkBudget(platform))
-      .catch((err) => {
-        console.error('costTracker: insert failed:', err instanceof Error ? err.message : err);
-      });
+    // SQLite is synchronous; the insert is a sub-millisecond local write, so the
+    // old fire-and-forget promise chain becomes a guarded sync call. A failed
+    // insert is a dashboard gap, never a thrown X call (same guarantee as before).
+    try {
+      db.insert(costEvents)
+        .values({
+          platform,
+          endpoint: info.endpoint,
+          status: info.status,
+          items: info.items,
+          costUsd: Number(usd.toFixed(5)),
+          durationMs: Math.round(info.durationMs),
+          attempts: info.attempts,
+          requestId: null,
+        })
+        .run();
+    } catch (err) {
+      console.error('costTracker: insert failed:', err instanceof Error ? err.message : err);
+      return;
+    }
+    void checkBudget(platform).catch((err) => {
+      console.error('costTracker: budget check failed:', err instanceof Error ? err.message : err);
+    });
   };
 }
 
@@ -88,7 +95,7 @@ async function checkBudget(platform: string): Promise<void> {
   const [row] = await db
     .select({ total: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)` })
     .from(costEvents)
-    .where(sql`${costEvents.platform} = ${platform} and ${costEvents.ts} >= ${from}`);
+    .where(sql`${costEvents.platform} = ${platform} and ${costEvents.ts} >= ${from.getTime()}`);
 
   const total = Number(row?.total ?? 0);
   if (total >= budget) {

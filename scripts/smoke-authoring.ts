@@ -19,7 +19,7 @@
 
 import { desc, eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, pool } from '../src/db/client.ts';
+import { db } from '../src/db/client.ts';
 import { postsPublished, scheduledPosts } from '../src/x/db/schema.ts';
 import { calendar } from '../src/x/routes/calendar.ts';
 import { drafter } from '../src/x/routes/drafter.ts';
@@ -224,5 +224,4 @@ try {
   console.log('\nSMOKE OK');
 } finally {
   await cleanup();
-  await pool.end();
 }

@@ -8,7 +8,7 @@
     "start": "bun run src/app.ts",
     "auth": "bun run src/x/server.ts",
     "play": "bun run src/x/playground.ts",
-    "test": "bun test",
+    "test": "SQLITE_PATH=:memory: bun test",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",

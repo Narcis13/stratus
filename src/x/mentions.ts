@@ -38,7 +38,7 @@ export async function pullMentions(
   const [latest] = await db
     .select({ tweetId: mentions.tweetId })
     .from(mentions)
-    .orderBy(sql`${mentions.tweetId}::bigint desc`)
+    .orderBy(sql`CAST(${mentions.tweetId} AS INTEGER) desc`)
     .limit(1);
   const sinceId = latest?.tweetId;
 

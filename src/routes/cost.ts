@@ -25,7 +25,7 @@ cost.get('/cost/today', async (c) => {
       calls: sql<string>`count(*)`,
     })
     .from(costEvents)
-    .where(sql`${costEvents.ts} >= ${from} and ${costEvents.ts} < ${to}`)
+    .where(sql`${costEvents.ts} >= ${from.getTime()} and ${costEvents.ts} < ${to.getTime()}`)
     .groupBy(costEvents.platform, costEvents.endpoint);
 
   type PlatformAgg = {
@@ -90,13 +90,14 @@ cost.get('/cost/daily', async (c) => {
 
   const rows = await db
     .select({
-      day: sql<string>`to_char(${costEvents.ts} at time zone 'UTC', 'YYYY-MM-DD')`,
+      // ts is epoch-ms; /1000 → epoch-s for strftime, which formats in UTC.
+      day: sql<string>`strftime('%Y-%m-%d', ${costEvents.ts} / 1000, 'unixepoch')`,
       platform: costEvents.platform,
       costUsd: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)`,
       calls: sql<string>`count(*)`,
     })
     .from(costEvents)
-    .where(sql`${costEvents.ts} >= ${from}`)
+    .where(sql`${costEvents.ts} >= ${from.getTime()}`)
     .groupBy(sql`1`, costEvents.platform);
 
   type DayAgg = {
