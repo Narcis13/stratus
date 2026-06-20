@@ -80,12 +80,14 @@ echo "==> bun install"
 ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && bun install --frozen-lockfile'"
 
 # Migration status BEFORE restart (§9.8): a restart against an un-migrated
-# schema is the silent way to crash every worker tick. drizzle-kit migrate is
-# idempotent — applied migrations are skipped. Sourcing .env makes drizzle-kit
-# (SQLite now) target the same SQLITE_PATH the service uses; the app also
-# auto-migrates at boot, so this is belt-and-suspenders.
+# schema is the silent way to crash every worker tick. We run the bun:sqlite
+# migrator (scripts/migrate.ts) — NOT `drizzle-kit migrate`, whose CLI can't
+# connect to bun:sqlite (it demands better-sqlite3/@libsql, unshipped). It's
+# idempotent and throws on a bad migration so this aborts before restart.
+# Sourcing .env makes it target the same SQLITE_PATH the service uses; the app
+# also auto-migrates at boot, so this is belt-and-suspenders.
 echo "==> run migrations (idempotent)"
-ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && set -a && . ./.env && set +a && bunx drizzle-kit migrate' " || {
+ssh "$REMOTE" "sudo -u stratus -H bash -lc 'cd $APPDIR && set -a && . ./.env && set +a && bun run scripts/migrate.ts' " || {
   echo "ERROR: migrations failed — NOT restarting the service." >&2
   exit 1
 }

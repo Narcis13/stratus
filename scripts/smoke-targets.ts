@@ -19,21 +19,33 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-// Baseline roster + my size.
-const t0 = await app.request('/x/voice/targets');
-if (t0.status !== 200) fail(`targets returned ${t0.status}`);
-const base = (await t0.json()) as {
+// Baseline roster + my size. `/voice/targets` needs my own follower count from
+// the latest account_snapshots row (written by the daily getMe). A fresh DB has
+// none, so seed a throwaway one here and drop it at the end — keeps this smoke
+// self-contained like the others. (Guarded on null, so an established DB with a
+// real snapshot for today is never given a second same-day row.)
+type Baseline = {
   myFollowers: number | null;
   band: { min: number; max: number } | null;
   targets: Array<{ handle: string }>;
 };
+let seededAccountId: number | null = null;
+let t0 = await app.request('/x/voice/targets');
+if (t0.status !== 200) fail(`targets returned ${t0.status}`);
+let base = (await t0.json()) as Baseline;
+if (base.myFollowers === null || !base.band) {
+  const [seed] = await db
+    .insert(accountSnapshots)
+    .values({ followersCount: 100, followingCount: 50, tweetCount: 10, listedCount: 0 })
+    .returning({ id: accountSnapshots.id });
+  seededAccountId = seed?.id ?? null;
+  t0 = await app.request('/x/voice/targets');
+  base = (await t0.json()) as Baseline;
+}
 console.log(
   `targets: myFollowers=${base.myFollowers} band=${JSON.stringify(base.band)} targets=${base.targets.length}`,
 );
-if (base.myFollowers === null || !base.band) {
-  const [acct] = await db.select().from(accountSnapshots).limit(1);
-  fail(`no account snapshot? sample row: ${JSON.stringify(acct)}`);
-}
+if (base.myFollowers === null || !base.band) fail('no account snapshot even after seeding');
 
 // Enrich twice with in-band counts → two snapshot points, +40 delta.
 const f1 = base.myFollowers * 3;
@@ -89,6 +101,11 @@ const [left] = await db
   .where(eq(voiceAuthorSnapshots.handle, HANDLE));
 if (left?.n !== 0) fail(`${left?.n} snapshot rows survived the delete`);
 console.log('delete: author + snapshot series removed');
+
+if (seededAccountId !== null) {
+  await db.delete(accountSnapshots).where(eq(accountSnapshots.id, seededAccountId));
+  console.log('cleanup: removed seeded account snapshot');
+}
 
 console.log('SMOKE OK');
 process.exit(0);
