@@ -994,9 +994,118 @@ function scheduleScan(): void {
 function start(): void {
   injectStyles();
   initHarvest();
+  initTypeFromClipboard();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// --------------------------------------------------- type-from-clipboard
+//
+// Cmd+B, while a composer / reply box is focused, "types" the clipboard text
+// in character by character, so a Grok-drafted reply lands like manual
+// keystrokes instead of an instant paste. X's composer is a Draft.js
+// contenteditable: setting textContent/value directly is ignored by its
+// internal model, so each char goes in via execCommand('insertText'), which
+// is exactly the path Draft listens on (its handleBeforeInput). Escape aborts
+// an in-flight run; moving focus away stops it too.
+
+const TYPE_CHAR_DELAY_MS = 18;
+let typingInFlight = false;
+let cancelTyping = false;
+
+function focusedEditable(): HTMLElement | null {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return null;
+  if (el.isContentEditable) return el;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return el;
+  return null;
+}
+
+function insertChar(target: HTMLElement, ch: string): void {
+  if (target.isContentEditable) {
+    // Draft.js consumes insertText/insertParagraph through beforeinput.
+    const ok =
+      ch === '\n'
+        ? document.execCommand('insertParagraph')
+        : document.execCommand('insertText', false, ch);
+    if (!ok) {
+      target.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          inputType: ch === '\n' ? 'insertLineBreak' : 'insertText',
+          data: ch === '\n' ? null : ch,
+        }),
+      );
+    }
+    return;
+  }
+  // Native input/textarea: write through React's value setter so onChange fires.
+  const el = target as HTMLInputElement | HTMLTextAreaElement;
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  const next = el.value.slice(0, start) + ch + el.value.slice(end);
+  const proto =
+    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, next);
+  else el.value = next;
+  const caret = start + ch.length;
+  el.selectionStart = el.selectionEnd = caret;
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+}
+
+async function typeClipboardIntoFocused(): Promise<void> {
+  if (typingInFlight) return;
+  const target = focusedEditable();
+  if (!target) return;
+
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (err) {
+    console.warn('[stratus] clipboard read failed', err);
+    return;
+  }
+  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!text) return;
+
+  typingInFlight = true;
+  cancelTyping = false;
+  target.focus();
+  try {
+    for (const ch of Array.from(text)) {
+      if (cancelTyping) break;
+      // Focus moved away (user clicked elsewhere) — stop typing into nothing.
+      if (focusedEditable() !== target) break;
+      insertChar(target, ch);
+      await sleep(TYPE_CHAR_DELAY_MS);
+    }
+  } finally {
+    typingInFlight = false;
+  }
+}
+
+function onTypeShortcut(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && typingInFlight) {
+    cancelTyping = true;
+    return;
+  }
+  // Cmd+B (Mac) — modifier-exact so we don't swallow unrelated combos.
+  const isCmdB =
+    e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'b' || e.key === 'B');
+  if (!isCmdB) return;
+  // Not in an editor — let Cmd+B do whatever the page wants.
+  if (!focusedEditable()) return;
+  e.preventDefault();
+  e.stopPropagation();
+  void typeClipboardIntoFocused();
+}
+
+function initTypeFromClipboard(): void {
+  // Capture phase so we intercept before Draft.js turns Cmd+B into bold.
+  document.addEventListener('keydown', onTypeShortcut, true);
 }
 
 if (document.readyState === 'loading') {
