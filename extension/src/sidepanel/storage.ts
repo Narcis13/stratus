@@ -7,25 +7,36 @@ const KEY_API_URL = 'apiUrl';
 const KEY_BEARER = 'bearer';
 // §8.6 opt-in: when on, reply drafting steers toward the active content pillars.
 const KEY_APPLY_PILLARS_REPLIES = 'applyPillarsToReplies';
+// When on, a Reply Master draft is "typed" char-by-char into the focused reply
+// box (content script reads this key directly). Default off → copy-to-clipboard.
+const KEY_AUTOTYPE_REPLY = 'autoTypeReplyDraft';
 
 export interface Settings {
   apiUrl: string;
   bearer: string;
   applyPillarsToReplies: boolean;
+  autoTypeReplyDraft: boolean;
 }
 
 export const EMPTY_SETTINGS: Settings = {
   apiUrl: '',
   bearer: '',
   applyPillarsToReplies: false,
+  autoTypeReplyDraft: false,
 };
 
 export async function getSettings(): Promise<Settings> {
-  const out = await chrome.storage.local.get([KEY_API_URL, KEY_BEARER, KEY_APPLY_PILLARS_REPLIES]);
+  const out = await chrome.storage.local.get([
+    KEY_API_URL,
+    KEY_BEARER,
+    KEY_APPLY_PILLARS_REPLIES,
+    KEY_AUTOTYPE_REPLY,
+  ]);
   return {
     apiUrl: typeof out[KEY_API_URL] === 'string' ? out[KEY_API_URL] : '',
     bearer: typeof out[KEY_BEARER] === 'string' ? out[KEY_BEARER] : '',
     applyPillarsToReplies: out[KEY_APPLY_PILLARS_REPLIES] === true,
+    autoTypeReplyDraft: out[KEY_AUTOTYPE_REPLY] === true,
   };
 }
 
@@ -34,6 +45,7 @@ export async function saveSettings(s: Settings): Promise<void> {
     [KEY_API_URL]: s.apiUrl.trim().replace(/\/$/, ''),
     [KEY_BEARER]: s.bearer.trim(),
     [KEY_APPLY_PILLARS_REPLIES]: s.applyPillarsToReplies === true,
+    [KEY_AUTOTYPE_REPLY]: s.autoTypeReplyDraft === true,
   });
 }
 
@@ -61,7 +73,8 @@ export function useSettings(): { settings: Settings; loading: boolean } {
       if (
         !(KEY_API_URL in changes) &&
         !(KEY_BEARER in changes) &&
-        !(KEY_APPLY_PILLARS_REPLIES in changes)
+        !(KEY_APPLY_PILLARS_REPLIES in changes) &&
+        !(KEY_AUTOTYPE_REPLY in changes)
       )
         return;
       getSettings().then((s) => alive && setSettings(s));

@@ -802,6 +802,23 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     console.warn('[stratus] storage.set lastDraft failed', err);
   }
 
+  // Opt-in (Settings → "Auto-type reply drafts", default off): stream the draft
+  // into the reply box like manual keystrokes. Clipboard copy above stays as the
+  // fallback, so an absent/unfound composer still leaves the draft pasteable.
+  if (await autoTypeReplyEnabled()) {
+    const editor = findReplyEditor();
+    if (editor) {
+      setReplyState(btn, 'working', 'Typing…');
+      const typed = await typeTextInto(editor, replyText);
+      setReplyState(btn, 'done', typed > 0 ? 'Typed ✓' : 'Open the reply box first');
+      scheduleReplyReset(btn);
+      return;
+    }
+    setReplyState(btn, 'done', copied ? 'Copied ✓ (no reply box)' : 'Drafted (copy manually)');
+    scheduleReplyReset(btn);
+    return;
+  }
+
   setReplyState(btn, 'done', copied ? 'Copied ✓' : 'Drafted (copy manually)');
   scheduleReplyReset(btn);
 }
@@ -1056,6 +1073,32 @@ function insertChar(target: HTMLElement, ch: string): void {
   el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
 }
 
+// Core loop, shared by the Cmd+B shortcut and Reply Master auto-type. Types
+// `text` into `target` one char at a time; aborts if Escape was pressed or the
+// user moved focus elsewhere mid-run. Returns the count actually typed.
+async function typeTextInto(target: HTMLElement, text: string): Promise<number> {
+  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!normalised) return 0;
+
+  typingInFlight = true;
+  cancelTyping = false;
+  target.focus();
+  let n = 0;
+  try {
+    for (const ch of Array.from(normalised)) {
+      if (cancelTyping) break;
+      // Focus moved away (user clicked elsewhere) — stop typing into nothing.
+      if (focusedEditable() !== target) break;
+      insertChar(target, ch);
+      n += 1;
+      await sleep(TYPE_CHAR_DELAY_MS);
+    }
+  } finally {
+    typingInFlight = false;
+  }
+  return n;
+}
+
 async function typeClipboardIntoFocused(): Promise<void> {
   if (typingInFlight) return;
   const target = focusedEditable();
@@ -1068,22 +1111,28 @@ async function typeClipboardIntoFocused(): Promise<void> {
     console.warn('[stratus] clipboard read failed', err);
     return;
   }
-  text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  if (!text) return;
+  await typeTextInto(target, text);
+}
 
-  typingInFlight = true;
-  cancelTyping = false;
-  target.focus();
+// X's reply composer is a Draft.js contenteditable tagged tweetTextarea_0 (the
+// inline reply on a focused tweet; tweetTextarea_0 in the modal too). The
+// data-testid element is itself contenteditable, but fall back to a descendant
+// in case X re-nests it.
+function findReplyEditor(): HTMLElement | null {
+  const box = document.querySelector<HTMLElement>('[data-testid^="tweetTextarea_"]');
+  if (!box) return null;
+  if (box.isContentEditable) return box;
+  return box.querySelector<HTMLElement>('[contenteditable="true"]');
+}
+
+const AUTOTYPE_SETTING_KEY = 'autoTypeReplyDraft';
+
+async function autoTypeReplyEnabled(): Promise<boolean> {
   try {
-    for (const ch of Array.from(text)) {
-      if (cancelTyping) break;
-      // Focus moved away (user clicked elsewhere) — stop typing into nothing.
-      if (focusedEditable() !== target) break;
-      insertChar(target, ch);
-      await sleep(TYPE_CHAR_DELAY_MS);
-    }
-  } finally {
-    typingInFlight = false;
+    const out = await chrome.storage.local.get(AUTOTYPE_SETTING_KEY);
+    return out[AUTOTYPE_SETTING_KEY] === true;
+  } catch {
+    return false;
   }
 }
 
