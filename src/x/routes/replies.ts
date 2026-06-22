@@ -25,6 +25,7 @@ import {
   type BatchTweet,
   type PostContext,
   type PostSignals,
+  REPLY_PROMPT_TEMPLATE,
   REPLY_VARIANTS_SCHEMA,
   type ReplyVariant,
   buildBatchGrokInput,
@@ -412,6 +413,12 @@ export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { e
 }
 
 // ---------------------------------------------------------------- list/get
+
+// The default Grok system prompt used when no `systemPromptOverride` is set.
+// Surfaced so the extension can show what the override replaces ($0, no Grok).
+replies.get('/replies/default-prompt', (c) => {
+  return c.json({ prompt: REPLY_PROMPT_TEMPLATE });
+});
 
 replies.get('/replies', async (c) => {
   const statusStr = c.req.query('status');

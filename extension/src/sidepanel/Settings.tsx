@@ -1,5 +1,5 @@
 import { type FormEvent, type JSX, useEffect, useState } from 'react';
-import { type Settings, getSettings, saveSettings } from './storage.ts';
+import { type Settings, getSettings, patchSettings, saveSettings } from './storage.ts';
 
 export function SettingsPanel(): JSX.Element {
   const [apiUrl, setApiUrl] = useState('');
@@ -64,7 +64,11 @@ export function SettingsPanel(): JSX.Element {
         <input
           type="checkbox"
           checked={applyPillarsToReplies}
-          onChange={(e) => setApplyPillarsToReplies(e.target.checked)}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setApplyPillarsToReplies(v);
+            void patchSettings({ applyPillarsToReplies: v });
+          }}
         />
         <span>Apply content pillars to reply drafting (default off)</span>
       </label>
@@ -73,7 +77,11 @@ export function SettingsPanel(): JSX.Element {
         <input
           type="checkbox"
           checked={autoTypeReplyDraft}
-          onChange={(e) => setAutoTypeReplyDraft(e.target.checked)}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setAutoTypeReplyDraft(v);
+            void patchSettings({ autoTypeReplyDraft: v });
+          }}
         />
         <span>Auto-type Reply Master drafts into the reply box (default off)</span>
       </label>

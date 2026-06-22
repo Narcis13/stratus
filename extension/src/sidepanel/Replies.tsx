@@ -175,6 +175,7 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
       )}
 
       <SystemPromptOverride
+        settings={settings}
         value={systemPromptOverride}
         loading={systemPromptLoading}
         onSave={saveSystemPrompt}
@@ -601,10 +602,12 @@ function IdeaSteer({
 }
 
 function SystemPromptOverride({
+  settings,
   value,
   loading,
   onSave,
 }: {
+  settings: Settings;
   value: string;
   loading: boolean;
   onSave: (next: string) => Promise<void>;
@@ -613,6 +616,30 @@ function SystemPromptOverride({
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const lastSavedRef = useRef(value);
+
+  // The default prompt is fetched lazily the first time the user opens the viewer.
+  const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
+  const [defaultLoading, setDefaultLoading] = useState(false);
+  const [defaultError, setDefaultError] = useState<string | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const openViewer = useCallback(() => {
+    setViewerOpen(true);
+    if (defaultPrompt !== null || defaultLoading) return;
+    setDefaultLoading(true);
+    setDefaultError(null);
+    void (async () => {
+      try {
+        const res = await api.replies.defaultPrompt(settings);
+        setDefaultPrompt(res.prompt);
+      } catch (e) {
+        setDefaultError(e instanceof Error ? e.message : 'Failed to load default prompt.');
+      } finally {
+        setDefaultLoading(false);
+      }
+    })();
+  }, [settings, defaultPrompt, defaultLoading]);
 
   // Re-sync if storage changed elsewhere (other panel, settings reset).
   useEffect(() => {
@@ -657,6 +684,11 @@ function SystemPromptOverride({
           Replaces the default Grok system prompt on every generation (side panel and the page
           button). Leave empty to use the server default.
         </p>
+        <div className="reply-toolbar voice-controls">
+          <button type="button" onClick={openViewer}>
+            View default prompt
+          </button>
+        </div>
         <textarea
           className="reply-textarea"
           value={draft}
@@ -670,7 +702,84 @@ function SystemPromptOverride({
           {saving ? 'saving…' : saved ? 'saved' : `${draft.length} chars`}
         </small>
       </div>
+
+      {viewerOpen && (
+        <PromptViewer
+          prompt={defaultPrompt}
+          loading={defaultLoading}
+          error={defaultError}
+          copied={copied}
+          onCopy={() => {
+            if (defaultPrompt === null) return;
+            void navigator.clipboard.writeText(defaultPrompt).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          onUseAsStart={() => {
+            if (defaultPrompt === null) return;
+            setDraft(defaultPrompt);
+            setViewerOpen(false);
+          }}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
     </details>
+  );
+}
+
+function PromptViewer({
+  prompt,
+  loading,
+  error,
+  copied,
+  onCopy,
+  onUseAsStart,
+  onClose,
+}: {
+  prompt: string | null;
+  loading: boolean;
+  error: string | null;
+  copied: boolean;
+  onCopy: () => void;
+  onUseAsStart: () => void;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+      role="presentation"
+    >
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Default reply system prompt"
+      >
+        <div className="modal-header">
+          <h3>Default reply system prompt</h3>
+          <button type="button" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        {loading && <p className="muted">Loading…</p>}
+        {error && <div className="error">{error}</div>}
+        {prompt !== null && <pre className="prompt-view">{prompt}</pre>}
+        <div className="reply-toolbar voice-controls">
+          <button type="button" onClick={onCopy} disabled={prompt === null}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button type="button" onClick={onUseAsStart} disabled={prompt === null}>
+            Use as starting point
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

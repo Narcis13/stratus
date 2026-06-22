@@ -310,6 +310,11 @@ export const api = {
       return request<ReplyDraft>(s, `/x/replies/${encodeURIComponent(id)}`);
     },
 
+    // The default Grok system prompt the override field replaces ($0).
+    defaultPrompt(s: Settings): Promise<{ prompt: string }> {
+      return request<{ prompt: string }>(s, '/x/replies/default-prompt');
+    },
+
     generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraft> {
       // §8.6: the Settings toggle rides along centrally so no call site changes.
       return request<ReplyDraft>(s, '/x/replies/generate', {

@@ -49,6 +49,20 @@ export async function saveSettings(s: Settings): Promise<void> {
   });
 }
 
+// Persist a single setting immediately. The boolean toggles use this so they
+// stick the moment they're clicked — the Save button only exists to commit the
+// API URL / bearer together, and gating a toggle behind it lost the change.
+export async function patchSettings(partial: Partial<Settings>): Promise<void> {
+  const out: Record<string, unknown> = {};
+  if (partial.apiUrl !== undefined) out[KEY_API_URL] = partial.apiUrl.trim().replace(/\/$/, '');
+  if (partial.bearer !== undefined) out[KEY_BEARER] = partial.bearer.trim();
+  if (partial.applyPillarsToReplies !== undefined)
+    out[KEY_APPLY_PILLARS_REPLIES] = partial.applyPillarsToReplies === true;
+  if (partial.autoTypeReplyDraft !== undefined)
+    out[KEY_AUTOTYPE_REPLY] = partial.autoTypeReplyDraft === true;
+  await chrome.storage.local.set(out);
+}
+
 export function isConfigured(s: Settings): boolean {
   return s.apiUrl.length > 0 && s.bearer.length > 0;
 }
