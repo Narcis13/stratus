@@ -24,14 +24,25 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
     return Array.from({ length: 7 }, (_, i) => addDays(today, i));
   }, []);
 
+  const [drafts, setDrafts] = useState<ScheduledPost[]>([]);
+
   const load = useCallback(async () => {
+    const first = days[0];
+    const last = days[6];
+    if (!first || !last) return;
     setLoading(true);
     setError(null);
     try {
-      const from = days[0]!.toISOString();
-      const to = addDays(days[6]!, 1).toISOString();
-      const rows = await api.list(settings, { from, to });
+      const from = first.toISOString();
+      const to = addDays(last, 1).toISOString();
+      const [rows, draftRows] = await Promise.all([
+        api.list(settings, { from, to }),
+        // Unscheduled drafts (incl. §8.1 drafter output) have no scheduled_for,
+        // so the day-window query above never returns them.
+        api.list(settings, { status: 'draft' }),
+      ]);
       setPosts(rows);
+      setDrafts(draftRows.filter((d) => !d.scheduledFor));
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Failed to load');
     } finally {
@@ -79,6 +90,9 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
                       >
                         <span className="post-time">{formatTime(p.scheduledFor)}</span>
                         <span className={`badge badge-${p.status}`}>{p.status}</span>
+                        {p.threadId && <span className="badge">🧵</span>}
+                        {p.quoteTweetId && <span className="badge">re-up</span>}
+                        {p.pillar && <span className="badge badge-pillar">{p.pillar}</span>}
                         <span className="post-text">{p.text}</span>
                       </button>
                     </li>
@@ -89,6 +103,32 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
           );
         })}
       </div>
+
+      {drafts.length > 0 && (
+        <div className="day-card">
+          <div className="day-header">
+            <span className="day-label">Drafts (unscheduled)</span>
+            <span className="day-count">{drafts.length}</span>
+          </div>
+          <ul className="post-list">
+            {drafts.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className={`post-row status-${p.status}`}
+                  onClick={() => onEdit(p.id)}
+                >
+                  <span className={`badge badge-${p.status}`}>{p.status}</span>
+                  {p.threadId && <span className="badge">🧵</span>}
+                  {p.quoteTweetId && <span className="badge">re-up</span>}
+                  {p.pillar && <span className="badge badge-pillar">{p.pillar}</span>}
+                  <span className="post-text">{p.text}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

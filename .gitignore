@@ -7,8 +7,19 @@ dist
 .env.*.local
 !.env.example
 
-# Local token store — created by src/server.ts after OAuth callback
-.tokens.json
+# Local token store — created by src/server.ts after OAuth callback.
+# Glob covers backups + the restore/export helpers (.tokens.json.bak.*,
+# .tokens.export.json, .tokens.fresh.json) — these hold live credentials.
+.tokens*.json
+.tokens.json*
+
+# Local SQLite database (and its WAL/SHM sidecars) — replaced Neon 2026-06-19
+stratus.db
+stratus.db-wal
+stratus.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 
 # OS / editor
 .DS_Store

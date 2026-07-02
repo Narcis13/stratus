@@ -11,16 +11,35 @@
 //   POST   /voice/scrape              { tweet, author? }   save a tweet (+ stub/enrich its author)
 //   PUT    /voice/authors/:handle     { ...profile }       enrich author from their profile page
 //   GET    /voice/authors?retired=    list authors + tweet counts
+//   GET    /voice/targets                                  the 2–10x reply-target roster (§7.4)
 //   GET    /voice/tweets?author=&q=&limit=&retired=        query the stash
 //   PATCH  /voice/tweets/:tweetId     { retired }          archive / unarchive a tweet
 //   DELETE /voice/tweets/:tweetId                          hard-remove a tweet
 //   PATCH  /voice/authors/:handle     { retired }          archive / unarchive an author
 //   DELETE /voice/authors/:handle                          hard-remove an author (409 if it has tweets)
 
-import { type SQL, and, asc, desc, eq, ilike, sql } from 'drizzle-orm';
+import {
+  type SQL,
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  sql,
+} from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { voiceAuthors, voiceTweets } from '../db/schema.ts';
+import {
+  accountSnapshots,
+  replyDrafts,
+  voiceAuthorSnapshots,
+  voiceAuthors,
+  voiceTweets,
+} from '../db/schema.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 // Twitter usernames: 1–15 chars, alphanumeric + underscore.
@@ -132,6 +151,16 @@ export function createVoiceRouter(): Hono {
       })
       .returning();
 
+    // Append-only follower series (§7.4) — every enrich adds a point, even an
+    // unchanged count ("still N at date X" is signal for the momentum slope).
+    if (profile.followersCount !== null) {
+      await db.insert(voiceAuthorSnapshots).values({
+        handle,
+        followersCount: profile.followersCount,
+        capturedAt: now,
+      });
+    }
+
     return c.json(row);
   });
 
@@ -140,7 +169,7 @@ export function createVoiceRouter(): Hono {
   router.get('/voice/authors', async (c) => {
     const includeRetired = c.req.query('retired') === 'true';
 
-    const tweetCount = sql<number>`count(${voiceTweets.tweetId})::int`.as('tweet_count');
+    const tweetCount = sql<number>`count(${voiceTweets.tweetId})`.as('tweet_count');
 
     const rows = await db
       .select({
@@ -194,19 +223,131 @@ export function createVoiceRouter(): Hono {
     if (!handle) return c.json({ error: 'invalid_handle' }, 400);
 
     const [countRow] = await db
-      .select({ count: sql<number>`count(*)::int` })
+      .select({ count: sql<number>`count(*)` })
       .from(voiceTweets)
       .where(eq(voiceTweets.authorHandle, handle));
     const tweetCount = countRow?.count ?? 0;
     if (tweetCount > 0) return c.json({ error: 'author_has_tweets', tweets: tweetCount }, 409);
 
-    const deleted = await db
-      .delete(voiceAuthors)
-      .where(eq(voiceAuthors.handle, handle))
-      .returning({ handle: voiceAuthors.handle });
+    // The follower series is derived data of the author — drop it with them
+    // (it FK-references the handle, so it must go first).
+    const deleted = db.transaction((tx) => {
+      tx.delete(voiceAuthorSnapshots).where(eq(voiceAuthorSnapshots.handle, handle)).run();
+      return tx
+        .delete(voiceAuthors)
+        .where(eq(voiceAuthors.handle, handle))
+        .returning({ handle: voiceAuthors.handle })
+        .all();
+    });
 
     if (deleted.length === 0) return c.json({ error: 'not_found' }, 404);
     return c.json({ deleted: handle });
+  });
+
+  // -------------------------------------------------------------- targets
+
+  // The reply-target roster (§7.4): voice authors sized 2–10x my own follower
+  // count (latest account_snapshots row from the daily getMe), ranked by
+  // momentum from the append-only enrich series, each with "last replied to"
+  // joined from reply_drafts so neglected targets surface. Pure SQL, $0.
+  router.get('/voice/targets', async (c) => {
+    const [acct] = await db
+      .select({
+        snapshotAt: accountSnapshots.snapshotAt,
+        followersCount: accountSnapshots.followersCount,
+      })
+      .from(accountSnapshots)
+      .orderBy(desc(accountSnapshots.snapshotAt))
+      .limit(1);
+
+    if (!acct) {
+      // No daily pass has run yet — there is no "my size" to band against.
+      return c.json({ myFollowers: null, measuredAt: null, band: null, targets: [] });
+    }
+
+    const band = targetBand(acct.followersCount);
+
+    const authors = await db
+      .select({
+        handle: voiceAuthors.handle,
+        displayName: voiceAuthors.displayName,
+        followersCount: voiceAuthors.followersCount,
+        followingCount: voiceAuthors.followingCount,
+        profileUrl: voiceAuthors.profileUrl,
+        enrichedAt: voiceAuthors.enrichedAt,
+      })
+      .from(voiceAuthors)
+      .where(
+        and(
+          eq(voiceAuthors.retired, false),
+          gte(voiceAuthors.followersCount, band.min),
+          lte(voiceAuthors.followersCount, band.max),
+        ),
+      );
+
+    const handles = authors.map((a) => a.handle);
+
+    const [snaps, replyAgg] = handles.length
+      ? await Promise.all([
+          db
+            .select({
+              handle: voiceAuthorSnapshots.handle,
+              followersCount: voiceAuthorSnapshots.followersCount,
+              capturedAt: voiceAuthorSnapshots.capturedAt,
+            })
+            .from(voiceAuthorSnapshots)
+            .where(inArray(voiceAuthorSnapshots.handle, handles))
+            .orderBy(asc(voiceAuthorSnapshots.capturedAt)),
+          // sourceAuthorUsername is stored as scraped (any case); voice handles
+          // are lowercased — match on lower(). A posted draft's updatedAt is in
+          // effect paste time (same reading as brief.ts's reply quota).
+          db
+            .select({
+              handle: sql<string>`lower(${replyDrafts.sourceAuthorUsername})`.as('agg_handle'),
+              // mapWith decodes the aggregate like the column itself, so the
+              // JSON carries an ISO timestamp, not a raw Postgres string.
+              lastRepliedAt:
+                sql`max(${replyDrafts.updatedAt}) filter (where ${replyDrafts.status} = 'posted')`.mapWith(
+                  replyDrafts.updatedAt,
+                ),
+              postedReplies: sql<number>`count(*) filter (where ${replyDrafts.status} = 'posted')`,
+            })
+            .from(replyDrafts)
+            .where(inArray(sql`lower(${replyDrafts.sourceAuthorUsername})`, handles))
+            .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`),
+        ])
+      : [[], []];
+
+    const snapsByHandle = new Map<string, FollowerSnapshotPoint[]>();
+    for (const s of snaps) {
+      const list = snapsByHandle.get(s.handle) ?? [];
+      list.push({ capturedAt: s.capturedAt, followersCount: s.followersCount });
+      snapsByHandle.set(s.handle, list);
+    }
+    const repliesByHandle = new Map(replyAgg.map((r) => [r.handle, r]));
+
+    const targets = rankTargets(
+      authors.map((a) => {
+        const points = snapsByHandle.get(a.handle) ?? [];
+        const r = repliesByHandle.get(a.handle);
+        return {
+          ...a,
+          followersCount: a.followersCount as number,
+          ratio: Math.round(((a.followersCount as number) / acct.followersCount) * 10) / 10,
+          momentum: authorMomentum(points),
+          snapshotCount: points.length,
+          lastRepliedAt: r?.lastRepliedAt ?? null,
+          postedReplies: r?.postedReplies ?? 0,
+        };
+      }),
+    );
+
+    return c.json({
+      myFollowers: acct.followersCount,
+      measuredAt: acct.snapshotAt,
+      band,
+      targets,
+    });
   });
 
   // --------------------------------------------------------------- tweets
@@ -214,6 +355,8 @@ export function createVoiceRouter(): Hono {
   router.get('/voice/tweets', async (c) => {
     const authorParam = c.req.query('author');
     const q = c.req.query('q')?.trim();
+    const hook = c.req.query('hook')?.trim();
+    const extractedParam = c.req.query('extracted');
     const includeRetired = c.req.query('retired') === 'true';
     const limitStr = c.req.query('limit');
 
@@ -226,9 +369,27 @@ export function createVoiceRouter(): Hono {
     }
 
     if (q) {
-      // ILIKE with escaped wildcards — keep the query as a substring match.
+      // Substring match with the user's %/_/\ taken literally. SQLite LIKE is
+      // case-insensitive for ASCII (stands in for Postgres ILIKE) but, unlike
+      // Postgres, has NO default escape char — so spell out `escape '\'`.
       const pattern = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-      filters.push(ilike(voiceTweets.text, pattern));
+      filters.push(sql`${voiceTweets.text} like ${pattern} escape '\\'`);
+    }
+
+    // Template filters (§8.3): "show me stat-hook tweets" becomes a query.
+    if (hook) {
+      const pattern = `%${hook.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+      filters.push(sql`${voiceTweets.hookType} like ${pattern} escape '\\'`);
+    }
+    if (extractedParam !== undefined) {
+      if (extractedParam !== 'true' && extractedParam !== 'false') {
+        return c.json({ error: 'invalid_extracted' }, 400);
+      }
+      filters.push(
+        extractedParam === 'true'
+          ? isNotNull(voiceTweets.templateExtractedAt)
+          : isNull(voiceTweets.templateExtractedAt),
+      );
     }
 
     if (!includeRetired) filters.push(eq(voiceTweets.retired, false));
@@ -253,6 +414,12 @@ export function createVoiceRouter(): Hono {
         savedAt: voiceTweets.savedAt,
         updatedAt: voiceTweets.updatedAt,
         retired: voiceTweets.retired,
+        hookType: voiceTweets.hookType,
+        skeleton: voiceTweets.skeleton,
+        lineBreakPattern: voiceTweets.lineBreakPattern,
+        templateLength: voiceTweets.templateLength,
+        device: voiceTweets.device,
+        templateExtractedAt: voiceTweets.templateExtractedAt,
       })
       .from(voiceTweets)
       .innerJoin(voiceAuthors, eq(voiceAuthors.handle, voiceTweets.authorHandle))
@@ -296,6 +463,63 @@ export function createVoiceRouter(): Hono {
   });
 
   return router;
+}
+
+// ------------------------------------------------------- targets helpers
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// REPLY GUIDE band: accounts 2–10x my size are big enough to lend reach,
+// small enough that a good reply is actually seen.
+export function targetBand(myFollowers: number): { min: number; max: number } {
+  return { min: 2 * myFollowers, max: 10 * myFollowers };
+}
+
+export interface FollowerSnapshotPoint {
+  capturedAt: Date;
+  followersCount: number;
+}
+
+export interface AuthorMomentum {
+  delta: number;
+  days: number;
+  perDay: number;
+}
+
+/** Followers/day between the oldest and newest snapshot. Needs ≥2 points; the
+ *  span is clamped to a 1-day minimum so two enriches minutes apart don't read
+ *  as explosive growth. */
+export function authorMomentum(points: FollowerSnapshotPoint[]): AuthorMomentum | null {
+  if (points.length < 2) return null;
+  const ordered = [...points].sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
+  const first = ordered[0] as FollowerSnapshotPoint;
+  const last = ordered.at(-1) as FollowerSnapshotPoint;
+  const days = (last.capturedAt.getTime() - first.capturedAt.getTime()) / DAY_MS;
+  const delta = last.followersCount - first.followersCount;
+  return {
+    delta,
+    days: round2(days),
+    perDay: round2(delta / Math.max(days, 1)),
+  };
+}
+
+/** Momentum desc; single-snapshot authors (unknown momentum) sink below all
+ *  measured ones and order by follower count asc — closest to my size first,
+ *  since smaller accounts in the band are likeliest to reply back. */
+export function rankTargets<T extends { momentum: AuthorMomentum | null; followersCount: number }>(
+  targets: T[],
+): T[] {
+  return [...targets].sort((a, b) => {
+    if (a.momentum && b.momentum && a.momentum.perDay !== b.momentum.perDay) {
+      return b.momentum.perDay - a.momentum.perDay;
+    }
+    if (!a.momentum !== !b.momentum) return a.momentum ? -1 : 1;
+    return a.followersCount - b.followersCount;
+  });
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 // --------------------------------------------------------------- helpers

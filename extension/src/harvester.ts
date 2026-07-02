@@ -18,13 +18,18 @@ import {
   type HarvestCommand,
   type HarvestContextResult,
   type HarvestEvent,
+  type HarvestIngest,
+  type HarvestIngestRow,
   type HarvestMode,
   type HarvestOptions,
   type HarvestScope,
+  harvestCursorKey,
   isHarvestContextRequest,
   isRepliesPath,
   profileHandleFromUrl,
 } from './shared/harvest.ts';
+import type { ApiRequest, ApiResponse } from './shared/messages.ts';
+import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 
 // ----------------------------------------------------------------- randomness
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -124,6 +129,11 @@ interface Extracted {
   pinned: boolean;
   isRepost: boolean;
   metrics: MetricSet;
+  // Content-shape signals (§9.4) — "which formats earn views" needs these.
+  hasPhoto: boolean;
+  hasVideo: boolean;
+  isQuote: boolean;
+  lineBreaks: number;
 }
 
 function profileHandle(): string | null {
@@ -131,19 +141,19 @@ function profileHandle(): string | null {
 }
 
 function parseMetrics(aria: string | null): MetricSet {
-  // aria like: "19 replies, 4 reposts, 38 likes, 2 bookmarks, 845 views"
-  const res: MetricSet = { comments: 0, reposts: 0, likes: 0, bookmarks: 0, views: 0 };
-  if (!aria) return res;
-  const g = (re: RegExp): number => {
-    const m = aria.match(re);
-    return m?.[1] ? Number.parseInt(m[1].replace(/,/g, ''), 10) : 0;
+  // aria like: "19 replies, 4 reposts, 38 likes, 2 bookmarks, 845 views" — in
+  // an English UI. The locale-hardened parser (§9.3) covers the rest; a label
+  // with numbers nothing matched is reported loudly (zeros would silently
+  // pollute the calibration data).
+  const m = parseMetricsAria(aria);
+  if (m.unparsed && aria) reportUnparsed('harvester', aria);
+  return {
+    comments: m.replies,
+    reposts: m.reposts,
+    likes: m.likes,
+    bookmarks: m.bookmarks,
+    views: m.views,
   };
-  res.comments = g(/([\d,]+)\s+repl/i);
-  res.reposts = g(/([\d,]+)\s+repost/i);
-  res.likes = g(/([\d,]+)\s+like/i);
-  res.bookmarks = g(/([\d,]+)\s+bookmark/i);
-  res.views = g(/([\d,]+)\s+view/i);
-  return res;
 }
 
 function idFrom(art: Element): { handle: string; id: string; url: string } | null {
@@ -170,16 +180,23 @@ function extractArticle(art: Element): Extracted {
   const pinned = /pin|fixat|épingl|anclado|fijado|festgeh|gepin/i.test(socialContext);
   const iso = time?.getAttribute('datetime') ?? '';
   const ms = iso ? Date.parse(iso) : Number.NaN;
+  const rawText = txtEl ? (txtEl as HTMLElement).innerText : '';
   return {
     handle: id ? id.handle : null,
     id: id ? id.id : null,
     url: id ? id.url : '',
-    text: txtEl ? (txtEl as HTMLElement).innerText.replace(/\s*\n\s*/g, ' ').trim() : '',
+    text: rawText.replace(/\s*\n\s*/g, ' ').trim(),
     time: iso,
     timeMs: Number.isNaN(ms) ? null : ms,
     pinned,
     isRepost,
     metrics: parseMetrics(grp ? grp.getAttribute('aria-label') : ''),
+    hasPhoto: art.querySelector('[data-testid="tweetPhoto"]') !== null,
+    hasVideo: art.querySelector('video, [data-testid="videoPlayer"]') !== null,
+    // A quoted tweet renders as a nested tweetText inside a role="link" card.
+    isQuote: art.querySelector('div[role="link"] [data-testid="tweetText"]') !== null,
+    // Counted on the raw innerText, before line breaks collapse to spaces.
+    lineBreaks: (rawText.match(/\n/g) ?? []).length,
   };
 }
 
@@ -220,6 +237,41 @@ function scopeWindow(scope: HarvestScope): DayWindow | null {
   return null;
 }
 
+// 'since-last' (§9.4): window opens at the previous completed run's newest
+// item for this handle+mode. First run (no cursor) scrapes like 'all'.
+async function readCursorMs(handle: string, mode: HarvestMode): Promise<number | null> {
+  try {
+    const key = harvestCursorKey(handle, mode);
+    const out = await chrome.storage.local.get(key);
+    const v = out[key];
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCursorMs(handle: string, mode: HarvestMode, ms: number): Promise<void> {
+  try {
+    const key = harvestCursorKey(handle, mode);
+    const existing = await readCursorMs(handle, mode);
+    if (existing === null || ms > existing) await chrome.storage.local.set({ [key]: ms });
+  } catch {
+    // cursor is an optimization — never fail the harvest over it
+  }
+}
+
+async function windowFor(
+  handle: string,
+  mode: HarvestMode,
+  scope: HarvestScope,
+): Promise<DayWindow | null> {
+  if (scope !== 'since-last') return scopeWindow(scope);
+  const cursor = await readCursorMs(handle, mode);
+  if (cursor === null) return null; // first run — full scrape
+  // Strictly newer than the cursor; endMs unbounded.
+  return { startMs: cursor + 1, endMs: Number.POSITIVE_INFINITY };
+}
+
 function inWindow(timeMs: number | null, win: DayWindow | null): boolean {
   if (!win) return true;
   if (timeMs === null) return false;
@@ -237,9 +289,17 @@ interface PostRow {
   time: string;
   handle: string;
   url: string;
+  hasPhoto: boolean;
+  hasVideo: boolean;
+  isQuote: boolean;
+  lineBreaks: number;
 }
 
+// Fields beyond the CSV columns (o_id, r_reposts, r_bookmarks) exist for the
+// stratus ingest only — the CSV builders ignore them to keep the original
+// scrape.js output shape.
 interface ReplyRow {
+  o_id: string;
   o_text: string;
   o_comments: number;
   o_likes: number;
@@ -248,9 +308,20 @@ interface ReplyRow {
   o_handle: string;
   r_text: string;
   r_comments: number;
+  r_reposts: number;
   r_likes: number;
+  r_bookmarks: number;
   r_views: number;
   r_time: string;
+  // 1-based index of the reply inside its rendered group (§9.4). Position 1
+  // sits directly under the true original; deeper positions mark self-threads/
+  // chains where the items[k-1] pairing mislabels the "original" — calibration
+  // analysis can filter or downweight them.
+  r_position: number;
+  hasPhoto: boolean;
+  hasVideo: boolean;
+  isQuote: boolean;
+  lineBreaks: number;
 }
 
 interface HarvestCtx<R> {
@@ -290,6 +361,10 @@ function harvestPosts(ctx: HarvestCtx<PostRow>): number {
         time: p.time,
         handle: p.handle ?? '',
         url: p.url,
+        hasPhoto: p.hasPhoto,
+        hasVideo: p.hasVideo,
+        isQuote: p.isQuote,
+        lineBreaks: p.lineBreaks,
       };
     }
   }
@@ -309,6 +384,7 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
       if (!inWindow(reply.timeMs, ctx.window)) continue;
       if (!ctx.store[reply.id]) added++;
       ctx.store[reply.id] = {
+        o_id: orig.id ?? '',
         o_text: orig.text,
         o_comments: orig.metrics.comments,
         o_likes: orig.metrics.likes,
@@ -317,9 +393,16 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
         o_handle: orig.handle ?? '',
         r_text: reply.text,
         r_comments: reply.metrics.comments,
+        r_reposts: reply.metrics.reposts,
         r_likes: reply.metrics.likes,
+        r_bookmarks: reply.metrics.bookmarks,
         r_views: reply.metrics.views,
         r_time: reply.time,
+        r_position: k,
+        hasPhoto: reply.hasPhoto,
+        hasVideo: reply.hasVideo,
+        isQuote: reply.isQuote,
+        lineBreaks: reply.lineBreaks,
       };
     }
   }
@@ -327,7 +410,14 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
 }
 
 // ----------------------------------------------------------------- CSV build
-const esc = (s: unknown): string => `"${String(s).replace(/"/g, '""')}"`;
+// Formula-escape (§9.4): a scraped tweet starting with =, +, - or @ would
+// execute as a formula when the CSV opens in Excel/Sheets. Prefix with ' —
+// the standard CSV-injection guard.
+const esc = (s: unknown): string => {
+  let v = String(s);
+  if (/^[=+\-@\t\r]/.test(v)) v = `'${v}`;
+  return `"${v.replace(/"/g, '""')}"`;
+};
 
 function postsCSV(store: Record<string, PostRow>): string {
   const header = [
@@ -397,6 +487,94 @@ function repliesCSV(store: Record<string, ReplyRow>): string {
   return `﻿${lines.join('\r\n')}`;
 }
 
+// -------------------------------------------------------------- stratus ship
+// Rows go through the existing background ApiRequest path (the background
+// worker owns the bearer token), in batches, alongside the CSV download.
+// Upload failure never loses the harvest — the CSV is already on disk.
+
+const INGEST_CHUNK = 200;
+
+function postsIngestRows(store: Record<string, PostRow>): HarvestIngestRow[] {
+  return Object.entries(store).map(([id, r]) => ({
+    tweetId: id,
+    handle: r.handle,
+    text: r.text,
+    comments: r.comments,
+    reposts: r.reposts,
+    likes: r.likes,
+    bookmarks: r.bookmarks,
+    views: r.views,
+    time: r.time || null,
+    hasPhoto: r.hasPhoto,
+    hasVideo: r.hasVideo,
+    isQuote: r.isQuote,
+    textLen: r.text.length,
+    lineBreaks: r.lineBreaks,
+  }));
+}
+
+function repliesIngestRows(profile: string, store: Record<string, ReplyRow>): HarvestIngestRow[] {
+  return Object.entries(store).map(([id, r]) => ({
+    tweetId: id,
+    handle: profile,
+    text: r.r_text,
+    comments: r.r_comments,
+    reposts: r.r_reposts,
+    likes: r.r_likes,
+    bookmarks: r.r_bookmarks,
+    views: r.r_views,
+    time: r.r_time || null,
+    hasPhoto: r.hasPhoto,
+    hasVideo: r.hasVideo,
+    isQuote: r.isQuote,
+    textLen: r.r_text.length,
+    lineBreaks: r.lineBreaks,
+    groupPosition: r.r_position,
+    orig: {
+      tweetId: r.o_id || null,
+      handle: r.o_handle || null,
+      text: r.o_text,
+      time: r.o_time || null,
+      comments: r.o_comments,
+      likes: r.o_likes,
+      views: r.o_views,
+    },
+  }));
+}
+
+async function apiSend<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+  const req: ApiRequest = { type: 'stratus/api', method, path, body };
+  const res = (await chrome.runtime.sendMessage(req)) as ApiResponse<T> | undefined;
+  if (!res) throw new Error('no_response');
+  if (!res.ok) throw new Error(res.code);
+  return res.data;
+}
+
+async function shipToStratus(
+  handle: string,
+  mode: HarvestMode,
+  scope: HarvestScope,
+  rows: HarvestIngestRow[],
+): Promise<HarvestIngest> {
+  try {
+    const run = await apiSend<{ id: string }>('POST', '/x/harvest/runs', { handle, mode, scope });
+    let matched = 0;
+    let backfilled = 0;
+    for (let i = 0; i < rows.length; i += INGEST_CHUNK) {
+      const batch = await apiSend<{ matched: number; backfilled: number }>(
+        'POST',
+        '/x/harvest/rows',
+        { runId: run.id, rows: rows.slice(i, i + INGEST_CHUNK) },
+      );
+      matched += batch.matched;
+      backfilled += batch.backfilled;
+    }
+    return { sent: true, rows: rows.length, runId: run.id, matched, backfilled };
+  } catch (err) {
+    return { sent: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function download(csv: string, name: string): void {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -441,7 +619,8 @@ function localDateStamp(): string {
 }
 
 function scopeSuffix(scope: HarvestScope): string {
-  return scope === 'all' ? '' : `_${scope}`;
+  if (scope === 'all') return '';
+  return `_${scope.replace(/-/g, '_')}`;
 }
 
 function postEvent(port: chrome.runtime.Port, e: HarvestEvent): void {
@@ -457,6 +636,7 @@ async function runHarvest<R>(
   options: HarvestOptions,
   harvest: Harvester<R>,
   buildCsv: (store: Record<string, R>) => string,
+  toIngest: (profile: string, store: Record<string, R>) => HarvestIngestRow[],
   rowTime: (r: R) => string,
   emit: (e: HarvestEvent) => void,
   shouldCancel: () => boolean,
@@ -468,7 +648,7 @@ async function runHarvest<R>(
   }
 
   const cfg = PRESETS[options.pace] ?? PRESETS.human;
-  const win = scopeWindow(options.scope);
+  const win = await windowFor(profile, mode, options.scope);
   const ctx: HarvestCtx<R> = { store: {}, profile, window: win, oldestSeenMs: null };
 
   emit({ type: 'started', handle: profile, mode, scope: options.scope });
@@ -543,6 +723,20 @@ async function runHarvest<R>(
 
   if (rows.length > 0) download(buildCsv(ctx.store), filename);
 
+  let ingest: HarvestIngest | undefined;
+  if (rows.length > 0 && options.sendToStratus !== false) {
+    emit({ type: 'sending', rows: rows.length });
+    ingest = await shipToStratus(profile, mode, options.scope, toIngest(profile, ctx.store));
+  }
+
+  // Advance the per-handle cursor only on a COMPLETED run (§9.4) — a cancelled
+  // partial scroll would otherwise skip everything it never reached.
+  if (!cancelled && rows.length > 0) {
+    const newest = times[times.length - 1];
+    const newestMs = newest ? Date.parse(newest) : Number.NaN;
+    if (!Number.isNaN(newestMs)) await writeCursorMs(profile, mode, newestMs);
+  }
+
   emit({
     type: 'done',
     rows: rows.length,
@@ -550,6 +744,7 @@ async function runHarvest<R>(
     firstTime: times[times.length - 1] ?? null,
     lastTime: times[0] ?? null,
     cancelled,
+    ...(ingest ? { ingest } : {}),
   });
 }
 
@@ -608,6 +803,7 @@ export function initHarvest(): void {
               opts,
               harvestReplies,
               repliesCSV,
+              (profile, store) => repliesIngestRows(profile, store),
               (r) => r.r_time,
               emit,
               shouldCancel,
@@ -617,6 +813,7 @@ export function initHarvest(): void {
               opts,
               harvestPosts,
               postsCSV,
+              (_profile, store) => postsIngestRows(store),
               (r) => r.time,
               emit,
               shouldCancel,

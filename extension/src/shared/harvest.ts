@@ -6,7 +6,10 @@
 export type HarvestMode = 'posts' | 'replies';
 // 'all' scrapes the whole timeline (until bottom / max). 'today'/'yesterday'
 // keep only items whose timestamp falls on that local calendar day.
-export type HarvestScope = 'all' | 'today' | 'yesterday';
+// 'since-last' (§9.4) is the per-handle incremental cursor: keep only items
+// newer than the newest item of the previous completed run for this
+// handle+mode (chrome.storage.local); behaves like 'all' on the first run.
+export type HarvestScope = 'all' | 'today' | 'yesterday' | 'since-last';
 export type HarvestPace = 'slow' | 'human' | 'fast';
 
 export interface HarvestOptions {
@@ -15,7 +18,56 @@ export interface HarvestOptions {
   pace: HarvestPace;
   // Hard row cap (safety / cost). Omitted means unlimited.
   max?: number;
+  // Ship rows to POST /x/harvest/* alongside the CSV download. Default on —
+  // only an explicit false skips the upload (OVERHAUL-PLAN §6.3).
+  sendToStratus?: boolean;
 }
+
+// One harvested row as shipped to POST /x/harvest/rows. `orig` is the tweet
+// replied to (replies mode only) — its capture-time metrics feed the BAND
+// calibration crosstab, and its id strengthens the reply_drafts reconcile.
+export interface HarvestIngestOrig {
+  tweetId: string | null;
+  handle: string | null;
+  text: string;
+  time: string | null;
+  comments: number;
+  likes: number;
+  views: number;
+}
+
+export interface HarvestIngestRow {
+  tweetId: string;
+  handle: string;
+  text: string;
+  comments: number;
+  reposts: number;
+  likes: number;
+  bookmarks: number;
+  views: number;
+  time: string | null;
+  // Content-shape columns (§9.4) — optional so older builds keep working.
+  hasPhoto?: boolean;
+  hasVideo?: boolean;
+  isQuote?: boolean;
+  textLen?: number;
+  lineBreaks?: number;
+  /** Replies mode: 1-based position inside the rendered group (1 = directly
+   *  under the true original; deeper = self-thread/chain pairing suspect). */
+  groupPosition?: number;
+  orig?: HarvestIngestOrig;
+}
+
+// Per-handle incremental cursor (§9.4), stored in chrome.storage.local.
+export function harvestCursorKey(handle: string, mode: HarvestMode): string {
+  return `harvest:cursor:${handle.toLowerCase()}:${mode}`;
+}
+
+// Outcome of the upload, attached to the final 'done' event. The CSV download
+// happens regardless — a failed upload only loses the Postgres copy.
+export type HarvestIngest =
+  | { sent: true; rows: number; runId: string; matched: number; backfilled: number }
+  | { sent: false; error: string };
 
 // Port name used by chrome.tabs.connect (side panel) / chrome.runtime.onConnect
 // (content script).
@@ -28,6 +80,7 @@ export type HarvestCommand = { type: 'start'; options: HarvestOptions } | { type
 export type HarvestEvent =
   | { type: 'started'; handle: string; mode: HarvestMode; scope: HarvestScope }
   | { type: 'progress'; rows: number; oldest: string | null; steps: number }
+  | { type: 'sending'; rows: number }
   | {
       type: 'done';
       rows: number;
@@ -35,6 +88,7 @@ export type HarvestEvent =
       firstTime: string | null;
       lastTime: string | null;
       cancelled: boolean;
+      ingest?: HarvestIngest;
     }
   | { type: 'error'; code: string; message?: string };
 

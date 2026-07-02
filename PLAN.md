@@ -447,6 +447,52 @@ Five short phases. Each ends with something usable.
 
 After Phase 5, stop. The next thing is analysis (LLM over `voice_tweets`, post-mortem reports over `metrics_snapshots`, agentic flows that pre-fill drafts from voice patterns) — that's a separate project, not more wrapper.
 
+**Phases 6–10 — the Growth Engine overhaul (2026-06).** `OVERHAUL-PLAN.md` is the
+milestone spec for everything after Phase 5; `CLAUDE.md`'s phase block tracks what
+shipped. Summary of what landed:
+
+**Phase 6 — Close the loops (shipped 2026-06-10).** Follower KPI snapshots
+(`account_snapshots`, $0.001/day), reply outcomes join (`GET /x/replies/outcomes`),
+harvest ingestion (`harvest_runs`/`harvest_rows`, $0), the Daily Brief
+(`GET /x/brief` + Today tab), worker heartbeats in `/healthz`, publisher
+double-post hardening, URL guard at schedule time, SIGTERM drain, `/cost/daily`
++ budget watchdog.
+
+**Phase 7 — Reply Engine 2.0 (shipped 2026-06-10).** Prompt surgery (structured
+outputs, two variants, idea steer, specificity gate, 350-token cap + prefix
+caching), the Radar worked queue, server-side band gate (`422 band_gate` with
+`override` escape hatch), target roster (`GET /x/voice/targets` + momentum),
+mention inbox (`mentions` table, `GET/PATCH /x/mentions`, `POST /x/mentions/refresh`,
+manual paste only).
+
+**Phase 8 — Authoring 2.0 (shipped 2026-06-10).** Original-post drafter
+(`POST /x/posts/draft` — three register-distinct drafts, pillar-tagged, few-shot
+from measured winners, ~$0.006/call); threads (`POST /x/posts/threads`,
+`thread_id`/`thread_position`/`segment` status, publisher chains self-replies
+~500ms apart, link-in-first-reply at $0.030 instead of $0.20, frozen-on-failure);
+template extraction (`POST /x/voice/tweets/:id/extract` + `/x/voice/extract-batch`,
+~$0.005/tweet one-time, hook/skeleton/line-break/length/device columns + Remix);
+best-time + pillar analytics (`GET /x/metrics/best-times` normalized by new
+`age_at_snapshot_min`, `GET /x/metrics/pillars`, `pillar` columns); bounded day-7
+winner re-read (cap 5/day, claim-before-read); self-quote re-up
+(`POST /x/posts/reup`, publisher verifies `quote_tweet_id` against
+`posts_published` before posting with `verifiedSelfQuote`).
+
+**Phase 9 — Hardening (shipped 2026-06-10).** Pricing truthfulness (`costHint`
+through `xFetch`, URL posts bill $0.20, $0-priced 2xx warnings, unknown-Grok-model
+warning); reply/quote gates verify (`parentAuthorId`, `verifiedSelfQuote`);
+locale-hardened metric parsing (`extension/src/shared/metricsAria.ts` +
+`metrics_unparsed` reporting); harvester robustness (since-last cursor, replies
+`groupPosition`, CSV formula-escape, content-shape columns); extension API-client
+consolidation onto the background route + `GET /x/posts/scheduled/:id`;
+money-path tests (`src/app.test.ts` + pure-function suites); deploy hardening
+(migrations before restart, git SHA in `/healthz`, `STRATUS_DEPLOY_HOST` env);
+tsconfig covers `scripts/` + `drizzle.config.ts`; `/healthz` stops echoing raw DB
+errors.
+
+**Phase 10 — Generated media: not started (gated).** Only after an image post
+wins a manual A/B; requires OAuth 1.0a for `/2/media/upload`.
+
 ## Explicitly NOT doing
 
 - No replies to non-self tweets, no cross-account quote tweets (Feb 2026 policy mess)

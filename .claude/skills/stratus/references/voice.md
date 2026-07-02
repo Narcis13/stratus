@@ -7,8 +7,9 @@ The voice library is a **swipe file** of other people's tweets, kept for style/s
 ## Mental model
 
 ```
-voice_authors        ── one row per author, keyed by lowercased @handle
-  └─ voice_tweets     ── many saved tweets per author
+voice_authors             ── one row per author, keyed by lowercased @handle
+  ├─ voice_tweets          ── many saved tweets per author
+  └─ voice_author_snapshots ── append-only follower series, one point per profile enrich
 ```
 
 - Authors are identified by their **lowercased `@handle`** — the only stable id scrapeable without the API. The numeric `xUserId` is filled opportunistically when the page exposes it (nullable).
@@ -71,7 +72,7 @@ All fields optional, but a body with **nothing usable** is rejected `400 invalid
 }
 ```
 
-Upserts the author with `source='profile_scrape'`, stamps `enrichedAt`+`updatedAt`. On an existing row, only the columns the scrape actually caught are overwritten (a missed bio won't wipe a good one). Returns the row.
+Upserts the author with `source='profile_scrape'`, stamps `enrichedAt`+`updatedAt`. On an existing row, only the columns the scrape actually caught are overwritten (a missed bio won't wipe a good one). When `followersCount` is present, also **appends a `voice_author_snapshots` point** — that series is what makes momentum computable for the targets roster, so re-enriching an author every week or two is worthwhile. Returns the row.
 
 ## Reading & curating from the CLI (the common case)
 
@@ -89,9 +90,13 @@ curl -s "$STRATUS_BASE_URL/x/voice/tweets?q=leverage&limit=50" \
 # Include archived tweets (default hides them)
 curl -s "$STRATUS_BASE_URL/x/voice/tweets?author=naval&retired=true" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+
+# By extracted structure: stat-hook tweets only (see "Template extraction" below)
+curl -s "$STRATUS_BASE_URL/x/voice/tweets?hook=stat&extracted=true&limit=20" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
 ```
 
-Params (all optional): `author` (a `@handle` — **not** a numeric id anymore), `q` (substring on `text`), `retired=true`, `limit` (default 50, max 200). Rows include `authorDisplayName` (joined) and `scrapedHtml`, ordered by `createdAt desc`. There is **no** `minLikes`/`includeReplies`/metrics filter — those died with the API-read model.
+Params (all optional): `author` (a `@handle` — **not** a numeric id anymore), `q` (substring on `text`), `hook` (substring on the extracted `hookType`), `extracted=true|false` (template-extracted vs not), `retired=true`, `limit` (default 50, max 200). Rows include `authorDisplayName` (joined), `scrapedHtml`, and the template columns (`hookType`/`skeleton`/`lineBreakPattern`/`templateLength`/`device`/`templateExtractedAt`), ordered by `createdAt desc`. There is **no** `minLikes`/`includeReplies`/metrics filter — those died with the API-read model.
 
 ### List authors
 
@@ -133,8 +138,38 @@ curl -sX DELETE "$STRATUS_BASE_URL/x/voice/authors/naval" \
   -H "Authorization: Bearer $STRATUS_API_TOKEN"
 ```
 
-Deleting an author returns `409 { error: "author_has_tweets", tweets: <n> }` while any tweet still references it. Retire or delete its tweets first, then delete the author.
+Deleting an author returns `409 { error: "author_has_tweets", tweets: <n> }` while any tweet still references it. Retire or delete its tweets first, then delete the author (its follower-snapshot series is dropped in the same txn).
+
+## The target roster (GET /x/voice/targets)
+
+The REPLY GUIDE's "private list of 10–20 top voices" as a live, $0 view:
+
+```bash
+curl -s "$STRATUS_BASE_URL/x/voice/targets" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" \
+  | jq '{myFollowers, band, top: [.targets[0:10][] | {handle, followersCount, ratio, momentum, lastRepliedAt, postedReplies}]}'
+```
+
+- Bands non-retired authors to **2–10× my follower count** (latest `account_snapshots` row from the daily getMe; `band: null` until the first 03:00 UTC pass).
+- Ranks by **momentum** (followers/day across the author's snapshot series; null with <2 points — those sort below measured authors, smallest first, since small in-band accounts reply back likeliest).
+- `lastRepliedAt`/`postedReplies` come from posted `reply_drafts` — an author never replied to, or not in >7 days, is a neglected target.
+
+## Template extraction (Grok, mounts only with XAI_API_KEY)
+
+One structured-output pass per saved tweet distills the reusable **structure** — `{hookType, skeleton, lineBreakPattern, templateLength, device}` — into `voice_tweets` columns. ~$0.005/tweet, one-time, **xAI tokens not X API**. Structure only, never content: the `voiceTweetId` remix on `POST /x/posts/draft` must transform, never reproduce.
+
+```bash
+# one tweet (re-extract allowed)
+curl -sX POST "$STRATUS_BASE_URL/x/voice/tweets/$TWEET_ID/extract" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" | jq
+
+# backfill un-extracted tweets, oldest first (limit ≤50, default 20)
+curl -sX POST "$STRATUS_BASE_URL/x/voice/extract-batch" \
+  -H "Authorization: Bearer $STRATUS_API_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"limit":20}' | jq
+# → { requested, extracted, failures, costUsd, remaining }
+```
 
 ## Cost
 
-Every route here is **`$0`** — Postgres only, no X API. The whole point of the pivot: other-user reads cost 5× owned reads ($0.005 vs $0.001), so the swipe file captures by DOM scrape in the extension instead. **Do not reintroduce an X-API read (`searchRecent`, `getTweet`, `getUserByUsername`) to "fetch" or "pull" voice content without an explicit budget conversation.**
+Every `/x/voice/*` route is **`$0`** against the X API — Postgres only. The whole point of the pivot: other-user reads cost 5× owned reads ($0.005 vs $0.001), so the swipe file captures by DOM scrape in the extension instead. The only paid voice-adjacent op is the optional Grok template extraction above (~$0.005/tweet, billed as xAI tokens, never an X read). **Do not reintroduce an X-API read (`searchRecent`, `getTweet`) to "fetch" or "pull" voice content without an explicit budget conversation.**

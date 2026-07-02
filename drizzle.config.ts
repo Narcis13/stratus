@@ -3,9 +3,9 @@ import type { Config } from 'drizzle-kit';
 export default {
   schema: ['./src/db/shared-schema.ts', './src/x/db/schema.ts'],
   out: './src/db/migrations',
-  dialect: 'postgresql',
+  dialect: 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
+    url: process.env.SQLITE_PATH ?? './stratus.db',
   },
   strict: true,
   verbose: true,

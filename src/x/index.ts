@@ -3,15 +3,22 @@
 // `startXWorkers()`. Nothing else should import from inside `src/x/`.
 
 import type { Hono } from 'hono';
+import { registerHeartbeat, unregisterHeartbeat } from '../heartbeats.ts';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
+import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
+import { drafter } from './routes/drafter.ts';
+import { harvest } from './routes/harvest.ts';
+import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
+import { pillars } from './routes/pillars.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { replies } from './routes/replies.ts';
 import { createVoiceRouter } from './routes/voice.ts';
-import { startDailyMetrics } from './workers/dailyMetrics.ts';
-import { startPublisher } from './workers/publisher.ts';
+import { voiceExtract } from './routes/voiceExtract.ts';
+import { DAILY_METRICS_HEARTBEAT, startDailyMetrics } from './workers/dailyMetrics.ts';
+import { PUBLISHER_HEARTBEAT, startPublisher } from './workers/publisher.ts';
 
 interface XConfig {
   selfXUserId: string;
@@ -29,33 +36,53 @@ function loadConfig(): XConfig {
 
 export function mountX(app: Hono): void {
   const cfg = loadConfig();
+  app.route('/x', brief);
   app.route('/x', calendar);
   app.route('/x', metrics);
+  app.route('/x', pillars);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
+  app.route('/x', harvest);
+  app.route('/x', createMentionsRouter(cfg));
   // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
   if (process.env.XAI_API_KEY) {
     app.route('/x', replies);
+    app.route('/x', drafter);
+    app.route('/x', voiceExtract);
   } else {
-    console.log('x/replies: XAI_API_KEY not set — /x/replies/* not mounted');
+    console.log(
+      'x/replies: XAI_API_KEY not set — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
+    );
   }
 }
 
 export interface XWorkers {
-  stop(): void;
+  /** Stops timers AND drains in-flight ticks — await before process exit. */
+  stop(): Promise<void>;
 }
 
 export function startXWorkers(): XWorkers {
-  // Install before any worker tick so the very first X call is logged.
-  setDefaultOnCost(makeOnCost('x'));
+  // Install before any worker tick so the very first X call is logged. The
+  // daily budget watchdog rides on the same callback ($0.15/day soft cap).
+  setDefaultOnCost(
+    makeOnCost('x', { dailyBudgetUsd: Number(process.env.X_DAILY_BUDGET_USD ?? '0.15') }),
+  );
 
   const cfg = loadConfig();
-  const stops: Array<() => void> = [];
+  const stops: Array<() => void | Promise<void>> = [];
+  const heartbeats: string[] = [];
 
+  // Heartbeats: /healthz flags (503) when a worker stops beating — a dead
+  // publisher must page the deploy check, not fail silently.
+  registerHeartbeat(PUBLISHER_HEARTBEAT, 5 * 60_000);
+  heartbeats.push(PUBLISHER_HEARTBEAT);
   stops.push(startPublisher(cfg));
+
   // One daily 03:00 UTC pass that discovers own tweets/replies and snapshots
   // each once at ~24h (replaces the old 60s metricsPoll + 24h ownReconcile).
   if (process.env.DAILY_METRICS_ENABLED !== 'false') {
+    registerHeartbeat(DAILY_METRICS_HEARTBEAT, 25 * 60 * 60_000);
+    heartbeats.push(DAILY_METRICS_HEARTBEAT);
     stops.push(startDailyMetrics(cfg));
   } else {
     console.log(
@@ -66,8 +93,9 @@ export function startXWorkers(): XWorkers {
   // pulls or metrics polling, so there are no voice workers to start.
 
   return {
-    stop() {
-      for (const s of stops) s();
+    async stop() {
+      await Promise.all(stops.map((s) => s()));
+      for (const name of heartbeats) unregisterHeartbeat(name);
       setDefaultOnCost(null);
     },
   };

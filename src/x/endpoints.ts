@@ -6,6 +6,7 @@ import { XApiError } from './errors.ts';
 import { defaultPostParams } from './fields.ts';
 import type { Page } from './pagination.ts';
 import { paginate } from './pagination.ts';
+import { OWNED_READ_USD, POST_CREATE_USD, URL_POST_CREATE_USD } from './pricing.ts';
 
 // -------------------------------------------------------------------- READS
 
@@ -69,16 +70,22 @@ export async function getMe(token: string): Promise<XUser> {
   return res.data;
 }
 
-/** Cost: $0.005 if other-user, $0.001 if owned. */
+/** Cost: $0.005 if other-user, $0.001 if owned — pass `owned: true` when the
+ *  id is the authenticated user's tweet so the cost row reads the true price
+ *  instead of the conservative other-user rate (§9.1). `ownedPrivate` implies it. */
 export async function getTweet(
   token: string,
   id: string,
-  opts: { ownedPrivate?: boolean } = {},
+  opts: { ownedPrivate?: boolean; owned?: boolean } = {},
 ): Promise<XTweet> {
   const res = await xFetch<{
     data?: XTweet;
     errors?: Array<{ type?: string; title?: string; detail?: string }>;
-  }>(`/2/tweets/${id}`, { token, query: defaultPostParams(opts) });
+  }>(`/2/tweets/${id}`, {
+    token,
+    query: defaultPostParams(opts),
+    ...(opts.owned || opts.ownedPrivate ? { costHint: OWNED_READ_USD } : {}),
+  });
   // X answers an unreadable tweet (deleted, suspended author) with HTTP 200 and
   // a `{errors:[…]}` body and NO `data` — and bills the read regardless. xFetch
   // can't see this (200 is "ok"), so without this guard getTweet returns
@@ -155,6 +162,64 @@ export async function* getUserTweets(
   yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
 }
 
+export interface GetUserMentionsOptions {
+  /** Max mentions returned across pages. Also clamps per-request page size for cost. Default 50. */
+  maxResults?: number;
+  /** Only return mentions newer than this tweet id (incremental inbox pull). */
+  sinceId?: string;
+}
+
+/** A mention with the author resolved from the page's `includes.users`. */
+export interface XMention extends XTweet {
+  authorUsername?: string;
+  authorName?: string;
+}
+
+/**
+ * Mentions of the authenticated user — owned reads, $0.001/result (§7.5
+ * mention inbox). Hard pagination cap of 800 mentions per X. The default
+ * maxResults is a deliberate 50: a first pull with no since_id checkpoint
+ * would otherwise walk the whole 800-mention history.
+ */
+export async function* getUserMentions(
+  token: string,
+  xUserId: string,
+  opts: GetUserMentionsOptions = {},
+): AsyncIterable<XMention> {
+  // Server accepts max_results in [5, 100]. Clamp page size to caller intent:
+  // X bills for every result it returns, not what JS iterates.
+  const maxResults = opts.maxResults ?? 50;
+  const pageSize = Math.min(100, Math.max(5, maxResults));
+  // Authors arrive in `includes.users`, which paginate() never sees — collect
+  // them per page so each yielded mention carries its author's handle.
+  const users = new Map<string, { username: string; name: string }>();
+  const fetchPage = async (nextToken: string | undefined) => {
+    const page = await xFetch<Page<XTweet> & { includes?: { users?: XUser[] } }>(
+      `/2/users/${xUserId}/mentions`,
+      {
+        token,
+        query: {
+          max_results: pageSize,
+          ...(opts.sinceId ? { since_id: opts.sinceId } : {}),
+          ...defaultPostParams(),
+          ...(nextToken ? { pagination_token: nextToken } : {}),
+        },
+      },
+    );
+    for (const u of page.includes?.users ?? []) {
+      users.set(u.id, { username: u.username, name: u.name });
+    }
+    return page;
+  };
+  for await (const tweet of paginate(fetchPage, { maxItems: maxResults })) {
+    const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
+    yield {
+      ...tweet,
+      ...(author ? { authorUsername: author.username, authorName: author.name } : {}),
+    };
+  }
+}
+
 export interface GetTweetsByIdsResult {
   /** Tweets X returned, in arbitrary order. */
   found: XTweet[];
@@ -207,6 +272,13 @@ export interface CreatePostOptions {
   selfXUserId?: string;
   /** If true, allow replying to non-self tweets. Default false (Feb 2026 policy). */
   allowReplyToOthers?: boolean;
+  /** Numeric author id of the tweet being replied to, when the caller knows it.
+   *  Verified against `selfXUserId` (§9.2) — the gate checks, not trusts. */
+  parentAuthorId?: string;
+  /** Caller attests it verified `quote_tweet_id` is an own tweet (e.g. a
+   *  posts_published lookup). Quote posts throw without it — quoting others is
+   *  blocked on self-serve tiers (Feb 2026), so self-quotes only (§8.5). */
+  verifiedSelfQuote?: boolean;
 }
 
 const URL_RE = /(^|\s)https?:\/\//i;
@@ -245,12 +317,39 @@ export async function createPost(
           'Pass selfXUserId so we can verify it is a self-reply (Feb 2026 policy).',
       );
     }
+    // Verify, don't trust (§9.2): when the caller knows the parent's author id,
+    // a mismatch is a policy violation waiting to 403 — refuse before the call.
+    if (opts.parentAuthorId != null && opts.parentAuthorId !== opts.selfXUserId) {
+      throw new Error(
+        'createPost: in_reply_to_tweet_id targets a non-self tweet — blocked on ' +
+          'self-serve tiers (Feb 2026). Pass allowReplyToOthers only for the ' +
+          'verified mention carve-out.',
+      );
+    }
   }
+
+  if (body.quote_tweet_id && !opts.verifiedSelfQuote) {
+    throw new Error(
+      'createPost: quote posts must be verified self-quotes — quoting others is ' +
+        'blocked on self-serve tiers (Feb 2026). Look the id up in posts_published ' +
+        'and pass { verifiedSelfQuote: true }.',
+    );
+  }
+
+  // Pricing truthfulness (§9.1): the path alone can't see the URL surcharge.
+  // House position (CLAUDE.md invariant #1, the link-in-first-reply pattern):
+  // the $0.20 surcharge applies to standalone post text; a link in a reply
+  // bills at the base $0.015.
+  const costHint =
+    containsUrl(body.text) && !body.reply?.in_reply_to_tweet_id
+      ? URL_POST_CREATE_USD
+      : POST_CREATE_USD;
 
   const res = await xFetch<{ data: { id: string; text: string } }>('/2/tweets', {
     method: 'POST',
     token,
     body,
+    costHint,
   });
   return res.data;
 }

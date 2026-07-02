@@ -1,6 +1,7 @@
 import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 import type {
   HarvestEvent,
+  HarvestIngest,
   HarvestMode,
   HarvestOptions,
   HarvestPace,
@@ -24,6 +25,10 @@ const SCOPES: { id: HarvestScope; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
+  // §9.4 — incremental: only items newer than the last completed run for this
+  // handle+mode. First run scrapes like All, then each run picks up where the
+  // previous one ended.
+  { id: 'since-last', label: 'Since last' },
 ];
 
 const PACES: HarvestPace[] = ['slow', 'human', 'fast'];
@@ -40,7 +45,11 @@ interface Result {
   firstTime: string | null;
   lastTime: string | null;
   cancelled: boolean;
+  ingest: HarvestIngest | null;
 }
+
+// Persisted so the choice survives panel close; default stays on.
+const SEND_TO_STRATUS_KEY = 'harvestSendToStratus';
 
 const ERROR_TEXT: Record<string, string> = {
   no_handle: "Couldn't read a profile handle from that page.",
@@ -69,6 +78,18 @@ export function HarvestPanel(): JSX.Element {
   const [scope, setScope] = useState<HarvestScope>('all');
   const [pace, setPace] = useState<HarvestPace>('human');
   const [maxStr, setMaxStr] = useState('');
+  const [sendToStratus, setSendToStratus] = useState(true);
+
+  useEffect(() => {
+    void chrome.storage.local.get(SEND_TO_STRATUS_KEY).then((out) => {
+      if (out[SEND_TO_STRATUS_KEY] === false) setSendToStratus(false);
+    });
+  }, []);
+
+  const toggleSendToStratus = (next: boolean): void => {
+    setSendToStratus(next);
+    void chrome.storage.local.set({ [SEND_TO_STRATUS_KEY]: next });
+  };
 
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -111,6 +132,9 @@ export function HarvestPanel(): JSX.Element {
       case 'progress':
         setProgress({ rows: e.rows, oldest: e.oldest, steps: e.steps });
         break;
+      case 'sending':
+        setStatus(`Sending ${e.rows} rows to stratus…`);
+        break;
       case 'done':
         setRunning(false);
         setStatus(null);
@@ -121,6 +145,7 @@ export function HarvestPanel(): JSX.Element {
           firstTime: e.firstTime,
           lastTime: e.lastTime,
           cancelled: e.cancelled,
+          ingest: e.ingest ?? null,
         });
         break;
       case 'error':
@@ -141,8 +166,13 @@ export function HarvestPanel(): JSX.Element {
     setRunning(true);
 
     const max = Number.parseInt(maxStr, 10);
-    const options: HarvestOptions =
-      Number.isFinite(max) && max > 0 ? { mode, scope, pace, max } : { mode, scope, pace };
+    const options: HarvestOptions = {
+      mode,
+      scope,
+      pace,
+      sendToStratus,
+      ...(Number.isFinite(max) && max > 0 ? { max } : {}),
+    };
 
     try {
       controllerRef.current = await startHarvest(cleanHandle, options, onEvent);
@@ -254,6 +284,16 @@ export function HarvestPanel(): JSX.Element {
         </label>
       </div>
 
+      <label className="row harvest-toggle">
+        <input
+          type="checkbox"
+          checked={sendToStratus}
+          disabled={running}
+          onChange={(e) => toggleSendToStratus(e.target.checked)}
+        />
+        <span>Send to stratus (alongside the CSV)</span>
+      </label>
+
       {error && <div className="error">{error}</div>}
 
       {running ? (
@@ -293,12 +333,26 @@ export function HarvestPanel(): JSX.Element {
               <strong>{result.rows}</strong> rows to <code>{result.filename}</code>.
               <br />
               Range {fmtDate(result.lastTime)} … {fmtDate(result.firstTime)}.
+              {result.ingest?.sent && (
+                <>
+                  <br />
+                  Sent <strong>{result.ingest.rows}</strong> rows to stratus
+                  {result.ingest.matched > 0 && <> · {result.ingest.matched} matched drafts</>}
+                  {result.ingest.backfilled > 0 && <> ({result.ingest.backfilled} backfilled)</>}.
+                </>
+              )}
             </>
           ) : (
             <>
               No matching {mode} found{scope === 'all' ? '' : ` for ${scope}`}.
             </>
           )}
+        </div>
+      )}
+
+      {result?.ingest && !result.ingest.sent && (
+        <div className="warn">
+          Stratus ingest failed: <code>{result.ingest.error}</code> — the CSV was still saved.
         </div>
       )}
     </div>

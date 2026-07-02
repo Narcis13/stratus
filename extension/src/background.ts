@@ -4,7 +4,23 @@
 // load apiUrl + bearer from chrome.storage.local and stamp the Authorization
 // header on every outgoing request.
 
-import { type ApiRequest, type ApiResponse, isApiRequest } from './shared/messages.ts';
+import {
+  type ApiRequest,
+  type ApiResponse,
+  isApiRequest,
+  isRadarClick,
+  isRadarDismiss,
+  isRadarReplies,
+  isRadarReport,
+} from './shared/messages.ts';
+import {
+  RADAR_DISMISSED_KEY,
+  RADAR_SIGHTINGS_KEY,
+  type RadarSighting,
+  appendDismissed,
+  isRadarSightings,
+  mergeSightings,
+} from './shared/radar.ts';
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
@@ -70,16 +86,109 @@ async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
   return { ok: true, status: r.status, data };
 }
 
+// --------------------------------------------------------------- radar (§7.2)
+//
+// Session-scoped ring buffer of hot/warm sightings streamed by the content
+// script, read by the side panel. Writes are funneled through one promise
+// chain: reports arrive from every x.com tab plus dismissals from the panel,
+// and chrome.storage has no transactions — interleaved read-modify-writes
+// would silently drop entries.
+
+let radarChain: Promise<void> = Promise.resolve();
+function enqueueRadar(fn: () => Promise<void>): Promise<void> {
+  const next = radarChain.then(fn);
+  radarChain = next.catch((err) => console.error('[stratus] radar write failed', err));
+  return next;
+}
+
+async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: string[] }> {
+  const out = await chrome.storage.session.get([RADAR_SIGHTINGS_KEY, RADAR_DISMISSED_KEY]);
+  const s = out[RADAR_SIGHTINGS_KEY];
+  const d = out[RADAR_DISMISSED_KEY];
+  return {
+    sightings: isRadarSightings(s) ? s : [],
+    dismissed: Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : [],
+  };
+}
+
+async function addSightings(incoming: RadarSighting[]): Promise<void> {
+  const { sightings, dismissed } = await readRadar();
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: mergeSightings(sightings, incoming, dismissed),
+  });
+}
+
+async function dismissSightings(tweetIds: string[]): Promise<void> {
+  const { sightings, dismissed } = await readRadar();
+  const gone = new Set(tweetIds);
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.filter((s) => !gone.has(s.tweetId)),
+    [RADAR_DISMISSED_KEY]: appendDismissed(dismissed, tweetIds),
+  });
+}
+
+// Attach batch-drafted replies onto matching sightings (§7.2). Single writer,
+// same as add/dismiss — a sighting evicted between draft and attach is simply
+// skipped (the panel only renders what's in the buffer).
+async function attachReplies(items: { tweetId: string; reply: string }[]): Promise<void> {
+  const { sightings } = await readRadar();
+  const byId = new Map(items.map((i) => [i.tweetId, i.reply]));
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) =>
+      byId.has(s.tweetId) ? { ...s, reply: byId.get(s.tweetId) } : s,
+    ),
+  });
+}
+
+// Stamp a sighting clicked (§7.2 Clicked view). Single writer, same as the
+// others — a sighting evicted between click and write is simply skipped.
+async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
+  const { sightings } = await readRadar();
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, clickedAt } : s)),
+  });
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (!isApiRequest(msg)) return false;
-  void handleApiRequest(msg).then(
-    (res) => sendResponse(res),
-    (err) => {
-      console.error('[stratus] api request crashed', err);
-      const fallback: ApiResponse = { ok: false, status: 0, code: 'background_error' };
-      sendResponse(fallback);
-    },
-  );
-  // returning true keeps the message channel open for the async sendResponse above
-  return true;
+  if (isApiRequest(msg)) {
+    void handleApiRequest(msg).then(
+      (res) => sendResponse(res),
+      (err) => {
+        console.error('[stratus] api request crashed', err);
+        const fallback: ApiResponse = { ok: false, status: 0, code: 'background_error' };
+        sendResponse(fallback);
+      },
+    );
+    // returning true keeps the message channel open for the async sendResponse above
+    return true;
+  }
+  if (isRadarReport(msg)) {
+    void enqueueRadar(() => addSightings(msg.sightings)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarDismiss(msg)) {
+    void enqueueRadar(() => dismissSightings(msg.tweetIds)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarReplies(msg)) {
+    void enqueueRadar(() => attachReplies(msg.replies)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarClick(msg)) {
+    void enqueueRadar(() => markClicked(msg.tweetId, msg.clickedAt)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  return false;
 });

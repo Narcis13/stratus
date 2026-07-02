@@ -21,9 +21,11 @@
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
 import { initHarvest } from './harvester.ts';
-import { BAND_LABEL, classifyBand, formatCount } from './replyBand.ts';
+import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
 import type { Band, TweetSignals } from './replyBand.ts';
-import type { ApiRequest, ApiResponse } from './shared/messages.ts';
+import type { ApiRequest, ApiResponse, RadarReport } from './shared/messages.ts';
+import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
+import type { RadarBand, RadarSighting } from './shared/radar.ts';
 import type {
   AuthorProfile,
   PostContext,
@@ -42,6 +44,7 @@ const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
 const REPLY_SYSTEM_PROMPT_KEY = 'replyMaster:systemPromptOverride';
+const REPLY_IDEA_KEY = 'replyMaster:idea';
 const REPLY_TOP_COMMENTS_MAX = 10;
 const REPLY_BTN_LABEL = '🪄 Reply Master';
 const SAVE_BTN_LABEL = 'Save to stratus';
@@ -618,20 +621,13 @@ function syncAuthorButton(): void {
 // --------------------------------------------------------------- reply master
 
 // X renders action-row aria-label like "12 replies, 5 reposts, 100 likes, ..."
-// Pull each metric independently — order isn't guaranteed across locales/A-B tests.
+// Locale-hardened parsing lives in shared/metricsAria.ts (§9.3) — a non-English
+// UI used to silently zero every metric, poisoning the band model. An aria
+// label with numbers nothing matched is reported loudly, never swallowed.
 function parseMetricsLabel(label: string): PostContext['metrics'] {
-  const n = (re: RegExp): number => {
-    const m = label.match(re);
-    if (!m || !m[1]) return 0;
-    const v = Number(m[1].replace(/[,.\s]/g, ''));
-    return Number.isFinite(v) ? v : 0;
-  };
-  return {
-    replies: n(/([\d.,]+)\s+repl/i),
-    reposts: n(/([\d.,]+)\s+repost/i),
-    likes: n(/([\d.,]+)\s+like/i),
-    views: n(/([\d.,]+)\s+view/i),
-  };
+  const m = parseMetricsAria(label);
+  if (m.unparsed) reportUnparsed('content', label);
+  return { replies: m.replies, reposts: m.reposts, likes: m.likes, views: m.views };
 }
 
 function scrapeTopComment(article: Element, focusedTweetId: string): TopComment | null {
@@ -676,6 +672,11 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     if (topComments.length >= REPLY_TOP_COMMENTS_MAX) break;
   }
 
+  // Stamp the band verdict + classifier inputs at capture time, via the same
+  // readTweetSignals path the badge uses — the draft row becomes a labeled
+  // training example for recalibrating BAND from own outcomes (plan §6.2).
+  const sig = readTweetSignals(focusedArticle);
+
   return {
     tweetId: focusedTweetId,
     handle: permalink.username,
@@ -685,6 +686,7 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     postedAt,
     metrics,
     topComments,
+    ...(sig ? { signals: { band: classifyBand(sig), ...sig } } : {}),
   };
 }
 
@@ -697,14 +699,21 @@ function setReplyState(
   btn.textContent = label;
 }
 
-function scheduleReplyReset(btn: HTMLButtonElement): void {
+function scheduleReplyReset(btn: HTMLButtonElement, ms = STATUS_PERSIST_MS): void {
   setTimeout(() => {
-    if (btn.isConnected) setReplyState(btn, 'idle', REPLY_BTN_LABEL);
-  }, STATUS_PERSIST_MS);
+    if (!btn.isConnected) return;
+    delete btn.dataset.force; // band-gate override expires with the prompt
+    setReplyState(btn, 'idle', REPLY_BTN_LABEL);
+  }, ms);
 }
 
 async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   if (btn.dataset.state === 'working') return;
+
+  // Set when the previous click was refused by the server band gate (§7.3);
+  // a deliberate re-click inside the prompt window forces the draft.
+  const force = btn.dataset.force === '1';
+  delete btn.dataset.force;
 
   const focusedId = focusedTweetIdFromUrl();
   if (!focusedId) {
@@ -729,10 +738,13 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   setReplyState(btn, 'working', 'Drafting…');
 
   let systemPromptOverride: string | undefined;
+  let idea: string | undefined;
   try {
-    const out = await chrome.storage.local.get(REPLY_SYSTEM_PROMPT_KEY);
+    const out = await chrome.storage.local.get([REPLY_SYSTEM_PROMPT_KEY, REPLY_IDEA_KEY]);
     const v = out[REPLY_SYSTEM_PROMPT_KEY];
     if (typeof v === 'string' && v.trim() !== '') systemPromptOverride = v;
+    const i = out[REPLY_IDEA_KEY];
+    if (typeof i === 'string' && i.trim() !== '') idea = i.trim();
   } catch (err) {
     console.warn('[stratus] reply master read override failed', err);
   }
@@ -741,7 +753,12 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     type: 'stratus/api',
     method: 'POST',
     path: '/x/replies/generate',
-    body: systemPromptOverride ? { context: ctx, systemPromptOverride } : { context: ctx },
+    body: {
+      context: ctx,
+      ...(systemPromptOverride ? { systemPromptOverride } : {}),
+      ...(idea ? { idea } : {}),
+      ...(force ? { override: true } : {}),
+    },
   };
 
   let res: ApiResponse<ReplyDraft> | undefined;
@@ -753,6 +770,14 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   if (!res || !res.ok) {
     const code = res && !res.ok ? res.code : 'no_response';
+    if (code === 'band_gate') {
+      // Server refused a dead (null/skip-band) target. Arm a short window in
+      // which a second deliberate click resends with override: true.
+      btn.dataset.force = '1';
+      setReplyState(btn, 'failed', 'Dead post — click to force');
+      scheduleReplyReset(btn, STATUS_PERSIST_MS * 2);
+      return;
+    }
     setReplyState(btn, 'failed', `Failed: ${code}`);
     scheduleReplyReset(btn);
     return;
@@ -771,8 +796,27 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   try {
     await chrome.storage.local.set({ [REPLY_MASTER_STORAGE_KEY]: draft });
+    // The idea steered this draft; clear it so it can't leak into the next one.
+    if (idea) await chrome.storage.local.remove(REPLY_IDEA_KEY);
   } catch (err) {
     console.warn('[stratus] storage.set lastDraft failed', err);
+  }
+
+  // Opt-in (Settings → "Auto-type reply drafts", default off): stream the draft
+  // into the reply box like manual keystrokes. Clipboard copy above stays as the
+  // fallback, so an absent/unfound composer still leaves the draft pasteable.
+  if (await autoTypeReplyEnabled()) {
+    const editor = findReplyEditor();
+    if (editor) {
+      setReplyState(btn, 'working', 'Typing…');
+      const typed = await typeTextInto(editor, replyText);
+      setReplyState(btn, 'done', typed > 0 ? 'Typed ✓' : 'Open the reply box first');
+      scheduleReplyReset(btn);
+      return;
+    }
+    setReplyState(btn, 'done', copied ? 'Copied ✓ (no reply box)' : 'Drafted (copy manually)');
+    scheduleReplyReset(btn);
+    return;
   }
 
   setReplyState(btn, 'done', copied ? 'Copied ✓' : 'Drafted (copy manually)');
@@ -809,13 +853,9 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
 // replying to early. Every signal is read from the DOM ($0). The scoring model
 // lives in replyBand.ts; the rationale is in evals/reply-eval-*.md.
 
-const BAIT_PHRASES =
-  /\b(agree or disagree|what'?s your|which one|be honest|your take|hot take|thoughts\??|am i wrong|change my mind|guess the)\b/i;
-
 function looksLikeReplyBait(article: Element): boolean {
   const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
-  if (/\?$/.test(text)) return true; // ends on a question
-  if (BAIT_PHRASES.test(text)) return true;
+  if (textLooksLikeReplyBait(text)) return true;
   // Best-effort poll detection — selector may drift across X redesigns.
   if (article.querySelector('[role="radiogroup"], [data-testid*="poll" i]')) return true;
   return false;
@@ -874,6 +914,74 @@ function applyBand(article: HTMLElement): void {
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
   renderBandBadge(article, band, sig);
+  if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+}
+
+// --------------------------------------------------------------- radar (§7.2)
+
+// Hot/warm verdicts used to evaporate as you scrolled past. Stream them to the
+// background's session ring buffer so the side panel can show a worked queue.
+// Batched (one message per flush window, deduped by tweetId) and per-tweet
+// throttled — applyBand re-runs on every mutation burst, but the queue only
+// needs a fresh number once a minute, sooner if the band itself changes.
+
+const RADAR_FLUSH_MS = 2000;
+const RADAR_RESEND_MS = 60_000;
+
+const pendingRadar = new Map<string, RadarSighting>();
+const radarSentAt = new Map<string, { at: number; band: RadarBand }>();
+let radarFlushTimer: number | null = null;
+
+function recordRadarSighting(article: Element, band: RadarBand, sig: TweetSignals): void {
+  const permalink = findPermalink(article);
+  if (!permalink) return;
+  const sent = radarSentAt.get(permalink.tweetId);
+  if (sent && sent.band === band && Date.now() - sent.at < RADAR_RESEND_MS) return;
+
+  const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  const userNameEl = article.querySelector('[data-testid="User-Name"]');
+  const author = userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  const now = new Date().toISOString();
+
+  pendingRadar.set(permalink.tweetId, {
+    tweetId: permalink.tweetId,
+    url: permalink.url,
+    handle: permalink.username,
+    author,
+    // Wider than the 2-line UI clamp on purpose: batch reply drafting (§7.2)
+    // feeds this text to Grok, so keep enough of a longer tweet to reply to.
+    text: text.slice(0, 500),
+    band,
+    signals: { ...sig, ageMin: Math.round(sig.ageMin), vpm: Math.round(sig.vpm * 10) / 10 },
+    firstSeenAt: now,
+    lastSeenAt: now,
+  });
+  if (radarFlushTimer === null) {
+    radarFlushTimer = window.setTimeout(flushRadar, RADAR_FLUSH_MS);
+  }
+}
+
+function flushRadar(): void {
+  radarFlushTimer = null;
+  if (pendingRadar.size === 0) return;
+  const sightings = [...pendingRadar.values()];
+  pendingRadar.clear();
+
+  // Throttle map grows one entry per distinct hot/warm tweet this session;
+  // reset rather than prune if a marathon scroll ever gets it huge (the only
+  // cost of forgetting is one early re-send per tweet).
+  if (radarSentAt.size > 3000) radarSentAt.clear();
+  const at = Date.now();
+  for (const s of sightings) radarSentAt.set(s.tweetId, { at, band: s.band });
+
+  const msg: RadarReport = { type: 'stratus/radar-report', sightings };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar report failed', err);
+    }
+  })();
 }
 
 // --------------------------------------------------------------- scan loop
@@ -903,9 +1011,150 @@ function scheduleScan(): void {
 function start(): void {
   injectStyles();
   initHarvest();
+  initTypeFromClipboard();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });
+}
+
+// --------------------------------------------------- type-from-clipboard
+//
+// Cmd+B, while a composer / reply box is focused, "types" the clipboard text
+// in character by character, so a Grok-drafted reply lands like manual
+// keystrokes instead of an instant paste. X's composer is a Draft.js
+// contenteditable: setting textContent/value directly is ignored by its
+// internal model, so each char goes in via execCommand('insertText'), which
+// is exactly the path Draft listens on (its handleBeforeInput). Escape aborts
+// an in-flight run; moving focus away stops it too.
+
+const TYPE_CHAR_DELAY_MS = 18;
+let typingInFlight = false;
+let cancelTyping = false;
+
+function focusedEditable(): HTMLElement | null {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return null;
+  if (el.isContentEditable) return el;
+  if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return el;
+  return null;
+}
+
+function insertChar(target: HTMLElement, ch: string): void {
+  if (target.isContentEditable) {
+    // Draft.js consumes insertText/insertParagraph through beforeinput.
+    const ok =
+      ch === '\n'
+        ? document.execCommand('insertParagraph')
+        : document.execCommand('insertText', false, ch);
+    if (!ok) {
+      target.dispatchEvent(
+        new InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          inputType: ch === '\n' ? 'insertLineBreak' : 'insertText',
+          data: ch === '\n' ? null : ch,
+        }),
+      );
+    }
+    return;
+  }
+  // Native input/textarea: write through React's value setter so onChange fires.
+  const el = target as HTMLInputElement | HTMLTextAreaElement;
+  const start = el.selectionStart ?? el.value.length;
+  const end = el.selectionEnd ?? el.value.length;
+  const next = el.value.slice(0, start) + ch + el.value.slice(end);
+  const proto =
+    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+  if (setter) setter.call(el, next);
+  else el.value = next;
+  const caret = start + ch.length;
+  el.selectionStart = el.selectionEnd = caret;
+  el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+}
+
+// Core loop, shared by the Cmd+B shortcut and Reply Master auto-type. Types
+// `text` into `target` one char at a time; aborts if Escape was pressed or the
+// user moved focus elsewhere mid-run. Returns the count actually typed.
+async function typeTextInto(target: HTMLElement, text: string): Promise<number> {
+  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (!normalised) return 0;
+
+  typingInFlight = true;
+  cancelTyping = false;
+  target.focus();
+  let n = 0;
+  try {
+    for (const ch of Array.from(normalised)) {
+      if (cancelTyping) break;
+      // Focus moved away (user clicked elsewhere) — stop typing into nothing.
+      if (focusedEditable() !== target) break;
+      insertChar(target, ch);
+      n += 1;
+      await sleep(TYPE_CHAR_DELAY_MS);
+    }
+  } finally {
+    typingInFlight = false;
+  }
+  return n;
+}
+
+async function typeClipboardIntoFocused(): Promise<void> {
+  if (typingInFlight) return;
+  const target = focusedEditable();
+  if (!target) return;
+
+  let text = '';
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (err) {
+    console.warn('[stratus] clipboard read failed', err);
+    return;
+  }
+  await typeTextInto(target, text);
+}
+
+// X's reply composer is a Draft.js contenteditable tagged tweetTextarea_0 (the
+// inline reply on a focused tweet; tweetTextarea_0 in the modal too). The
+// data-testid element is itself contenteditable, but fall back to a descendant
+// in case X re-nests it.
+function findReplyEditor(): HTMLElement | null {
+  const box = document.querySelector<HTMLElement>('[data-testid^="tweetTextarea_"]');
+  if (!box) return null;
+  if (box.isContentEditable) return box;
+  return box.querySelector<HTMLElement>('[contenteditable="true"]');
+}
+
+const AUTOTYPE_SETTING_KEY = 'autoTypeReplyDraft';
+
+async function autoTypeReplyEnabled(): Promise<boolean> {
+  try {
+    const out = await chrome.storage.local.get(AUTOTYPE_SETTING_KEY);
+    return out[AUTOTYPE_SETTING_KEY] === true;
+  } catch {
+    return false;
+  }
+}
+
+function onTypeShortcut(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && typingInFlight) {
+    cancelTyping = true;
+    return;
+  }
+  // Cmd+B (Mac) — modifier-exact so we don't swallow unrelated combos.
+  const isCmdB =
+    e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'b' || e.key === 'B');
+  if (!isCmdB) return;
+  // Not in an editor — let Cmd+B do whatever the page wants.
+  if (!focusedEditable()) return;
+  e.preventDefault();
+  e.stopPropagation();
+  void typeClipboardIntoFocused();
+}
+
+function initTypeFromClipboard(): void {
+  // Capture phase so we intercept before Draft.js turns Cmd+B into bold.
+  document.addEventListener('keydown', onTypeShortcut, true);
 }
 
 if (document.readyState === 'loading') {

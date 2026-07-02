@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { BAND, classifyBand, formatCount } from './replyBand.ts';
+import { BAND, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
 
 // Signals reconstructed from evals/reply-eval-20260604-201909.md:
 // (original-post views, replies already on it, age = reply_time - post_time).
@@ -45,6 +45,25 @@ describe('classifyBand', () => {
     expect(BAND.baitViews).toBeLessThan(BAND.bigViews);
     expect(BAND.earlyReplies).toBeLessThan(BAND.midReplies);
     expect(BAND.baitVPM).toBeLessThan(BAND.risingVPM);
+  });
+});
+
+describe('textLooksLikeReplyBait', () => {
+  test('trailing question mark is bait', () => {
+    expect(textLooksLikeReplyBait('Is Bun ready for production?')).toBe(true);
+    expect(textLooksLikeReplyBait('Cursor vs Claude Code — which one wins')).toBe(true); // "which one"
+  });
+
+  test('bait phrases hit mid-text', () => {
+    expect(textLooksLikeReplyBait('Hot take: TypeScript slowed us down. Change my mind.')).toBe(
+      true,
+    );
+    expect(textLooksLikeReplyBait("What's your stack for side projects")).toBe(true);
+  });
+
+  test('plain statements are not bait', () => {
+    expect(textLooksLikeReplyBait('Shipped the new metrics worker today.')).toBe(false);
+    expect(textLooksLikeReplyBait('')).toBe(false);
   });
 });
 

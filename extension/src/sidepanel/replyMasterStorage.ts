@@ -6,12 +6,18 @@
 // system prompt that replaces the server default when non-empty. Both the side
 // panel's Regenerate button and the content-script button read it before
 // hitting POST /x/replies/generate.
+//
+// `replyMaster:idea` is the per-tweet steer (OVERHAUL-PLAN §7.1): typed in the
+// panel, read by whichever surface fires the next generate, then cleared by
+// the content script after a successful generation — an idea aims one draft,
+// not every draft after it.
 
 import { useEffect, useState } from 'react';
 import type { ReplyDraft } from '../shared/types.ts';
 
 export const LAST_DRAFT_KEY = 'replyMaster:lastDraft';
 export const SYSTEM_PROMPT_OVERRIDE_KEY = 'replyMaster:systemPromptOverride';
+export const IDEA_KEY = 'replyMaster:idea';
 
 function isReplyDraft(v: unknown): v is ReplyDraft {
   if (!v || typeof v !== 'object') return false;
@@ -125,6 +131,63 @@ export function useSystemPromptOverride(): {
 
   const save = async (next: string): Promise<void> => {
     await setSystemPromptOverride(next);
+    setValue(next);
+  };
+
+  return { value, loading, save };
+}
+
+export async function getIdea(): Promise<string> {
+  const out = await chrome.storage.local.get(IDEA_KEY);
+  const v = out[IDEA_KEY];
+  return typeof v === 'string' ? v : '';
+}
+
+export async function setIdea(value: string): Promise<void> {
+  if (value.trim() === '') {
+    await chrome.storage.local.remove(IDEA_KEY);
+    return;
+  }
+  await chrome.storage.local.set({ [IDEA_KEY]: value });
+}
+
+export function useIdea(): {
+  value: string;
+  loading: boolean;
+  save: (next: string) => Promise<void>;
+} {
+  const [value, setValue] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    getIdea().then((v) => {
+      if (!alive) return;
+      setValue(v);
+      setLoading(false);
+    });
+
+    // The content script clears the key after a successful generate — this
+    // listener is what empties the panel textbox in response.
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: chrome.storage.AreaName,
+    ): void => {
+      if (area !== 'local') return;
+      const change = changes[IDEA_KEY];
+      if (!change) return;
+      const v = change.newValue;
+      setValue(typeof v === 'string' ? v : '');
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, []);
+
+  const save = async (next: string): Promise<void> => {
+    await setIdea(next);
     setValue(next);
   };
 

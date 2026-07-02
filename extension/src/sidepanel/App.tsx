@@ -4,12 +4,14 @@ import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
+import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
 
-type Tab = 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
+type Tab = 'today' | 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
+  { id: 'today', label: 'Today' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
   { id: 'harvest', label: 'Harvest' },
@@ -20,8 +22,9 @@ const TABS: { id: Tab; label: string }[] = [
 
 export function App(): JSX.Element {
   const { settings, loading } = useSettings();
-  const [tab, setTab] = useState<Tab>('calendar');
+  const [tab, setTab] = useState<Tab>('today');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [remixTweetId, setRemixTweetId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const startEdit = (id: string) => {
@@ -29,6 +32,12 @@ export function App(): JSX.Element {
     setTab('composer');
   };
   const clearEdit = () => setEditingId(null);
+  // §8.3 → §8.1: Voice tab's Remix button seeds the Composer drafter.
+  const startRemix = (tweetId: string) => {
+    setEditingId(null);
+    setRemixTweetId(tweetId);
+    setTab('composer');
+  };
   const onSaved = () => setRefreshKey((k) => k + 1);
 
   const configured = isConfigured(settings);
@@ -63,19 +72,24 @@ export function App(): JSX.Element {
           <div className="panel">
             <p className="muted">Configure API URL and bearer token first.</p>
           </div>
+        ) : activeTab === 'today' ? (
+          <TodayPanel key={`today-${refreshKey}`} settings={settings} />
         ) : activeTab === 'calendar' ? (
           <CalendarPanel key={`cal-${refreshKey}`} settings={settings} onEdit={startEdit} />
         ) : activeTab === 'composer' ? (
           <ComposerPanel
             settings={settings}
             editingId={editingId}
+            remixTweetId={remixTweetId}
+            onClearRemix={() => setRemixTweetId(null)}
             onClearEdit={clearEdit}
             onSaved={onSaved}
+            onEdit={startEdit}
           />
         ) : activeTab === 'harvest' ? (
           <HarvestPanel />
         ) : activeTab === 'voice' ? (
-          <VoicePanel settings={settings} />
+          <VoicePanel settings={settings} onRemix={startRemix} />
         ) : activeTab === 'replies' ? (
           <RepliesPanel key={`replies-${refreshKey}`} settings={settings} />
         ) : (

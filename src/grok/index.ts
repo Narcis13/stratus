@@ -14,4 +14,10 @@ export function mountGrok(app: Hono): void {
 }
 
 export { askGrok, GrokApiError } from './client.ts';
-export type { AskGrokOptions, AskGrokResult, GrokMessage, ReasoningEffort } from './client.ts';
+export type {
+  AskGrokOptions,
+  AskGrokResult,
+  GrokJsonSchemaFormat,
+  GrokMessage,
+  ReasoningEffort,
+} from './client.ts';

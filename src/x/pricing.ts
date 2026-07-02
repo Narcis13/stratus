@@ -9,14 +9,17 @@
 // of N results bills N× the per-result rate. It's `null` for single-object
 // responses (priced as one unit).
 
-const POST_CREATE_BASE = 0.015;
-// URL surcharge ($0.20 vs $0.015) can't be inferred from the path alone.
-// `createPost` already blocks URL writes unless `allowUrlSurcharge: true`,
-// so opting in is a deliberate, observable choice — the cost row will read
-// $0.015 even when the bill was actually $0.20. Wire body-aware pricing
-// (or a `costHint` opt) when we start posting URLs in earnest.
+// Exported for call sites that know more than the path does (§9.1 costHint):
+// createPost knows whether the text carries a URL surcharge; getTweet's caller
+// knows whether the read is owned. They pass the true price through xFetch's
+// `costHint` and costTracker prefers it over this table.
+export const POST_CREATE_USD = 0.015;
+export const URL_POST_CREATE_USD = 0.2;
+export const OWNED_READ_USD = 0.001;
+
+const POST_CREATE_BASE = POST_CREATE_USD;
 const POST_DELETE = 0.01;
-const OWNED_READ = 0.001;
+const OWNED_READ = OWNED_READ_USD;
 const OTHER_READ = 0.005;
 const SEARCH_PER_RESULT = 0.005;
 
@@ -46,6 +49,10 @@ export function priceFor(
   // — see CLAUDE.md), so the owned rate is correct, not optimistic.
   if (m === 'GET' && /^\/2\/users\/[^/]+\/tweets$/.test(path)) return OWNED_READ * (items ?? 1);
   if (m === 'GET' && path === '/2/tweets') return OWNED_READ * (items ?? 1);
+
+  // Mentions of the authenticated user (§7.5 mention inbox) — owned reads,
+  // $0.001/result.
+  if (m === 'GET' && /^\/2\/users\/[^/]+\/mentions$/.test(path)) return OWNED_READ * (items ?? 1);
 
   // Single-tweet lookup: $0.001 owned vs $0.005 other-user — can't tell from
   // the path. Price as other-user (the conservative/upper bound) until a

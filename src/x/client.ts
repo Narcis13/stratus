@@ -15,6 +15,10 @@ export interface FetchOptions {
   maxAttempts?: number;
   /** Optional logger; called once per call regardless of retries. */
   onCost?: (info: CostInfo) => void;
+  /** True USD for this call when the call site knows more than the path does
+   *  (URL surcharge, owned vs other reads). costTracker prefers it over the
+   *  price table on 2xx (§9.1 pricing truthfulness). */
+  costHint?: number;
   signal?: AbortSignal;
 }
 
@@ -24,6 +28,8 @@ export interface CostInfo {
   status: number;
   /** Results X returned in the body — drives per-result billing (invariant #5). */
   items: number | null;
+  /** Call-site price override; null when the price table should decide. */
+  costHint: number | null;
   durationMs: number;
   attempts: number;
   rateLimitRemaining: number | null;
@@ -78,6 +84,7 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
           method,
           status: res.status,
           items: itemCount(data),
+          costHint: opts.costHint ?? null,
           durationMs: performance.now() - start,
           attempts: attempt,
           rateLimitRemaining: remaining,
@@ -98,6 +105,7 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
         method,
         status: res.status,
         items: null,
+        costHint: opts.costHint ?? null,
         durationMs: performance.now() - start,
         attempts: attempt,
         rateLimitRemaining: remaining,

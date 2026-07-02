@@ -9,6 +9,7 @@ import {
 import {
   clearLastDraft,
   setLastDraft,
+  useIdea,
   useLastDraft,
   useSystemPromptOverride,
 } from './replyMasterStorage.ts';
@@ -41,6 +42,7 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
     loading: systemPromptLoading,
     save: saveSystemPrompt,
   } = useSystemPromptOverride();
+  const { value: idea, loading: ideaLoading, save: saveIdea } = useIdea();
   const [activeDraft, setActiveDraft] = useState<ReplyDraft | null>(null);
   const [history, setHistory] = useState<ReplyDraft[]>([]);
   const [statusFilter, setStatusFilter] = useState<'' | ReplyDraftStatus>('');
@@ -145,6 +147,8 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
         </p>
       )}
 
+      <IdeaSteer value={idea} loading={ideaLoading} onSave={saveIdea} />
+
       {activeDraft && (
         <DraftEditor
           key={activeDraft.id}
@@ -152,6 +156,8 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
           settings={settings}
           isLive={lastShownStorageId.current === activeDraft.id}
           systemPromptOverride={systemPromptOverride}
+          idea={idea}
+          onIdeaConsumed={() => saveIdea('')}
           onChanged={onDraftChanged}
           onDiscarded={onDraftDiscarded}
           onRegenerated={onRegenerated}
@@ -169,6 +175,7 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
       )}
 
       <SystemPromptOverride
+        settings={settings}
         value={systemPromptOverride}
         loading={systemPromptLoading}
         onSave={saveSystemPrompt}
@@ -221,6 +228,8 @@ interface EditorProps {
   settings: Settings;
   isLive: boolean;
   systemPromptOverride: string;
+  idea: string;
+  onIdeaConsumed: () => void | Promise<void>;
   onChanged: (row: ReplyDraft) => void | Promise<void>;
   onDiscarded: (id: string) => void | Promise<void>;
   onRegenerated: (row: ReplyDraft) => void | Promise<void>;
@@ -232,6 +241,8 @@ function DraftEditor({
   settings,
   isLive,
   systemPromptOverride,
+  idea,
+  onIdeaConsumed,
   onChanged,
   onDiscarded,
   onRegenerated,
@@ -308,11 +319,14 @@ function DraftEditor({
       // looking at to steer the next call.
       const override =
         systemPromptOverride.trim() !== '' ? systemPromptOverride : draft.systemPromptOverride;
+      const steer = idea.trim();
       const next = await api.replies.generate(settings, {
         context: ctx,
         ...(override ? { systemPromptOverride: override } : {}),
+        ...(steer !== '' ? { idea: steer } : {}),
       });
       await onRegenerated(next);
+      if (steer !== '') await onIdeaConsumed();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : 'Regenerate failed');
     } finally {
@@ -413,11 +427,33 @@ function DraftEditor({
               ))}
             </ul>
           )}
+          {draft.idea && (
+            <div className="muted">
+              <strong>Steer:</strong> {draft.idea}
+            </div>
+          )}
           <a className="muted" href={draft.sourceUrl} target="_blank" rel="noreferrer">
             Open on x.com →
           </a>
         </div>
       </details>
+
+      {draft.variants && draft.variants.length > 1 && (
+        <div className="reply-variants">
+          {draft.variants.map((v, i) => (
+            <button
+              key={`${v.angle}-${i}`}
+              type="button"
+              className={`reply-variant${text === v.text ? ' active' : ''}`}
+              onClick={() => setText(v.text)}
+              disabled={isTerminal || busy !== null}
+              title={v.text}
+            >
+              V{i + 1} · {v.angle}
+            </button>
+          ))}
+        </div>
+      )}
 
       <label className="field">
         <span>
@@ -506,7 +542,9 @@ function DraftEditor({
   );
 }
 
-function SystemPromptOverride({
+// The per-tweet steer. Persisted to chrome.storage so the page button picks it
+// up; consumed (cleared) by whichever surface fires the generate it steered.
+function IdeaSteer({
   value,
   loading,
   onSave,
@@ -517,8 +555,91 @@ function SystemPromptOverride({
 }): JSX.Element {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
+  const lastSavedRef = useRef(value);
+
+  // Re-sync when storage changes elsewhere — most importantly when the content
+  // script consumes the idea after a successful generate.
+  useEffect(() => {
+    setDraft(value);
+    lastSavedRef.current = value;
+  }, [value]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (draft === lastSavedRef.current) return;
+    const t = setTimeout(() => {
+      void (async () => {
+        setSaving(true);
+        try {
+          await onSave(draft);
+          lastSavedRef.current = draft;
+        } finally {
+          setSaving(false);
+        }
+      })();
+    }, SYSTEM_PROMPT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [draft, loading, onSave]);
+
+  return (
+    <label className="field reply-idea">
+      <span>
+        Idea steer{' '}
+        <span className="muted">(optional — used on the next generate, then cleared)</span>
+      </span>
+      <textarea
+        className="reply-textarea"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={2}
+        placeholder="Seed for the next draft — Romanian is fine, the reply comes out in English."
+        disabled={loading}
+        spellCheck
+      />
+      {saving && <small className="muted">saving…</small>}
+    </label>
+  );
+}
+
+function SystemPromptOverride({
+  settings,
+  value,
+  loading,
+  onSave,
+}: {
+  settings: Settings;
+  value: string;
+  loading: boolean;
+  onSave: (next: string) => Promise<void>;
+}): JSX.Element {
+  const [draft, setDraft] = useState(value);
+  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const lastSavedRef = useRef(value);
+
+  // The default prompt is fetched lazily the first time the user opens the viewer.
+  const [defaultPrompt, setDefaultPrompt] = useState<string | null>(null);
+  const [defaultLoading, setDefaultLoading] = useState(false);
+  const [defaultError, setDefaultError] = useState<string | null>(null);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const openViewer = useCallback(() => {
+    setViewerOpen(true);
+    if (defaultPrompt !== null || defaultLoading) return;
+    setDefaultLoading(true);
+    setDefaultError(null);
+    void (async () => {
+      try {
+        const res = await api.replies.defaultPrompt(settings);
+        setDefaultPrompt(res.prompt);
+      } catch (e) {
+        setDefaultError(e instanceof Error ? e.message : 'Failed to load default prompt.');
+      } finally {
+        setDefaultLoading(false);
+      }
+    })();
+  }, [settings, defaultPrompt, defaultLoading]);
 
   // Re-sync if storage changed elsewhere (other panel, settings reset).
   useEffect(() => {
@@ -563,6 +684,11 @@ function SystemPromptOverride({
           Replaces the default Grok system prompt on every generation (side panel and the page
           button). Leave empty to use the server default.
         </p>
+        <div className="reply-toolbar voice-controls">
+          <button type="button" onClick={openViewer}>
+            View default prompt
+          </button>
+        </div>
         <textarea
           className="reply-textarea"
           value={draft}
@@ -576,7 +702,84 @@ function SystemPromptOverride({
           {saving ? 'saving…' : saved ? 'saved' : `${draft.length} chars`}
         </small>
       </div>
+
+      {viewerOpen && (
+        <PromptViewer
+          prompt={defaultPrompt}
+          loading={defaultLoading}
+          error={defaultError}
+          copied={copied}
+          onCopy={() => {
+            if (defaultPrompt === null) return;
+            void navigator.clipboard.writeText(defaultPrompt).then(() => {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            });
+          }}
+          onUseAsStart={() => {
+            if (defaultPrompt === null) return;
+            setDraft(defaultPrompt);
+            setViewerOpen(false);
+          }}
+          onClose={() => setViewerOpen(false)}
+        />
+      )}
     </details>
+  );
+}
+
+function PromptViewer({
+  prompt,
+  loading,
+  error,
+  copied,
+  onCopy,
+  onUseAsStart,
+  onClose,
+}: {
+  prompt: string | null;
+  loading: boolean;
+  error: string | null;
+  copied: boolean;
+  onCopy: () => void;
+  onUseAsStart: () => void;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onClose();
+      }}
+      role="presentation"
+    >
+      <div
+        className="modal-card"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Default reply system prompt"
+      >
+        <div className="modal-header">
+          <h3>Default reply system prompt</h3>
+          <button type="button" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        {loading && <p className="muted">Loading…</p>}
+        {error && <div className="error">{error}</div>}
+        {prompt !== null && <pre className="prompt-view">{prompt}</pre>}
+        <div className="reply-toolbar voice-controls">
+          <button type="button" onClick={onCopy} disabled={prompt === null}>
+            {copied ? 'Copied' : 'Copy'}
+          </button>
+          <button type="button" onClick={onUseAsStart} disabled={prompt === null}>
+            Use as starting point
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -644,8 +847,7 @@ function HistoryGroup({
 
   // If the active draft is in this group, force-open it so the user sees the
   // highlight even on older days.
-  const containsActive =
-    activeId !== null && group.rows.some((r) => r.id === activeId);
+  const containsActive = activeId !== null && group.rows.some((r) => r.id === activeId);
   const effectiveOpen = open || containsActive;
 
   const visible = group.rows.slice(0, visibleCount);

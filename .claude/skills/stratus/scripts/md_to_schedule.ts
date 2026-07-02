@@ -47,26 +47,35 @@ function die(msg: string, code = 2): never {
 
 const args = process.argv.slice(2);
 if (args.length !== 4) {
-  die("usage: bun run md_to_schedule.ts <md-file> <timezone> <YYYY-MM-DD> <3|4>");
+  die('usage: bun run md_to_schedule.ts <md-file> <timezone> <YYYY-MM-DD> <3|4>');
 }
 const [mdPath, tz, startDate, slotsStr] = args;
 const slotsPerDay = Number(slotsStr);
 
 if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) die(`start-date must be YYYY-MM-DD, got: ${startDate}`);
 if (!ANCHORS_BY_SLOTS[slotsPerDay]) die(`slots/day must be 3 or 4, got: ${slotsStr}`);
-try { new Intl.DateTimeFormat("en-US", { timeZone: tz }); } catch { die(`unknown IANA timezone: ${tz}`); }
+try {
+  new Intl.DateTimeFormat('en-US', { timeZone: tz });
+} catch {
+  die(`unknown IANA timezone: ${tz}`);
+}
 
 const anchors = ANCHORS_BY_SLOTS[slotsPerDay];
 
 // --- Parse markdown ---
-const raw = await Bun.file(mdPath).text().catch(() => die(`cannot read ${mdPath}`));
-const lines = raw.split("\n");
+const raw = await Bun.file(mdPath)
+  .text()
+  .catch(() => die(`cannot read ${mdPath}`));
+const lines = raw.split('\n');
 
 // Skip leading YAML frontmatter (--- ... ---) if present
 let startLine = 0;
-if (lines[0]?.trim() === "---") {
+if (lines[0]?.trim() === '---') {
   for (let i = 1; i < lines.length; i++) {
-    if (lines[i].trim() === "---") { startLine = i + 1; break; }
+    if (lines[i].trim() === '---') {
+      startLine = i + 1;
+      break;
+    }
   }
 }
 
@@ -76,19 +85,19 @@ let cur: string[] = [];
 let curStart = -1;
 const flush = () => {
   if (cur.length > 0) {
-    tweets.push({ text: cur.join("\n").trim(), line: curStart });
+    tweets.push({ text: cur.join('\n').trim(), line: curStart });
     cur = [];
     curStart = -1;
   }
 };
 for (let i = startLine; i < lines.length; i++) {
   const ln = lines[i];
-  if (ln.startsWith("> ")) {
+  if (ln.startsWith('> ')) {
     if (curStart < 0) curStart = i + 1;
     cur.push(ln.slice(2));
-  } else if (ln === ">") {
+  } else if (ln === '>') {
     if (curStart < 0) curStart = i + 1;
-    cur.push("");
+    cur.push('');
   } else {
     flush();
   }
@@ -98,27 +107,41 @@ flush();
 // --- Validate ---
 const expected = slotsPerDay * DAYS;
 if (tweets.length !== expected) {
-  die(`expected ${expected} tweets (${slotsPerDay}/day × ${DAYS} days), parsed ${tweets.length}`, 3);
+  die(
+    `expected ${expected} tweets (${slotsPerDay}/day × ${DAYS} days), parsed ${tweets.length}`,
+    3,
+  );
 }
 
 const urlHits = tweets.flatMap((t, i) => (/(^|\s)https?:\/\//i.test(t.text) ? [{ i, t }] : []));
 if (urlHits.length > 0) {
-  console.error(`md_to_schedule: refusing — ${urlHits.length} tweet(s) contain a URL (publisher would silently fail, see SKILL.md Rule 1):`);
-  for (const { i, t } of urlHits) console.error(`  #${i + 1} (md line ~${t.line}): ${t.text.slice(0, 80)}…`);
+  console.error(
+    `md_to_schedule: refusing — ${urlHits.length} tweet(s) contain a URL (publisher would silently fail, see SKILL.md Rule 1):`,
+  );
+  for (const { i, t } of urlHits)
+    console.error(`  #${i + 1} (md line ~${t.line}): ${t.text.slice(0, 80)}…`);
   process.exit(4);
 }
 
-const tooLong = tweets.flatMap((t, i) => (t.text.length > 280 ? [{ i, t, len: t.text.length }] : []));
+const tooLong = tweets.flatMap((t, i) =>
+  t.text.length > 280 ? [{ i, t, len: t.text.length }] : [],
+);
 if (tooLong.length > 0) {
   console.error(`md_to_schedule: refusing — ${tooLong.length} tweet(s) exceed 280 chars:`);
-  for (const { i, t, len } of tooLong) console.error(`  #${i + 1} (${len} chars, md line ~${t.line}): ${t.text.slice(0, 80)}…`);
+  for (const { i, t, len } of tooLong)
+    console.error(`  #${i + 1} (${len} chars, md line ~${t.line}): ${t.text.slice(0, 80)}…`);
   process.exit(4);
 }
 
-const longish = tweets.flatMap((t, i) => (t.text.length > 270 && t.text.length <= 280 ? [{ i, t, len: t.text.length }] : []));
+const longish = tweets.flatMap((t, i) =>
+  t.text.length > 270 && t.text.length <= 280 ? [{ i, t, len: t.text.length }] : [],
+);
 if (longish.length > 0) {
-  console.error(`md_to_schedule: warning — ${longish.length} tweet(s) exceed 270 chars (cap is 280, leave slack):`);
-  for (const { i, t, len } of longish) console.error(`  #${i + 1} (${len} chars): ${t.text.slice(0, 60)}…`);
+  console.error(
+    `md_to_schedule: warning — ${longish.length} tweet(s) exceed 270 chars (cap is 280, leave slack):`,
+  );
+  for (const { i, t, len } of longish)
+    console.error(`  #${i + 1} (${len} chars): ${t.text.slice(0, 60)}…`);
 }
 
 // --- Jittered minutes: per slot column, distinct values in [5,35]\{30} ---
@@ -137,22 +160,34 @@ function pickUnique(n: number): number[] {
 const minutesBySlot = anchors.map(() => pickUnique(DAYS));
 
 // --- Local-wall-time → UTC for an arbitrary IANA timezone (DST-safe) ---
-function zonedTimeToUtc(y: number, m: number, d: number, h: number, mi: number, timeZone: string): Date {
+function zonedTimeToUtc(
+  y: number,
+  m: number,
+  d: number,
+  h: number,
+  mi: number,
+  timeZone: string,
+): Date {
   const utcGuess = new Date(Date.UTC(y, m - 1, d, h, mi, 0));
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone, hourCycle: "h23",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
   });
   const p: Record<string, string> = {};
-  for (const x of dtf.formatToParts(utcGuess)) if (x.type !== "literal") p[x.type] = x.value;
+  for (const x of dtf.formatToParts(utcGuess)) if (x.type !== 'literal') p[x.type] = x.value;
   const asTzReadAsUtc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
   const offset = asTzReadAsUtc - utcGuess.getTime();
   return new Date(utcGuess.getTime() - offset);
 }
 
 // --- Build schedule ---
-const [sy, sm, sd] = startDate.split("-").map(Number);
+const [sy, sm, sd] = startDate.split('-').map(Number);
 const rows: { text: string; scheduledFor: string }[] = [];
 let cursor = 0;
 for (let d = 0; d < DAYS; d++) {
@@ -163,7 +198,7 @@ for (let d = 0; d < DAYS; d++) {
   const day = base.getUTCDate();
   for (let s = 0; s < slotsPerDay; s++) {
     const utc = zonedTimeToUtc(y, mo, day, anchors[s], minutesBySlot[s][d], tz);
-    const iso = utc.toISOString().replace(/\.\d{3}Z$/, "Z");
+    const iso = utc.toISOString().replace(/\.\d{3}Z$/, 'Z');
     rows.push({ text: tweets[cursor].text, scheduledFor: iso });
     cursor++;
   }
@@ -171,4 +206,6 @@ for (let d = 0; d < DAYS; d++) {
 
 // --- Output ---
 console.log(JSON.stringify(rows, null, 2));
-console.error(`md_to_schedule: emitted ${rows.length} rows | tz=${tz} | startLocal=${startDate} | slots/day=${slotsPerDay} | anchors=${anchors.join(",")}`);
+console.error(
+  `md_to_schedule: emitted ${rows.length} rows | tz=${tz} | startLocal=${startDate} | slots/day=${slotsPerDay} | anchors=${anchors.join(',')}`,
+);

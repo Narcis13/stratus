@@ -2,8 +2,9 @@
 // Mounted under `/x` by `mountX` in ../index.ts.
 //
 // Routes:
-//   POST   /replies/generate   body: { context, systemPromptOverride?, model?, reasoningEffort? }
+//   POST   /replies/generate   body: { context, idea?, override?, systemPromptOverride?, model?, reasoningEffort? }
 //   GET    /replies            ?status=&sourceAuthor=&limit=&since=
+//   GET    /replies/outcomes   ?limit=&since=   posted drafts joined to their metrics
 //   GET    /replies/:id
 //   PATCH  /replies/:id        body: { replyTextEdited?, status?, postedTweetId? }
 //   DELETE /replies/:id
@@ -12,21 +13,43 @@
 // The denormalized `costUsd` column on `reply_drafts` is a UI convenience —
 // do NOT double-log here.
 
-import { type SQL, and, desc, eq, gte } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import type { ReasoningEffort } from '../../grok/index.ts';
-import { replyDrafts } from '../db/schema.ts';
-import { type PostContext, buildGrokInput } from '../replies/prompt.ts';
+import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
+import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
+import {
+  BATCH_REPLY_SCHEMA,
+  type BatchTweet,
+  type PostContext,
+  type PostSignals,
+  REPLY_PROMPT_TEMPLATE,
+  REPLY_VARIANTS_SCHEMA,
+  type ReplyVariant,
+  buildBatchGrokInput,
+  buildGrokInput,
+  parseBatchReplies,
+  parseReplyVariants,
+  passesSpecificityGate,
+} from '../replies/prompt.ts';
+import { getActivePillars } from './pillars.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
-// (~280 chars). This just has to clear a low-effort reasoning pass plus the
-// reply so a draft never gets truncated mid-sentence. Billed by actual tokens
-// used, so headroom here costs nothing unless the model actually fills it.
-const MAX_OUTPUT_TOKENS = 2000;
+// (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
+// that xAI does not count reasoning tokens against this cap (a low-effort
+// pass of ~520 reasoning tokens completed fine under a 350 cap).
+const MAX_OUTPUT_TOKENS = 350;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: ReasoningEffort = 'low';
+const MAX_IDEA_LENGTH = 2000;
+// Stable key so repeat drafts land on the same xAI server — the ~17.5KB
+// template is a cacheable prefix (context + idea sit at the very end).
+const PROMPT_CACHE_KEY = 'stratus-x-reply-draft';
+// Batch (Radar §7.2): one Grok call drafts a reply per queued hot/warm tweet.
+const BATCH_PROMPT_CACHE_KEY = 'stratus-x-reply-batch';
+const MAX_BATCH_TWEETS = 25;
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -47,12 +70,20 @@ const ALLOWED_TRANSITIONS: Record<Status, readonly Status[]> = {
 
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
+// Outcomes feed the BAND recalibration crosstab, which wants the full posted
+// history (≥100 rows before thresholds move) — higher cap than the list view.
+const MAX_OUTCOMES_LIMIT = 1000;
 
 interface RawBody {
   context?: unknown;
+  idea?: unknown;
+  override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
   reasoningEffort?: unknown;
+  // §8.6 opt-in (default off, set by the extension Settings toggle): steer the
+  // reply toward one of the active content pillars.
+  applyPillars?: unknown;
 }
 
 export const replies = new Hono();
@@ -76,6 +107,15 @@ replies.post('/replies/generate', async (c) => {
     systemOverride = body.systemPromptOverride;
   }
 
+  let idea: string | undefined;
+  if (body.idea !== undefined && body.idea !== null) {
+    if (typeof body.idea !== 'string' || body.idea.length > MAX_IDEA_LENGTH) {
+      return c.json({ error: 'invalid_idea' }, 400);
+    }
+    const trimmed = body.idea.trim();
+    if (trimmed !== '') idea = trimmed;
+  }
+
   let model: string | undefined;
   if (body.model !== undefined && body.model !== null) {
     if (typeof body.model !== 'string' || body.model.trim() === '') {
@@ -93,17 +133,69 @@ replies.post('/replies/generate', async (c) => {
     reasoningEffort = r;
   }
 
-  const messages = buildGrokInput(ctx, systemOverride);
+  let override = false;
+  if (body.override !== undefined && body.override !== null) {
+    if (typeof body.override !== 'boolean') return c.json({ error: 'invalid_override' }, 400);
+    override = body.override;
+  }
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
-  try {
-    result = await askGrok({
+  let applyPillars = false;
+  if (body.applyPillars !== undefined && body.applyPillars !== null) {
+    if (typeof body.applyPillars !== 'boolean')
+      return c.json({ error: 'invalid_apply_pillars' }, 400);
+    applyPillars = body.applyPillars;
+  }
+
+  // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
+  // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
+  // escape hatch (the extension arms it on a second deliberate click).
+  const gateSignals = gateSignalsFor(ctx, Date.now());
+  const band = classifyBand(gateSignals);
+  if ((band === null || band === 'skip') && !override) {
+    return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
+  }
+
+  // Stamp the gate's verdict when the caller didn't send capture-time signals
+  // (CLI callers, older extension builds) — every draft stays a labeled
+  // training row for the BAND recalibration crosstab (§6.2).
+  if (!ctx.signals) ctx.signals = { band, ...gateSignals };
+
+  const pillarDefs = applyPillars ? await getActivePillars() : undefined;
+  const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs);
+
+  const callGrok = (): ReturnType<typeof askGrok> =>
+    askGrok({
       ...(model !== undefined ? { model } : {}),
       messages,
       reasoningEffort,
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
+      jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
+      promptCacheKey: PROMPT_CACHE_KEY,
     });
+
+  let result: Awaited<ReturnType<typeof askGrok>>;
+  let costUsd: number;
+  let variants: ReplyVariant[] | null;
+  try {
+    result = await callGrok();
+    costUsd = result.costUsd;
+    variants = parseReplyVariants(result.text);
+
+    // Specificity gate (§7.1): if no variant carries a digit, a first-person
+    // marker, or a named tool, burn exactly one regenerate. Both calls are
+    // already cost-logged by askGrok; we just sum the draft's denormalized
+    // costUsd. A second all-generic round ships anyway — the human edits.
+    const someSpecific = variants?.some((v) => passesSpecificityGate(v.text)) ?? false;
+    if (variants === null || !someSpecific) {
+      const retry = await callGrok();
+      costUsd += retry.costUsd;
+      const retryVariants = parseReplyVariants(retry.text);
+      if (retryVariants !== null) {
+        result = retry;
+        variants = retryVariants;
+      }
+    }
   } catch (err) {
     if (err instanceof GrokApiError) {
       return c.json(
@@ -123,6 +215,15 @@ replies.post('/replies/generate', async (c) => {
     return c.json({ error: 'generate_failed', detail }, 502);
   }
 
+  if (variants === null) {
+    return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+  }
+
+  // Primary pick = first variant that clears the gate; the rest ride along in
+  // `variants` for the panel's picker.
+  const primary = variants.find((v) => passesSpecificityGate(v.text)) ?? variants[0];
+  if (!primary) return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+
   const [row] = await db
     .insert(replyDrafts)
     .values({
@@ -133,11 +234,13 @@ replies.post('/replies/generate', async (c) => {
       sourceUrl: ctx.url,
       sourcePostedAt: new Date(ctx.postedAt),
       contextSnapshot: ctx,
-      replyText: result.text.trim(),
+      replyText: primary.text,
+      variants,
+      idea: idea ?? null,
       model: result.model,
       promptTokens: result.usage.inputTokens,
       completionTokens: result.usage.outputTokens,
-      costUsd: result.costUsd.toFixed(5),
+      costUsd: costUsd.toFixed(5),
       grokRequestId: result.requestId,
       systemPromptOverride: systemOverride ?? null,
       status: 'generated',
@@ -147,7 +250,175 @@ replies.post('/replies/generate', async (c) => {
   return c.json(row, 201);
 });
 
+// --------------------------------------------------------- batch (Radar §7.2)
+//
+// One Grok call drafts a reply for a whole queue of hot/warm tweets the Radar
+// collected. Unlike /replies/generate this does NOT persist drafts or run the
+// band gate (the Radar already filtered to hot/warm): the replies live in the
+// extension's session ring buffer, copied to the clipboard when the user opens
+// a tweet. Cheap, ephemeral, re-runnable as the queue grows.
+
+interface BatchBody {
+  tweets?: unknown;
+  idea?: unknown;
+  systemPromptOverride?: unknown;
+  model?: unknown;
+  reasoningEffort?: unknown;
+  applyPillars?: unknown;
+}
+
+replies.post('/replies/generate-batch', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as BatchBody;
+
+  const parsed = parseBatchTweets(body.tweets);
+  if ('error' in parsed) return c.json({ error: parsed.error }, 400);
+  const tweets = parsed.tweets;
+
+  let systemOverride: string | undefined;
+  if (body.systemPromptOverride !== undefined && body.systemPromptOverride !== null) {
+    if (typeof body.systemPromptOverride !== 'string') {
+      return c.json({ error: 'invalid_system_prompt_override' }, 400);
+    }
+    systemOverride = body.systemPromptOverride;
+  }
+
+  let idea: string | undefined;
+  if (body.idea !== undefined && body.idea !== null) {
+    if (typeof body.idea !== 'string' || body.idea.length > MAX_IDEA_LENGTH) {
+      return c.json({ error: 'invalid_idea' }, 400);
+    }
+    const trimmed = body.idea.trim();
+    if (trimmed !== '') idea = trimmed;
+  }
+
+  let model: string | undefined;
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== 'string' || body.model.trim() === '') {
+      return c.json({ error: 'invalid_model' }, 400);
+    }
+    model = body.model;
+  }
+
+  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
+    const r = body.reasoningEffort;
+    if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
+      return c.json({ error: 'invalid_reasoning_effort' }, 400);
+    }
+    reasoningEffort = r;
+  }
+
+  let applyPillars = false;
+  if (body.applyPillars !== undefined && body.applyPillars !== null) {
+    if (typeof body.applyPillars !== 'boolean')
+      return c.json({ error: 'invalid_apply_pillars' }, 400);
+    applyPillars = body.applyPillars;
+  }
+
+  const pillarDefs = applyPillars ? await getActivePillars() : undefined;
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs);
+  // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
+  const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
+
+  let result: Awaited<ReturnType<typeof askGrok>>;
+  try {
+    result = await askGrok({
+      ...(model !== undefined ? { model } : {}),
+      messages,
+      reasoningEffort,
+      maxOutputTokens,
+      temperature: DEFAULT_TEMPERATURE,
+      jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
+      promptCacheKey: BATCH_PROMPT_CACHE_KEY,
+    });
+  } catch (err) {
+    if (err instanceof GrokApiError) {
+      return c.json(
+        {
+          error: 'grok_upstream_error',
+          status: err.status,
+          type: err.type,
+          code: err.code,
+          message: err.message,
+          requestId: err.requestId,
+        },
+        err.status === 429 ? 429 : 502,
+      );
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/replies/generate-batch failed:', detail);
+    return c.json({ error: 'generate_failed', detail }, 502);
+  }
+
+  const batch = parseBatchReplies(result.text);
+  if (batch === null) {
+    return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+  }
+
+  // Anchor: keep only replies whose id is one we asked for, first occurrence
+  // wins (a model that doubled up on an id can't shadow the right tweet).
+  const wanted = new Set(tweets.map((t) => t.tweetId));
+  const seen = new Set<string>();
+  const out: { tweetId: string; text: string; angle: string }[] = [];
+  for (const r of batch) {
+    if (!wanted.has(r.tweetId) || seen.has(r.tweetId)) continue;
+    seen.add(r.tweetId);
+    out.push({ tweetId: r.tweetId, text: r.text, angle: r.angle });
+  }
+
+  return c.json({
+    replies: out,
+    count: out.length,
+    requested: tweets.length,
+    costUsd: result.costUsd,
+    model: result.model,
+    requestId: result.requestId,
+  });
+});
+
+// Pure validator — exported for unit tests. Dedups by id, clamps the batch.
+export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { error: string } {
+  if (!Array.isArray(value)) return { error: 'invalid_tweets' };
+  if (value.length === 0) return { error: 'empty_tweets' };
+  if (value.length > MAX_BATCH_TWEETS) return { error: 'too_many_tweets' };
+
+  const tweets: BatchTweet[] = [];
+  const seen = new Set<string>();
+  for (let i = 0; i < value.length; i++) {
+    const t = value[i];
+    if (!t || typeof t !== 'object' || Array.isArray(t)) return { error: `invalid_tweet_${i}` };
+    const r = t as Record<string, unknown>;
+
+    const tweetId = typeof r.tweetId === 'string' ? r.tweetId.trim() : '';
+    if (!TWEET_ID_RE.test(tweetId)) return { error: `invalid_tweet_id_${i}` };
+    if (seen.has(tweetId)) continue;
+
+    const handleRaw = typeof r.handle === 'string' ? r.handle.trim().replace(/^@/, '') : '';
+    if (!USERNAME_RE.test(handleRaw)) return { error: `invalid_tweet_handle_${i}` };
+    if (typeof r.text !== 'string' || r.text.trim() === '') {
+      return { error: `invalid_tweet_text_${i}` };
+    }
+
+    seen.add(tweetId);
+    const author =
+      typeof r.author === 'string' && r.author.trim() !== '' ? r.author.trim() : handleRaw;
+    const url = typeof r.url === 'string' ? r.url : undefined;
+    tweets.push({ tweetId, handle: handleRaw, author, text: r.text, ...(url ? { url } : {}) });
+  }
+  return { tweets };
+}
+
 // ---------------------------------------------------------------- list/get
+
+// The default Grok system prompt used when no `systemPromptOverride` is set.
+// Surfaced so the extension can show what the override replaces ($0, no Grok).
+replies.get('/replies/default-prompt', (c) => {
+  return c.json({ prompt: REPLY_PROMPT_TEMPLATE });
+});
 
 replies.get('/replies', async (c) => {
   const statusStr = c.req.query('status');
@@ -188,6 +459,194 @@ replies.get('/replies', async (c) => {
     .limit(limit);
 
   return c.json(rows);
+});
+
+// ---------------------------------------------------------------- outcomes
+
+// First-party calibration data (OVERHAUL-PLAN §6.2): every posted draft joined
+// to its published row and latest metrics snapshot via postedTweetId. All $0 —
+// pure SQL over already-billed dailyMetrics reads. `signals` is the band
+// verdict stamped at capture time; `outcome` stays null until the 03:00 UTC
+// pass has snapshotted the reply (or while postedTweetId is unlinked).
+// Registered before `/replies/:id` so "outcomes" isn't parsed as an id.
+
+interface OutcomeDraftRow {
+  id: string;
+  sourceTweetId: string;
+  sourceAuthorUsername: string;
+  sourceText: string;
+  sourceUrl: string;
+  sourcePostedAt: Date | null;
+  contextSnapshot: unknown;
+  replyText: string;
+  replyTextEdited: string | null;
+  postedTweetId: string | null;
+  createdAt: Date;
+}
+
+interface OutcomePostRow {
+  tweetId: string;
+  postedAt: Date;
+  retired: boolean;
+}
+
+interface OutcomeSnapRow {
+  tweetId: string;
+  snapshotAt: Date;
+  publicMetrics: unknown;
+  nonPublicMetrics: unknown;
+}
+
+export interface ReplyOutcome {
+  draftId: string;
+  sourceTweetId: string;
+  sourceAuthorUsername: string;
+  sourceText: string;
+  sourceUrl: string;
+  sourcePostedAt: Date | null;
+  /** What actually went out: the human edit when there is one. */
+  replyText: string;
+  /** Band verdict + classifier inputs stamped at capture; null on old drafts. */
+  signals: PostSignals | null;
+  /** Capture-time metrics of the tweet replied to (from contextSnapshot). */
+  sourceMetrics: PostContext['metrics'] | null;
+  draftCreatedAt: Date;
+  postedTweetId: string | null;
+  postedAt: Date | null;
+  retired: boolean | null;
+  measuredAt: Date | null;
+  outcome: {
+    views: number | null;
+    likes: number | null;
+    replies: number | null;
+    retweets: number | null;
+    quotes: number | null;
+    bookmarks: number | null;
+    /** user_profile_clicks — the follow-precursor, free on the owned read. */
+    profileVisits: number | null;
+  } | null;
+}
+
+// Pure join/shape — exported for unit tests. `snaps` must arrive newest-first;
+// the first row seen per tweet is its latest snapshot (same pattern as
+// routes/metrics.ts listPerformance).
+export function buildReplyOutcomes(
+  drafts: OutcomeDraftRow[],
+  posts: OutcomePostRow[],
+  snaps: OutcomeSnapRow[],
+): ReplyOutcome[] {
+  const postById = new Map(posts.map((p) => [p.tweetId, p]));
+  const latestSnap = new Map<string, OutcomeSnapRow>();
+  for (const s of snaps) if (!latestSnap.has(s.tweetId)) latestSnap.set(s.tweetId, s);
+
+  return drafts.map((d) => {
+    const ctx = d.contextSnapshot as Partial<PostContext> | null;
+    const post = d.postedTweetId ? postById.get(d.postedTweetId) : undefined;
+    const snap = d.postedTweetId ? latestSnap.get(d.postedTweetId) : undefined;
+    const pub = (snap?.publicMetrics ?? null) as Record<string, number> | null;
+    const priv = (snap?.nonPublicMetrics ?? null) as Record<string, number> | null;
+
+    return {
+      draftId: d.id,
+      sourceTweetId: d.sourceTweetId,
+      sourceAuthorUsername: d.sourceAuthorUsername,
+      sourceText: d.sourceText,
+      sourceUrl: d.sourceUrl,
+      sourcePostedAt: d.sourcePostedAt,
+      replyText: d.replyTextEdited ?? d.replyText,
+      signals: ctx?.signals ?? null,
+      sourceMetrics: ctx?.metrics ?? null,
+      draftCreatedAt: d.createdAt,
+      postedTweetId: d.postedTweetId,
+      postedAt: post?.postedAt ?? null,
+      retired: post?.retired ?? null,
+      measuredAt: snap?.snapshotAt ?? null,
+      outcome: snap
+        ? {
+            views: pub?.impression_count ?? priv?.impression_count ?? null,
+            likes: pub?.like_count ?? null,
+            replies: pub?.reply_count ?? null,
+            retweets: pub?.retweet_count ?? null,
+            quotes: pub?.quote_count ?? null,
+            bookmarks: pub?.bookmark_count ?? null,
+            profileVisits: priv?.user_profile_clicks ?? null,
+          }
+        : null,
+    };
+  });
+}
+
+replies.get('/replies/outcomes', async (c) => {
+  const limitStr = c.req.query('limit');
+  const sinceStr = c.req.query('since');
+
+  const filters: SQL[] = [eq(replyDrafts.status, 'posted')];
+  if (sinceStr !== undefined) {
+    const since = new Date(sinceStr);
+    if (Number.isNaN(since.getTime())) return c.json({ error: 'invalid_since' }, 400);
+    filters.push(gte(replyDrafts.createdAt, since));
+  }
+
+  let limit = MAX_LIST_LIMIT;
+  if (limitStr !== undefined) {
+    const n = Number(limitStr);
+    if (!Number.isInteger(n) || n < 1) return c.json({ error: 'invalid_limit' }, 400);
+    limit = Math.min(MAX_OUTCOMES_LIMIT, n);
+  }
+
+  const drafts = await db
+    .select({
+      id: replyDrafts.id,
+      sourceTweetId: replyDrafts.sourceTweetId,
+      sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
+      sourceText: replyDrafts.sourceText,
+      sourceUrl: replyDrafts.sourceUrl,
+      sourcePostedAt: replyDrafts.sourcePostedAt,
+      contextSnapshot: replyDrafts.contextSnapshot,
+      replyText: replyDrafts.replyText,
+      replyTextEdited: replyDrafts.replyTextEdited,
+      postedTweetId: replyDrafts.postedTweetId,
+      createdAt: replyDrafts.createdAt,
+    })
+    .from(replyDrafts)
+    .where(and(...filters))
+    .orderBy(desc(replyDrafts.createdAt))
+    .limit(limit);
+
+  const ids = drafts.flatMap((d) => (d.postedTweetId ? [d.postedTweetId] : []));
+
+  const posts = ids.length
+    ? await db
+        .select({
+          tweetId: postsPublished.tweetId,
+          postedAt: postsPublished.postedAt,
+          retired: postsPublished.retired,
+        })
+        .from(postsPublished)
+        .where(inArray(postsPublished.tweetId, ids))
+    : [];
+
+  const snaps = ids.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          snapshotAt: metricsSnapshots.snapshotAt,
+          publicMetrics: metricsSnapshots.publicMetrics,
+          nonPublicMetrics: metricsSnapshots.nonPublicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, ids))
+        .orderBy(desc(metricsSnapshots.snapshotAt))
+    : [];
+
+  const outcomes = buildReplyOutcomes(drafts, posts, snaps);
+  const measured = outcomes.filter((o) => o.outcome !== null).length;
+  return c.json({
+    count: outcomes.length,
+    measured,
+    unlinked: outcomes.filter((o) => o.postedTweetId === null).length,
+    outcomes,
+  });
 });
 
 replies.get('/replies/:id', async (c) => {
@@ -285,7 +744,28 @@ function isStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
 }
 
-function parseContext(value: unknown): PostContext | { error: string } {
+// Exported for unit tests (pure). Classifier inputs for the band gate: prefer
+// the capture-time raw inputs the extension stamped (DOM-aware bait, exact
+// age) but always recompute the band server-side — a stale extension build
+// doesn't get to spend the Grok call on its own verdict. Without signals the
+// inputs derive from metrics + postedAt + the shared text-only bait check.
+export function gateSignalsFor(ctx: PostContext, nowMs: number): TweetSignals {
+  if (ctx.signals) {
+    const { views, replies, ageMin, vpm, bait } = ctx.signals;
+    return { views, replies, ageMin, vpm, bait };
+  }
+  const ageMin = Math.max(0, (nowMs - new Date(ctx.postedAt).getTime()) / 60000);
+  return {
+    views: ctx.metrics.views,
+    replies: ctx.metrics.replies,
+    ageMin,
+    vpm: ctx.metrics.views / Math.max(ageMin, 1),
+    bait: textLooksLikeReplyBait(ctx.text),
+  };
+}
+
+// Exported for unit tests (pure).
+export function parseContext(value: unknown): PostContext | { error: string } {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { error: 'context_required' };
   }
@@ -339,6 +819,27 @@ function parseContext(value: unknown): PostContext | { error: string } {
     topComments.push({ author: r.author, handle: r.handle, text: r.text });
   }
 
+  // Optional capture-time band signals — absent on older extension builds.
+  let signals: PostSignals | undefined;
+  if (v.signals !== undefined && v.signals !== null) {
+    const parsed = parseSignals(v.signals);
+    if ('error' in parsed) return parsed;
+    signals = parsed.signals;
+  }
+
+  // Optional thread context (§7.5): my post the target tweet replies to.
+  let parent: PostContext['parent'];
+  if (v.parent !== undefined && v.parent !== null) {
+    if (typeof v.parent !== 'object' || Array.isArray(v.parent)) {
+      return { error: 'invalid_context_parent' };
+    }
+    const p = v.parent as Record<string, unknown>;
+    if (typeof p.text !== 'string' || p.text.trim() === '') {
+      return { error: 'invalid_context_parent' };
+    }
+    parent = { text: p.text };
+  }
+
   return {
     tweetId,
     handle: handleRaw,
@@ -348,5 +849,37 @@ function parseContext(value: unknown): PostContext | { error: string } {
     postedAt: v.postedAt,
     metrics,
     topComments,
+    ...(signals ? { signals } : {}),
+    ...(parent ? { parent } : {}),
   };
+}
+
+function parseSignals(value: unknown): { signals: PostSignals } | { error: string } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { error: 'invalid_context_signals' };
+  }
+  const s = value as Record<string, unknown>;
+
+  const band = s.band;
+  if (band !== null && band !== 'hot' && band !== 'warm' && band !== 'skip') {
+    return { error: 'invalid_context_signals_band' };
+  }
+
+  const nums: Record<'views' | 'replies' | 'ageMin' | 'vpm', number> = {
+    views: 0,
+    replies: 0,
+    ageMin: 0,
+    vpm: 0,
+  };
+  for (const k of ['views', 'replies', 'ageMin', 'vpm'] as const) {
+    const n = s[k];
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+      return { error: `invalid_context_signals_${k}` };
+    }
+    nums[k] = n;
+  }
+
+  if (typeof s.bait !== 'boolean') return { error: 'invalid_context_signals_bait' };
+
+  return { signals: { band, ...nums, bait: s.bait } };
 }
