@@ -66,7 +66,13 @@ function contextFor(m: Mention): PostContext {
   };
 }
 
-export function InboxSection({ settings }: { settings: Settings }): JSX.Element {
+export function InboxSection({
+  settings,
+  onOpenPerson,
+}: {
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const [data, setData] = useState<MentionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -152,6 +158,7 @@ export function InboxSection({ settings }: { settings: Settings }): JSX.Element 
                 settings={settings}
                 onGone={() => remove(m.tweetId)}
                 onError={setError}
+                onOpenPerson={onOpenPerson}
               />
             ))}
           </ul>
@@ -165,11 +172,13 @@ function InboxRow({
   settings,
   onGone,
   onError,
+  onOpenPerson,
 }: {
   m: Mention;
   settings: Settings;
   onGone: () => void;
   onError: (msg: string | null) => void;
+  onOpenPerson: (handle: string) => void;
 }): JSX.Element {
   const [draft, setDraft] = useState<ReplyDraft | null>(null);
   const [variantIdx, setVariantIdx] = useState(0);
@@ -221,9 +230,18 @@ function InboxRow({
   return (
     <li className="radar-row">
       <div className="radar-row-head">
-        <span className="radar-author">
-          {m.authorUsername ? `@${m.authorUsername}` : (m.authorName ?? 'unknown')}
-        </span>
+        {m.authorUsername ? (
+          <button
+            type="button"
+            className="radar-author person-link"
+            title="Open dossier"
+            onClick={() => onOpenPerson(m.authorUsername as string)}
+          >
+            @{m.authorUsername}
+          </button>
+        ) : (
+          <span className="radar-author">{m.authorName ?? 'unknown'}</span>
+        )}
         <span className="inbox-age">{fmtAgo(m.postedAt)}</span>
         <button
           type="button"

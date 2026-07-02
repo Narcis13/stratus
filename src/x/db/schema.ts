@@ -300,6 +300,79 @@ export const radarDrafts = sqliteTable(
   ],
 );
 
+// The people layer (CIRCLES-PLAN C1): one row per human the system has ever
+// encountered — mention authors, reply targets, saved voice authors. NOT merged
+// with voice_authors (different jobs: swipe-file vs relationship); the
+// lowercased handle is the join key between the two. `stage` describes
+// reciprocity only (see src/x/people/stage.ts) and only ratchets up
+// automatically; a human can demote via PATCH /x/people/:handle.
+export const people = sqliteTable(
+  'people',
+  {
+    handle: text('handle').primaryKey(),
+    xUserId: text('x_user_id'),
+    displayName: text('display_name'),
+    bio: text('bio'),
+    followersCount: integer('followers_count'),
+    followingCount: integer('following_count'),
+    stage: text('stage').notNull().default('stranger'),
+    // stranger | noticed | engaged | responded | mutual | ally
+    stageUpdatedAt: integer('stage_updated_at', { mode: 'timestamp_ms' }),
+    notes: text('notes'),
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    // First surface that created the row: mention | voice | reply | harvest | manual
+    source: text('source'),
+    firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' }),
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
+    // Their last mention/reply to me — the reply-back signal.
+    lastInboundAt: integer('last_inbound_at', { mode: 'timestamp_ms' }),
+    // My last posted reply to them.
+    lastOutboundAt: integer('last_outbound_at', { mode: 'timestamp_ms' }),
+    retired: integer('retired', { mode: 'boolean' }).default(false).notNull(),
+  },
+  (t) => [index('people_stage_idx').on(t.stage)],
+);
+
+// Append-only interaction log — the timeline IS the CRM. Event ids are
+// DETERMINISTIC when a ref exists (`type:ref_table:ref_id`, see
+// src/x/people/store.ts) so backfill and live hooks can INSERT OR IGNORE and
+// never double-log the same underlying row.
+export const personEvents = sqliteTable(
+  'person_events',
+  {
+    id: text('id').primaryKey(),
+    handle: text('handle')
+      .notNull()
+      .references(() => people.handle),
+    // saved_tweet | saved_author | my_reply | their_mention |
+    // their_reply_to_me | hover_sighting | harvest_seen | note | manual_dm_logged
+    type: text('type').notNull(),
+    refTable: text('ref_table'),
+    refId: text('ref_id'),
+    summary: text('summary'),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('person_events_handle_at_idx').on(t.handle, t.at)],
+);
+
+// Follower series for non-voice people (C6 passive hover capture will feed
+// this); voice authors keep their series in voice_author_snapshots — the
+// dossier route joins both by handle.
+export const personSnapshots = sqliteTable(
+  'person_snapshots',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    handle: text('handle')
+      .notNull()
+      .references(() => people.handle),
+    followersCount: integer('followers_count').notNull(),
+    capturedAt: integer('captured_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('person_snapshots_handle_captured_idx').on(t.handle, t.capturedAt)],
+);
+
 // Mention inbox (§7.5): mentions of me, pulled incrementally (since_id = max
 // stored tweet_id) by the daily pass and the on-demand refresh — owned reads,
 // $0.001/result. `status` drives the panel's Inbox: rows arrive 'unanswered';

@@ -18,6 +18,12 @@ import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { harvestRows, harvestRuns, replyDrafts } from '../db/schema.ts';
+import {
+  type PersonEventInput,
+  normalizePersonHandle,
+  safeLogPersonEvents,
+  snippet,
+} from '../people/store.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -127,8 +133,9 @@ harvest.post('/harvest/rows', async (c) => {
   }
 
   const now = new Date();
-  db.transaction((tx) => {
-    tx.insert(harvestRows)
+  const insertedIds = db.transaction((tx) => {
+    const ids = tx
+      .insert(harvestRows)
       .values(
         rows.map((r) => ({
           runId,
@@ -159,7 +166,8 @@ harvest.post('/harvest/rows', async (c) => {
           groupPosition: r.groupPosition,
         })),
       )
-      .run();
+      .returning({ id: harvestRows.id })
+      .all();
     for (const b of backfills) {
       tx.update(replyDrafts)
         .set({ postedTweetId: b.tweetId, updatedAt: now })
@@ -170,7 +178,31 @@ harvest.post('/harvest/rows', async (c) => {
       .set({ rowCount: run.rowCount + rows.length })
       .where(eq(harvestRuns.id, runId))
       .run();
+    return ids;
   });
+
+  // People layer (C1): replies-mode rows carry the person my reply targeted
+  // (origHandle) — log harvest_seen on them. Timeline-only (never advances a
+  // stage) and best-effort: a failure never fails the ingest.
+  if (run.mode === 'replies') {
+    const events: PersonEventInput[] = [];
+    rows.forEach((r, i) => {
+      const handle = normalizePersonHandle(r.orig?.handle);
+      const rowId = insertedIds[i]?.id;
+      if (!handle || rowId === undefined) return;
+      events.push({
+        handle,
+        type: 'harvest_seen',
+        refTable: 'harvest_rows',
+        refId: String(rowId),
+        summary: r.orig?.text
+          ? `harvest saw my reply to their post: "${snippet(r.orig.text, 80)}"`
+          : 'harvest saw my reply to them',
+        at: now,
+      });
+    });
+    if (events.length > 0) await safeLogPersonEvents(events, { source: 'harvest' });
+  }
 
   return c.json(
     {

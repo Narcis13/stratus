@@ -9,7 +9,13 @@ import type { Settings } from './storage.ts';
 
 const NEGLECT_DAYS = 7;
 
-export function TargetsSection({ settings }: { settings: Settings }): JSX.Element {
+export function TargetsSection({
+  settings,
+  onOpenPerson,
+}: {
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const [data, setData] = useState<VoiceTargets | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,7 +59,7 @@ export function TargetsSection({ settings }: { settings: Settings }): JSX.Elemen
         ) : (
           <ul className="targets-list">
             {data.targets.map((t) => (
-              <TargetRow key={t.handle} t={t} />
+              <TargetRow key={t.handle} t={t} onOpenPerson={onOpenPerson} />
             ))}
           </ul>
         ))}
@@ -61,7 +67,13 @@ export function TargetsSection({ settings }: { settings: Settings }): JSX.Elemen
   );
 }
 
-function TargetRow({ t }: { t: VoiceTarget }): JSX.Element {
+function TargetRow({
+  t,
+  onOpenPerson,
+}: {
+  t: VoiceTarget;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const neglected =
     t.lastRepliedAt === null ||
     Date.now() - Date.parse(t.lastRepliedAt) > NEGLECT_DAYS * 24 * 60 * 60 * 1000;
@@ -69,13 +81,22 @@ function TargetRow({ t }: { t: VoiceTarget }): JSX.Element {
   return (
     <li className="target-row">
       <div className="target-head">
+        <button
+          type="button"
+          className="target-handle person-link"
+          title="Open dossier"
+          onClick={() => onOpenPerson(t.handle)}
+        >
+          @{t.handle}
+        </button>
         <a
-          className="target-handle"
+          className="target-ext"
           href={t.profileUrl ?? `https://x.com/${t.handle}`}
           target="_blank"
           rel="noreferrer"
+          title="Open profile on X"
         >
-          @{t.handle}
+          ↗
         </a>
         <span className="target-followers">{fmtNum(t.followersCount)}</span>
         <span className="target-momentum">{fmtMomentum(t)}</span>

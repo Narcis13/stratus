@@ -7,12 +7,14 @@ interface Props {
   settings: Settings;
   /** §8.3 Remix: send a saved tweet's structure to the Composer drafter. */
   onRemix: (tweetId: string) => void;
+  /** C1: open a handle's dossier in the People tab. */
+  onOpenPerson: (handle: string) => void;
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
 const TWEET_LIMIT = 100;
 
-export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
+export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Element {
   const [view, setView] = useState<'tweets' | 'pillars'>('tweets');
   const [authors, setAuthors] = useState<VoiceAuthor[]>([]);
   const [tweets, setTweets] = useState<VoiceTweet[]>([]);
@@ -299,6 +301,7 @@ export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
           {selectedAuthor && (
             <AuthorCard
               author={selectedAuthor}
+              onOpenPerson={onOpenPerson}
               busy={busy === `author:${selectedAuthor.handle}`}
               confirmingDelete={confirming === `author:${selectedAuthor.handle}`}
               onToggleRetired={() => void toggleAuthorRetired(selectedAuthor)}
@@ -328,6 +331,7 @@ export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
                     onConfirmDelete={() => void removeTweet(t)}
                     onExtract={() => void extractTweet(t)}
                     onRemix={() => onRemix(t.tweetId)}
+                    onOpenPerson={onOpenPerson}
                   />
                 </li>
               ))}
@@ -341,6 +345,7 @@ export function VoicePanel({ settings, onRemix }: Props): JSX.Element {
 
 interface AuthorCardProps {
   author: VoiceAuthor;
+  onOpenPerson: (handle: string) => void;
   busy: boolean;
   confirmingDelete: boolean;
   onToggleRetired: () => void;
@@ -351,6 +356,7 @@ interface AuthorCardProps {
 
 function AuthorCard({
   author,
+  onOpenPerson,
   busy,
   confirmingDelete,
   onToggleRetired,
@@ -362,13 +368,22 @@ function AuthorCard({
     <div className="author-card">
       <div className="author-head">
         <span className="author-name">{author.displayName || `@${author.handle}`}</span>
+        <button
+          type="button"
+          className="author-handle person-link"
+          title="Open dossier"
+          onClick={() => onOpenPerson(author.handle)}
+        >
+          @{author.handle}
+        </button>
         <a
           className="author-handle"
           href={`https://x.com/${author.handle}`}
           target="_blank"
           rel="noreferrer"
+          title="Open profile on X"
         >
-          @{author.handle}
+          ↗
         </a>
         {author.enrichedAt ? (
           <span className="badge badge-tracked">enriched</span>
@@ -418,6 +433,7 @@ function AuthorCard({
 
 interface TweetRowProps {
   tweet: VoiceTweet;
+  onOpenPerson: (handle: string) => void;
   renderHtml: boolean;
   busy: boolean;
   extractBusy: boolean;
@@ -432,6 +448,7 @@ interface TweetRowProps {
 
 function TweetRow({
   tweet,
+  onOpenPerson,
   renderHtml,
   busy,
   extractBusy,
@@ -449,14 +466,14 @@ function TweetRow({
   return (
     <div className={`voice-tweet${tweet.retired ? ' voice-tweet-retired' : ''}`}>
       <div className="voice-tweet-head">
-        <a
-          className="voice-tweet-author"
-          href={`https://x.com/${tweet.authorHandle}`}
-          target="_blank"
-          rel="noreferrer"
+        <button
+          type="button"
+          className="voice-tweet-author person-link"
+          title="Open dossier"
+          onClick={() => onOpenPerson(tweet.authorHandle)}
         >
           {tweet.authorDisplayName ? `${tweet.authorDisplayName} ` : ''}@{tweet.authorHandle}
-        </a>
+        </button>
         <span className="voice-tweet-time">
           {new Date(tweet.createdAt).toLocaleDateString(undefined, {
             month: 'short',

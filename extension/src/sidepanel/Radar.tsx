@@ -85,7 +85,13 @@ function markClicked(tweetId: string): void {
   })();
 }
 
-export function RadarSection({ settings }: { settings: Settings }): JSX.Element {
+export function RadarSection({
+  settings,
+  onOpenPerson,
+}: {
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const ranked = rankSightings(useRadarSightings());
   const { queue, clicked } = splitClicked(ranked);
   const { ready, fresh } = groupQueue(queue);
@@ -194,9 +200,19 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
         ) : (
           <>
             {ready.length > 0 && (
-              <RadarGroup label={`Reply ready (${ready.length})`} rows={ready} />
+              <RadarGroup
+                label={`Reply ready (${ready.length})`}
+                rows={ready}
+                onOpenPerson={onOpenPerson}
+              />
             )}
-            {fresh.length > 0 && <RadarGroup label={`New (${fresh.length})`} rows={fresh} />}
+            {fresh.length > 0 && (
+              <RadarGroup
+                label={`New (${fresh.length})`}
+                rows={fresh}
+                onOpenPerson={onOpenPerson}
+              />
+            )}
           </>
         )
       ) : clicked.length === 0 ? (
@@ -204,7 +220,7 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
       ) : (
         <ul className="radar-list">
           {clicked.map((s) => (
-            <RadarRow key={s.tweetId} s={s} />
+            <RadarRow key={s.tweetId} s={s} onOpenPerson={onOpenPerson} />
           ))}
         </ul>
       )}
@@ -212,20 +228,34 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
   );
 }
 
-function RadarGroup({ label, rows }: { label: string; rows: RadarSighting[] }): JSX.Element {
+function RadarGroup({
+  label,
+  rows,
+  onOpenPerson,
+}: {
+  label: string;
+  rows: RadarSighting[];
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   return (
     <>
       <div className="radar-group-label">{label}</div>
       <ul className="radar-list">
         {rows.map((s) => (
-          <RadarRow key={s.tweetId} s={s} />
+          <RadarRow key={s.tweetId} s={s} onOpenPerson={onOpenPerson} />
         ))}
       </ul>
     </>
   );
 }
 
-function RadarRow({ s }: { s: RadarSighting }): JSX.Element {
+function RadarRow({
+  s,
+  onOpenPerson,
+}: {
+  s: RadarSighting;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const [copied, setCopied] = useState(false);
 
   // Opening a drafted tweet copies its reply (user gesture → clipboard allowed)
@@ -247,7 +277,14 @@ function RadarRow({ s }: { s: RadarSighting }): JSX.Element {
     <li className={`radar-row${s.reply ? ' radar-row-replied' : ''}`}>
       <div className="radar-row-head">
         <span className={`radar-band radar-band-${s.band}`}>{s.band}</span>
-        <span className="radar-author">{s.author ?? `@${s.handle}`}</span>
+        <button
+          type="button"
+          className="radar-author person-link"
+          title={`Open @${s.handle}'s dossier`}
+          onClick={() => onOpenPerson(s.handle)}
+        >
+          {s.author ?? `@${s.handle}`}
+        </button>
         {s.reply && <span className="radar-ready">reply ready</span>}
         <button
           type="button"

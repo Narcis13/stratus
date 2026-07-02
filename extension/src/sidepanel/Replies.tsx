@@ -17,6 +17,8 @@ import type { Settings } from './storage.ts';
 
 interface Props {
   settings: Settings;
+  /** C1: open a handle's dossier in the People tab. */
+  onOpenPerson: (handle: string) => void;
 }
 
 const LIST_LIMIT = 100;
@@ -35,7 +37,7 @@ const STATUS_OPTIONS: { value: '' | ReplyDraftStatus; label: string }[] = [
   { value: 'discarded', label: 'Discarded' },
 ];
 
-export function RepliesPanel({ settings }: Props): JSX.Element {
+export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
   const { draft: storageDraft, refresh: refreshStorage } = useLastDraft();
   const {
     value: systemPromptOverride,
@@ -154,6 +156,7 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
           key={activeDraft.id}
           draft={activeDraft}
           settings={settings}
+          onOpenPerson={onOpenPerson}
           isLive={lastShownStorageId.current === activeDraft.id}
           systemPromptOverride={systemPromptOverride}
           idea={idea}
@@ -226,6 +229,7 @@ export function RepliesPanel({ settings }: Props): JSX.Element {
 interface EditorProps {
   draft: ReplyDraft;
   settings: Settings;
+  onOpenPerson: (handle: string) => void;
   isLive: boolean;
   systemPromptOverride: string;
   idea: string;
@@ -239,6 +243,7 @@ interface EditorProps {
 function DraftEditor({
   draft,
   settings,
+  onOpenPerson,
   isLive,
   systemPromptOverride,
   idea,
@@ -393,7 +398,15 @@ function DraftEditor({
         <div className="reply-capture-head">
           <span className={`badge ${badgeClassFor(draft.status)}`}>{draft.status}</span>
           <span>
-            Drafted from <strong>@{draft.sourceAuthorUsername}</strong>
+            Drafted from{' '}
+            <button
+              type="button"
+              className="person-link"
+              title="Open dossier"
+              onClick={() => onOpenPerson(draft.sourceAuthorUsername)}
+            >
+              <strong>@{draft.sourceAuthorUsername}</strong>
+            </button>
           </span>
           <span className="muted">· {relativeTime(draft.createdAt)}</span>
           {isLive && <span className="badge badge-pending">live</span>}

@@ -1391,3 +1391,198 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
   flex: 1 1 auto;
 }
+
+/* ---------------------------------------------------------- people (C1) */
+
+/* Any handle anywhere in the panel — click-through to the dossier. */
+.person-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+
+.person-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.target-ext,
+.author-handle[title="Open profile on X"] {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.people-search {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.people-stage-filter {
+  flex-wrap: wrap;
+}
+
+.stage-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
+.stage-ally {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.stage-mutual {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.stage-responded {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.stage-engaged {
+  color: var(--text);
+}
+
+.people-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.people-row-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.people-row-main:hover {
+  background: var(--bg-hover);
+}
+
+.people-handle {
+  color: var(--muted);
+}
+
+.people-counts {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.people-ago {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.people-head-name {
+  font-size: 15px;
+}
+
+.people-head-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.people-bio {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.people-notes {
+  width: 100%;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  resize: vertical;
+}
+
+.people-quicklog {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.people-quicklog input {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+}
+
+.people-angles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.people-angle-chip {
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.people-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.people-event {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.people-event-icon {
+  flex: 0 0 18px;
+  text-align: center;
+}
+
+.people-event-summary {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

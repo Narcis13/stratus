@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 shipped 2026-07-02; C1 is next.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 is next.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
@@ -155,6 +155,27 @@ replies; a reply draft row shows the comments it saw.
 
 *Goal: one row per human the system has ever encountered, with an auto-advancing
 relationship stage and a full interaction timeline. The foundation phase.*
+
+> **SHIPPED 2026-07-02.** Notes vs the plan below: (1) event ids are
+> deterministic (`type:ref_table:ref_id`, INSERT OR IGNORE) so the backfill and
+> the live hooks share one idempotent id space — re-running either never
+> double-logs. (2) A mention that replies to one of my published replies logs
+> `their_reply_to_me` *instead of* (not in addition to) `their_mention` — one
+> event per underlying row, cleaner timeline, same inbound weight in the stage
+> engine. (3) "Two-way exchange day" is defined as a UTC day with ≥1 inbound
+> AND ≥1 outbound event; ally = 4 such days inside any rolling 60d window
+> (historical windows count — ratchet semantics). `harvest_seen` is
+> timeline-only, it never advances a stage. (4) The stage ratchet is applied at
+> recompute (`maxStage(current, computed)`): PATCH may demote, but the next
+> qualifying recompute re-promotes. (5) `person_snapshots` exists but stays
+> empty until C6 — voice enriches keep writing `voice_author_snapshots` only;
+> the dossier merges both series. (6) Backfill skips `contextSnapshot.comments`
+> (marked optional below) — commenters on someone else's post aren't
+> interactions with me; C6 passive capture is the ambient path. (7) Extension
+> shipped as a full People tab from day one (open question 1), with
+> click-throughs from Targets/Radar/Inbox/Replies-editor/Voice and a
+> "Start their file" manual-add for unknown handles (POST /events creates the
+> person). See CLAUDE.md phase status for the full entry.
 
 ### Schema (`src/x/db/schema.ts`)
 
@@ -515,15 +536,16 @@ channel rail, quest strip, passive-capture toggle, idea quick-add.
 - Multi-tenant anything. One user, one wallet, one bearer.
 - Merging voice_authors into people (different jobs; join by handle instead).
 
-## 5. Open questions (decide before C1 ships)
+## 5. Open questions (all decided with C1, 2026-07-02)
 
 1. Does `people` deserve its own extension tab from day one, or live under Today until
-   C5 makes it operational? Tab from day one
-2. Stage thresholds (2 exchange-days → mutual, 4/60d → ally) are guesses — revisit after
-   30 days of real events, same spirit as the BAND ≥100 gate. i will revisit
-3. Passive capture default ON or OFF at first install? (Lean: ON with a visible first-run
-   note — it's the phase that makes the product feel alive.) ON 
-4. CLAUDE.md scope amendment: land it with C1's commit, per one-file-one-truth. kand it from befinning to express the new vision for this product 
+   C5 makes it operational? **DECIDED: tab from day one** — shipped in C1.
+2. Stage thresholds (2 exchange-days → mutual, 4/60d → ally) are guesses — **DECIDED:
+   ship as-is, revisit after 30 days of real events**, same spirit as the BAND ≥100 gate.
+3. Passive capture default ON or OFF at first install? **DECIDED: ON** with a visible
+   first-run note (lands with C6).
+4. CLAUDE.md scope amendment: **DECIDED: landed with C0's commit** — the four-goal
+   vision is expressed from the top of CLAUDE.md, per one-file-one-truth.
 
 ---
 

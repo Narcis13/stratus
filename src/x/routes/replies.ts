@@ -21,6 +21,12 @@ import type { ReasoningEffort } from '../../grok/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import {
+  normalizePersonHandle,
+  safeLogPersonEvents,
+  snippet,
+  upsertPerson,
+} from '../people/store.ts';
+import {
   BATCH_REPLY_SCHEMA,
   type PostContext,
   type PostSignals,
@@ -769,6 +775,31 @@ replies.patch('/replies/:id', async (c) => {
 
   updates.updatedAt = new Date();
   const [row] = await db.update(replyDrafts).set(updates).where(eq(replyDrafts.id, id)).returning();
+
+  // People layer (C1): a draft flipping to `posted` is my_reply on its target —
+  // updatedAt is in effect paste time. Best-effort, never fails the PATCH.
+  if (updates.status === 'posted') {
+    const handle = normalizePersonHandle(existing.sourceAuthorUsername);
+    if (handle) {
+      await upsertPerson(handle, {
+        source: 'reply',
+        fields: { displayName: existing.sourceAuthorDisplayName },
+      }).catch((err) => console.error('people: reply upsert failed:', err));
+      await safeLogPersonEvents(
+        [
+          {
+            handle,
+            type: 'my_reply',
+            refTable: 'reply_drafts',
+            refId: id,
+            summary: `replied to: "${snippet(existing.sourceText)}"`,
+            at: updates.updatedAt,
+          },
+        ],
+        { source: 'reply' },
+      );
+    }
+  }
 
   return c.json(row);
 });

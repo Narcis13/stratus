@@ -13,6 +13,14 @@ import { isNotNull, sql } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { mentions, postsPublished } from './db/schema.ts';
 import { getUserMentions } from './endpoints.ts';
+import {
+  type PersonEventInput,
+  myReplyTweetIds,
+  normalizePersonHandle,
+  safeLogPersonEvents,
+  snippet,
+  upsertPerson,
+} from './people/store.ts';
 
 export const DEFAULT_PULL_MAX = 50;
 
@@ -43,6 +51,17 @@ export async function pullMentions(
   const sinceId = latest?.tweetId;
 
   const now = new Date();
+  // People layer (C1): every new mention becomes a person + inbound event.
+  const newcomers: Array<{
+    handle: string;
+    authorId: string | null;
+    authorName: string | null;
+    tweetId: string;
+    text: string;
+    postedAt: Date;
+    inReplyToTweetId: string | null;
+  }> = [];
+
   for await (const m of getUserMentions(token, selfXUserId, {
     maxResults: opts.maxResults ?? DEFAULT_PULL_MAX,
     ...(sinceId ? { sinceId } : {}),
@@ -53,6 +72,7 @@ export async function pullMentions(
       continue;
     }
     const repliedTo = m.referenced_tweets?.find((r) => r.type === 'replied_to');
+    const postedAt = m.created_at ? new Date(m.created_at) : now;
     const inserted = await db
       .insert(mentions)
       .values({
@@ -61,17 +81,75 @@ export async function pullMentions(
         authorUsername: m.authorUsername ?? null,
         authorName: m.authorName ?? null,
         text: m.text,
-        postedAt: m.created_at ? new Date(m.created_at) : now,
+        postedAt,
         conversationId: m.conversation_id ?? null,
         inReplyToTweetId: repliedTo?.id ?? null,
       })
       .onConflictDoNothing()
       .returning({ tweetId: mentions.tweetId });
-    if (inserted.length > 0) result.inserted++;
+    if (inserted.length > 0) {
+      result.inserted++;
+      const handle = normalizePersonHandle(m.authorUsername);
+      if (handle) {
+        newcomers.push({
+          handle,
+          authorId: m.author_id ?? null,
+          authorName: m.authorName ?? null,
+          tweetId: m.id,
+          text: m.text,
+          postedAt,
+          inReplyToTweetId: repliedTo?.id ?? null,
+        });
+      }
+    }
   }
+
+  await logMentionPeople(newcomers);
 
   result.answered = await backfillAnswered();
   return result;
+}
+
+// C1 hook: person bookkeeping for freshly inserted mentions. A mention that
+// replies to one of MY replies is their_reply_to_me — the 75x chain moment —
+// otherwise a plain their_mention. Best-effort: a failure here never fails
+// (or re-bills) the pull.
+async function logMentionPeople(
+  rows: Array<{
+    handle: string;
+    authorId: string | null;
+    authorName: string | null;
+    tweetId: string;
+    text: string;
+    postedAt: Date;
+    inReplyToTweetId: string | null;
+  }>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  try {
+    const chainIds = await myReplyTweetIds(
+      rows.flatMap((r) => (r.inReplyToTweetId ? [r.inReplyToTweetId] : [])),
+    );
+    const events: PersonEventInput[] = [];
+    for (const r of rows) {
+      await upsertPerson(r.handle, {
+        source: 'mention',
+        fields: { xUserId: r.authorId, displayName: r.authorName },
+      });
+      const chain = r.inReplyToTweetId !== null && chainIds.has(r.inReplyToTweetId);
+      events.push({
+        handle: r.handle,
+        type: chain ? 'their_reply_to_me' : 'their_mention',
+        refTable: 'mentions',
+        refId: r.tweetId,
+        summary: `${chain ? 'replied to my reply' : 'mentioned me'}: "${snippet(r.text)}"`,
+        at: r.postedAt,
+      });
+    }
+    await safeLogPersonEvents(events, { source: 'mention' });
+  } catch (err) {
+    console.error('people: mention hook failed:', err instanceof Error ? err.message : err);
+  }
 }
 
 // $0 answered backfill: a mention is answered the moment one of my published

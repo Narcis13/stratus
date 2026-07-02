@@ -13,9 +13,11 @@ import type { Settings } from './storage.ts';
 
 interface Props {
   settings: Settings;
+  /** C1: open a handle's dossier in the People tab. */
+  onOpenPerson: (handle: string) => void;
 }
 
-export function TodayPanel({ settings }: Props): JSX.Element {
+export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -51,10 +53,10 @@ export function TodayPanel({ settings }: Props): JSX.Element {
           code remain intact; the section is just no longer rendered here. */}
 
       {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
-      <RadarSection settings={settings} />
+      <RadarSection settings={settings} onOpenPerson={onOpenPerson} />
 
       {/* The 2–10x reply-target roster (§7.4) — its own $0 fetch. */}
-      <TargetsSection settings={settings} />
+      <TargetsSection settings={settings} onOpenPerson={onOpenPerson} />
 
       {brief && (
         <>

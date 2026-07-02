@@ -40,6 +40,7 @@ import {
   voiceAuthors,
   voiceTweets,
 } from '../db/schema.ts';
+import { safeLogPersonEvents, snippet, upsertPerson } from '../people/store.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 // Twitter usernames: 1–15 chars, alphanumeric + underscore.
@@ -110,6 +111,33 @@ export function createVoiceRouter(): Hono {
       .from(voiceAuthors)
       .where(eq(voiceAuthors.handle, tweet.handle));
 
+    // People layer (C1): a saved tweet notices its author. Fill-only person
+    // upsert (hover-card grade); the follower series for voice authors stays
+    // in voice_author_snapshots. Best-effort, never fails the save.
+    await upsertPerson(tweet.handle, {
+      source: 'voice',
+      fields: {
+        displayName: hover?.displayName ?? tweet.displayName,
+        bio: hover?.bio ?? null,
+        followersCount: hover?.followersCount ?? null,
+        followingCount: hover?.followingCount ?? null,
+        xUserId: hover?.xUserId ?? null,
+      },
+    }).catch((err) => console.error('people: voice upsert failed:', err));
+    await safeLogPersonEvents(
+      [
+        {
+          handle: tweet.handle,
+          type: 'saved_tweet',
+          refTable: 'voice_tweets',
+          refId: tweet.tweetId,
+          summary: `saved their tweet: "${snippet(tweet.text)}"`,
+          at: now,
+        },
+      ],
+      { source: 'voice' },
+    );
+
     return c.json({ tweet: saved, author }, 201);
   });
 
@@ -160,6 +188,34 @@ export function createVoiceRouter(): Hono {
         capturedAt: now,
       });
     }
+
+    // People layer (C1): a full profile capture is authoritative — overwrite.
+    // saved_author's deterministic id means only the first enrich logs an
+    // event; repeat enriches refresh the person fields silently.
+    await upsertPerson(handle, {
+      source: 'voice',
+      overwrite: true,
+      fields: {
+        displayName: profile.displayName,
+        bio: profile.bio,
+        followersCount: profile.followersCount,
+        followingCount: profile.followingCount,
+        xUserId: profile.xUserId,
+      },
+    }).catch((err) => console.error('people: enrich upsert failed:', err));
+    await safeLogPersonEvents(
+      [
+        {
+          handle,
+          type: 'saved_author',
+          refTable: 'voice_authors',
+          refId: handle,
+          summary: 'saved their profile to the voice library',
+          at: now,
+        },
+      ],
+      { source: 'voice' },
+    );
 
     return c.json(row);
   });

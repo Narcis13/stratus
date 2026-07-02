@@ -24,6 +24,17 @@ import {
   type MentionStatus,
   type MentionsRefreshResult,
   type MentionsResponse,
+  type PeopleListOpts,
+  type PeopleListResponse,
+  type Person,
+  type PersonAngleCell,
+  type PersonDossier,
+  type PersonEvent,
+  type PersonEventCreateBody,
+  type PersonListItem,
+  type PersonPatchBody,
+  type PersonReplyOutcome,
+  type PersonStage,
   type PillarCreateBody,
   type PillarDraftBody,
   type PillarDraftResult,
@@ -75,6 +86,17 @@ export type {
   MentionStatus,
   MentionsRefreshResult,
   MentionsResponse,
+  PeopleListOpts,
+  PeopleListResponse,
+  Person,
+  PersonAngleCell,
+  PersonDossier,
+  PersonEvent,
+  PersonEventCreateBody,
+  PersonListItem,
+  PersonPatchBody,
+  PersonReplyOutcome,
+  PersonStage,
   PostContext,
   PostDraftBody,
   PostDraftResponse,
@@ -264,6 +286,43 @@ export const api = {
     deleteAuthor(s: Settings, handle: string): Promise<unknown> {
       return request<unknown>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
+      });
+    },
+  },
+
+  // C1 — the people layer: list, dossier, notes/stage edits, manual log.
+  people: {
+    list(s: Settings, opts: PeopleListOpts = {}): Promise<PeopleListResponse> {
+      const q = new URLSearchParams();
+      if (opts.stage) q.set('stage', opts.stage);
+      if (opts.tag) q.set('tag', opts.tag);
+      if (opts.q) q.set('q', opts.q);
+      if (opts.sort) q.set('sort', opts.sort);
+      if (opts.retired) q.set('retired', 'true');
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<PeopleListResponse>(s, `/x/people${qs ? `?${qs}` : ''}`);
+    },
+
+    dossier(s: Settings, handle: string): Promise<PersonDossier> {
+      return request<PersonDossier>(s, `/x/people/${encodeURIComponent(handle)}`);
+    },
+
+    patch(s: Settings, handle: string, body: PersonPatchBody): Promise<Person> {
+      return request<Person>(s, `/x/people/${encodeURIComponent(handle)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    addEvent(
+      s: Settings,
+      handle: string,
+      body: PersonEventCreateBody,
+    ): Promise<{ person: Person; event: PersonEvent }> {
+      return request(s, `/x/people/${encodeURIComponent(handle)}/events`, {
+        method: 'POST',
+        body,
       });
     },
   },

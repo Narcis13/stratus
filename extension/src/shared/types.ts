@@ -532,6 +532,125 @@ export interface Brief {
   };
 }
 
+// ---------------------------------------------------------------- people (C1)
+
+// Circles CRM rows (src/x/routes/people.ts). Stage describes reciprocity only.
+export type PersonStage = 'stranger' | 'noticed' | 'engaged' | 'responded' | 'mutual' | 'ally';
+
+export type PersonEventType =
+  | 'saved_tweet'
+  | 'saved_author'
+  | 'my_reply'
+  | 'their_mention'
+  | 'their_reply_to_me'
+  | 'hover_sighting'
+  | 'harvest_seen'
+  | 'note'
+  | 'manual_dm_logged';
+
+export interface Person {
+  handle: string;
+  xUserId: string | null;
+  displayName: string | null;
+  bio: string | null;
+  followersCount: number | null;
+  followingCount: number | null;
+  stage: PersonStage;
+  stageUpdatedAt: string | null;
+  notes: string | null;
+  tags: string[] | null;
+  source: string | null;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  retired: boolean;
+}
+
+export interface PersonListItem extends Person {
+  inboundCount: number;
+  outboundCount: number;
+  eventCount: number;
+}
+
+export interface PeopleListResponse {
+  count: number;
+  people: PersonListItem[];
+}
+
+export interface PeopleListOpts {
+  stage?: PersonStage;
+  tag?: string;
+  q?: string;
+  sort?: 'last_seen' | 'last_inbound' | 'last_outbound' | 'first_seen';
+  retired?: boolean;
+  limit?: number;
+}
+
+export interface PersonEvent {
+  id: string;
+  handle: string;
+  type: PersonEventType;
+  refTable: string | null;
+  refId: string | null;
+  summary: string | null;
+  at: string;
+}
+
+export interface PersonReplyOutcome {
+  draftId: string;
+  sourceTweetId: string;
+  sourceText: string;
+  sourceUrl: string;
+  replyText: string;
+  draftCreatedAt: string;
+  postedTweetId: string | null;
+  postedAt: string | null;
+  measuredAt: string | null;
+  outcome: {
+    views: number | null;
+    likes: number | null;
+    replies: number | null;
+    retweets: number | null;
+    quotes: number | null;
+    bookmarks: number | null;
+    profileVisits: number | null;
+  } | null;
+}
+
+export interface PersonAngleCell {
+  angle: string | null;
+  posted: number;
+  measured: number;
+  medianViews: number | null;
+  medianProfileVisits: number | null;
+  medianReplies: number | null;
+}
+
+export interface PersonDossier {
+  person: Person;
+  voiceAuthor: Omit<VoiceAuthor, 'tweetCount'> | null;
+  events: PersonEvent[];
+  replies: { count: number; measured: number; outcomes: PersonReplyOutcome[] };
+  angles: PersonAngleCell[];
+  mentions: Omit<Mention, 'parentText'>[];
+  savedTweets: Omit<VoiceTweet, 'authorDisplayName'>[];
+  followerSeries: Array<{ followersCount: number; capturedAt: string; source: 'voice' | 'person' }>;
+}
+
+export interface PersonPatchBody {
+  notes?: string | null;
+  tags?: string[] | null;
+  stage?: PersonStage;
+  retired?: boolean;
+}
+
+export interface PersonEventCreateBody {
+  type: 'note' | 'manual_dm_logged';
+  summary: string;
+  at?: string;
+}
+
 export class ApiError extends Error {
   constructor(
     readonly status: number,

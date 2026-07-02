@@ -2,16 +2,26 @@ import { type JSX, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
+import { PeoplePanel } from './People.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
 import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
 
-type Tab = 'today' | 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
+type Tab =
+  | 'today'
+  | 'people'
+  | 'calendar'
+  | 'composer'
+  | 'harvest'
+  | 'voice'
+  | 'replies'
+  | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'today', label: 'Today' },
+  { id: 'people', label: 'People' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
   { id: 'harvest', label: 'Harvest' },
@@ -25,6 +35,9 @@ export function App(): JSX.Element {
   const [tab, setTab] = useState<Tab>('today');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [remixTweetId, setRemixTweetId] = useState<string | null>(null);
+  // C1: handle to open in the People dossier — any handle rendered anywhere in
+  // the panel routes here via openPerson.
+  const [personHandle, setPersonHandle] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const startEdit = (id: string) => {
@@ -37,6 +50,10 @@ export function App(): JSX.Element {
     setEditingId(null);
     setRemixTweetId(tweetId);
     setTab('composer');
+  };
+  const openPerson = (handle: string) => {
+    setPersonHandle(handle.replace(/^@/, '').toLowerCase());
+    setTab('people');
   };
   const onSaved = () => setRefreshKey((k) => k + 1);
 
@@ -73,7 +90,13 @@ export function App(): JSX.Element {
             <p className="muted">Configure API URL and bearer token first.</p>
           </div>
         ) : activeTab === 'today' ? (
-          <TodayPanel key={`today-${refreshKey}`} settings={settings} />
+          <TodayPanel key={`today-${refreshKey}`} settings={settings} onOpenPerson={openPerson} />
+        ) : activeTab === 'people' ? (
+          <PeoplePanel
+            settings={settings}
+            openHandle={personHandle}
+            onClearOpen={() => setPersonHandle(null)}
+          />
         ) : activeTab === 'calendar' ? (
           <CalendarPanel key={`cal-${refreshKey}`} settings={settings} onEdit={startEdit} />
         ) : activeTab === 'composer' ? (
@@ -89,9 +112,13 @@ export function App(): JSX.Element {
         ) : activeTab === 'harvest' ? (
           <HarvestPanel />
         ) : activeTab === 'voice' ? (
-          <VoicePanel settings={settings} onRemix={startRemix} />
+          <VoicePanel settings={settings} onRemix={startRemix} onOpenPerson={openPerson} />
         ) : activeTab === 'replies' ? (
-          <RepliesPanel key={`replies-${refreshKey}`} settings={settings} />
+          <RepliesPanel
+            key={`replies-${refreshKey}`}
+            settings={settings}
+            onOpenPerson={openPerson}
+          />
         ) : (
           <SettingsPanel />
         )}
