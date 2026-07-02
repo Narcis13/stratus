@@ -1368,3 +1368,26 @@ button.danger:hover:not(:disabled) {
 .pillar-card.pillar-add {
   border-style: dashed;
 }
+
+/* --- Settings: harvest cursors (C0) --- */
+.cursor-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cursor-row {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cursor-label {
+  font-weight: 600;
+  flex: 1 1 auto;
+}

@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   RADAR_CAP,
   RADAR_DISMISSED_CAP,
+  type RadarDraftRow,
   type RadarSighting,
   appendDismissed,
+  draftRowToSighting,
   groupQueue,
   isRadarSightings,
   mergeSightings,
@@ -184,5 +186,58 @@ describe('isRadarSightings', () => {
     expect(isRadarSightings(undefined)).toBe(false);
     expect(isRadarSightings([{ tweetId: 1 }])).toBe(false);
     expect(isRadarSightings([sighting('1'), { nope: true }])).toBe(false);
+  });
+});
+
+describe('draftRowToSighting (C0 rehydration)', () => {
+  const row: RadarDraftRow = {
+    id: 'uuid-1',
+    tweetId: '111',
+    url: 'https://x.com/alice/status/111',
+    handle: 'alice',
+    author: 'Alice',
+    snippet: 'shipping beats planning',
+    band: 'hot',
+    signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+    replyText: 'my drafted reply',
+    angle: 'contrarian',
+    status: 'ready',
+    draftedAt: '2026-07-01T10:00:00.000Z',
+    createdAt: '2026-07-01T10:00:00.000Z',
+  };
+
+  test('rebuilds a reply-ready sighting from a server row', () => {
+    const s = draftRowToSighting(row);
+    expect(s).toEqual({
+      tweetId: '111',
+      url: 'https://x.com/alice/status/111',
+      handle: 'alice',
+      author: 'Alice',
+      text: 'shipping beats planning',
+      band: 'hot',
+      signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+      firstSeenAt: '2026-07-01T10:00:00.000Z',
+      lastSeenAt: '2026-07-01T10:00:00.000Z',
+      reply: 'my drafted reply',
+    });
+  });
+
+  test('falls back to a built status URL when the row has none', () => {
+    const s = draftRowToSighting({ ...row, url: null });
+    expect(s?.url).toBe('https://x.com/alice/status/111');
+  });
+
+  test('rows without band/signals cannot rehydrate (no rank, no why-line)', () => {
+    expect(draftRowToSighting({ ...row, band: null })).toBeNull();
+    expect(draftRowToSighting({ ...row, signals: null })).toBeNull();
+  });
+
+  test('rehydrated sightings merge cleanly and keep their reply', () => {
+    const s = draftRowToSighting(row);
+    if (!s) throw new Error('expected sighting');
+    const merged = mergeSightings([], [s], []);
+    expect(merged[0]?.reply).toBe('my drafted reply');
+    // dismissed ids stay gone even through rehydration
+    expect(mergeSightings([], [s], ['111'])).toEqual([]);
   });
 });

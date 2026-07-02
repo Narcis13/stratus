@@ -54,6 +54,19 @@ export interface RadarClick {
   clickedAt: string;
 }
 
+// Rehydrate the session buffer from the server's radar_drafts copy (C0) —
+// sent by the panel on mount; the background (single writer + Authorization
+// owner) fetches GET /x/radar/drafts?status=ready and merges rows the buffer
+// doesn't already hold, so a browser restart no longer loses drafted replies.
+export interface RadarRehydrate {
+  type: 'stratus/radar-rehydrate';
+}
+
+export function isRadarRehydrate(msg: unknown): msg is RadarRehydrate {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/radar-rehydrate';
+}
+
 export function isRadarReport(msg: unknown): msg is RadarReport {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;

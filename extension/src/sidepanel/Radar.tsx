@@ -10,7 +10,7 @@
 
 import { type JSX, useEffect, useState } from 'react';
 import { formatCount } from '../replyBand.ts';
-import type { RadarClick, RadarDismiss, RadarReplies } from '../shared/messages.ts';
+import type { RadarClick, RadarDismiss, RadarRehydrate, RadarReplies } from '../shared/messages.ts';
 import {
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
@@ -93,6 +93,15 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
   const [drafting, setDrafting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
+  // C0: ask the background to pull the server's radar_drafts copy — after a
+  // browser restart the session buffer is empty but paid-for drafts survive.
+  useEffect(() => {
+    const msg: RadarRehydrate = { type: 'stratus/radar-rehydrate' };
+    chrome.runtime
+      .sendMessage(msg)
+      .catch((err) => console.warn('[stratus] radar rehydrate failed', err));
+  }, []);
+
   // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
   const undrafted = fresh.slice(0, RADAR_DRAFT_CAP);
 
@@ -100,12 +109,16 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
     if (undrafted.length === 0) return;
     setDrafting(true);
     setNote(null);
+    // band/signals ride along for the server's radar_drafts copy (C0) — they
+    // never reach the Grok prompt.
     const tweets: BatchReplyTweet[] = undrafted.map((s) => ({
       tweetId: s.tweetId,
       handle: s.handle,
       author: s.author ?? s.handle,
       text: s.text,
       url: s.url,
+      band: s.band,
+      signals: s.signals,
     }));
     try {
       const res = await api.replies.generateBatch(settings, { tweets });

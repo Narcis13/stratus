@@ -14,6 +14,7 @@ import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
 import { pillars } from './routes/pillars.ts';
 import { createPostsRouter } from './routes/posts.ts';
+import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
@@ -43,6 +44,9 @@ export function mountX(app: Hono): void {
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
+  // C0: radar draft reads/status flips are $0 and mount without the Grok key;
+  // only the insert path (generate-batch, below) needs XAI_API_KEY.
+  app.route('/x', radar);
   app.route('/x', createMentionsRouter(cfg));
   // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
   if (process.env.XAI_API_KEY) {

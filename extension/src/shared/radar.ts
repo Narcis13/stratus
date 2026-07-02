@@ -120,6 +120,45 @@ export function groupQueue(queue: RadarSighting[]): {
   return { ready, fresh };
 }
 
+// --- server rehydration (CIRCLES-PLAN C0) ---
+
+// A radar_drafts row as GET /x/radar/drafts returns it (timestamps as ISO).
+export interface RadarDraftRow {
+  id: string;
+  tweetId: string;
+  url: string | null;
+  handle: string;
+  author: string | null;
+  snippet: string;
+  band: RadarBand | null;
+  signals: TweetSignals | null;
+  replyText: string;
+  angle: string;
+  status: 'ready' | 'clicked' | 'expired';
+  draftedAt: string;
+  createdAt: string;
+}
+
+// Rebuild a sighting from the server copy after a browser restart wiped the
+// session buffer. Rows without band/signals (CLI-originated drafts) can't be
+// ranked or given a "why" line, so they don't rehydrate. seen-at times are the
+// draft time — displayAgeMin keeps ticking from there, same as a live capture.
+export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
+  if (!row.band || !row.signals) return null;
+  return {
+    tweetId: row.tweetId,
+    url: row.url ?? `https://x.com/${row.handle}/status/${row.tweetId}`,
+    handle: row.handle,
+    author: row.author,
+    text: row.snippet,
+    band: row.band,
+    signals: row.signals,
+    firstSeenAt: row.draftedAt,
+    lastSeenAt: row.draftedAt,
+    reply: row.replyText,
+  };
+}
+
 export function isRadarSightings(v: unknown): v is RadarSighting[] {
   if (!Array.isArray(v)) return false;
   return v.every((s) => {

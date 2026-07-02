@@ -1,6 +1,7 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: PROPOSED (2026-07-01). Companion to `PLAN.md` (which stays the canonical plan for
+> Status: ADOPTED (2026-07-02) — C0 shipped 2026-07-02; C1 is next.
+> Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
 >
@@ -118,6 +119,14 @@ product layers on top. Each phase is independently shippable and usable.
 ## Phase C0 — Stop the bleeding (persistence quick wins)
 
 *Goal: three small changes so no more people/context data evaporates while we build C1.*
+
+> **SHIPPED 2026-07-02.** Notes vs the plan below: (1) verified — `contextSnapshot` was
+> never truncated server-side (only the prompt render caps at 10); a round-trip test now
+> locks the contract. (2) `radar_drafts` landed with a `PATCH /x/radar/drafts` status
+> route on top of the planned GET: clicks/dismissals mirror from the extension so worked
+> rows don't resurrect at the next rehydrate; rehydration routes through the background
+> (`stratus/radar-rehydrate`), keeping it the buffer's single writer. Expiry is a lazy
+> status flip on GET. (3) as planned. See CLAUDE.md phase status for the full entry.
 
 1. **Persist top comments.** `POST /x/replies/generate` already receives
    `PostContext.comments` (≤10 × {author, handle, text}) and discards it after the Grok
@@ -509,12 +518,12 @@ channel rail, quest strip, passive-capture toggle, idea quick-add.
 ## 5. Open questions (decide before C1 ships)
 
 1. Does `people` deserve its own extension tab from day one, or live under Today until
-   C5 makes it operational? (Lean: section first, tab at C5.)
+   C5 makes it operational? Tab from day one
 2. Stage thresholds (2 exchange-days → mutual, 4/60d → ally) are guesses — revisit after
-   30 days of real events, same spirit as the BAND ≥100 gate.
+   30 days of real events, same spirit as the BAND ≥100 gate. i will revisit
 3. Passive capture default ON or OFF at first install? (Lean: ON with a visible first-run
-   note — it's the phase that makes the product feel alive.)
-4. CLAUDE.md scope amendment: land it with C1's commit, per one-file-one-truth.
+   note — it's the phase that makes the product feel alive.) ON 
+4. CLAUDE.md scope amendment: land it with C1's commit, per one-file-one-truth. kand it from befinning to express the new vision for this product 
 
 ---
 

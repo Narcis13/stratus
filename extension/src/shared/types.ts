@@ -1,6 +1,8 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
+import type { TweetSignals } from '../replyBand.ts';
+
 export type PostStatus =
   | 'draft'
   | 'pending'
@@ -368,14 +370,18 @@ export interface ReplyGenerateBody {
 }
 
 // Batch reply drafting (Radar §7.2): one Grok call, one reply per queued
-// tweet, anchored by tweetId. Not persisted server-side — the replies attach
-// to the session radar buffer.
+// tweet, anchored by tweetId. The replies attach to the session radar buffer
+// AND land in the server's radar_drafts table (C0) so a browser restart can
+// rehydrate the queue — band/signals ride along for that copy only, they
+// never reach the Grok prompt.
 export interface BatchReplyTweet {
   tweetId: string;
   handle: string;
   author: string;
   text: string;
   url?: string;
+  band?: 'hot' | 'warm';
+  signals?: TweetSignals;
 }
 
 export interface BatchReplyGenerateBody {

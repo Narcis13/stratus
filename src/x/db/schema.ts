@@ -263,6 +263,43 @@ export const replyDrafts = sqliteTable(
   ],
 );
 
+// Radar batch drafts (CIRCLES-PLAN C0): the server-side copy of replies drafted
+// by POST /x/replies/generate-batch. The session ring buffer in the extension
+// used to be the ONLY holder — a browser restart lost every drafted reply (Grok
+// money already spent). Rows auto-expire by status flip (never delete) after
+// 48h: a radar reply to a dead post is worthless anyway.
+export const radarDrafts = sqliteTable(
+  'radar_drafts',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    tweetId: text('tweet_id').notNull(),
+    url: text('url'),
+    handle: text('handle').notNull(),
+    author: text('author'),
+    snippet: text('snippet').notNull(),
+    // Band + classifier inputs as the Radar saw them at draft time. Nullable:
+    // CLI callers of generate-batch may not send them (those rows can't
+    // rehydrate the panel queue, which needs signals to rank/render).
+    band: text('band'),
+    signals: text('signals', { mode: 'json' }),
+    replyText: text('reply_text').notNull(),
+    angle: text('angle').notNull(),
+    status: text('status').notNull().default('ready'), // ready | clicked | expired
+    draftedAt: integer('drafted_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [
+    index('radar_drafts_status_drafted_idx').on(t.status, t.draftedAt),
+    index('radar_drafts_tweet_idx').on(t.tweetId),
+  ],
+);
+
 // Mention inbox (§7.5): mentions of me, pulled incrementally (since_id = max
 // stored tweet_id) by the daily pass and the on-demand refresh — owned reads,
 // $0.001/result. `status` drives the panel's Inbox: rows arrive 'unanswered';

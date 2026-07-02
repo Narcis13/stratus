@@ -10,14 +10,17 @@ import {
   isApiRequest,
   isRadarClick,
   isRadarDismiss,
+  isRadarRehydrate,
   isRadarReplies,
   isRadarReport,
 } from './shared/messages.ts';
 import {
   RADAR_DISMISSED_KEY,
   RADAR_SIGHTINGS_KEY,
+  type RadarDraftRow,
   type RadarSighting,
   appendDismissed,
+  draftRowToSighting,
   isRadarSightings,
   mergeSightings,
 } from './shared/radar.ts';
@@ -149,6 +152,68 @@ async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
   });
 }
 
+// --- server copy (C0): radar_drafts is the restart-surviving mirror of the
+// session buffer. Status flips + rehydration are best-effort — the buffer
+// stays authoritative for the live session.
+
+// Fire-and-forget: mirror a click/dismiss onto the server rows so a worked
+// tweet doesn't resurrect at the next rehydrate. Losing this write only costs
+// a duplicate queue entry after a restart, never a wrong live queue.
+function markDraftsOnServer(tweetIds: string[], status: 'clicked' | 'expired'): void {
+  if (tweetIds.length === 0) return;
+  void handleApiRequest({
+    type: 'stratus/api',
+    method: 'PATCH',
+    path: '/x/radar/drafts',
+    body: { tweetIds, status },
+  }).then(
+    (res) => {
+      if (!res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] radar draft status sync failed', res.code);
+      }
+    },
+    (err) => console.warn('[stratus] radar draft status sync failed', err),
+  );
+}
+
+// Merge server drafts into the buffer. Only tweetIds the buffer does NOT hold
+// come in — a live sighting has fresher signals than its hours-old draft row,
+// and mergeSightings would let the stale copy win. Dismissed ids are filtered
+// by mergeSightings as usual. Returns how many entered.
+async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
+  const { sightings, dismissed } = await readRadar();
+  const have = new Set(sightings.map((s) => s.tweetId));
+  const gone = new Set(dismissed);
+  const incoming: RadarSighting[] = [];
+  for (const row of rows) {
+    if (have.has(row.tweetId) || gone.has(row.tweetId)) continue;
+    const s = draftRowToSighting(row);
+    if (s) incoming.push(s);
+  }
+  if (incoming.length === 0) return 0;
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: mergeSightings(sightings, incoming, dismissed),
+  });
+  return incoming.length;
+}
+
+async function rehydrateFromServer(): Promise<{ added: number }> {
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/radar/drafts',
+    query: { status: 'ready' },
+  });
+  if (!res.ok) return { added: 0 };
+  const rows = (res.data as { drafts?: RadarDraftRow[] } | undefined)?.drafts;
+  if (!Array.isArray(rows) || rows.length === 0) return { added: 0 };
+  let added = 0;
+  await enqueueRadar(async () => {
+    added = await rehydrateSightings(rows);
+  });
+  return { added };
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (isApiRequest(msg)) {
     void handleApiRequest(msg).then(
@@ -170,6 +235,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (isRadarDismiss(msg)) {
+    markDraftsOnServer(msg.tweetIds, 'expired');
     void enqueueRadar(() => dismissSightings(msg.tweetIds)).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
@@ -184,9 +250,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (isRadarClick(msg)) {
+    markDraftsOnServer([msg.tweetId], 'clicked');
     void enqueueRadar(() => markClicked(msg.tweetId, msg.clickedAt)).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarRehydrate(msg)) {
+    void rehydrateFromServer().then(
+      (r) => sendResponse({ ok: true, added: r.added }),
+      (err) => {
+        console.warn('[stratus] radar rehydrate failed', err);
+        sendResponse({ ok: false });
+      },
     );
     return true;
   }

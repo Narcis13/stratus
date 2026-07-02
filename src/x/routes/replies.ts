@@ -22,7 +22,6 @@ import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../s
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import {
   BATCH_REPLY_SCHEMA,
-  type BatchTweet,
   type PostContext,
   type PostSignals,
   REPLY_PROMPT_TEMPLATE,
@@ -35,6 +34,7 @@ import {
   passesSpecificityGate,
 } from '../replies/prompt.ts';
 import { getActivePillars } from './pillars.ts';
+import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
 // (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
@@ -253,10 +253,11 @@ replies.post('/replies/generate', async (c) => {
 // --------------------------------------------------------- batch (Radar §7.2)
 //
 // One Grok call drafts a reply for a whole queue of hot/warm tweets the Radar
-// collected. Unlike /replies/generate this does NOT persist drafts or run the
-// band gate (the Radar already filtered to hot/warm): the replies live in the
-// extension's session ring buffer, copied to the clipboard when the user opens
-// a tweet. Cheap, ephemeral, re-runnable as the queue grows.
+// collected. Unlike /replies/generate this does NOT create reply_drafts rows or
+// run the band gate (the Radar already filtered to hot/warm): the replies live
+// in the extension's session ring buffer, copied to the clipboard when the user
+// opens a tweet. Since CIRCLES-PLAN C0 each reply also lands in `radar_drafts`
+// so a browser restart no longer loses paid-for drafts (routes/radar.ts).
 
 interface BatchBody {
   tweets?: unknown;
@@ -370,6 +371,10 @@ replies.post('/replies/generate-batch', async (c) => {
     out.push({ tweetId: r.tweetId, text: r.text, angle: r.angle });
   }
 
+  // C0: the server keeps the copy — the session ring buffer alone lost every
+  // draft on browser restart. Never fails the response (money already spent).
+  await persistRadarDrafts(tweets, out);
+
   return c.json({
     replies: out,
     count: out.length,
@@ -381,12 +386,16 @@ replies.post('/replies/generate-batch', async (c) => {
 });
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
-export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { error: string } {
+// Optional band/signals (C0) carry the Radar's capture-time verdict into
+// `radar_drafts`; they never reach the Grok prompt.
+export function parseBatchTweets(
+  value: unknown,
+): { tweets: RadarBatchTweet[] } | { error: string } {
   if (!Array.isArray(value)) return { error: 'invalid_tweets' };
   if (value.length === 0) return { error: 'empty_tweets' };
   if (value.length > MAX_BATCH_TWEETS) return { error: 'too_many_tweets' };
 
-  const tweets: BatchTweet[] = [];
+  const tweets: RadarBatchTweet[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < value.length; i++) {
     const t = value[i];
@@ -403,13 +412,53 @@ export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { e
       return { error: `invalid_tweet_text_${i}` };
     }
 
+    let band: 'hot' | 'warm' | undefined;
+    if (r.band !== undefined && r.band !== null) {
+      if (r.band !== 'hot' && r.band !== 'warm') return { error: `invalid_tweet_band_${i}` };
+      band = r.band;
+    }
+
+    let signals: TweetSignals | undefined;
+    if (r.signals !== undefined && r.signals !== null) {
+      const parsed = parseTweetSignals(r.signals);
+      if (parsed === null) return { error: `invalid_tweet_signals_${i}` };
+      signals = parsed;
+    }
+
     seen.add(tweetId);
     const author =
       typeof r.author === 'string' && r.author.trim() !== '' ? r.author.trim() : handleRaw;
     const url = typeof r.url === 'string' ? r.url : undefined;
-    tweets.push({ tweetId, handle: handleRaw, author, text: r.text, ...(url ? { url } : {}) });
+    tweets.push({
+      tweetId,
+      handle: handleRaw,
+      author,
+      text: r.text,
+      ...(url ? { url } : {}),
+      ...(band ? { band } : {}),
+      ...(signals ? { signals } : {}),
+    });
   }
   return { tweets };
+}
+
+// Classifier inputs without the verdict (TweetSignals, not PostSignals).
+function parseTweetSignals(value: unknown): TweetSignals | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const s = value as Record<string, unknown>;
+  const nums: Record<'views' | 'replies' | 'ageMin' | 'vpm', number> = {
+    views: 0,
+    replies: 0,
+    ageMin: 0,
+    vpm: 0,
+  };
+  for (const k of ['views', 'replies', 'ageMin', 'vpm'] as const) {
+    const n = s[k];
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
+    nums[k] = n;
+  }
+  if (typeof s.bait !== 'boolean') return null;
+  return { ...nums, bait: s.bait };
 }
 
 // ---------------------------------------------------------------- list/get

@@ -52,6 +52,7 @@ import {
   takeRefreshSlot,
 } from './x/routes/mentions.ts';
 import { aggregatePillars, buildAccountSeries, buildBestTimes } from './x/routes/metrics.ts';
+import { type RadarBatchTweet, buildRadarDraftRows, radarDraftExpired } from './x/routes/radar.ts';
 import { parseBatchTweets } from './x/routes/replies.ts';
 import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
 import {
@@ -518,6 +519,100 @@ describe('batch replies (Radar §7.2)', () => {
         Array.from({ length: 26 }, (_, i) => ({ tweetId: String(i), handle: 'a', text: 'x' })),
       ),
     ).toEqual({ error: 'too_many_tweets' });
+  });
+
+  test('parseBatchTweets carries band + signals through (C0) and rejects junk', () => {
+    const signals = { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false };
+    const ok = parseBatchTweets([
+      { tweetId: '111', handle: 'alice', text: 'a', band: 'hot', signals },
+      { tweetId: '222', handle: 'bob', text: 'b' },
+    ]);
+    if ('error' in ok) throw new Error(ok.error);
+    expect(ok.tweets[0]?.band).toBe('hot');
+    expect(ok.tweets[0]?.signals).toEqual(signals);
+    expect('band' in (ok.tweets[1] ?? {})).toBe(false);
+
+    expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
+      error: 'invalid_tweet_band_0',
+    });
+    expect(
+      parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', signals: { views: -1 } }]),
+    ).toEqual({ error: 'invalid_tweet_signals_0' });
+  });
+});
+
+describe('radar drafts (C0)', () => {
+  const tweets: RadarBatchTweet[] = [
+    {
+      tweetId: '111',
+      handle: 'alice',
+      author: 'Alice',
+      text: 'shipping beats planning',
+      url: 'https://x.com/alice/status/111',
+      band: 'hot',
+      signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+    },
+    // author fell back to handle at parse time → stored as null, not duplicated
+    { tweetId: '222', handle: 'bob', author: 'bob', text: 'AI take' },
+  ];
+
+  test('buildRadarDraftRows pairs replies with their tweets and keeps signals', () => {
+    const rows = buildRadarDraftRows(tweets, [
+      { tweetId: '111', text: 'my reply', angle: 'contrarian' },
+      { tweetId: '222', text: 'other reply', angle: 'extends' },
+      { tweetId: '999', text: 'unknown id dropped', angle: 'extends' },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({
+      tweetId: '111',
+      url: 'https://x.com/alice/status/111',
+      handle: 'alice',
+      author: 'Alice',
+      snippet: 'shipping beats planning',
+      band: 'hot',
+      signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+      replyText: 'my reply',
+      angle: 'contrarian',
+    });
+    expect(rows[1]?.author).toBeNull();
+    expect(rows[1]?.band).toBeNull();
+    expect(rows[1]?.url).toBeNull();
+  });
+
+  test('radarDraftExpired flips at exactly 48h', () => {
+    const drafted = new Date('2026-07-01T00:00:00Z');
+    const t = drafted.getTime();
+    expect(radarDraftExpired(drafted, t + 47 * 3600_000)).toBe(false);
+    expect(radarDraftExpired(drafted, t + 48 * 3600_000)).toBe(true);
+  });
+});
+
+// CIRCLES-PLAN C0 item 1: the top comments scraped into PostContext must
+// survive the trip into contextSnapshot untruncated — C1 mines them. The
+// route stores parseContext's output verbatim, so this round-trip IS the
+// persistence contract (the prompt render may cap at 10; storage never does).
+describe('contextSnapshot keeps top comments (C0)', () => {
+  test('all comments survive parseContext + JSON round-trip, full text, in order', () => {
+    const topComments = Array.from({ length: 12 }, (_, i) => ({
+      author: `Commenter ${i}`,
+      handle: `@commenter${i}`,
+      text: `comment ${i} — ${'long enough that truncation would show '.repeat(8)}`,
+    }));
+    const out = parseContext({
+      tweetId: '123456',
+      handle: '@someone',
+      author: 'Some One',
+      text: 'a tweet',
+      url: 'https://x.com/someone/status/123456',
+      postedAt: '2026-06-10T08:00:00Z',
+      metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
+      topComments,
+    });
+    if ('error' in out) throw new Error(out.error);
+    expect(out.topComments).toEqual(topComments);
+    // what the DB json column stores and returns
+    const roundTrip = JSON.parse(JSON.stringify(out)) as { topComments: unknown };
+    expect(roundTrip.topComments).toEqual(topComments);
   });
 });
 
