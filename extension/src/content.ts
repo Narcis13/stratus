@@ -23,7 +23,15 @@
 import { initHarvest } from './harvester.ts';
 import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
 import type { Band, TweetSignals } from './replyBand.ts';
-import type { ApiRequest, ApiResponse, RadarReport } from './shared/messages.ts';
+import { parseEarlyReplies } from './shared/earlyReplies.ts';
+import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
+import type {
+  ApiRequest,
+  ApiResponse,
+  LaunchGet,
+  LaunchReport,
+  RadarReport,
+} from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 import type { RadarBand, RadarSighting } from './shared/radar.ts';
 import {
@@ -1129,6 +1137,80 @@ function flushSightings(): void {
   })();
 }
 
+// --------------------------------------------------------- launch room (C7)
+//
+// While a Launch Room is live and the user has the launched tweet open, the
+// early replies are right there in the DOM — stream them to the background
+// (radar transport pattern: batched flush, per-tweet dedupe, $0). The room
+// state lives with the background; we ask it whether a launch is live on a
+// 30s throttle instead of reading chrome.storage.session (untrusted context).
+
+const LAUNCH_GET_THROTTLE_MS = 30_000;
+
+let launchTweetId: string | null = null;
+let launchCheckedAt = 0;
+let launchCheckInFlight = false;
+const launchReported = new Set<string>();
+const pendingLaunchReplies = new Map<string, EarlyReply>();
+let launchFlushTimer: number | null = null;
+
+function refreshActiveLaunch(): void {
+  launchCheckInFlight = true;
+  const msg: LaunchGet = { type: 'stratus/launch-get' };
+  void chrome.runtime
+    .sendMessage(msg)
+    .then((res: { ok: boolean; active: ActiveLaunch | null } | undefined) => {
+      const next = res?.ok && res.active ? res.active.tweetId : null;
+      if (next !== launchTweetId) {
+        launchTweetId = next;
+        launchReported.clear();
+        if (next) scheduleScan(); // capture what's already rendered
+      }
+    })
+    .catch(() => {
+      /* background asleep mid-navigation — next throttle window retries */
+    })
+    .finally(() => {
+      launchCheckedAt = Date.now();
+      launchCheckInFlight = false;
+    });
+}
+
+function captureLaunchReplies(): void {
+  const focusedId = focusedTweetIdFromUrl();
+  if (!focusedId) return;
+  if (!launchCheckInFlight && Date.now() - launchCheckedAt > LAUNCH_GET_THROTTLE_MS) {
+    refreshActiveLaunch();
+  }
+  if (!launchTweetId || launchTweetId !== focusedId) return;
+
+  const selfHandle = location.pathname.match(/^\/([^/]+)\/status\//)?.[1] ?? null;
+  for (const r of parseEarlyReplies(document, focusedId, selfHandle)) {
+    if (launchReported.has(r.tweetId) || pendingLaunchReplies.has(r.tweetId)) continue;
+    pendingLaunchReplies.set(r.tweetId, r);
+  }
+  if (pendingLaunchReplies.size > 0 && launchFlushTimer === null) {
+    launchFlushTimer = window.setTimeout(flushLaunchReplies, RADAR_FLUSH_MS);
+  }
+}
+
+function flushLaunchReplies(): void {
+  launchFlushTimer = null;
+  if (pendingLaunchReplies.size === 0 || !launchTweetId) return;
+  const replies = [...pendingLaunchReplies.values()];
+  pendingLaunchReplies.clear();
+  for (const r of replies) launchReported.add(r.tweetId);
+
+  const msg: LaunchReport = { type: 'stratus/launch-report', tweetId: launchTweetId, replies };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] launch report failed', err);
+    }
+  })();
+}
+
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
@@ -1140,6 +1222,7 @@ function scan(root: ParentNode): void {
   }
   syncAuthorButton();
   capturePassiveHoverCards();
+  captureLaunchReplies();
 }
 
 let scheduled = false;

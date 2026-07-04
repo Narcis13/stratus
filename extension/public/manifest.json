@@ -1,8 +1,11 @@
 {
   "manifest_version": 3,
   "name": "stratus",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Side panel for stratus — schedule posts and stash voice tweets.",
+  "icons": {
+    "128": "icons/icon128.png"
+  },
   "action": {
     "default_title": "Open stratus"
   },
@@ -20,7 +23,15 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
-  "permissions": ["sidePanel", "storage", "clipboardWrite", "clipboardRead", "contextMenus"],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "clipboardWrite",
+    "clipboardRead",
+    "contextMenus",
+    "alarms",
+    "notifications"
+  ],
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",

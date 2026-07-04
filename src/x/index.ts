@@ -13,6 +13,7 @@ import { drafter } from './routes/drafter.ts';
 import { followups } from './routes/followups.ts';
 import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
+import { launch } from './routes/launch.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
 import { peopleRouter } from './routes/people.ts';
@@ -61,6 +62,8 @@ export function mountX(app: Hono): void {
   app.route('/x', followups);
   // C1: the people layer — pure SQL over already-collected data, always $0.
   app.route('/x', peopleRouter);
+  // C7: Launch Room early-replier ingest — DOM-scraped, people+events only, $0.
+  app.route('/x', launch);
   // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.
   app.route('/x', conversations);
   // C4: the Playbook — pure SQL over measured outcomes, $0; only its

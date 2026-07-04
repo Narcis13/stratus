@@ -1822,3 +1822,123 @@ button.danger:hover:not(:disabled) {
   color: var(--muted);
   font-size: 11px;
 }
+
+/* ------------------------------------------------------- launch room (C7) */
+
+.launch-room {
+  border: 1px solid var(--ok);
+  border-radius: 8px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--ok) 6%, var(--bg-elev));
+}
+
+.launch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.launch-head h3 {
+  margin: 0;
+  flex: 1;
+}
+
+.launch-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ok);
+}
+
+.launch-dismiss {
+  padding: 0 7px;
+  color: var(--muted);
+}
+
+.launch-post {
+  margin: 8px 0 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.launch-open {
+  display: block;
+  text-align: center;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.launch-open:hover {
+  background: var(--accent-hover);
+}
+
+.launch-checklist {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.launch-repliers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.launch-repliers-head h4 {
+  margin: 0;
+  font-size: 12px;
+}
+
+.launch-refresh-note {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.launch-replies {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.launch-reply-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.launch-reply-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.launch-reply-head .person-link {
+  flex: 1;
+  text-align: left;
+}
+
+.launch-reply-open {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.launch-reply-text {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.launch-reply-draft {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--ok);
+  background: var(--bg-hover);
+  font-size: 12px;
+  white-space: pre-wrap;
+}

@@ -8,6 +8,7 @@ import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ConversationsSection } from './Conversations.tsx';
 import { DoNextSection } from './DoNext.tsx';
 import { FansSection } from './Fans.tsx';
+import { LaunchRoomSection } from './LaunchRoom.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
 import { ApiError, type Brief, type BriefTweet, api } from './api.ts';
@@ -51,6 +52,10 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
       </div>
 
       {error && <div className="error">{error}</div>}
+
+      {/* Launch Room (C7) — takes the top slot for 30 min after a scheduled
+          post fires; renders nothing outside that window. */}
+      <LaunchRoomSection settings={settings} onOpenPerson={onOpenPerson} />
 
       {/* The follow-up queue (C5), capped at 5 — who do I owe, who to
           nurture, who's heating up. */}

@@ -5,9 +5,34 @@
 // header on every outgoing request.
 
 import {
+  type ActiveLaunch,
+  type EarlyReply,
+  LAUNCH_ACTIVE_KEY,
+  LAUNCH_ALARM_PREFIX,
+  LAUNCH_MAX_RETRIES,
+  LAUNCH_REPLIES_KEY,
+  LAUNCH_RETRY_MS,
+  LAUNCH_ROOM_MS,
+  LAUNCH_SYNC_ALARM,
+  LAUNCH_SYNC_PERIOD_MIN,
+  computeLaunchAlarms,
+  isActiveLaunch,
+  isEarlyReplies,
+  launchIsLive,
+  mergeEarlyReplies,
+  notificationText,
+  parseLaunchAlarm,
+  retryAlarmName,
+  threadLinkInFirstReply,
+} from './shared/launch.ts';
+import {
   type ApiRequest,
   type ApiResponse,
   isApiRequest,
+  isLaunchDismiss,
+  isLaunchGet,
+  isLaunchReport,
+  isLaunchSync,
   isRadarClick,
   isRadarDismiss,
   isRadarRehydrate,
@@ -24,6 +49,7 @@ import {
   isRadarSightings,
   mergeSightings,
 } from './shared/radar.ts';
+import type { ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
@@ -266,6 +292,177 @@ async function rehydrateFromServer(): Promise<{ added: number }> {
   return { added };
 }
 
+// ----------------------------------------------------------- launch room (C7)
+//
+// The doctrine's highest-leverage window is the 30 minutes right after a post
+// goes live. On worker start, panel load and every 15 min we fetch today's
+// pending scheduled posts and set one chrome.alarm per scheduledFor (+90s
+// grace for the publisher tick). At fire time we verify the post actually
+// went live (retrying while the publisher works), then open the room: an
+// ActiveLaunch in chrome.storage.session plus a chrome notification. The
+// content script streams the early repliers it sees in the DOM; we merge
+// them (single writer, same promise-chain discipline as the radar) and
+// mirror each NEW replier to POST /x/launch/replies — they engaged first,
+// prime CRM material.
+
+let launchChain: Promise<void> = Promise.resolve();
+function enqueueLaunch(fn: () => Promise<void>): Promise<void> {
+  const next = launchChain.then(fn);
+  launchChain = next.catch((err) => console.error('[stratus] launch write failed', err));
+  return next;
+}
+
+async function readActiveLaunch(): Promise<ActiveLaunch | null> {
+  const out = await chrome.storage.session.get(LAUNCH_ACTIVE_KEY);
+  const v = out[LAUNCH_ACTIVE_KEY];
+  return isActiveLaunch(v) ? v : null;
+}
+
+async function syncLaunchAlarms(): Promise<void> {
+  // Recently-past window included: a missed fire (browser was closed) still
+  // opens the room mid-window via the clamped alarm.
+  const from = new Date(Date.now() - LAUNCH_ROOM_MS).toISOString();
+  const to = new Date(Date.now() + 24 * 3_600_000).toISOString();
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/posts/scheduled',
+    query: { status: 'pending', from, to },
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] launch sync failed', res.code);
+    return;
+  }
+  const posts = Array.isArray(res.data) ? (res.data as ScheduledPost[]) : [];
+  const wanted = computeLaunchAlarms(posts, Date.now());
+  const wantedNames = new Set(wanted.map((w) => w.name));
+
+  // Drop fire alarms for posts that moved/cancelled; leave retry alarms alone
+  // (they resolve themselves against the row's live status).
+  const existing = await chrome.alarms.getAll();
+  for (const a of existing) {
+    if (a.name.startsWith(LAUNCH_ALARM_PREFIX) && !wantedNames.has(a.name)) {
+      await chrome.alarms.clear(a.name);
+    }
+  }
+  for (const w of wanted) chrome.alarms.create(w.name, { when: w.when });
+}
+
+async function handleLaunchFire(postId: string, attempt: number): Promise<void> {
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: `/x/posts/scheduled/${postId}`,
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') scheduleLaunchRetry(postId, attempt);
+    return;
+  }
+  const row = res.data as ScheduledPostWithThread;
+
+  if (row.status === 'posted' && row.postedTweetId) {
+    // A stale wake (laptop slept through the window) must not shout "just
+    // went live" an hour later.
+    const scheduledMs = row.scheduledFor ? Date.parse(row.scheduledFor) : Number.NaN;
+    if (!Number.isNaN(scheduledMs) && Date.now() - scheduledMs > LAUNCH_ROOM_MS) return;
+    await openLaunchRoom(row, row.postedTweetId);
+    return;
+  }
+  // pending: the publisher hasn't ticked yet; publishing: claim in flight (or
+  // ambiguous after a 5xx — reconcile may still resolve it). Re-check soon.
+  if (row.status === 'pending' || row.status === 'publishing') {
+    scheduleLaunchRetry(postId, attempt);
+  }
+  // failed/cancelled/draft: no room — the calendar shows what happened.
+}
+
+function scheduleLaunchRetry(postId: string, attempt: number): void {
+  if (attempt >= LAUNCH_MAX_RETRIES) return;
+  chrome.alarms.create(retryAlarmName(postId, attempt + 1), {
+    when: Date.now() + LAUNCH_RETRY_MS,
+  });
+}
+
+async function openLaunchRoom(row: ScheduledPostWithThread, tweetId: string): Promise<void> {
+  const active: ActiveLaunch = {
+    postId: row.id,
+    tweetId,
+    text: row.text,
+    // /i/web/status resolves without knowing my handle.
+    url: `https://x.com/i/web/status/${tweetId}`,
+    firedAt: new Date().toISOString(),
+    linkInFirstReply: threadLinkInFirstReply(row.thread),
+  };
+  await enqueueLaunch(async () => {
+    await chrome.storage.session.set({ [LAUNCH_ACTIVE_KEY]: active, [LAUNCH_REPLIES_KEY]: [] });
+  });
+  chrome.notifications.create(`stratus-launch-note:${row.id}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: 'stratus — Launch Room',
+    message: notificationText(row.text),
+    priority: 2,
+  });
+}
+
+// Merge reported early replies into the session feed; mirror the genuinely
+// new ones to the server (person upsert + inbound person_event). Best-effort:
+// a server hiccup costs CRM bookkeeping, never the live feed.
+async function recordEarlyReplies(tweetId: string, replies: EarlyReply[]): Promise<void> {
+  const active = await readActiveLaunch();
+  if (!active || active.tweetId !== tweetId) return; // stale report
+  let added: EarlyReply[] = [];
+  await enqueueLaunch(async () => {
+    const out = await chrome.storage.session.get(LAUNCH_REPLIES_KEY);
+    const existing = isEarlyReplies(out[LAUNCH_REPLIES_KEY]) ? out[LAUNCH_REPLIES_KEY] : [];
+    const merged = mergeEarlyReplies(existing, replies);
+    added = merged.added;
+    await chrome.storage.session.set({ [LAUNCH_REPLIES_KEY]: merged.merged });
+  });
+  if (added.length === 0) return;
+  void handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/launch/replies',
+    body: { replies: added },
+  }).then(
+    (res) => {
+      if (!res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] launch replies sync failed', res.code);
+      }
+    },
+    (err) => console.warn('[stratus] launch replies sync failed', err),
+  );
+}
+
+// Runs on every service-worker start; re-creating the periodic alarm is
+// idempotent (same name replaces).
+chrome.alarms.create(LAUNCH_SYNC_ALARM, { periodInMinutes: LAUNCH_SYNC_PERIOD_MIN });
+void syncLaunchAlarms();
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === LAUNCH_SYNC_ALARM) {
+    void syncLaunchAlarms();
+    return;
+  }
+  const fire = parseLaunchAlarm(alarm.name);
+  if (fire) void handleLaunchFire(fire.postId, fire.attempt);
+});
+
+// A notification click is a user gesture, which sidePanel.open needs. Best
+// effort — if Chrome disagrees, the panel is one action-click away.
+chrome.notifications.onClicked.addListener((id) => {
+  if (!id.startsWith('stratus-launch-note:')) return;
+  chrome.notifications.clear(id);
+  chrome.windows.getLastFocused((win) => {
+    if (win?.id !== undefined) {
+      chrome.sidePanel.open({ windowId: win.id }).catch(() => {
+        /* no gesture credit — ignore */
+      });
+    }
+  });
+});
+
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (isApiRequest(msg)) {
     void handleApiRequest(msg).then(
@@ -316,6 +513,40 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         console.warn('[stratus] radar rehydrate failed', err);
         sendResponse({ ok: false });
       },
+    );
+    return true;
+  }
+  if (isLaunchSync(msg)) {
+    void syncLaunchAlarms().then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isLaunchGet(msg)) {
+    void readActiveLaunch().then(
+      (active) =>
+        sendResponse({
+          ok: true,
+          active: active && launchIsLive(active.firedAt, Date.now()) ? active : null,
+        }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isLaunchReport(msg)) {
+    void recordEarlyReplies(msg.tweetId, msg.replies).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isLaunchDismiss(msg)) {
+    void enqueueLaunch(async () => {
+      await chrome.storage.session.remove([LAUNCH_ACTIVE_KEY, LAUNCH_REPLIES_KEY]);
+    }).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
     );
     return true;
   }

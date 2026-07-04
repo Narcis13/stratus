@@ -2,6 +2,7 @@
 // the background service worker. The background worker is the only place that
 // reads the bearer token and attaches the Authorization header.
 
+import type { EarlyReply } from './launch.ts';
 import type { RadarSighting } from './radar.ts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -93,4 +94,56 @@ export function isRadarClick(msg: unknown): msg is RadarClick {
     typeof m.tweetId === 'string' &&
     typeof m.clickedAt === 'string'
   );
+}
+
+// --- Launch Room (C7) — all routed through the background: it owns the
+// chrome.alarms schedule and is the single writer of the launch:* session keys.
+
+/** Panel → background on Today mount: re-sync alarms against today's pending
+ *  scheduled posts (the 15-min periodic alarm covers the rest of the day). */
+export interface LaunchSync {
+  type: 'stratus/launch-sync';
+}
+
+/** Content script → background: is a Launch Room live right now? Response:
+ *  `{ ok: true, active: ActiveLaunch | null }`. */
+export interface LaunchGet {
+  type: 'stratus/launch-get';
+}
+
+/** Content script → background: early repliers parsed from the launched
+ *  tweet's status page. tweetId names the launch so a stale report (room
+ *  already over / different launch) is dropped. */
+export interface LaunchReport {
+  type: 'stratus/launch-report';
+  tweetId: string;
+  replies: EarlyReply[];
+}
+
+/** Panel → background: close the room early. */
+export interface LaunchDismiss {
+  type: 'stratus/launch-dismiss';
+}
+
+export function isLaunchSync(msg: unknown): msg is LaunchSync {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/launch-sync';
+}
+
+export function isLaunchGet(msg: unknown): msg is LaunchGet {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/launch-get';
+}
+
+export function isLaunchReport(msg: unknown): msg is LaunchReport {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return (
+    m.type === 'stratus/launch-report' && typeof m.tweetId === 'string' && Array.isArray(m.replies)
+  );
+}
+
+export function isLaunchDismiss(msg: unknown): msg is LaunchDismiss {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/launch-dismiss';
 }

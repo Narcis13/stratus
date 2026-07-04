@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 shipped 2026-07-04; C7 is next.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 is next.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
