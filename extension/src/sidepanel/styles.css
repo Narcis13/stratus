@@ -1710,3 +1710,115 @@ button.danger:hover:not(:disabled) {
 .pb-note {
   font-size: 11px;
 }
+
+/* ------------------------------------------- followups + fans (C5) */
+
+.donext-list,
+.fans-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.donext-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.donext-chain_live {
+  border-color: var(--ok);
+}
+
+.donext-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.donext-reason {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.donext-kind {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.donext-kind-chain_live {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.donext-kind-dm_ready {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.donext-kind-neglected_target,
+.donext-kind-neglected_ally {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.donext-snooze {
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.donext-more {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.fans-window {
+  margin-left: 8px;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.fans-window-btn {
+  padding: 0 7px;
+  font-size: 10px;
+}
+
+.fans-window-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.fan-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.fan-count {
+  min-width: 26px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.fan-ack {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}

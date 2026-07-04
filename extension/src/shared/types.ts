@@ -708,6 +708,63 @@ export interface PersonEventCreateBody {
   at?: string;
 }
 
+// ---------------------------------------------- followups + fans (C5)
+
+// Follow-up queue (src/x/routes/followups.ts) — who do I owe, who should I
+// nurture, who's heating up. Recomputed on every GET; only snoozes persist.
+export type FollowupKind =
+  | 'chain_live'
+  | 'dm_ready'
+  | 'neglected_target'
+  | 'neglected_ally'
+  | 'momentum';
+
+export interface FollowupItem {
+  kind: FollowupKind;
+  handle: string;
+  displayName: string | null;
+  stage: PersonStage | null;
+  reason: string;
+  at: string | null;
+  /** chain_live only: the owed inbound tweet. */
+  tweetId?: string;
+  url?: string;
+}
+
+export interface FollowupsResponse {
+  generatedAt: string;
+  myFollowers: number | null;
+  counts: { total: number; snoozed: number; byKind: Partial<Record<FollowupKind, number>> };
+  items: FollowupItem[];
+}
+
+export interface FollowupSnoozeBody {
+  kind: FollowupKind;
+  handle: string;
+  /** null = unsnooze. */
+  snoozedUntil: string | null;
+}
+
+export interface FanItem {
+  rank: number;
+  handle: string;
+  displayName: string | null;
+  stage: PersonStage | null;
+  followersCount: number | null;
+  inboundCount: number;
+  lastInboundAt: string;
+  /** My last outbound to them — the "last acknowledged" reading. */
+  lastOutboundAt: string | null;
+  /** Never replied, or my last reply is >7d old. */
+  unacknowledged: boolean;
+}
+
+export interface FansResponse {
+  days: number;
+  count: number;
+  fans: FanItem[];
+}
+
 // ---------------------------------------------------------------- playbook (C4)
 
 // GET /x/playbook (src/x/routes/playbook.ts): the measured playbook. Every

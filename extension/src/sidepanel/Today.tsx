@@ -6,6 +6,8 @@
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ConversationsSection } from './Conversations.tsx';
+import { DoNextSection } from './DoNext.tsx';
+import { FansSection } from './Fans.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
 import { ApiError, type Brief, type BriefTweet, api } from './api.ts';
@@ -50,6 +52,10 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
 
       {error && <div className="error">{error}</div>}
 
+      {/* The follow-up queue (C5), capped at 5 — who do I owe, who to
+          nurture, who's heating up. */}
+      <DoNextSection settings={settings} onOpenPerson={onOpenPerson} />
+
       {/* Threaded inbox (C2) — conversations with open loops and chains first.
           Supersedes the flat §7.5 mention list. */}
       <ConversationsSection settings={settings} onOpenPerson={onOpenPerson} />
@@ -59,6 +65,9 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
 
       {/* The 2–10x reply-target roster (§7.4) — its own $0 fetch. */}
       <TargetsSection settings={settings} onOpenPerson={onOpenPerson} />
+
+      {/* Top Fans (C5) — people who already notice you. */}
+      <FansSection settings={settings} onOpenPerson={onOpenPerson} />
 
       {brief && (
         <>

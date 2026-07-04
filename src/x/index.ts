@@ -10,6 +10,7 @@ import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
 import { conversations } from './routes/conversations.ts';
 import { drafter } from './routes/drafter.ts';
+import { followups } from './routes/followups.ts';
 import { harvest } from './routes/harvest.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
@@ -50,6 +51,10 @@ export function mountX(app: Hono): void {
   // C0: radar draft reads/status flips are $0 and mount without the Grok key;
   // only the insert path (generate-batch, below) needs XAI_API_KEY.
   app.route('/x', radar);
+  // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
+  // 'followups'/'fans' are valid usernames, so GET /people/:handle would
+  // otherwise swallow these static paths as dossier lookups.
+  app.route('/x', followups);
   // C1: the people layer — pure SQL over already-collected data, always $0.
   app.route('/x', peopleRouter);
   // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.

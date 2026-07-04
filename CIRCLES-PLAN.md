@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 shipped 2026-07-04; C5 is next.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 shipped 2026-07-04; C6 is next.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
@@ -426,6 +426,20 @@ in a draft call's rendered prompt.
 ## Phase C5 — Follow-up engine, Top Fans, momentum alerts (CRM ops)
 
 *Goal: the relationship layer starts telling you what to do today.*
+
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) the classifier is pure
+> (`src/x/people/followups.ts`); routes in `src/x/routes/followups.ts`, mounted BEFORE
+> peopleRouter because 'followups'/'fans' are valid usernames the `:handle` dossier
+> route would otherwise swallow. (2) snoozes landed as the small `followup_snoozes`
+> table (item_key `kind:handle` PK — the conversation_meta pattern, not tags).
+> (3) **momentum is computed at read time inside GET /x/people/followups**, not in the
+> nightly dailyMetrics pass — same $0 and the same queue line, but no stored flags to
+> go stale (the C2 "no conversation table" discipline); inflection = latest ≥3d segment
+> growing ≥5%/wk AND faster than the series before it, band entry = mutual+ people
+> projected to cross 2x my size within 30d at their current followers/day. (4) one item
+> per person (highest-priority kind wins) and a snoozed item doesn't hide the person's
+> lower-priority items. `scripts/smoke-followups.ts` is the rerunnable $0 check. See
+> CLAUDE.md phase status for the full entry.
 
 - **Follow-up queue.** `GET /x/people/followups` computes, from people + events:
   - `chain_live`: inbound reply to my reply, < 24h old (also flagged in C2) — top priority

@@ -22,6 +22,12 @@ import {
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
+  type FanItem,
+  type FansResponse,
+  type FollowupItem,
+  type FollowupKind,
+  type FollowupSnoozeBody,
+  type FollowupsResponse,
   type ListOpts,
   type Mention,
   type MentionPatchBody,
@@ -88,6 +94,12 @@ export type {
   CreateBody,
   CreateThreadBody,
   CreateThreadResponse,
+  FanItem,
+  FansResponse,
+  FollowupItem,
+  FollowupKind,
+  FollowupSnoozeBody,
+  FollowupsResponse,
   ListOpts,
   Mention,
   PillarCreateBody,
@@ -355,6 +367,24 @@ export const api = {
         method: 'POST',
         body,
       });
+    },
+
+    // C5 — the follow-up queue: who do I owe, who to nurture, who's heating up.
+    followups(s: Settings): Promise<FollowupsResponse> {
+      return request<FollowupsResponse>(s, '/x/people/followups');
+    },
+
+    snoozeFollowup(s: Settings, body: FollowupSnoozeBody): Promise<unknown> {
+      return request<unknown>(s, '/x/people/followups', { method: 'PATCH', body });
+    },
+
+    // C5 — Top Fans: inbound-ranked "people who already notice you".
+    fans(s: Settings, opts: { days?: number; limit?: number } = {}): Promise<FansResponse> {
+      const q = new URLSearchParams();
+      if (opts.days !== undefined) q.set('days', String(opts.days));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<FansResponse>(s, `/x/people/fans${qs ? `?${qs}` : ''}`);
     },
   },
 

@@ -394,6 +394,18 @@ export const personSnapshots = sqliteTable(
   (t) => [index('person_snapshots_handle_captured_idx').on(t.handle, t.capturedAt)],
 );
 
+// Follow-up queue snoozes (CIRCLES-PLAN C5) — conversation_meta pattern for
+// the computed queue: items are recomputed on every GET /x/people/followups,
+// so the only state worth persisting is "stop showing me this one until X".
+// item_key is `${kind}:${handle}` (see src/x/people/followups.ts).
+export const followupSnoozes = sqliteTable('followup_snoozes', {
+  itemKey: text('item_key').primaryKey(),
+  snoozedUntil: integer('snoozed_until', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
 // Mention inbox (§7.5): mentions of me, pulled incrementally (since_id = max
 // stored tweet_id) by the daily pass and the on-demand refresh — owned reads,
 // $0.001/result. `status` drives the panel's Inbox: rows arrive 'unanswered';
