@@ -8,12 +8,14 @@ import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
+import { conversations } from './routes/conversations.ts';
 import { drafter } from './routes/drafter.ts';
 import { harvest } from './routes/harvest.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
 import { peopleRouter } from './routes/people.ts';
 import { pillars } from './routes/pillars.ts';
+import { playbook } from './routes/playbook.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
@@ -50,6 +52,11 @@ export function mountX(app: Hono): void {
   app.route('/x', radar);
   // C1: the people layer — pure SQL over already-collected data, always $0.
   app.route('/x', peopleRouter);
+  // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.
+  app.route('/x', conversations);
+  // C4: the Playbook — pure SQL over measured outcomes, $0; only its
+  // extract-winners POST needs Grok and it checks XAI_API_KEY at runtime.
+  app.route('/x', playbook);
   app.route('/x', createMentionsRouter(cfg));
   // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
   if (process.env.XAI_API_KEY) {

@@ -65,6 +65,9 @@ export const scheduledPosts = sqliteTable(
     threadPosition: integer('thread_position'),
     // Content pillar declared by the drafter (§8.4) — feeds /x/metrics/pillars.
     pillar: text('pillar'),
+    // Register declared by the drafter (C4: plain | spicy | reflective) — feeds
+    // the Playbook's pillar × register scorecard. Null on hand-written posts.
+    register: text('register'),
     // Self-quote re-up (§8.5): when set, the publisher posts this row as a
     // quote tweet — only after verifying the quoted id is own via posts_published.
     quoteTweetId: text('quote_tweet_id'),
@@ -120,6 +123,24 @@ export const metricsSnapshots = sqliteTable(
   },
   (t) => [index('metrics_snapshots_tweet_snapshot_idx').on(t.tweetId, t.snapshotAt)],
 );
+
+// Structure templates extracted from MY OWN published winners (CIRCLES-PLAN
+// C4) — the §8.3 voiceExtract pipeline pointed at posts_published top rows.
+// One-time Grok pass per tweet (~$0.005, bounded ≤20/call); feeds the
+// Playbook's skeleton/hook effectiveness stat and topStructures() guidance.
+export const postTemplates = sqliteTable('post_templates', {
+  tweetId: text('tweet_id')
+    .primaryKey()
+    .references(() => postsPublished.tweetId),
+  hookType: text('hook_type').notNull(),
+  skeleton: text('skeleton').notNull(),
+  lineBreakPattern: text('line_break_pattern').notNull(),
+  templateLength: text('template_length').notNull(),
+  device: text('device').notNull(),
+  extractedAt: integer('extracted_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
 
 // One row per UTC day from the dailyMetrics pass — the follower-growth KPI
 // series. Counts come free on the same $0.001 getMe() owned read.
@@ -399,6 +420,21 @@ export const mentions = sqliteTable(
   },
   (t) => [index('mentions_status_posted_idx').on(t.status, t.postedAt)],
 );
+
+// Slack-style read state for conversations (CIRCLES-PLAN C2). Threads
+// themselves are NOT stored — GET /x/conversations groups posts_published +
+// mentions by conversation_id on read; this table only remembers what a thread
+// view can't recompute: when the user last read it, snoozed it, or muted it.
+// conversation_id falls back to the mention's own tweet_id when X gave none.
+export const conversationMeta = sqliteTable('conversation_meta', {
+  conversationId: text('conversation_id').primaryKey(),
+  snoozedUntil: integer('snoozed_until', { mode: 'timestamp_ms' }),
+  lastReadAt: integer('last_read_at', { mode: 'timestamp_ms' }),
+  muted: integer('muted', { mode: 'boolean' }).default(false).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
 
 // $0 ingestion of the extension's DOM harvester (OVERHAUL-PLAN §6.3). One run
 // per harvest click; repeated harvests of the same tweet intentionally create

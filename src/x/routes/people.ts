@@ -25,10 +25,15 @@ import {
   voiceAuthors,
   voiceTweets,
 } from '../db/schema.ts';
+import { buildAngleCrosstab } from '../people/angles.ts';
 import { isStage } from '../people/stage.ts';
 import { normalizePersonHandle, recomputePerson, upsertPerson } from '../people/store.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
-import { type ReplyOutcome, buildReplyOutcomes } from './replies.ts';
+import { buildReplyOutcomes } from './replies.ts';
+
+// Moved to ../people/angles.ts (C3 needs it outside a route module); re-exported
+// so existing callers/tests keep their import site.
+export { buildAngleCrosstab, type AngleCell } from '../people/angles.ts';
 
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
@@ -380,49 +385,4 @@ peopleRouter.post('/people/:handle/events', async (c) => {
 
 function isSort(v: unknown): v is PeopleSort {
   return typeof v === 'string' && (SORTS as readonly string[]).includes(v);
-}
-
-export interface AngleCell {
-  angle: string | null;
-  posted: number;
-  measured: number;
-  medianViews: number | null;
-  medianProfileVisits: number | null;
-  medianReplies: number | null;
-}
-
-// Pure — exported for unit tests. Per-angle outcome mini-crosstab over this
-// person's posted replies (feeds C3's relationship-aware drafting; C3 applies
-// its own ≥3-measured gate before letting a preference influence a prompt).
-export function buildAngleCrosstab(
-  rows: Array<{ angle: string | null; outcome: ReplyOutcome['outcome'] }>,
-): AngleCell[] {
-  const byAngle = new Map<string | null, Array<ReplyOutcome['outcome']>>();
-  for (const r of rows) {
-    const list = byAngle.get(r.angle) ?? [];
-    list.push(r.outcome);
-    byAngle.set(r.angle, list);
-  }
-  const cells: AngleCell[] = [];
-  for (const [angle, outcomes] of byAngle) {
-    const measured = outcomes.filter((o) => o !== null);
-    cells.push({
-      angle,
-      posted: outcomes.length,
-      measured: measured.length,
-      medianViews: median(measured.map((o) => o?.views ?? null)),
-      medianProfileVisits: median(measured.map((o) => o?.profileVisits ?? null)),
-      medianReplies: median(measured.map((o) => o?.replies ?? null)),
-    });
-  }
-  return cells.sort((a, b) => b.posted - a.posted);
-}
-
-function median(values: Array<number | null>): number | null {
-  const nums = values.filter((v): v is number => v !== null).sort((a, b) => a - b);
-  if (nums.length === 0) return null;
-  const mid = Math.floor(nums.length / 2);
-  return nums.length % 2 === 1
-    ? (nums[mid] as number)
-    : ((nums[mid - 1] as number) + (nums[mid] as number)) / 2;
 }

@@ -37,6 +37,7 @@ import {
   parsePostDrafts,
 } from '../posts/prompt.ts';
 import { getActivePillars } from './pillars.ts';
+import { loadPostGuidanceSafe } from './playbook.ts';
 
 // Three posts of JSON run ~300 tokens; xAI doesn't count reasoning tokens
 // against the cap (verified live on the reply route under a 350 cap).
@@ -151,12 +152,16 @@ interface GenerateOptions {
 async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Response> {
   const winners = await topWinners();
   const slugs = opts.pillars.map((p) => p.slug);
+  // Playbook guidance (C4): gated topStructures line from my own measured
+  // winners, appended at the variable tail. Best-effort; null under the gate.
+  const guidance = await loadPostGuidanceSafe();
   const messages = buildPostDraftInput({
     winners,
     remix: opts.remix,
     pillars: opts.pillars,
     ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
+    ...(guidance !== null ? { guidance } : {}),
   });
 
   let result: Awaited<ReturnType<typeof askGrok>>;
@@ -202,6 +207,9 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
         status: 'draft',
         source: 'drafter',
         pillar: v.pillar,
+        // C4: the chosen register lands on the row so the Playbook's
+        // pillar × register scorecard has something to aggregate.
+        register: v.register,
         quoteTweetId: opts.quoteTweetId,
       })),
     )

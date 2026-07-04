@@ -5,6 +5,7 @@
 // hot/warm reply opportunities, fed by the content script, $0.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { ConversationsSection } from './Conversations.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
 import { ApiError, type Brief, type BriefTweet, api } from './api.ts';
@@ -49,8 +50,9 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
 
       {error && <div className="error">{error}</div>}
 
-      {/* Mention inbox (§7.5) decoupled from the UI — Inbox.tsx + /x/mentions
-          code remain intact; the section is just no longer rendered here. */}
+      {/* Threaded inbox (C2) — conversations with open loops and chains first.
+          Supersedes the flat §7.5 mention list. */}
+      <ConversationsSection settings={settings} onOpenPerson={onOpenPerson} />
 
       {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
       <RadarSection settings={settings} onOpenPerson={onOpenPerson} />

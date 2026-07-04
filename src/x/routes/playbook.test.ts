@@ -1,0 +1,286 @@
+// C4 Playbook route over the real (in-memory, auto-migrated) SQLite DB — the
+// aggregation math lives in ../playbook.test.ts; this checks the route wiring:
+// the joins land in the right stats, the minN knob, the guidance loaders, and
+// the C4 prompt-tail injection.
+
+import { beforeAll, describe, expect, test } from 'bun:test';
+import { Hono } from 'hono';
+import { db } from '../../db/client.ts';
+import {
+  metricsSnapshots,
+  people,
+  postTemplates,
+  postsPublished,
+  radarDrafts,
+  replyDrafts,
+  scheduledPosts,
+} from '../db/schema.ts';
+import { buildPostDraftInput } from '../posts/prompt.ts';
+import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
+import { loadPostGuidance, loadReplyGuidance, playbook } from './playbook.ts';
+
+const app = new Hono();
+app.route('/x', playbook);
+
+const NOW = Date.now();
+const at = (min: number): Date => new Date(NOW - min * 60_000);
+
+async function seedReply(opts: {
+  id: string;
+  angle: 'extends' | 'contrarian' | 'debate';
+  postedTweetId: string;
+  views: number;
+  profileVisits: number;
+  handle?: string;
+  relationship?: string;
+}): Promise<void> {
+  const replyText = `reply ${opts.id}`;
+  await db
+    .insert(replyDrafts)
+    .values({
+      id: opts.id,
+      sourceTweetId: '4242',
+      sourceAuthorUsername: opts.handle ?? 'pb_author',
+      sourceText: 'What is your take?',
+      sourceUrl: 'https://x.com/pb_author/status/4242',
+      sourcePostedAt: at(600),
+      contextSnapshot: {
+        signals: { band: 'hot', views: 5000, replies: 4, ageMin: 12, vpm: 400, bait: true },
+        metrics: { views: 5000, replies: 4, reposts: 1, likes: 20 },
+        ...(opts.relationship ? { relationship: opts.relationship } : {}),
+      },
+      replyText,
+      variants: [{ text: replyText, angle: opts.angle }],
+      model: 'test',
+      status: 'posted',
+      postedTweetId: opts.postedTweetId,
+      createdAt: at(500),
+    })
+    .onConflictDoNothing();
+  await db
+    .insert(postsPublished)
+    .values({
+      tweetId: opts.postedTweetId,
+      text: replyText,
+      postedAt: at(490),
+      isReply: true,
+      inReplyToTweetId: '4242',
+      source: 'test',
+    })
+    .onConflictDoNothing();
+  await db.insert(metricsSnapshots).values({
+    tweetId: opts.postedTweetId,
+    publicMetrics: { impression_count: opts.views, like_count: 2, reply_count: 0 },
+    nonPublicMetrics: { user_profile_clicks: opts.profileVisits },
+  });
+}
+
+describe('playbook route', () => {
+  beforeAll(async () => {
+    // Two measured single-draft replies with different angles + a person row
+    // carrying the author's follower count for the size bucket.
+    await db
+      .insert(people)
+      .values({ handle: 'pb_author', followersCount: 50_000 })
+      .onConflictDoNothing();
+    await seedReply({
+      id: 'a0000000-0000-4000-8000-000000000001',
+      angle: 'contrarian',
+      postedTweetId: 'pb_r1',
+      views: 400,
+      profileVisits: 6,
+      relationship: '## My history with @pb_author',
+    });
+    await seedReply({
+      id: 'a0000000-0000-4000-8000-000000000002',
+      angle: 'extends',
+      postedTweetId: 'pb_r2',
+      views: 100,
+      profileVisits: 1,
+    });
+
+    // A radar-drafted reply: published reply whose text matches the drafted
+    // one under the drafted target, with no reply_drafts link.
+    await db
+      .insert(radarDrafts)
+      .values({
+        tweetId: '5555',
+        handle: 'pb_radar',
+        snippet: 'hot post',
+        replyText: 'Radar says ship it.',
+        angle: 'extends',
+        status: 'clicked',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: 'pb_r3',
+        text: 'Radar  says ship it.',
+        postedAt: at(200),
+        isReply: true,
+        inReplyToTweetId: '5555',
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db.insert(metricsSnapshots).values({
+      tweetId: 'pb_r3',
+      publicMetrics: { impression_count: 50, like_count: 0, reply_count: 0 },
+    });
+
+    // A drafter original with pillar + register and a measured outcome.
+    await db
+      .insert(scheduledPosts)
+      .values({
+        id: 'b0000000-0000-4000-8000-000000000001',
+        text: 'original post',
+        status: 'posted',
+        source: 'drafter',
+        pillar: 'ai-craft',
+        register: 'spicy',
+        postedTweetId: 'pb_p1',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: 'pb_p1',
+        text: 'original post',
+        postedAt: at(300),
+        isReply: false,
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db.insert(metricsSnapshots).values({
+      tweetId: 'pb_p1',
+      publicMetrics: { impression_count: 900, like_count: 4, reply_count: 1 },
+    });
+
+    // An extracted own-winner template on that original.
+    await db
+      .insert(postTemplates)
+      .values({
+        tweetId: 'pb_p1',
+        hookType: 'stat hook',
+        skeleton: 'stat -> claim -> close',
+        lineBreakPattern: 'one-liner',
+        templateLength: 'short',
+        device: 'direct address',
+      })
+      .onConflictDoNothing();
+  });
+
+  test('GET /x/playbook serves every stat with n and gates', async () => {
+    const res = await app.request('/x/playbook');
+    expect(res.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the whole payload
+    const body = (await res.json()) as any;
+
+    expect(body.minN).toBe(20);
+    const contrarian = body.angleEffectiveness.overall.find(
+      (c: { angle: string | null }) => c.angle === 'contrarian',
+    );
+    expect(contrarian).toMatchObject({ n: 1, medianViews: 400, sufficient: false });
+    const bucket = body.angleEffectiveness.byAuthorSize.find(
+      (b: { bucket: string }) => b.bucket === '10k-100k',
+    );
+    expect(bucket).toBeDefined();
+
+    const pr = body.pillarRegister.cells.find(
+      (c: { pillar: string | null; register: string | null }) =>
+        c.pillar === 'ai-craft' && c.register === 'spicy',
+    );
+    expect(pr).toMatchObject({ n: 1, medianViews: 900 });
+
+    const hook = body.structures.hooks.find((h: { key: string }) => h.key === 'stat hook');
+    expect(hook).toMatchObject({ n: 1, medianViews: 900, sufficient: false });
+
+    expect(body.batchVsSingle.single.n).toBe(2);
+    expect(body.batchVsSingle.radar.n).toBe(1);
+    expect(body.batchVsSingle.radar.medianViews).toBe(50);
+
+    expect(body.bandCalibration.totalMeasured).toBeGreaterThanOrEqual(2);
+    expect(body.bandCalibration.bands.length).toBeGreaterThanOrEqual(1);
+
+    expect(body.relationshipLift.withRelationship.n).toBe(1);
+    expect(body.relationshipLift.withoutRelationship.n).toBe(1);
+    expect(body.relationshipLift.viewsLift).toBeNull(); // gated
+
+    // Nothing clears the default gate on 2 measured rows.
+    expect(body.guidance.reply).toBeNull();
+    expect(body.guidance.post).toBeNull();
+  });
+
+  test('minN=1 opens the gates and the guidance speaks', async () => {
+    const res = await app.request('/x/playbook?minN=1');
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the whole payload
+    const body = (await res.json()) as any;
+    const contrarian = body.angleEffectiveness.overall.find(
+      (c: { angle: string | null }) => c.angle === 'contrarian',
+    );
+    expect(contrarian?.sufficient).toBe(true);
+    expect(body.relationshipLift.viewsLift).toBe(4); // 400 / 100
+    // guidance stays on the DEFAULT gate even when the page opens its own.
+    expect(body.guidance.reply).toBeNull();
+  });
+
+  test('minN validation', async () => {
+    for (const q of ['0', '-1', '1.5', 'abc', '100000']) {
+      const res = await app.request(`/x/playbook?minN=${q}`);
+      expect(res.status).toBe(400);
+    }
+  });
+
+  test('guidance loaders gate on the default and inject at the prompt tail', async () => {
+    // Loaders read the same rows the page shows; 2 measured < 20 → silent.
+    expect(await loadReplyGuidance()).toBeNull();
+    expect(await loadPostGuidance()).toBeNull();
+
+    // Tail placement (pure): a guidance line lands at the very end.
+    const line = "measured: my 'contrarian' replies earn 2x — prefer it.";
+    const single = buildGrokInput(
+      {
+        url: 'https://x.com/a/status/1',
+        tweetId: '1',
+        author: 'A',
+        handle: 'a',
+        text: 'post',
+        postedAt: new Date().toISOString(),
+        metrics: { views: 0, replies: 0, reposts: 0, likes: 0 },
+        topComments: [],
+        guidance: line,
+      },
+      undefined,
+      undefined,
+    )[0]?.content as string;
+    expect(single.endsWith(line)).toBe(true);
+
+    const batch = buildBatchGrokInput(
+      [{ tweetId: '1', handle: 'a', author: 'A', text: 'post' }],
+      undefined,
+      undefined,
+      undefined,
+      line,
+    )[0]?.content as string;
+    expect(batch.endsWith(line)).toBe(true);
+
+    const post = buildPostDraftInput({ winners: [], guidance: line })[0]?.content as string;
+    expect(post.endsWith(line)).toBe(true);
+  });
+
+  test('extract-winners without XAI_API_KEY is 503', async () => {
+    const prev = process.env.XAI_API_KEY;
+    // biome-ignore lint/performance/noDelete: assigning undefined leaves the env var set
+    delete process.env.XAI_API_KEY;
+    try {
+      const res = await app.request('/x/playbook/extract-winners', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      expect(res.status).toBe(503);
+    } finally {
+      if (prev !== undefined) process.env.XAI_API_KEY = prev;
+    }
+  });
+});

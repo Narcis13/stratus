@@ -454,6 +454,63 @@ export interface MentionPatchBody {
   draftId?: string | null;
 }
 
+// -------------------------------------------------------- conversations (C2)
+
+// GET /x/conversations (src/x/routes/conversations.ts): the mention inbox as
+// Slack-style threads — my posts + their mentions grouped by conversation_id,
+// interleaved by postedAt. Read state (unread/snooze/mute) from conversation_meta.
+
+export type ConversationItem =
+  | {
+      kind: 'inbound';
+      tweetId: string;
+      text: string;
+      postedAt: string;
+      authorUsername: string | null;
+      authorName: string | null;
+      status: MentionStatus;
+      inReplyToTweetId: string | null;
+    }
+  | {
+      kind: 'outbound';
+      tweetId: string;
+      text: string;
+      postedAt: string;
+      isReply: boolean;
+    };
+
+export interface ConversationThread {
+  conversationId: string;
+  items: ConversationItem[];
+  lastActivityAt: string;
+  counterpartHandle: string | null;
+  counterpartName: string | null;
+  inboundCount: number;
+  outboundCount: number;
+  /** The last word is theirs — an unanswered inbound with no post of mine after it. */
+  openLoop: boolean;
+  owedSince: string | null;
+  /** Open loop where the owed inbound replies to MY REPLY — the 75x moment. */
+  chain: boolean;
+  unread: boolean;
+  snoozedUntil: string | null;
+  snoozed: boolean;
+  muted: boolean;
+  /** C1 stage chip for the thread header; null when no dossier exists yet. */
+  person: { handle: string; stage: PersonStage; displayName: string | null } | null;
+}
+
+export interface ConversationsResponse {
+  counts: { threads: number; openLoops: number; chains: number; unread: number };
+  threads: ConversationThread[];
+}
+
+export interface ConversationPatchBody {
+  read?: true;
+  snoozedUntil?: string | null;
+  muted?: boolean;
+}
+
 // ---------------------------------------------------------------- brief
 
 // GET /x/brief — the Today tab's single payload (src/x/routes/brief.ts).
@@ -649,6 +706,88 @@ export interface PersonEventCreateBody {
   type: 'note' | 'manual_dm_logged';
   summary: string;
   at?: string;
+}
+
+// ---------------------------------------------------------------- playbook (C4)
+
+// GET /x/playbook (src/x/routes/playbook.ts): the measured playbook. Every
+// cell carries n + `sufficient` (the min-sample gate); the page shows
+// "insufficient data (n=7)" instead of a confident lie.
+
+export interface PlaybookCell {
+  posted: number;
+  n: number;
+  medianViews: number | null;
+  medianProfileVisits: number | null;
+  sufficient: boolean;
+}
+
+export interface PlaybookAngleCell extends PlaybookCell {
+  angle: string | null;
+}
+
+export interface PlaybookBandCell {
+  band: 'hot' | 'warm' | 'skip' | null;
+  n: number;
+  medianViews: number | null;
+  meanViews: number | null;
+  hitRate: number | null;
+  likeRate: number | null;
+  meanProfileClicks: number | null;
+  sufficient: boolean;
+}
+
+export interface PlaybookBaitCell {
+  n: number;
+  medianViews: number | null;
+  meanLikes: number | null;
+  sufficient: boolean;
+}
+
+export interface Playbook {
+  minN: number;
+  angleEffectiveness: {
+    overall: PlaybookAngleCell[];
+    byAuthorSize: Array<{ bucket: string; cells: PlaybookAngleCell[] }>;
+    totalMeasured: number;
+  };
+  pillarRegister: {
+    cells: Array<PlaybookCell & { pillar: string | null; register: string | null }>;
+    totalMeasured: number;
+  };
+  structures: {
+    hooks: Array<PlaybookCell & { key: string }>;
+    devices: Array<PlaybookCell & { key: string }>;
+    totalMeasured: number;
+  };
+  batchVsSingle: {
+    single: PlaybookCell;
+    radar: PlaybookCell;
+    unattributed: number;
+  };
+  bandCalibration: {
+    totalMeasured: number;
+    hitThresholdViews: number | null;
+    bands: PlaybookBandCell[];
+    actionable: { n: number; medianViews: number | null; hitRate: number | null };
+    passed: { n: number; medianViews: number | null; hitRate: number | null };
+    bait: { bait: PlaybookBaitCell; nonBait: PlaybookBaitCell };
+  };
+  relationshipLift: {
+    withRelationship: PlaybookCell;
+    withoutRelationship: PlaybookCell;
+    viewsLift: number | null;
+    profileVisitsLift: number | null;
+  };
+  guidance: { reply: string | null; post: string | null };
+}
+
+export interface PlaybookExtractResult {
+  requested: number;
+  extracted: number;
+  failures: Array<{ tweetId: string; error: string }>;
+  costUsd: number;
+  remaining: number;
 }
 
 export class ApiError extends Error {

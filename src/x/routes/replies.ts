@@ -21,6 +21,12 @@ import type { ReasoningEffort } from '../../grok/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import {
+  type RelationshipFacts,
+  renderRelationship,
+  renderRelationshipBrief,
+} from '../people/relationship.ts';
+import {
+  loadRelationshipFacts,
   normalizePersonHandle,
   safeLogPersonEvents,
   snippet,
@@ -40,6 +46,7 @@ import {
   passesSpecificityGate,
 } from '../replies/prompt.ts';
 import { getActivePillars } from './pillars.ts';
+import { loadReplyGuidanceSafe } from './playbook.ts';
 import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
@@ -165,6 +172,23 @@ replies.post('/replies/generate', async (c) => {
   // (CLI callers, older extension builds) — every draft stays a labeled
   // training row for the BAND recalibration crosstab (§6.2).
   if (!ctx.signals) ctx.signals = { band, ...gateSignals };
+
+  // Relationship block (C3): what the people layer knows about this handle,
+  // injected at the variable tail so the prompt stops meeting everyone for the
+  // first time. Stamped into ctx BEFORE the insert so contextSnapshot records
+  // exactly what the model saw (outcome analysis for C4). Best-effort — a
+  // people-layer read must never block the draft.
+  const relationship = renderRelationship(
+    await loadRelationshipFactsSafe(normalizePersonHandle(ctx.handle)),
+    new Date(),
+  );
+  if (relationship !== '') ctx.relationship = relationship;
+
+  // Playbook guidance (C4): the gated topAngles line, stamped into ctx before
+  // the insert (like relationship) so contextSnapshot records whether this
+  // draft was steered by measured data. Best-effort; null under the gate.
+  const guidance = await loadReplyGuidanceSafe();
+  if (guidance) ctx.guidance = guidance;
 
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
   const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs);
@@ -326,8 +350,28 @@ replies.post('/replies/generate-batch', async (c) => {
     applyPillars = body.applyPillars;
   }
 
+  // Relationship briefs (C3): same block per tweet, capped to 2 lines/person
+  // (renderRelationshipBrief) to protect the token budget. One lookup per
+  // distinct handle; best-effort.
+  const now = new Date();
+  const briefByHandle = new Map<string, string>();
+  for (const t of tweets) {
+    const handle = normalizePersonHandle(t.handle);
+    if (!handle || briefByHandle.has(handle)) continue;
+    briefByHandle.set(
+      handle,
+      renderRelationshipBrief(await loadRelationshipFactsSafe(handle), now),
+    );
+  }
+  for (const t of tweets) {
+    const brief = briefByHandle.get(normalizePersonHandle(t.handle) ?? '');
+    if (brief) t.relationship = brief;
+  }
+
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
-  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs);
+  // Playbook guidance (C4): one gated line for the whole batch, variable tail.
+  const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance);
   // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
   const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
 
@@ -819,6 +863,21 @@ replies.delete('/replies/:id', async (c) => {
 });
 
 // --------------------------------------------------------------- validation
+
+// The people layer informs the draft; it never blocks it. A failed lookup
+// (or an invalid handle) just means the prompt meets this person cold.
+async function loadRelationshipFactsSafe(handle: string | null): Promise<RelationshipFacts | null> {
+  if (!handle) return null;
+  try {
+    return await loadRelationshipFacts(handle);
+  } catch (err) {
+    console.error(
+      'people: relationship lookup failed (draft proceeds cold):',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
 
 function isStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);

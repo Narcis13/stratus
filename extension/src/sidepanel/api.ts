@@ -15,6 +15,10 @@ import {
   type Brief,
   type BriefTweet,
   type ContentPillar,
+  type ConversationItem,
+  type ConversationPatchBody,
+  type ConversationThread,
+  type ConversationsResponse,
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
@@ -39,6 +43,10 @@ import {
   type PillarDraftBody,
   type PillarDraftResult,
   type PillarUpdateBody,
+  type Playbook,
+  type PlaybookAngleCell,
+  type PlaybookCell,
+  type PlaybookExtractResult,
   type PostContext,
   type PostDraftBody,
   type PostDraftResponse,
@@ -73,6 +81,10 @@ export type {
   Brief,
   BriefTweet,
   ContentPillar,
+  ConversationItem,
+  ConversationPatchBody,
+  ConversationThread,
+  ConversationsResponse,
   CreateBody,
   CreateThreadBody,
   CreateThreadResponse,
@@ -89,6 +101,10 @@ export type {
   PeopleListOpts,
   PeopleListResponse,
   Person,
+  Playbook,
+  PlaybookAngleCell,
+  PlaybookCell,
+  PlaybookExtractResult,
   PersonAngleCell,
   PersonDossier,
   PersonEvent,
@@ -290,6 +306,21 @@ export const api = {
     },
   },
 
+  // C4 — the measured playbook + one-time own-winner template extraction.
+  playbook: {
+    get(s: Settings, opts: { minN?: number } = {}): Promise<Playbook> {
+      const qs = opts.minN !== undefined ? `?minN=${opts.minN}` : '';
+      return request<Playbook>(s, `/x/playbook${qs}`);
+    },
+
+    extractWinners(s: Settings, limit?: number): Promise<PlaybookExtractResult> {
+      return request<PlaybookExtractResult>(s, '/x/playbook/extract-winners', {
+        method: 'POST',
+        body: limit !== undefined ? { limit } : {},
+      });
+    },
+  },
+
   // C1 — the people layer: list, dossier, notes/stage edits, manual log.
   people: {
     list(s: Settings, opts: PeopleListOpts = {}): Promise<PeopleListResponse> {
@@ -322,6 +353,21 @@ export const api = {
     ): Promise<{ person: Person; event: PersonEvent }> {
       return request(s, `/x/people/${encodeURIComponent(handle)}/events`, {
         method: 'POST',
+        body,
+      });
+    },
+  },
+
+  // C2 — the mention inbox as threads, with Slack-style read state.
+  conversations: {
+    list(s: Settings, opts: { limit?: number } = {}): Promise<ConversationsResponse> {
+      const qs = opts.limit !== undefined ? `?limit=${opts.limit}` : '';
+      return request<ConversationsResponse>(s, `/x/conversations${qs}`);
+    },
+
+    patch(s: Settings, conversationId: string, body: ConversationPatchBody): Promise<unknown> {
+      return request<unknown>(s, `/x/conversations/${encodeURIComponent(conversationId)}`, {
+        method: 'PATCH',
         body,
       });
     },

@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 is next.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 shipped 2026-07-04; C5 is next.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
@@ -281,6 +281,21 @@ with this person?" in one screen.
 *Goal: stop rendering mentions as a flat list; render exchanges as threads, and surface
 the ones where the last word is theirs.*
 
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) open-loop definition refined —
+> an *unanswered* inbound with no post of mine after it; a mention marked
+> answered/dismissed by hand settles the loop immediately, before daily discovery sees
+> the pasted reply. (2) chain detection checks the owed inbound's `inReplyToTweetId`
+> against `myReplyTweetIds` (all my published replies) *and* in-thread outbound reply
+> rows, so a reply whose conversation_id discovery hasn't filled yet still flags.
+> (3) mentions with null conversation_id get tweetId-keyed fallback threads — nothing
+> drops out of the inbox. (4) snoozed/muted threads leave the actionable tier (counts +
+> ranking); ranking is server-side: chains first, open loops oldest-debt-first, settled
+> by latest activity. (5) the flat Inbox.tsx (already unrendered) was deleted; the
+> threaded ConversationsSection renders at the Today tab's top slot, refresh budget and
+> the §7.5 draft/copy/done flow carried over unchanged. Chain flag NOT yet observed on
+> a real exchange (synthetic only, via scripts/smoke-conversations.ts) — watch the first
+> live one. See CLAUDE.md phase status for the full entry.
+
 - **No heavyweight conversation table.** `conversationId` already exists on both
   `posts_published` and `mentions`. `GET /x/conversations` groups the union by
   conversationId, ordered by latest activity: each thread = my posts + their mentions in
@@ -309,6 +324,26 @@ a real exchange.
 
 *Goal: the Reply Master prompt stops meeting everyone for the first time.*
 
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) no literal `{{RELATIONSHIP}}`
+> token — the block rides as server-stamped `PostContext.relationship` /
+> `BatchTweet.relationship` fields and `buildGrokInput`/`buildBatchGrokInput` append it
+> at the variable tail (template + byte-sync test untouched, as planned); parseContext /
+> parseBatchTweets never accept the field from the client, so a caller can't forge a
+> history. Stamping into ctx before the insert makes `contextSnapshot` record exactly
+> what the model saw, for free. (2) pure renderers live in
+> `src/x/people/relationship.ts` (`renderRelationship`, `renderRelationshipBrief`,
+> `pickAnglePreference`); the facts loader `loadRelationshipFacts` in people/store.ts
+> (null when the person is unknown or has zero events); `buildAngleCrosstab` moved to
+> `src/x/people/angles.ts` (routes/people.ts re-exports it). (3) angle preference is
+> gated at ≥3 measured replies to this person (`MIN_MEASURED_FOR_ANGLE_PREFERENCE`) and
+> picked by median profile visits, views as tie-break. (4) the single path looks up the
+> relationship AFTER the band gate (a refused call never pays the read); batch does one
+> lookup per distinct handle and carries the shared use-as-context instruction once, in
+> the variable tail. (5) all lookups are best-effort — a people-layer failure yields a
+> cold draft, never a failed one. "Done when" NOT yet observed live — watch the first
+> mutual-stage reply build on the prior exchange. See CLAUDE.md phase status for the
+> full entry.
+
 - `buildGrokInput` / `buildBatchGrokInput` (src/x/replies/prompt.ts) gain an optional
   `{{RELATIONSHIP}}` block rendered **at the variable tail** (same pattern as the §8.6
   pillars opt-in — `reply prompt.md` / `REPLY_PROMPT_TEMPLATE` stay byte-identical, the
@@ -336,6 +371,26 @@ a real exchange.
 
 *Goal: the measured-but-unused feedback signals become (a) a page the human reads and
 (b) constraints the prompts consume. Insights stop living in a manually-run eval script.*
+
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) all six stats live in pure
+> `src/x/playbook.ts`, loaders + `GET /x/playbook` (?minN=, default 20) in
+> `src/x/routes/playbook.ts` (always mounted, $0). (2) own-winner templates land in a
+> new `post_templates` table (not columns on posts_published) via
+> `POST /x/playbook/extract-winners` — runtime XAI check → 503, bounded ≤20/call,
+> skips already-extracted rows so re-running only picks up new winners; it reuses the
+> §8.3 prompt/schema/cache-key verbatim (now exported from routes/voiceExtract.ts).
+> (3) batch-vs-single attributes a published reply to the Radar only when BOTH the
+> target matches a radar_drafts tweet AND the posted text equals the drafted reply
+> (collapsed whitespace) — a draft-linked postedTweetId always wins; the rest count as
+> `unattributed`. (4) guidance is server-stamped only: `PostContext.guidance` (persisted
+> via contextSnapshot, so guided drafts stay distinguishable), a 5th arg on
+> buildBatchGrokInput, `BuildPostDraftOptions.guidance` — all at the variable tail,
+> templates + byte-sync tests untouched; loaders are best-effort
+> (`loadReplyGuidanceSafe`/`loadPostGuidanceSafe` — a playbook failure never fails a
+> draft) and always gate on the DEFAULT n≥20 even when the page is viewed at a lower
+> minN. (5) extension got a **Playbook** tab (its own tab, not under Today); gated cells
+> render the literal "insufficient data (n=…)". `scripts/smoke-playbook.ts` is the
+> rerunnable $0 check. See CLAUDE.md phase status for the full entry.
 
 - `src/x/playbook.ts` — pure aggregation over existing tables, each stat guarded by a
   min-sample gate (cell shows `insufficient data (n=7)` below threshold; default n≥20

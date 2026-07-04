@@ -4,9 +4,22 @@
 // reply posted, voice scrape/enrich, harvest ingest) and the backfill script
 // all come through here, so idempotency and the stage ratchet live in one spot.
 
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
-import { people, personEvents, postsPublished } from '../db/schema.ts';
+import {
+  metricsSnapshots,
+  people,
+  personEvents,
+  postsPublished,
+  replyDrafts,
+} from '../db/schema.ts';
+import type { ReplyVariant } from '../replies/prompt.ts';
+import { buildAngleCrosstab } from './angles.ts';
+import {
+  type ExchangeSummary,
+  type RelationshipFacts,
+  pickAnglePreference,
+} from './relationship.ts';
 import {
   INBOUND_TYPES,
   OUTBOUND_TYPES,
@@ -199,6 +212,112 @@ export async function recomputePerson(handle: string, now: Date): Promise<void> 
 /** Batch stage recompute (backfill). */
 export async function recomputePeople(handles: string[], now: Date): Promise<void> {
   for (const h of handles) await recomputePerson(h, now);
+}
+
+// ------------------------------------------------- relationship facts (C3)
+
+// Posted drafts per person are few; matches the dossier's scope cap.
+const MAX_RELATIONSHIP_DRAFTS = 200;
+
+/** What the reply drafter gets to know about a target (CIRCLES-PLAN C3):
+ *  stage + exchange counts, the latest exchange topics, the measured angle
+ *  preference (gated at ≥3 measured replies by pickAnglePreference), and the
+ *  human-written notes. Null when the person is unknown or has zero events —
+ *  the prompt then meets them for the first time, as before. */
+export async function loadRelationshipFacts(handle: string): Promise<RelationshipFacts | null> {
+  const [person] = await db.select().from(people).where(eq(people.handle, handle));
+  if (!person) return null;
+
+  const events = await db
+    .select({ type: personEvents.type, at: personEvents.at, summary: personEvents.summary })
+    .from(personEvents)
+    .where(eq(personEvents.handle, handle))
+    .orderBy(desc(personEvents.at));
+  if (events.length === 0) return null;
+
+  let inboundCount = 0;
+  let outboundCount = 0;
+  let lastInbound: ExchangeSummary | null = null;
+  let lastOutbound: ExchangeSummary | null = null;
+  for (const e of events) {
+    const type = e.type as PersonEventType;
+    if (INBOUND_TYPES.includes(type)) {
+      inboundCount++;
+      if (!lastInbound && e.summary) lastInbound = { at: e.at, summary: e.summary };
+    } else if (OUTBOUND_TYPES.includes(type)) {
+      outboundCount++;
+      if (!lastOutbound && e.summary) lastOutbound = { at: e.at, summary: e.summary };
+    }
+  }
+
+  const anglePreference =
+    outboundCount > 0 ? pickAnglePreference(await loadAngleCells(handle)) : null;
+
+  return {
+    handle,
+    stage: person.stage as Stage,
+    eventCount: events.length,
+    inboundCount,
+    outboundCount,
+    lastInbound,
+    lastOutbound,
+    anglePreference,
+    notes: person.notes,
+  };
+}
+
+// Same join path as the dossier's angle crosstab (routes/people.ts), scoped to
+// what the preference pick needs: shipped angle + latest measured snapshot.
+async function loadAngleCells(handle: string) {
+  const drafts = await db
+    .select({
+      replyText: replyDrafts.replyText,
+      variants: replyDrafts.variants,
+      postedTweetId: replyDrafts.postedTweetId,
+    })
+    .from(replyDrafts)
+    .where(
+      and(
+        sql`lower(${replyDrafts.sourceAuthorUsername}) = ${handle}`,
+        eq(replyDrafts.status, 'posted'),
+      ),
+    )
+    .orderBy(desc(replyDrafts.createdAt))
+    .limit(MAX_RELATIONSHIP_DRAFTS);
+
+  const ids = drafts.flatMap((d) => (d.postedTweetId ? [d.postedTweetId] : []));
+  const snaps = ids.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          publicMetrics: metricsSnapshots.publicMetrics,
+          nonPublicMetrics: metricsSnapshots.nonPublicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, ids))
+        .orderBy(desc(metricsSnapshots.snapshotAt))
+    : [];
+  const latest = new Map<string, (typeof snaps)[number]>();
+  for (const s of snaps) if (!latest.has(s.tweetId)) latest.set(s.tweetId, s);
+
+  return buildAngleCrosstab(
+    drafts.map((d) => {
+      const variants = d.variants as ReplyVariant[] | null;
+      const snap = d.postedTweetId ? latest.get(d.postedTweetId) : undefined;
+      const pub = (snap?.publicMetrics ?? null) as Record<string, number> | null;
+      const priv = (snap?.nonPublicMetrics ?? null) as Record<string, number> | null;
+      return {
+        angle: variants?.find((v) => v.text === d.replyText)?.angle ?? null,
+        outcome: snap
+          ? {
+              views: pub?.impression_count ?? priv?.impression_count ?? null,
+              profileVisits: priv?.user_profile_clicks ?? null,
+              replies: pub?.reply_count ?? null,
+            }
+          : null,
+      };
+    }),
+  );
 }
 
 /** Which of these tweet ids are my published REPLIES — a mention replying to
