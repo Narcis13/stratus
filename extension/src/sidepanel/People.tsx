@@ -5,6 +5,7 @@
 // in the panel click-throughs to here via App's onOpenPerson.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { ChannelTagPicker } from './ChannelTags.tsx';
 import {
   ApiError,
   type PersonAngleCell,
@@ -339,6 +340,15 @@ function Dossier({
           {person.lastOutboundAt && <span>last reply {fmtAgo(person.lastOutboundAt)}</span>}
         </div>
         {bio && <div className="people-bio">{bio}</div>}
+        <ChannelTagPicker
+          settings={settings}
+          tags={person.tags}
+          onSave={async (tags) => {
+            await api.people.patch(settings, person.handle, { tags });
+            onChanged();
+          }}
+          suggestFrom={bio ?? undefined}
+        />
       </section>
 
       <NotesEditor settings={settings} handle={person.handle} initial={person.notes} />

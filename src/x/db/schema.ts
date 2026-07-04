@@ -44,6 +44,29 @@ export const contentPillars = sqliteTable('content_pillars', {
     .notNull(),
 });
 
+// Channels (CIRCLES-PLAN C8): topic rooms over everything — pillars organize
+// output, channels organize input + people. A channel is tags + a saved view,
+// deliberately shallow: a tag is the channel's slug stored in the `tags` JSON
+// column of people/ideas/voice_tweets/radar_drafts, so deleting a channel just
+// leaves harmless strings behind (no FK, no cascade). `pillar` optionally maps
+// the channel to a content-pillar slug so the aggregate view can pull own-post
+// performance; `keywords` feed the pure $0 auto-suggest (human always confirms).
+export const channels = sqliteTable('channels', {
+  slug: text('slug').primaryKey(),
+  label: text('label').notNull(),
+  color: text('color'),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  pillar: text('pillar'),
+  keywords: text('keywords', { mode: 'json' }).$type<string[]>(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
 export const scheduledPosts = sqliteTable(
   'scheduled_posts',
   {
@@ -229,6 +252,8 @@ export const voiceTweets = sqliteTable(
     templateLength: text('template_length'),
     device: text('device'),
     templateExtractedAt: integer('template_extracted_at', { mode: 'timestamp_ms' }),
+    // Channel slugs (C8) — a saved tweet can live in several topic rooms.
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
   },
   (t) => [index('voice_tweets_author_created_idx').on(t.authorHandle, t.createdAt)],
 );
@@ -307,6 +332,8 @@ export const radarDrafts = sqliteTable(
     signals: text('signals', { mode: 'json' }),
     replyText: text('reply_text').notNull(),
     angle: text('angle').notNull(),
+    // Channel slugs (C8) — tagged from the Radar row, keyed by tweet_id.
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
     status: text('status').notNull().default('ready'), // ready | clicked | expired
     draftedAt: integer('drafted_at', { mode: 'timestamp_ms' })
       .default(sql`(unixepoch() * 1000)`)

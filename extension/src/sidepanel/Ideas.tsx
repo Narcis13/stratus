@@ -4,6 +4,7 @@
 // server stamps status + backlink), and a consumed idea reopens in one click.
 
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
+import { ChannelTagPicker } from './ChannelTags.tsx';
 import { ApiError, type Idea, type IdeaStatus, api } from './api.ts';
 import type { Settings } from './storage.ts';
 
@@ -76,6 +77,12 @@ export function IdeasPanel({ settings }: Props): JSX.Element {
     } finally {
       setBusyId(null);
     }
+  };
+
+  // C8 — channel tags; local update, no reload (tags don't change the filter).
+  const saveTags = async (idea: Idea, tags: string[]): Promise<void> => {
+    const updated = await api.ideas.patch(settings, idea.id, { tags });
+    setIdeas((prev) => prev.map((i) => (i.id === updated.id ? { ...i, ...updated } : i)));
   };
 
   const onDelete = async (idea: Idea): Promise<void> => {
@@ -159,6 +166,12 @@ export function IdeasPanel({ settings }: Props): JSX.Element {
                 <span className="voice-tweet-time">{relativeTime(idea.createdAt)}</span>
               </div>
               <div className="voice-tweet-text">{idea.text}</div>
+              <ChannelTagPicker
+                settings={settings}
+                tags={idea.tags}
+                onSave={(tags) => saveTags(idea, tags)}
+                suggestFrom={idea.text}
+              />
               <div className="voice-tweet-metrics">
                 {idea.sourceUrl && (
                   <a href={idea.sourceUrl} target="_blank" rel="noreferrer">

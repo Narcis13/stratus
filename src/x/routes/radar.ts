@@ -6,8 +6,10 @@
 // don't need the Grok key (only the insert path, in routes/replies.ts, does).
 //
 // Routes:
-//   GET   /radar/drafts   ?status=ready|clicked|expired (default ready)
-//   PATCH /radar/drafts   body: { tweetIds: string[], status: 'clicked'|'expired' }
+//   GET   /radar/drafts                 ?status=ready|clicked|expired (default ready)
+//   PATCH /radar/drafts                 body: { tweetIds: string[], status: 'clicked'|'expired' }
+//   PATCH /radar/drafts/:tweetId/tags   body: { tags: string[] | null } — channel tags (C8),
+//                                       applied to every draft row of that tweet
 //
 // Expiry is a lazy status flip (never a delete), applied on every GET: a radar
 // reply to a post that's been dead for 48h is worthless anyway.
@@ -18,6 +20,7 @@ import { db } from '../../db/client.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
 import { radarDrafts } from '../db/schema.ts';
 import type { BatchTweet } from '../replies/prompt.ts';
+import { parseChannelTags } from './channels.ts';
 
 export const RADAR_DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -171,6 +174,32 @@ radar.patch('/radar/drafts', async (c) => {
     .returning({ id: radarDrafts.id });
 
   return c.json({ updated: updated.length });
+});
+
+// Channel tags (C8). Keyed by tweetId — the panel's queue and the session ring
+// buffer identify a sighting by tweet, not by draft row; repeated drafts of the
+// same tweet all get the tags so any of them rehydrates correctly.
+radar.patch('/radar/drafts/:tweetId/tags', async (c) => {
+  const tweetId = c.req.param('tweetId');
+  if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
+
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+  if (body.tags === undefined) return c.json({ error: 'invalid_tags' }, 400);
+  const tags = parseChannelTags(body.tags);
+  if (tags === 'invalid') return c.json({ error: 'invalid_tags' }, 400);
+
+  const updated = await db
+    .update(radarDrafts)
+    .set({ tags })
+    .where(eq(radarDrafts.tweetId, tweetId))
+    .returning({ id: radarDrafts.id });
+
+  if (updated.length === 0) return c.json({ error: 'not_found' }, 404);
+  return c.json({ updated: updated.length, tags });
 });
 
 function isStatus(v: unknown): v is RadarDraftStatus {

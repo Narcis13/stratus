@@ -13,7 +13,7 @@
 //   GET    /voice/authors?retired=    list authors + tweet counts
 //   GET    /voice/targets                                  the 2–10x reply-target roster (§7.4)
 //   GET    /voice/tweets?author=&q=&limit=&retired=        query the stash
-//   PATCH  /voice/tweets/:tweetId     { retired }          archive / unarchive a tweet
+//   PATCH  /voice/tweets/:tweetId     { retired?, tags?, addTags? }  archive / channel tags (C8)
 //   DELETE /voice/tweets/:tweetId                          hard-remove a tweet
 //   PATCH  /voice/authors/:handle     { retired }          archive / unarchive an author
 //   DELETE /voice/authors/:handle                          hard-remove an author (409 if it has tweets)
@@ -41,6 +41,7 @@ import {
   voiceTweets,
 } from '../db/schema.ts';
 import { safeLogPersonEvents, snippet, upsertPerson } from '../people/store.ts';
+import { parseChannelTags } from './channels.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 // Twitter usernames: 1–15 chars, alphanumeric + underscore.
@@ -491,13 +492,47 @@ export function createVoiceRouter(): Hono {
     if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
 
     const body = await readJson(c.req.raw);
-    if (!body || typeof body.retired !== 'boolean') {
-      return c.json({ error: 'invalid_retired' }, 400);
+    if (!body) return c.json({ error: 'invalid_body' }, 400);
+
+    const updates: Partial<typeof voiceTweets.$inferInsert> = {};
+
+    if (body.retired !== undefined) {
+      if (typeof body.retired !== 'boolean') return c.json({ error: 'invalid_retired' }, 400);
+      updates.retired = body.retired;
     }
+
+    // Channel tags (C8): `tags` replaces the set (null clears); `addTags`
+    // merges server-side — the additive form the content script's save chips
+    // use, so a chip click never races a read-modify-write in the page.
+    if (body.tags !== undefined && body.addTags !== undefined) {
+      return c.json({ error: 'tags_or_add_tags_not_both' }, 400);
+    }
+    if (body.tags !== undefined) {
+      const tags = parseChannelTags(body.tags);
+      if (tags === 'invalid') return c.json({ error: 'invalid_tags' }, 400);
+      updates.tags = tags;
+    }
+    if (body.addTags !== undefined) {
+      const addTags = parseChannelTags(body.addTags);
+      if (addTags === 'invalid' || addTags === null) {
+        return c.json({ error: 'invalid_add_tags' }, 400);
+      }
+      const [existing] = await db
+        .select({ tags: voiceTweets.tags })
+        .from(voiceTweets)
+        .where(eq(voiceTweets.tweetId, tweetId));
+      if (!existing) return c.json({ error: 'not_found' }, 404);
+      const merged = [...(existing.tags ?? [])];
+      for (const t of addTags) if (!merged.includes(t)) merged.push(t);
+      updates.tags = merged;
+    }
+
+    if (Object.keys(updates).length === 0) return c.json({ error: 'empty_patch' }, 400);
+    updates.updatedAt = new Date();
 
     const [updated] = await db
       .update(voiceTweets)
-      .set({ retired: body.retired, updatedAt: new Date() })
+      .set(updates)
       .where(eq(voiceTweets.tweetId, tweetId))
       .returning();
 
@@ -638,6 +673,8 @@ interface Body {
   tweet?: unknown;
   author?: unknown;
   retired?: unknown;
+  tags?: unknown;
+  addTags?: unknown;
   displayName?: unknown;
   bio?: unknown;
   followersCount?: unknown;

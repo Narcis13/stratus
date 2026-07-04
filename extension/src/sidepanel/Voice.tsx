@@ -1,4 +1,5 @@
 import { type JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import { ChannelTagPicker } from './ChannelTags.tsx';
 import { PillarsPanel } from './Pillars.tsx';
 import { ApiError, type VoiceAuthor, type VoiceTweet, type VoiceTweetsOpts, api } from './api.ts';
 import type { Settings } from './storage.ts';
@@ -153,6 +154,14 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
       setBusy(null);
       setConfirming(null);
     }
+  };
+
+  // C8 — channel tags on a saved tweet (the picker owns suggest/toggle UX).
+  const saveTweetTags = async (tweet: VoiceTweet, tags: string[]): Promise<void> => {
+    const updated = await api.voice.setTweetTags(settings, tweet.tweetId, tags);
+    setTweets((prev) =>
+      prev.map((t) => (t.tweetId === updated.tweetId ? { ...t, ...updated } : t)),
+    );
   };
 
   // §8.3 — one Grok pass distilling the tweet's structure (~$0.005).
@@ -321,6 +330,8 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
                 <li key={t.tweetId}>
                   <TweetRow
                     tweet={t}
+                    settings={settings}
+                    onSaveTags={(tags) => saveTweetTags(t, tags)}
                     renderHtml={renderHtml}
                     busy={busy === `tweet:${t.tweetId}`}
                     extractBusy={busy === `extract:${t.tweetId}`}
@@ -433,6 +444,8 @@ function AuthorCard({
 
 interface TweetRowProps {
   tweet: VoiceTweet;
+  settings: Settings;
+  onSaveTags: (tags: string[]) => Promise<void>;
   onOpenPerson: (handle: string) => void;
   renderHtml: boolean;
   busy: boolean;
@@ -448,6 +461,8 @@ interface TweetRowProps {
 
 function TweetRow({
   tweet,
+  settings,
+  onSaveTags,
   onOpenPerson,
   renderHtml,
   busy,
@@ -508,6 +523,13 @@ function TweetRow({
             .join(' · ')}
         </div>
       )}
+
+      <ChannelTagPicker
+        settings={settings}
+        tags={tweet.tags}
+        onSave={onSaveTags}
+        suggestFrom={tweet.text}
+      />
 
       <div className="voice-tweet-actions">
         <a href={url} target="_blank" rel="noreferrer">

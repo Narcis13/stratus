@@ -549,6 +549,19 @@ get human replies inside 30 minutes without the user having remembered on their 
 
 *Goal: topics become places. Pillars organize output; channels organize input + people.*
 
+> **SHIPPED 2026-07-05.** Notes vs the plan below: (1) the keyword map lives ON the
+> channel row (`keywords` JSON column), so the auto-suggest is data-driven and one pure
+> module (`src/shared/channelSuggest.ts`, extension shim — the replyBand pattern) scores
+> identically on server and page. (2) tag writes: voice-tweet PATCH takes replace
+> (`tags`) or additive (`addTags` — what the save-time chips use, so quick clicks can't
+> race); radar drafts tag by tweetId via `PATCH /x/radar/drafts/:tweetId/tags`. (3) the
+> "confirmation toast" chip picker became inline suggest-chips next to the Save button
+> (there was never a toast) — max 3, keyword-suggested only, one click tags; the full
+> picker lives in the panel rows. Radar rows show the picker once a reply is drafted
+> (that's when a server-side row exists to hold tags). (4) the switcher is a Channels
+> tab with a Discord-style left rail, not a global rail. DELETE is clean by design —
+> tags survive as harmless strings. See CLAUDE.md phase status for the full entry.
+
 - New table `channels` (slug PK, label, color, sort_order, active) + the existing
   `tags` JSON columns on people/ideas (C1/C6) plus new nullable `tags` on voice_tweets
   and radar_drafts. A tag is a channel slug; a channel is a saved view.

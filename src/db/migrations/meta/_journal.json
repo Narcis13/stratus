@@ -50,6 +50,13 @@
       "when": 1783169824140,
       "tag": "0006_condemned_captain_stacy",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1783200255679,
+      "tag": "0007_clever_gamora",
+      "breakpoints": true
     }
   ]
 }

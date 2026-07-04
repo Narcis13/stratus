@@ -1942,3 +1942,117 @@ button.danger:hover:not(:disabled) {
   font-size: 12px;
   white-space: pre-wrap;
 }
+
+/* ------------------------------------------------------------ channels (C8) */
+
+.channels-layout {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.channel-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 130px;
+  position: sticky;
+  top: 0;
+}
+
+.channel-rail-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-rail-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.channel-rail-item.active {
+  background: var(--bg-elev);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.channel-rail-inactive {
+  opacity: 0.5;
+}
+
+.channel-rail-new {
+  color: var(--accent);
+}
+
+.channel-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.channel-room {
+  flex: 1;
+  min-width: 0;
+}
+
+.channel-room-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.channel-keywords {
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+/* Tag chips — rendered on Voice tweets, dossiers, Ideas and Radar rows. */
+.channel-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.channel-chip {
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.channel-chip:hover {
+  background: var(--bg-hover);
+}
+
+.channel-chip-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg-elev);
+}
+
+.channel-chip-hint {
+  border-style: dashed;
+  color: var(--text);
+}

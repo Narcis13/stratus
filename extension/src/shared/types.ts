@@ -224,6 +224,8 @@ export interface VoiceTweet {
   templateLength: string | null;
   device: string | null;
   templateExtractedAt: string | null;
+  // Channel tags (C8) — null until tagged.
+  tags: string[] | null;
 }
 
 export interface VoiceTweetsOpts {
@@ -887,6 +889,106 @@ export interface PlaybookExtractResult {
   failures: Array<{ tweetId: string; error: string }>;
   costUsd: number;
   remaining: number;
+}
+
+// ------------------------------------------------------------ channels (C8)
+
+// A topic room: tags + a saved view. `pillar` optionally maps the channel to a
+// content-pillar slug (own-post performance in the aggregate); `keywords` feed
+// the pure client-side auto-suggest (human always confirms the tag).
+export interface Channel {
+  slug: string;
+  label: string;
+  color: string | null;
+  sortOrder: number;
+  active: boolean;
+  pillar: string | null;
+  keywords: string[] | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChannelCreateBody {
+  slug: string;
+  label: string;
+  color?: string | null;
+  pillar?: string | null;
+  keywords?: string[] | null;
+  sortOrder?: number;
+  active?: boolean;
+}
+
+export type ChannelPatchBody = Omit<ChannelCreateBody, 'slug'>;
+
+export interface ChannelPerson {
+  handle: string;
+  displayName: string | null;
+  stage: PersonStage;
+  followersCount: number | null;
+  lastInboundAt: string | null;
+  lastOutboundAt: string | null;
+  tags: string[] | null;
+}
+
+export interface ChannelVoiceTweet {
+  tweetId: string;
+  authorHandle: string;
+  authorDisplayName: string | null;
+  text: string;
+  url: string | null;
+  createdAt: string;
+  savedAt: string;
+  hookType: string | null;
+  tags: string[] | null;
+}
+
+export interface ChannelRadarDraft {
+  tweetId: string;
+  url: string | null;
+  handle: string;
+  author: string | null;
+  snippet: string;
+  band: 'hot' | 'warm' | null;
+  replyText: string;
+  angle: string;
+  status: 'ready' | 'clicked' | 'expired';
+  draftedAt: string;
+  tags: string[] | null;
+}
+
+export interface ChannelPostItem {
+  scheduledPostId: string;
+  text: string;
+  register: string | null;
+  postedTweetId: string | null;
+  postedAt: string | null;
+  outcome: {
+    views: number | null;
+    likes: number | null;
+    replies: number | null;
+    retweets: number | null;
+    bookmarks: number | null;
+    profileVisits: number | null;
+  } | null;
+}
+
+export interface ChannelPosts {
+  pillar: string;
+  count: number;
+  measured: number;
+  medianViews: number | null;
+  medianProfileVisits: number | null;
+  items: ChannelPostItem[];
+}
+
+// GET /x/channels/:slug — the room on one screen.
+export interface ChannelAggregate {
+  channel: Channel;
+  people: ChannelPerson[];
+  voiceTweets: ChannelVoiceTweet[];
+  ideas: Idea[];
+  radarDrafts: ChannelRadarDraft[];
+  posts: ChannelPosts | null;
 }
 
 export class ApiError extends Error {

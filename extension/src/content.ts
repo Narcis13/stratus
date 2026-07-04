@@ -20,6 +20,7 @@
 //
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
+import { suggestChannels } from './channelSuggest.ts';
 import { initHarvest } from './harvester.ts';
 import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
 import type { Band, TweetSignals } from './replyBand.ts';
@@ -56,6 +57,8 @@ import type {
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
+const CHAN_CHIP_CLASS = 'stratus-chan-chip';
+const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const BAND_BADGE_CLASS = 'stratus-band-badge';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
@@ -202,6 +205,28 @@ function injectStyles(): void {
     }
     .${BAND_BADGE_CLASS}[data-band="hot"]  { color: rgb(0, 186, 124); border: 1px solid rgba(0, 186, 124, 0.5); background: rgba(0, 186, 124, 0.10); }
     .${BAND_BADGE_CLASS}[data-band="warm"] { color: rgb(214, 150, 0); border: 1px solid rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${CHAN_WRAP_CLASS} { display: inline-flex; gap: 4px; margin-left: 4px; align-items: center; }
+    .${CHAN_CHIP_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      color: rgb(29, 155, 240);
+      border: 1px dashed rgba(29, 155, 240, 0.5);
+      background: transparent;
+      white-space: nowrap;
+    }
+    .${CHAN_CHIP_CLASS}:hover { background: rgba(29, 155, 240, 0.1); }
+    .${CHAN_CHIP_CLASS}[data-state="tagged"] {
+      color: rgb(0, 186, 124);
+      border: 1px solid rgb(0, 186, 124);
+      cursor: default;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -415,6 +440,92 @@ async function scrapeAuthorFromHoverCard(
   };
 }
 
+// -------------------------------------------------- channel chips (C8, $0)
+
+// Active channels for the save-time chips, fetched through the background API
+// channel and cached a few minutes — one GET serves a whole browsing session.
+const CHANNEL_CACHE_TTL_MS = 5 * 60_000;
+const CHANNEL_CHIP_MAX = 3;
+const CHANNEL_CHIPS_PERSIST_MS = 15_000;
+let channelCache: { channels: { slug: string; keywords: string[] | null }[]; at: number } | null =
+  null;
+
+async function getActiveChannels(): Promise<{ slug: string; keywords: string[] | null }[]> {
+  if (channelCache && Date.now() - channelCache.at < CHANNEL_CACHE_TTL_MS) {
+    return channelCache.channels;
+  }
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/channels?active=true',
+  };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as
+      | ApiResponse<{ slug: string; keywords: string[] | null }[]>
+      | undefined;
+    if (res?.ok && Array.isArray(res.data)) {
+      channelCache = { channels: res.data, at: Date.now() };
+      return res.data;
+    }
+  } catch (err) {
+    console.warn('[stratus] channels fetch failed', err);
+  }
+  return channelCache?.channels ?? [];
+}
+
+// After a successful save, offer keyword-suggested channel chips next to the
+// button — the C8 "chip picker in the confirmation" affordance. One click tags
+// the just-saved voice tweet (additive PATCH, so quick successive clicks can't
+// clobber each other). Suggest-only keeps the action row light; the full
+// picker lives in the panel's Voice tab.
+async function offerChannelChips(btn: HTMLButtonElement, tweet: ScrapedTweet): Promise<void> {
+  const channels = await getActiveChannels();
+  const suggested = suggestChannels(tweet.text, channels).slice(0, CHANNEL_CHIP_MAX);
+  if (suggested.length === 0 || !btn.isConnected) return;
+
+  btn.parentElement?.querySelector(`.${CHAN_WRAP_CLASS}`)?.remove();
+  const wrap = document.createElement('span');
+  wrap.className = CHAN_WRAP_CLASS;
+  for (const slug of suggested) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = CHAN_CHIP_CLASS;
+    chip.textContent = `+ #${slug}`;
+    chip.title = `Tag the saved tweet into #${slug}`;
+    chip.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (chip.dataset.state === 'tagged') return;
+      chip.disabled = true;
+      void (async () => {
+        const req: ApiRequest = {
+          type: 'stratus/api',
+          method: 'PATCH',
+          path: `/x/voice/tweets/${tweet.tweetId}`,
+          body: { addTags: [slug] },
+        };
+        let ok = false;
+        try {
+          const res = (await chrome.runtime.sendMessage(req)) as ApiResponse | undefined;
+          ok = res?.ok === true;
+        } catch (err) {
+          console.warn('[stratus] tag failed', err);
+        }
+        if (ok) {
+          chip.dataset.state = 'tagged';
+          chip.textContent = `✓ #${slug}`;
+        } else {
+          chip.textContent = `! #${slug}`;
+          chip.disabled = false;
+        }
+      })();
+    });
+    wrap.appendChild(chip);
+  }
+  btn.insertAdjacentElement('afterend', wrap);
+  setTimeout(() => wrap.remove(), CHANNEL_CHIPS_PERSIST_MS);
+}
+
 // --------------------------------------------------------------- save tweet
 
 function setState(
@@ -479,6 +590,7 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
 
   if (res?.ok) {
     setState(btn, 'saved', author ? 'Saved + author' : 'Saved');
+    void offerChannelChips(btn, tweet);
   } else {
     const code = res && !res.ok ? res.code : 'no_response';
     setState(btn, 'failed', `Failed: ${code}`);

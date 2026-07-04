@@ -14,6 +14,10 @@ import {
   type BatchReplyTweet,
   type Brief,
   type BriefTweet,
+  type Channel,
+  type ChannelAggregate,
+  type ChannelCreateBody,
+  type ChannelPatchBody,
   type ContentPillar,
   type ConversationItem,
   type ConversationPatchBody,
@@ -91,6 +95,10 @@ export type {
   BatchReplyTweet,
   Brief,
   BriefTweet,
+  Channel,
+  ChannelAggregate,
+  ChannelCreateBody,
+  ChannelPatchBody,
   ContentPillar,
   ConversationItem,
   ConversationPatchBody,
@@ -253,6 +261,42 @@ export const api = {
     },
   },
 
+  // C8 — channels: topic rooms as saved views over tags.
+  channels: {
+    list(s: Settings, opts: { active?: boolean } = {}): Promise<Channel[]> {
+      const qs = opts.active === undefined ? '' : `?active=${opts.active}`;
+      return request<Channel[]>(s, `/x/channels${qs}`);
+    },
+
+    aggregate(s: Settings, slug: string): Promise<ChannelAggregate> {
+      return request<ChannelAggregate>(s, `/x/channels/${encodeURIComponent(slug)}`);
+    },
+
+    create(s: Settings, body: ChannelCreateBody): Promise<Channel> {
+      return request<Channel>(s, '/x/channels', { method: 'POST', body });
+    },
+
+    update(s: Settings, slug: string, body: ChannelPatchBody): Promise<Channel> {
+      return request<Channel>(s, `/x/channels/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, slug: string): Promise<unknown> {
+      return request<unknown>(s, `/x/channels/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    },
+
+    // Channel tags on a radar row, keyed by tweetId (every draft row of that
+    // tweet gets them so any copy rehydrates correctly).
+    tagRadarDraft(s: Settings, tweetId: string, tags: string[]): Promise<unknown> {
+      return request<unknown>(s, `/x/radar/drafts/${encodeURIComponent(tweetId)}/tags`, {
+        method: 'PATCH',
+        body: { tags },
+      });
+    },
+  },
+
   voice: {
     listAuthors(s: Settings, opts: { retired?: boolean } = {}): Promise<VoiceAuthor[]> {
       const qs = opts.retired ? '?retired=true' : '';
@@ -298,6 +342,14 @@ export const api = {
       return request<VoiceExtractBatchResult>(s, '/x/voice/extract-batch', {
         method: 'POST',
         body: limit !== undefined ? { limit } : {},
+      });
+    },
+
+    // C8 — replace a saved tweet's channel tags.
+    setTweetTags(s: Settings, tweetId: string, tags: string[]): Promise<VoiceTweet> {
+      return request<VoiceTweet>(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}`, {
+        method: 'PATCH',
+        body: { tags },
       });
     },
 

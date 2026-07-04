@@ -1,5 +1,6 @@
 import { type JSX, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
+import { ChannelsPanel } from './Channels.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
 import { IdeasPanel } from './Ideas.tsx';
@@ -14,6 +15,7 @@ import { isConfigured, useSettings } from './storage.ts';
 type Tab =
   | 'today'
   | 'people'
+  | 'channels'
   | 'calendar'
   | 'composer'
   | 'harvest'
@@ -26,6 +28,7 @@ type Tab =
 const TABS: { id: Tab; label: string }[] = [
   { id: 'today', label: 'Today' },
   { id: 'people', label: 'People' },
+  { id: 'channels', label: 'Channels' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
   { id: 'harvest', label: 'Harvest' },
@@ -103,6 +106,8 @@ export function App(): JSX.Element {
             openHandle={personHandle}
             onClearOpen={() => setPersonHandle(null)}
           />
+        ) : activeTab === 'channels' ? (
+          <ChannelsPanel settings={settings} onOpenPerson={openPerson} />
         ) : activeTab === 'calendar' ? (
           <CalendarPanel key={`cal-${refreshKey}`} settings={settings} onEdit={startEdit} />
         ) : activeTab === 'composer' ? (

@@ -19,6 +19,7 @@ import {
   rankSightings,
   splitClicked,
 } from '../shared/radar.ts';
+import { ChannelTagPicker } from './ChannelTags.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
 import type { Settings } from './storage.ts';
 
@@ -203,6 +204,7 @@ export function RadarSection({
               <RadarGroup
                 label={`Reply ready (${ready.length})`}
                 rows={ready}
+                settings={settings}
                 onOpenPerson={onOpenPerson}
               />
             )}
@@ -210,6 +212,7 @@ export function RadarSection({
               <RadarGroup
                 label={`New (${fresh.length})`}
                 rows={fresh}
+                settings={settings}
                 onOpenPerson={onOpenPerson}
               />
             )}
@@ -220,7 +223,7 @@ export function RadarSection({
       ) : (
         <ul className="radar-list">
           {clicked.map((s) => (
-            <RadarRow key={s.tweetId} s={s} onOpenPerson={onOpenPerson} />
+            <RadarRow key={s.tweetId} s={s} settings={settings} onOpenPerson={onOpenPerson} />
           ))}
         </ul>
       )}
@@ -231,10 +234,12 @@ export function RadarSection({
 function RadarGroup({
   label,
   rows,
+  settings,
   onOpenPerson,
 }: {
   label: string;
   rows: RadarSighting[];
+  settings: Settings;
   onOpenPerson: (handle: string) => void;
 }): JSX.Element {
   return (
@@ -242,7 +247,7 @@ function RadarGroup({
       <div className="radar-group-label">{label}</div>
       <ul className="radar-list">
         {rows.map((s) => (
-          <RadarRow key={s.tweetId} s={s} onOpenPerson={onOpenPerson} />
+          <RadarRow key={s.tweetId} s={s} settings={settings} onOpenPerson={onOpenPerson} />
         ))}
       </ul>
     </>
@@ -251,12 +256,18 @@ function RadarGroup({
 
 function RadarRow({
   s,
+  settings,
   onOpenPerson,
 }: {
   s: RadarSighting;
+  settings: Settings;
   onOpenPerson: (handle: string) => void;
 }): JSX.Element {
   const [copied, setCopied] = useState(false);
+  // C8: channel tags live on the server's radar_drafts copy (keyed by tweetId),
+  // which only exists once a reply was drafted — so the picker shows then.
+  // Session-local mirror; the persisted copy is what the aggregate reads.
+  const [tags, setTags] = useState<string[]>([]);
 
   // Opening a drafted tweet copies its reply (user gesture → clipboard allowed)
   // and moves the row to the Clicked view; the anchor's default still opens the
@@ -304,6 +315,17 @@ function RadarRow({
           {s.reply}
           <span className="radar-reply-hint">{copied ? 'copied ✓' : 'open → copies'}</span>
         </div>
+      )}
+      {s.reply && (
+        <ChannelTagPicker
+          settings={settings}
+          tags={tags}
+          onSave={async (next) => {
+            await api.channels.tagRadarDraft(settings, s.tweetId, next);
+            setTags(next);
+          }}
+          suggestFrom={s.text}
+        />
       )}
     </li>
   );

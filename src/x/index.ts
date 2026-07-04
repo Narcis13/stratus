@@ -8,6 +8,7 @@ import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
+import { channelsRouter } from './routes/channels.ts';
 import { conversations } from './routes/conversations.ts';
 import { drafter } from './routes/drafter.ts';
 import { followups } from './routes/followups.ts';
@@ -56,6 +57,8 @@ export function mountX(app: Hono): void {
   // C6: Idea Inbox — pure SQL, always mounted; consumption happens inside the
   // Grok-gated draft routes, but capture/list/reopen must work without the key.
   app.route('/x', ideasRouter);
+  // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
+  app.route('/x', channelsRouter);
   // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
   // 'followups'/'fans' are valid usernames, so GET /people/:handle would
   // otherwise swallow these static paths as dossier lookups.
