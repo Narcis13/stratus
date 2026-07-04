@@ -1,6 +1,7 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ApiError,
+  type Idea,
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftStatus,
@@ -10,6 +11,7 @@ import {
   clearLastDraft,
   setLastDraft,
   useIdea,
+  useIdeaId,
   useLastDraft,
   useSystemPromptOverride,
 } from './replyMasterStorage.ts';
@@ -45,6 +47,10 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
     save: saveSystemPrompt,
   } = useSystemPromptOverride();
   const { value: idea, loading: ideaLoading, save: saveIdea } = useIdea();
+  // C6: when the steer was picked from the Idea Inbox, its id rides along so
+  // the server consumes the row on the next generate.
+  const { value: ideaId, save: saveIdeaId } = useIdeaId();
+  const [openIdeas, setOpenIdeas] = useState<Idea[]>([]);
   const [activeDraft, setActiveDraft] = useState<ReplyDraft | null>(null);
   const [history, setHistory] = useState<ReplyDraft[]>([]);
   const [statusFilter, setStatusFilter] = useState<'' | ReplyDraftStatus>('');
@@ -68,6 +74,19 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
       setActiveDraft(storageDraft);
     }
   }, [storageDraft, activeDraft]);
+
+  const loadOpenIdeas = useCallback(() => {
+    api.ideas
+      .list(settings, { status: 'open' })
+      .then(setOpenIdeas)
+      .catch(() => {
+        /* dropdown just stays empty; free-typing still works */
+      });
+  }, [settings]);
+
+  useEffect(() => {
+    loadOpenIdeas();
+  }, [loadOpenIdeas]);
 
   const loadHistory = useCallback(async () => {
     setLoadingHistory(true);
@@ -149,7 +168,18 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
         </p>
       )}
 
-      <IdeaSteer value={idea} loading={ideaLoading} onSave={saveIdea} />
+      <IdeaSteer
+        value={idea}
+        loading={ideaLoading}
+        onSave={saveIdea}
+        openIdeas={openIdeas}
+        selectedId={ideaId}
+        onSelect={(picked) => {
+          void saveIdea(picked?.text ?? '');
+          void saveIdeaId(picked?.id ?? null);
+        }}
+        onClearId={() => void saveIdeaId(null)}
+      />
 
       {activeDraft && (
         <DraftEditor
@@ -160,7 +190,12 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
           isLive={lastShownStorageId.current === activeDraft.id}
           systemPromptOverride={systemPromptOverride}
           idea={idea}
-          onIdeaConsumed={() => saveIdea('')}
+          ideaId={ideaId}
+          onIdeaConsumed={async () => {
+            await saveIdea('');
+            await saveIdeaId(null);
+            loadOpenIdeas();
+          }}
           onChanged={onDraftChanged}
           onDiscarded={onDraftDiscarded}
           onRegenerated={onRegenerated}
@@ -233,6 +268,7 @@ interface EditorProps {
   isLive: boolean;
   systemPromptOverride: string;
   idea: string;
+  ideaId: string | null;
   onIdeaConsumed: () => void | Promise<void>;
   onChanged: (row: ReplyDraft) => void | Promise<void>;
   onDiscarded: (id: string) => void | Promise<void>;
@@ -247,6 +283,7 @@ function DraftEditor({
   isLive,
   systemPromptOverride,
   idea,
+  ideaId,
   onIdeaConsumed,
   onChanged,
   onDiscarded,
@@ -329,6 +366,7 @@ function DraftEditor({
         context: ctx,
         ...(override ? { systemPromptOverride: override } : {}),
         ...(steer !== '' ? { idea: steer } : {}),
+        ...(steer !== '' && ideaId ? { ideaId } : {}),
       });
       await onRegenerated(next);
       if (steer !== '') await onIdeaConsumed();
@@ -557,14 +595,25 @@ function DraftEditor({
 
 // The per-tweet steer. Persisted to chrome.storage so the page button picks it
 // up; consumed (cleared) by whichever surface fires the generate it steered.
+// C6: open Idea Inbox rows feed a dropdown above the textarea — picking one
+// links its id (server-side consume on generate); free-typing stays allowed
+// and emptying the box drops the link.
 function IdeaSteer({
   value,
   loading,
   onSave,
+  openIdeas,
+  selectedId,
+  onSelect,
+  onClearId,
 }: {
   value: string;
   loading: boolean;
   onSave: (next: string) => Promise<void>;
+  openIdeas: Idea[];
+  selectedId: string | null;
+  onSelect: (picked: Idea | null) => void;
+  onClearId: () => void;
 }): JSX.Element {
   const [draft, setDraft] = useState(value);
   const [saving, setSaving] = useState(false);
@@ -586,31 +635,54 @@ function IdeaSteer({
         try {
           await onSave(draft);
           lastSavedRef.current = draft;
+          if (draft.trim() === '') onClearId();
         } finally {
           setSaving(false);
         }
       })();
     }, SYSTEM_PROMPT_DEBOUNCE_MS);
     return () => clearTimeout(t);
-  }, [draft, loading, onSave]);
+  }, [draft, loading, onSave, onClearId]);
 
   return (
-    <label className="field reply-idea">
-      <span>
-        Idea steer{' '}
-        <span className="muted">(optional — used on the next generate, then cleared)</span>
-      </span>
-      <textarea
-        className="reply-textarea"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        rows={2}
-        placeholder="Seed for the next draft — Romanian is fine, the reply comes out in English."
-        disabled={loading}
-        spellCheck
-      />
-      {saving && <small className="muted">saving…</small>}
-    </label>
+    <div className="reply-idea">
+      {openIdeas.length > 0 && (
+        <label className="field">
+          <span>Seed from Idea Inbox</span>
+          <select
+            value={selectedId ?? ''}
+            onChange={(e) => {
+              const id = e.target.value;
+              onSelect(id === '' ? null : (openIdeas.find((i) => i.id === id) ?? null));
+            }}
+            disabled={loading}
+          >
+            <option value="">— free-typed / none —</option>
+            {openIdeas.map((i) => (
+              <option key={i.id} value={i.id}>
+                {i.text.length > 80 ? `${i.text.slice(0, 79)}…` : i.text}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="field">
+        <span>
+          Idea steer{' '}
+          <span className="muted">(optional — used on the next generate, then cleared)</span>
+        </span>
+        <textarea
+          className="reply-textarea"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          rows={2}
+          placeholder="Seed for the next draft — Romanian is fine, the reply comes out in English."
+          disabled={loading}
+          spellCheck
+        />
+        {saving && <small className="muted">saving…</small>}
+      </label>
+    </div>
   );
 }
 

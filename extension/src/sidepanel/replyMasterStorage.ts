@@ -18,6 +18,12 @@ import type { ReplyDraft } from '../shared/types.ts';
 export const LAST_DRAFT_KEY = 'replyMaster:lastDraft';
 export const SYSTEM_PROMPT_OVERRIDE_KEY = 'replyMaster:systemPromptOverride';
 export const IDEA_KEY = 'replyMaster:idea';
+// C6 Idea Inbox: set alongside IDEA_KEY when the steer was picked from the
+// stored ideas dropdown — whichever surface fires the generate sends it as
+// `ideaId` so the server consumes the idea (status flip + backlink). Cleared
+// with the idea after a successful generate, and whenever the user free-types
+// a different steer (a hand-typed idea has no row to consume).
+export const IDEA_ID_KEY = 'replyMaster:ideaId';
 
 function isReplyDraft(v: unknown): v is ReplyDraft {
   if (!v || typeof v !== 'object') return false;
@@ -135,6 +141,55 @@ export function useSystemPromptOverride(): {
   };
 
   return { value, loading, save };
+}
+
+export async function getIdeaId(): Promise<string | null> {
+  const out = await chrome.storage.local.get(IDEA_ID_KEY);
+  const v = out[IDEA_ID_KEY];
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+export async function setIdeaId(value: string | null): Promise<void> {
+  if (value === null || value === '') {
+    await chrome.storage.local.remove(IDEA_ID_KEY);
+    return;
+  }
+  await chrome.storage.local.set({ [IDEA_ID_KEY]: value });
+}
+
+export function useIdeaId(): {
+  value: string | null;
+  save: (next: string | null) => Promise<void>;
+} {
+  const [value, setValue] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getIdeaId().then((v) => alive && setValue(v));
+
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: chrome.storage.AreaName,
+    ): void => {
+      if (area !== 'local') return;
+      const change = changes[IDEA_ID_KEY];
+      if (!change) return;
+      const v = change.newValue;
+      setValue(typeof v === 'string' && v !== '' ? v : null);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, []);
+
+  const save = async (next: string | null): Promise<void> => {
+    await setIdeaId(next);
+    setValue(next);
+  };
+
+  return { value, save };
 }
 
 export async function getIdea(): Promise<string> {

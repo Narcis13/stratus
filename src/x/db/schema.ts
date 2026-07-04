@@ -394,6 +394,34 @@ export const personSnapshots = sqliteTable(
   (t) => [index('person_snapshots_handle_captured_idx').on(t.handle, t.capturedAt)],
 );
 
+// Idea Inbox (CIRCLES-PLAN C6): captured post/reply seeds that survive their
+// first use. `replyMaster:idea` used to be delete-after-one-use; now consuming
+// is an explicit status flip with a backlink (consumed_by_table/-id points at
+// the reply_drafts or scheduled_posts row the idea seeded), and a consumed
+// idea can be re-opened. Rows come from the panel quick-add or the extension's
+// "Send selection to stratus ideas" context menu ($0 DOM, Romanian welcome).
+export const ideas = sqliteTable(
+  'ideas',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    text: text('text').notNull(),
+    sourceUrl: text('source_url'),
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    status: text('status').notNull().default('open'), // open | consumed | discarded
+    consumedByTable: text('consumed_by_table'),
+    consumedById: text('consumed_by_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('ideas_status_created_idx').on(t.status, t.createdAt)],
+);
+
 // Follow-up queue snoozes (CIRCLES-PLAN C5) — conversation_meta pattern for
 // the computed queue: items are recomputed on every GET /x/people/followups,
 // so the only state worth persisting is "stop showing me this one until X".

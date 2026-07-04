@@ -37,6 +37,40 @@ interface Props {
   onClearOpen: () => void;
 }
 
+// C6 first-run note (open question 3): passive capture ships ON, so say so
+// once, visibly, where the captured people appear. Dismiss persists.
+const PASSIVE_NOTE_DISMISSED_KEY = 'c6:passiveNoteDismissed';
+
+function PassiveCaptureNote(): JSX.Element | null {
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    chrome.storage.local
+      .get(PASSIVE_NOTE_DISMISSED_KEY)
+      .then((out) => setShow(out[PASSIVE_NOTE_DISMISSED_KEY] !== true))
+      .catch(() => {
+        /* keep hidden */
+      });
+  }, []);
+
+  if (!show) return null;
+  return (
+    <div className="status-line">
+      👀 Passive capture is <strong>on</strong>: hover cards you see while browsing X grow this
+      roster automatically. Turn it off in Settings.{' '}
+      <button
+        type="button"
+        onClick={() => {
+          setShow(false);
+          void chrome.storage.local.set({ [PASSIVE_NOTE_DISMISSED_KEY]: true });
+        }}
+      >
+        Got it
+      </button>
+    </div>
+  );
+}
+
 export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.Element {
   const [selected, setSelected] = useState<string | null>(openHandle);
 
@@ -54,7 +88,10 @@ export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.E
       {selected ? (
         <DossierView settings={settings} handle={selected} onBack={back} />
       ) : (
-        <PeopleList settings={settings} onOpen={setSelected} />
+        <>
+          <PassiveCaptureNote />
+          <PeopleList settings={settings} onOpen={setSelected} />
+        </>
       )}
     </div>
   );

@@ -2,6 +2,7 @@ import { type JSX, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
+import { IdeasPanel } from './Ideas.tsx';
 import { PeoplePanel } from './People.tsx';
 import { PlaybookPanel } from './Playbook.tsx';
 import { RepliesPanel } from './Replies.tsx';
@@ -18,6 +19,7 @@ type Tab =
   | 'harvest'
   | 'voice'
   | 'replies'
+  | 'ideas'
   | 'playbook'
   | 'settings';
 
@@ -29,6 +31,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'harvest', label: 'Harvest' },
   { id: 'voice', label: 'Voice' },
   { id: 'replies', label: 'Replies' },
+  { id: 'ideas', label: 'Ideas' },
   { id: 'playbook', label: 'Playbook' },
   { id: 'settings', label: 'Settings' },
 ];
@@ -122,6 +125,8 @@ export function App(): JSX.Element {
             settings={settings}
             onOpenPerson={openPerson}
           />
+        ) : activeTab === 'ideas' ? (
+          <IdeasPanel settings={settings} />
         ) : activeTab === 'playbook' ? (
           <PlaybookPanel settings={settings} />
         ) : (

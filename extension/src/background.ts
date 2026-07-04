@@ -29,6 +29,58 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((err) => console.error('[stratus] sidePanel.setPanelBehavior failed', err));
 
+// --------------------------------------------------------- idea capture (C6)
+//
+// Right-click any selected text anywhere → "Send selection to stratus ideas".
+// Selection + page URL land in the Idea Inbox ($0 DOM; Romanian welcome). The
+// action badge flashes ✓/! as feedback — no notifications permission needed.
+
+const IDEA_MENU_ID = 'stratus-send-idea';
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.create(
+    {
+      id: IDEA_MENU_ID,
+      title: 'Send selection to stratus ideas',
+      contexts: ['selection'],
+    },
+    () => {
+      // "duplicate id" on extension reload is expected — swallow it.
+      void chrome.runtime.lastError;
+    },
+  );
+});
+
+function flashBadge(text: string, color: string): void {
+  void chrome.action.setBadgeBackgroundColor({ color });
+  void chrome.action.setBadgeText({ text });
+  setTimeout(() => void chrome.action.setBadgeText({ text: '' }), 2500);
+}
+
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId !== IDEA_MENU_ID) return;
+  const text = info.selectionText?.trim();
+  if (!text) return;
+  void handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/ideas',
+    body: { text, ...(info.pageUrl ? { sourceUrl: info.pageUrl } : {}) },
+  }).then(
+    (res) => {
+      if (res.ok) flashBadge('✓', '#00ba7c');
+      else {
+        console.warn('[stratus] idea capture failed', res.code);
+        flashBadge('!', '#f4212e');
+      }
+    },
+    (err) => {
+      console.warn('[stratus] idea capture failed', err);
+      flashBadge('!', '#f4212e');
+    },
+  );
+});
+
 interface Settings {
   apiUrl: string;
   bearer: string;

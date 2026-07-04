@@ -28,7 +28,7 @@ import { randomUUID } from 'node:crypto';
 import { type SQL, and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { scheduledPosts } from '../db/schema.ts';
+import { ideas, scheduledPosts } from '../db/schema.ts';
 import { containsUrl } from '../endpoints.ts';
 
 const STATUSES = [
@@ -206,14 +206,22 @@ calendar.get('/posts/scheduled/:id', async (c) => {
   const [row] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, id));
   if (!row) return c.json({ error: 'not_found' }, 404);
 
-  if (!row.threadId) return c.json(row);
+  // C6 provenance: the Idea Inbox idea whose consume backlinks this row —
+  // "seeded by" in the detail view, content archaeology for free.
+  const [seed] = await db
+    .select({ id: ideas.id, text: ideas.text, status: ideas.status })
+    .from(ideas)
+    .where(and(eq(ideas.consumedByTable, 'scheduled_posts'), eq(ideas.consumedById, id)));
+  const seededBy = seed ?? null;
+
+  if (!row.threadId) return c.json({ ...row, seededBy });
 
   const thread = await db
     .select()
     .from(scheduledPosts)
     .where(eq(scheduledPosts.threadId, row.threadId))
     .orderBy(asc(scheduledPosts.threadPosition));
-  return c.json({ ...row, thread });
+  return c.json({ ...row, thread, seededBy });
 });
 
 calendar.patch('/posts/scheduled/:id', async (c) => {

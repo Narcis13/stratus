@@ -12,6 +12,7 @@ import { conversations } from './routes/conversations.ts';
 import { drafter } from './routes/drafter.ts';
 import { followups } from './routes/followups.ts';
 import { harvest } from './routes/harvest.ts';
+import { ideasRouter } from './routes/ideas.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
 import { peopleRouter } from './routes/people.ts';
@@ -51,6 +52,9 @@ export function mountX(app: Hono): void {
   // C0: radar draft reads/status flips are $0 and mount without the Grok key;
   // only the insert path (generate-batch, below) needs XAI_API_KEY.
   app.route('/x', radar);
+  // C6: Idea Inbox — pure SQL, always mounted; consumption happens inside the
+  // Grok-gated draft routes, but capture/list/reopen must work without the key.
+  app.route('/x', ideasRouter);
   // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
   // 'followups'/'fans' are valid usernames, so GET /people/:handle would
   // otherwise swallow these static paths as dossier lookups.

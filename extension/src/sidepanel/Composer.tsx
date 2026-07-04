@@ -2,6 +2,7 @@ import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'reac
 import type { PostPillar, PostRegister } from '../shared/types.ts';
 import {
   ApiError,
+  type Idea,
   type PostDraftResponse,
   type ScheduledPost,
   type ScheduledPostWithThread,
@@ -73,6 +74,10 @@ export function ComposerPanel({
 
   // Drafter (§8.1)
   const [idea, setIdea] = useState('');
+  // C6 Idea Inbox: the stored idea the steer was picked from — sent as ideaId
+  // so the server consumes it (status flip + "seeded by" backlink).
+  const [selectedIdeaId, setSelectedIdeaId] = useState('');
+  const [openIdeas, setOpenIdeas] = useState<Idea[]>([]);
   const [pillar, setPillar] = useState<PostPillar | ''>('');
   const [pillarOpts, setPillarOpts] = useState<Array<{ value: string; label: string }>>([
     ANY_PILLAR,
@@ -80,6 +85,20 @@ export function ComposerPanel({
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
+
+  // C6 — open ideas feed the drafter's seed dropdown; free-typing stays allowed.
+  const loadOpenIdeas = useCallback(() => {
+    api.ideas
+      .list(settings, { status: 'open' })
+      .then(setOpenIdeas)
+      .catch(() => {
+        /* dropdown just stays empty; the textarea still works */
+      });
+  }, [settings]);
+
+  useEffect(() => {
+    loadOpenIdeas();
+  }, [loadOpenIdeas]);
 
   // §8.6 — the pillar dropdown follows the editable DB set, not a hardcoded list.
   useEffect(() => {
@@ -307,11 +326,20 @@ export function ComposerPanel({
     setNotice(null);
     try {
       const effectiveIdea = seedIdea !== undefined ? seedIdea : idea.trim();
+      // The inbox link only applies to the typed idea, not a "More like this"
+      // re-seed from a generated draft.
+      const ideaId = seedIdea === undefined && effectiveIdea ? selectedIdeaId : '';
       const res = await api.drafts.generate(settings, {
         ...(pillar ? { pillar } : {}),
         ...(effectiveIdea ? { idea: effectiveIdea } : {}),
+        ...(ideaId ? { ideaId } : {}),
         ...(remixTweetId ? { voiceTweetId: remixTweetId } : {}),
       });
+      if (ideaId) {
+        // Consumed server-side; drop the link and refresh the dropdown.
+        setSelectedIdeaId('');
+        loadOpenIdeas();
+      }
       setDrafts(res.drafts);
       setDraftMeta({ winnersUsed: res.winnersUsed, costUsd: res.costUsd });
       if (seedIdea !== undefined) setIdea(seedIdea);
@@ -410,6 +438,15 @@ export function ComposerPanel({
               {' '}
               · error: <code>{original.errorClass}</code>
             </>
+          )}
+          {original.seededBy && (
+            <div className="muted" title={original.seededBy.text}>
+              seeded by idea: "
+              {original.seededBy.text.length > 100
+                ? `${original.seededBy.text.slice(0, 99)}…`
+                : original.seededBy.text}
+              "
+            </div>
           )}
         </div>
       )}
@@ -601,11 +638,37 @@ export function ComposerPanel({
               ))}
             </select>
           </label>
+          {openIdeas.length > 0 && (
+            <label className="field">
+              <span>Seed from Idea Inbox (optional)</span>
+              <select
+                value={selectedIdeaId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setSelectedIdeaId(id);
+                  const picked = openIdeas.find((i) => i.id === id);
+                  if (picked) setIdea(picked.text);
+                }}
+              >
+                <option value="">— free-typed / none —</option>
+                {openIdeas.map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.text.length > 80 ? `${i.text.slice(0, 79)}…` : i.text}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="field">
             <span>Idea (optional, Romanian OK)</span>
             <textarea
               value={idea}
-              onChange={(e) => setIdea(e.target.value)}
+              onChange={(e) => {
+                setIdea(e.target.value);
+                // Emptying the box drops the inbox link; tweaking keeps it —
+                // the picked idea still seeded whatever ships.
+                if (e.target.value.trim() === '') setSelectedIdeaId('');
+              }}
               rows={2}
               maxLength={2000}
               placeholder="seed for the three drafts…"

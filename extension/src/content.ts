@@ -26,6 +26,15 @@ import type { Band, TweetSignals } from './replyBand.ts';
 import type { ApiRequest, ApiResponse, RadarReport } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 import type { RadarBand, RadarSighting } from './shared/radar.ts';
+import {
+  type HoverCardData,
+  type PersonSighting,
+  SIGHTING_BATCH_MAX,
+  SIGHTING_FLUSH_MS,
+  cardHasData,
+  mergePendingSighting,
+  shouldReportSighting,
+} from './shared/sightings.ts';
 import type {
   AuthorProfile,
   PostContext,
@@ -45,6 +54,9 @@ const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
 const REPLY_SYSTEM_PROMPT_KEY = 'replyMaster:systemPromptOverride';
 const REPLY_IDEA_KEY = 'replyMaster:idea';
+// C6: set when the steer was picked from the Idea Inbox dropdown — rides along
+// as `ideaId` so the server consumes the stored idea (status flip + backlink).
+const REPLY_IDEA_ID_KEY = 'replyMaster:ideaId';
 const REPLY_TOP_COMMENTS_MAX = 10;
 const REPLY_BTN_LABEL = '🪄 Reply Master';
 const SAVE_BTN_LABEL = 'Save to stratus';
@@ -739,12 +751,19 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   let systemPromptOverride: string | undefined;
   let idea: string | undefined;
+  let ideaId: string | undefined;
   try {
-    const out = await chrome.storage.local.get([REPLY_SYSTEM_PROMPT_KEY, REPLY_IDEA_KEY]);
+    const out = await chrome.storage.local.get([
+      REPLY_SYSTEM_PROMPT_KEY,
+      REPLY_IDEA_KEY,
+      REPLY_IDEA_ID_KEY,
+    ]);
     const v = out[REPLY_SYSTEM_PROMPT_KEY];
     if (typeof v === 'string' && v.trim() !== '') systemPromptOverride = v;
     const i = out[REPLY_IDEA_KEY];
     if (typeof i === 'string' && i.trim() !== '') idea = i.trim();
+    const id = out[REPLY_IDEA_ID_KEY];
+    if (idea && typeof id === 'string' && id !== '') ideaId = id;
   } catch (err) {
     console.warn('[stratus] reply master read override failed', err);
   }
@@ -757,6 +776,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
       context: ctx,
       ...(systemPromptOverride ? { systemPromptOverride } : {}),
       ...(idea ? { idea } : {}),
+      ...(ideaId ? { ideaId } : {}),
       ...(force ? { override: true } : {}),
     },
   };
@@ -797,7 +817,9 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   try {
     await chrome.storage.local.set({ [REPLY_MASTER_STORAGE_KEY]: draft });
     // The idea steered this draft; clear it so it can't leak into the next one.
-    if (idea) await chrome.storage.local.remove(REPLY_IDEA_KEY);
+    // (When it came from the Idea Inbox the server already consumed the row —
+    // re-use is one click from the Ideas tab.)
+    if (idea) await chrome.storage.local.remove([REPLY_IDEA_KEY, REPLY_IDEA_ID_KEY]);
   } catch (err) {
     console.warn('[stratus] storage.set lastDraft failed', err);
   }
@@ -984,6 +1006,129 @@ function flushRadar(): void {
   })();
 }
 
+// ------------------------------------------------- passive hover capture (C6)
+//
+// When X renders a hover card because the user hovered a handle naturally, we
+// parse it with the same readers the explicit-save path uses and queue an
+// upsert for POST /x/people/sightings — the roster grows itself from normal
+// browsing, no clicks. No hovers are synthesised here; we only read cards X
+// already drew (the explicit-save path's synthetic hover gets captured too,
+// which is harmless — it upserts the same person). Batched per 2s flush,
+// per-handle resend throttled to 60s; the server dedupes events once a day.
+
+const PASSIVE_CAPTURE_KEY = 'passiveCapture';
+const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
+
+// Default ON (opt-out via Settings): absent key means enabled.
+let passiveCaptureEnabled = true;
+
+function initPassiveCaptureSetting(): void {
+  chrome.storage.local
+    .get(PASSIVE_CAPTURE_KEY)
+    .then((out) => {
+      passiveCaptureEnabled = out[PASSIVE_CAPTURE_KEY] !== false;
+    })
+    .catch(() => {
+      /* keep default */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[PASSIVE_CAPTURE_KEY];
+    if (change) passiveCaptureEnabled = change.newValue !== false;
+  });
+}
+
+// Cards whose parse already produced data — never re-captured. A card seen
+// while still a skeleton (all fields null) is NOT marked, so a later mutation
+// scan retries it once X fills it in.
+const capturedHoverCards = new WeakSet<Element>();
+
+const pendingSightings = new Map<string, PersonSighting>();
+const sightingSentAt = new Map<string, number>();
+let sightingFlushTimer: number | null = null;
+
+// The card's own @handle link is the only reliable identity marker: first
+// anchor whose text starts with '@' and whose pathname is a plain username.
+function hoverCardHandle(card: Element): string | null {
+  for (const a of card.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')) {
+    if (!a.textContent?.trim().startsWith('@')) continue;
+    const seg = a.pathname.split('/').filter(Boolean);
+    const h = seg[0];
+    if (seg.length === 1 && h && HANDLE_RE.test(h) && !RESERVED_HANDLES.has(h.toLowerCase())) {
+      return h.toLowerCase();
+    }
+  }
+  return null;
+}
+
+function parseHoverCardData(card: Element, handle: string): HoverCardData {
+  const nameEl = card.querySelector('[data-testid="User-Name"]');
+  const displayName = nameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  const bio = readHoverCardBio(card, handle);
+  const { followers, following } = readCountsFrom(card);
+  return {
+    displayName,
+    bio,
+    followersCount: followers,
+    followingCount: following,
+    xUserId: readUserIdFromFollowButton(card),
+  };
+}
+
+function capturePassiveHoverCards(): void {
+  if (!passiveCaptureEnabled) return;
+  for (const card of document.querySelectorAll('[data-testid="HoverCard"]')) {
+    if (capturedHoverCards.has(card)) continue;
+    const handle = hoverCardHandle(card);
+    if (!handle) continue;
+    const data = parseHoverCardData(card, handle);
+    if (!cardHasData(data)) continue; // skeleton — retry on a later scan
+    capturedHoverCards.add(card);
+    recordPersonSighting(handle, data);
+  }
+}
+
+function recordPersonSighting(handle: string, card: HoverCardData): void {
+  if (!shouldReportSighting(sightingSentAt.get(handle), Date.now())) return;
+  const sighting: PersonSighting = { handle, card, seenAt: new Date().toISOString() };
+  pendingSightings.set(handle, mergePendingSighting(pendingSightings.get(handle), sighting));
+  if (sightingFlushTimer === null) {
+    sightingFlushTimer = window.setTimeout(flushSightings, SIGHTING_FLUSH_MS);
+  }
+}
+
+function flushSightings(): void {
+  sightingFlushTimer = null;
+  if (pendingSightings.size === 0) return;
+  const sightings = [...pendingSightings.values()].slice(0, SIGHTING_BATCH_MAX);
+  for (const s of sightings) pendingSightings.delete(s.handle);
+  if (pendingSightings.size > 0) {
+    // Overflow beyond one server batch waits for the next window.
+    sightingFlushTimer = window.setTimeout(flushSightings, SIGHTING_FLUSH_MS);
+  }
+
+  if (sightingSentAt.size > 3000) sightingSentAt.clear();
+  const at = Date.now();
+  for (const s of sightings) sightingSentAt.set(s.handle, at);
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/people/sightings',
+    body: { sightings },
+  };
+  void (async () => {
+    try {
+      const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+      if (res && !res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] sighting report failed', res.code);
+      }
+    } catch (err) {
+      console.warn('[stratus] sighting report failed', err);
+    }
+  })();
+}
+
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
@@ -994,6 +1139,7 @@ function scan(root: ParentNode): void {
     if (focusedId) attachReplyMasterButton(article, focusedId);
   }
   syncAuthorButton();
+  capturePassiveHoverCards();
 }
 
 let scheduled = false;
@@ -1012,6 +1158,7 @@ function start(): void {
   injectStyles();
   initHarvest();
   initTypeFromClipboard();
+  initPassiveCaptureSetting();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });

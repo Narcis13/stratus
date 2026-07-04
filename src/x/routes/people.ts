@@ -26,6 +26,12 @@ import {
   voiceTweets,
 } from '../db/schema.ts';
 import { buildAngleCrosstab } from '../people/angles.ts';
+import {
+  type HoverCard,
+  MAX_SIGHTINGS_PER_BATCH,
+  type PersonSightingInput,
+  recordSightings,
+} from '../people/sightings.ts';
 import { isStage } from '../people/stage.ts';
 import { normalizePersonHandle, recomputePerson, upsertPerson } from '../people/store.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
@@ -331,6 +337,76 @@ peopleRouter.patch('/people/:handle', async (c) => {
   if (!row) return c.json({ error: 'not_found' }, 404);
   return c.json(row);
 });
+
+// -------------------------------------------------------------- sightings
+
+// Passive hover capture (C6): batched upserts from hover cards X rendered
+// during natural browsing. $0 — pure DOM data. NOTE: POST, so it can't collide
+// with GET /people/:handle; the events/snapshot once-a-day gates live in
+// ../people/sightings.ts.
+peopleRouter.post('/people/sightings', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!Array.isArray(body.sightings) || body.sightings.length === 0) {
+    return c.json({ error: 'invalid_sightings' }, 400);
+  }
+  if (body.sightings.length > MAX_SIGHTINGS_PER_BATCH) {
+    return c.json({ error: 'too_many_sightings', max: MAX_SIGHTINGS_PER_BATCH }, 400);
+  }
+
+  const inputs: PersonSightingInput[] = [];
+  for (let i = 0; i < body.sightings.length; i++) {
+    const s = body.sightings[i];
+    if (!s || typeof s !== 'object' || Array.isArray(s)) {
+      return c.json({ error: `invalid_sighting_${i}` }, 400);
+    }
+    const r = s as Record<string, unknown>;
+    if (typeof r.handle !== 'string') return c.json({ error: `invalid_sighting_handle_${i}` }, 400);
+    const seenAt = typeof r.seenAt === 'string' ? new Date(r.seenAt) : null;
+    if (!seenAt || Number.isNaN(seenAt.getTime())) {
+      return c.json({ error: `invalid_sighting_seen_at_${i}` }, 400);
+    }
+    const card = parseHoverCard(r.card);
+    if (card === null) return c.json({ error: `invalid_sighting_card_${i}` }, 400);
+    inputs.push({ handle: r.handle, card, seenAt });
+  }
+
+  const result = await recordSightings(inputs);
+  return c.json(result);
+});
+
+function parseHoverCard(value: unknown): HoverCard | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const r = value as Record<string, unknown>;
+  const str = (v: unknown): string | null | undefined =>
+    v === undefined || v === null ? null : typeof v === 'string' ? v : undefined;
+  const num = (v: unknown): number | null | undefined =>
+    v === undefined || v === null
+      ? null
+      : typeof v === 'number' && Number.isFinite(v) && v >= 0
+        ? Math.floor(v)
+        : undefined;
+
+  const displayName = str(r.displayName);
+  const bio = str(r.bio);
+  const xUserId = str(r.xUserId);
+  const followersCount = num(r.followersCount);
+  const followingCount = num(r.followingCount);
+  if (
+    displayName === undefined ||
+    bio === undefined ||
+    xUserId === undefined ||
+    followersCount === undefined ||
+    followingCount === undefined
+  ) {
+    return null;
+  }
+  return { displayName, bio, followersCount, followingCount, xUserId };
+}
 
 // ----------------------------------------------------------- manual events
 

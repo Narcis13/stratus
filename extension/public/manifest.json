@@ -20,7 +20,7 @@
   "side_panel": {
     "default_path": "sidepanel.html"
   },
-  "permissions": ["sidePanel", "storage", "clipboardWrite", "clipboardRead"],
+  "permissions": ["sidePanel", "storage", "clipboardWrite", "clipboardRead", "contextMenus"],
   "host_permissions": [
     "https://x.com/*",
     "https://twitter.com/*",

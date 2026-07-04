@@ -33,9 +33,11 @@ export interface ScheduledPost {
   updatedAt: string;
 }
 
-/** GET /x/posts/scheduled/:id on a thread member carries its siblings. */
+/** GET /x/posts/scheduled/:id on a thread member carries its siblings, plus
+ *  the Idea Inbox idea that seeded it (C6 provenance), when one backlinks. */
 export interface ScheduledPostWithThread extends ScheduledPost {
   thread?: ScheduledPost[];
+  seededBy?: { id: string; text: string; status: IdeaStatus } | null;
 }
 
 export interface CreateBody {
@@ -67,7 +69,45 @@ export type PostRegister = 'plain' | 'spicy' | 'reflective';
 export interface PostDraftBody {
   pillar?: PostPillar;
   idea?: string;
+  /** C6: the Idea Inbox row the steer came from — the server consumes it. */
+  ideaId?: string;
   voiceTweetId?: string;
+}
+
+// --------------------------------------------------------------- ideas (C6)
+
+export type IdeaStatus = 'open' | 'consumed' | 'discarded';
+
+export interface Idea {
+  id: string;
+  text: string;
+  sourceUrl: string | null;
+  tags: string[] | null;
+  status: IdeaStatus;
+  consumedByTable: string | null;
+  consumedById: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IdeasResponse {
+  count: number;
+  ideas: Idea[];
+}
+
+export interface IdeaCreateBody {
+  text: string;
+  sourceUrl?: string;
+  tags?: string[];
+}
+
+export interface IdeaPatchBody {
+  text?: string;
+  sourceUrl?: string | null;
+  tags?: string[] | null;
+  status?: IdeaStatus;
+  consumedByTable?: string;
+  consumedById?: string;
 }
 
 export interface PostReupBody {
@@ -362,6 +402,8 @@ export interface ReplyGenerateBody {
   context: PostContext;
   /** Optional steer (may be Romanian) substituted into the prompt's <idea> tag. */
   idea?: string;
+  /** C6: the Idea Inbox row the steer came from — the server consumes it. */
+  ideaId?: string;
   /** Skip the server-side band gate (§7.3) — mentions are never band-gated. */
   override?: boolean;
   systemPromptOverride?: string;

@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 shipped 2026-07-04; C6 is next.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 shipped 2026-07-04; C7 is next.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
@@ -472,6 +472,24 @@ should I nurture, who's heating up" in one glance.
 ## Phase C6 — Passive contact capture + Idea Inbox
 
 *Goal: the roster grows itself from natural browsing, and ideas stop dying after one use.*
+
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) hover_sighting events dedupe
+> once/day/handle via the deterministic-id trick (`hover_sighting:hover:<handle>:<day>`
+> + INSERT OR IGNORE, `src/x/people/sightings.ts`); person_snapshots points are gated
+> once/day/handle too — momentum is followers/day, sub-daily points are resend noise.
+> (2) The content script sends batches through the existing background ApiRequest
+> channel (no new message type needed; the pure throttle/merge core is
+> `extension/src/shared/sightings.ts`, bun:tested). Skeleton cards (all-null parse)
+> are retried on later scans instead of being marked captured. (3) Idea consumption is
+> SERVER-side on the paying path: /replies/generate and /posts/draft accept `ideaId`
+> and consume after their insert (consumeIdeaSafe only advances `open`, never clobbers
+> first provenance, never fails the draft); a band-gate refusal leaves the idea open.
+> (4) The drafter's 3-draft batch backlinks the FIRST inserted row. (5) Reply Master
+> carries the picked idea via a second storage key `replyMaster:ideaId`; both keys
+> clear after a successful generate (the row is consumed — reopen is one click).
+> (6) First-run note (open question 3) is a dismissible line atop the People tab.
+> See CLAUDE.md phase status for the full entry; `scripts/smoke-c6.ts` is the
+> rerunnable check ($0).
 
 - **Passive hover capture.** Content script: when X renders a hover card because the
   **user hovered naturally** (no synthesized events beyond the existing explicit-save

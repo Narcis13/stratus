@@ -43,6 +43,13 @@
       "when": 1783168260784,
       "tag": "0005_stormy_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1783169824140,
+      "tag": "0006_condemned_captain_stacy",
+      "breakpoints": true
     }
   ]
 }

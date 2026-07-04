@@ -45,6 +45,7 @@ import {
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
+import { consumeIdeaSafe } from './ideas.ts';
 import { getActivePillars } from './pillars.ts';
 import { loadReplyGuidanceSafe } from './playbook.ts';
 import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
@@ -90,6 +91,9 @@ const MAX_OUTCOMES_LIMIT = 1000;
 interface RawBody {
   context?: unknown;
   idea?: unknown;
+  // C6 Idea Inbox: when the steer came from a stored idea, its id rides along
+  // so a successful draft consumes it (status flip + backlink, routes/ideas.ts).
+  ideaId?: unknown;
   override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
@@ -127,6 +131,14 @@ replies.post('/replies/generate', async (c) => {
     }
     const trimmed = body.idea.trim();
     if (trimmed !== '') idea = trimmed;
+  }
+
+  let ideaId: string | undefined;
+  if (body.ideaId !== undefined && body.ideaId !== null) {
+    if (typeof body.ideaId !== 'string' || !UUID_RE.test(body.ideaId)) {
+      return c.json({ error: 'invalid_idea_id' }, 400);
+    }
+    ideaId = body.ideaId;
   }
 
   let model: string | undefined;
@@ -276,6 +288,11 @@ replies.post('/replies/generate', async (c) => {
       status: 'generated',
     })
     .returning();
+
+  // C6: the steer came from the Idea Inbox — consume it with the backlink.
+  // A band-gate refusal or Grok failure never reaches here, so a failed
+  // generate leaves the idea open.
+  if (ideaId && row) await consumeIdeaSafe(ideaId, 'reply_drafts', row.id);
 
   return c.json(row, 201);
 });

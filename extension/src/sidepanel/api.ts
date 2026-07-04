@@ -28,6 +28,11 @@ import {
   type FollowupKind,
   type FollowupSnoozeBody,
   type FollowupsResponse,
+  type Idea,
+  type IdeaCreateBody,
+  type IdeaPatchBody,
+  type IdeaStatus,
+  type IdeasResponse,
   type ListOpts,
   type Mention,
   type MentionPatchBody,
@@ -100,6 +105,11 @@ export type {
   FollowupKind,
   FollowupSnoozeBody,
   FollowupsResponse,
+  Idea,
+  IdeaCreateBody,
+  IdeaPatchBody,
+  IdeaStatus,
+  IdeasResponse,
   ListOpts,
   Mention,
   PillarCreateBody,
@@ -315,6 +325,29 @@ export const api = {
       return request<unknown>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
       });
+    },
+  },
+
+  // C6 — the Idea Inbox: capture seeds, consume them explicitly, reopen freely.
+  ideas: {
+    list(s: Settings, opts: { status?: IdeaStatus | 'all'; limit?: number } = {}): Promise<Idea[]> {
+      const q = new URLSearchParams();
+      if (opts.status) q.set('status', opts.status);
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<IdeasResponse>(s, `/x/ideas${qs ? `?${qs}` : ''}`).then((r) => r.ideas);
+    },
+
+    create(s: Settings, body: IdeaCreateBody): Promise<Idea> {
+      return request<Idea>(s, '/x/ideas', { method: 'POST', body });
+    },
+
+    patch(s: Settings, id: string, body: IdeaPatchBody): Promise<Idea> {
+      return request<Idea>(s, `/x/ideas/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    },
+
+    remove(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/ideas/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
   },
 

@@ -31,6 +31,7 @@ export function SettingsPanel(): JSX.Element {
   const [bearer, setBearer] = useState('');
   const [applyPillarsToReplies, setApplyPillarsToReplies] = useState(false);
   const [autoTypeReplyDraft, setAutoTypeReplyDraft] = useState(false);
+  const [passiveCapture, setPassiveCapture] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [cursors, setCursors] = useState<HarvestCursor[]>([]);
@@ -41,6 +42,7 @@ export function SettingsPanel(): JSX.Element {
       setBearer(s.bearer);
       setApplyPillarsToReplies(s.applyPillarsToReplies);
       setAutoTypeReplyDraft(s.autoTypeReplyDraft);
+      setPassiveCapture(s.passiveCapture);
     });
     void loadHarvestCursors().then(setCursors);
   }, []);
@@ -54,7 +56,13 @@ export function SettingsPanel(): JSX.Element {
     e.preventDefault();
     setSaving(true);
     setSaved(false);
-    const next: Settings = { apiUrl, bearer, applyPillarsToReplies, autoTypeReplyDraft };
+    const next: Settings = {
+      apiUrl,
+      bearer,
+      applyPillarsToReplies,
+      autoTypeReplyDraft,
+      passiveCapture,
+    };
     await saveSettings(next);
     setSaving(false);
     setSaved(true);
@@ -116,6 +124,19 @@ export function SettingsPanel(): JSX.Element {
           }}
         />
         <span>Auto-type Reply Master drafts into the reply box (default off)</span>
+      </label>
+
+      <label className="row voice-toggle" style={{ marginTop: 8 }}>
+        <input
+          type="checkbox"
+          checked={passiveCapture}
+          onChange={(e) => {
+            const v = e.target.checked;
+            setPassiveCapture(v);
+            void patchSettings({ passiveCapture: v });
+          }}
+        />
+        <span>Passive contact capture from hover cards (default on)</span>
       </label>
 
       <div className="row">
