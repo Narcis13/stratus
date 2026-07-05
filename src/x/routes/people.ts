@@ -10,10 +10,12 @@
 //   PATCH /people/:handle           notes, tags, stage override (may demote), retired
 //   POST  /people/:handle/events    manual log entry (note | manual_dm_logged)
 
-import { type SQL, and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import { GrokApiError, askGrok } from '../../grok/index.ts';
 import {
+  channels,
   mentions,
   metricsSnapshots,
   people,
@@ -27,12 +29,20 @@ import {
 } from '../db/schema.ts';
 import { buildAngleCrosstab } from '../people/angles.ts';
 import {
+  ICEBREAKER_SCHEMA,
+  MAX_GROUNDING_EXCHANGES,
+  MAX_GROUNDING_TWEETS,
+  buildIcebreakerInput,
+  parseIcebreakers,
+  renderIcebreakerGrounding,
+} from '../people/icebreakers.ts';
+import {
   type HoverCard,
   MAX_SIGHTINGS_PER_BATCH,
   type PersonSightingInput,
   recordSightings,
 } from '../people/sightings.ts';
-import { isStage } from '../people/stage.ts';
+import { INBOUND_TYPES, OUTBOUND_TYPES, type Stage, isStage } from '../people/stage.ts';
 import { normalizePersonHandle, recomputePerson, upsertPerson } from '../people/store.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
 import { buildReplyOutcomes } from './replies.ts';
@@ -455,6 +465,116 @@ peopleRouter.post('/people/:handle/events', async (c) => {
   const [person] = await db.select().from(people).where(eq(people.handle, handle));
   const [event] = await db.select().from(personEvents).where(eq(personEvents.id, id));
   return c.json({ person, event }, 201);
+});
+
+// ------------------------------------------------------- icebreakers (C9)
+
+// "Suggest an opener": one Grok call (~$0.005) grounded STRICTLY on real
+// shared context. Order matters for $0 paths: unknown person → 404 and no
+// shared context → 422 are decided BEFORE the XAI_API_KEY check, so smoke
+// tests and thin dossiers never risk a Grok call.
+peopleRouter.post('/people/:handle/icebreakers', async (c) => {
+  const handle = normalizePersonHandle(c.req.param('handle'));
+  if (!handle) return c.json({ error: 'invalid_handle' }, 400);
+
+  const [person] = await db.select().from(people).where(eq(people.handle, handle));
+  if (!person) return c.json({ error: 'not_found' }, 404);
+
+  const [voiceAuthor] = await db
+    .select({ bio: voiceAuthors.bio, displayName: voiceAuthors.displayName })
+    .from(voiceAuthors)
+    .where(eq(voiceAuthors.handle, handle));
+
+  const [exchangeRows, savedTweets, channelRows] = await Promise.all([
+    db
+      .select({ type: personEvents.type, at: personEvents.at, summary: personEvents.summary })
+      .from(personEvents)
+      .where(
+        and(
+          eq(personEvents.handle, handle),
+          isNotNull(personEvents.summary),
+          inArray(personEvents.type, [...INBOUND_TYPES, ...OUTBOUND_TYPES]),
+        ),
+      )
+      .orderBy(desc(personEvents.at))
+      .limit(MAX_GROUNDING_EXCHANGES),
+    db
+      .select({ text: voiceTweets.text, createdAt: voiceTweets.createdAt, tags: voiceTweets.tags })
+      .from(voiceTweets)
+      .where(and(eq(voiceTweets.authorHandle, handle), eq(voiceTweets.retired, false)))
+      .orderBy(desc(voiceTweets.createdAt))
+      .limit(MAX_GROUNDING_TWEETS),
+    db.select({ slug: channels.slug }).from(channels).where(eq(channels.active, true)),
+  ]);
+
+  const channelSlugs = new Set(channelRows.map((r) => r.slug));
+  const theirTags = new Set<string>(person.tags ?? []);
+  for (const t of savedTweets) for (const tag of t.tags ?? []) theirTags.add(tag);
+  const sharedChannels = [...theirTags].filter((t) => channelSlugs.has(t));
+
+  const grounding = renderIcebreakerGrounding(
+    {
+      handle,
+      displayName: person.displayName ?? voiceAuthor?.displayName ?? null,
+      stage: person.stage as Stage,
+      bio: person.bio ?? voiceAuthor?.bio ?? null,
+      notes: person.notes,
+      exchanges: exchangeRows.map((e) => ({
+        direction: (INBOUND_TYPES as readonly string[]).includes(e.type)
+          ? ('inbound' as const)
+          : ('outbound' as const),
+        at: e.at,
+        summary: e.summary as string,
+      })),
+      savedTweets: savedTweets.map((t) => ({ text: t.text, createdAt: t.createdAt })),
+      sharedChannels,
+    },
+    new Date(),
+  );
+  if (grounding === null) return c.json({ error: 'no_shared_context' }, 422);
+
+  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+
+  let result: Awaited<ReturnType<typeof askGrok>>;
+  try {
+    result = await askGrok({
+      messages: buildIcebreakerInput(grounding),
+      reasoningEffort: 'low',
+      maxOutputTokens: 400,
+      temperature: 0.7,
+      jsonSchema: { name: 'icebreakers', schema: ICEBREAKER_SCHEMA },
+      promptCacheKey: 'stratus-icebreaker',
+    });
+  } catch (err) {
+    if (err instanceof GrokApiError) {
+      return c.json(
+        {
+          error: 'grok_upstream_error',
+          status: err.status,
+          message: err.message,
+          requestId: err.requestId,
+        },
+        err.status === 429 ? 429 : 502,
+      );
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/people/:handle/icebreakers failed:', detail);
+    return c.json({ error: 'icebreakers_failed', detail }, 502);
+  }
+
+  const icebreakers = parseIcebreakers(result.text);
+  if (!icebreakers) return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+
+  // The grounding rides back so the panel can show exactly what the openers
+  // were allowed to know — trust through transparency, nothing persisted.
+  return c.json({
+    handle,
+    icebreakers,
+    grounding,
+    model: result.model,
+    costUsd: result.costUsd,
+    requestId: result.requestId,
+  });
 });
 
 // ---------------------------------------------------------------- helpers

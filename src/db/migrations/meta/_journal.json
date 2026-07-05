@@ -57,6 +57,13 @@
       "when": 1783200255679,
       "tag": "0007_clever_gamora",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1783259439415,
+      "tag": "0008_cloudy_aaron_stack",
+      "breakpoints": true
     }
   ]
 }

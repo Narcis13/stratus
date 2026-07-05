@@ -631,6 +631,73 @@ export interface Brief {
     totalUsd: number;
     byPlatform: Array<{ platform: string; costUsd: number; calls: number }>;
   };
+  quests: BriefQuests;
+}
+
+// -------------------------------------------------------------- quests (C9)
+
+export type QuestKey = 'replies' | 'original' | 'targets' | 'loop' | 'launch';
+
+export interface Quest {
+  key: QuestKey;
+  label: string;
+  n: number;
+  /** 0 means the quest had no opportunity today (vacuously done). */
+  target: number;
+  done: boolean;
+  note: string | null;
+}
+
+export interface BriefQuests {
+  day: string;
+  items: Quest[];
+  streak: { current: number; todayComplete: boolean };
+}
+
+// -------------------------------------------------------------- digest (C9)
+
+export interface DigestFacts {
+  weekKey: string;
+  from: string;
+  to: string;
+  followers: { start: number | null; end: number | null; delta: number | null };
+  activity: { posts: number; replies: number; replyPct: number | null };
+  topTweets: Array<{
+    text: string;
+    isReply: boolean;
+    views: number | null;
+    profileVisits: number | null;
+  }>;
+  stageTransitions: Array<{ handle: string; stage: string }>;
+  topFans: Array<{ handle: string; inbound: number; newThisWeek: boolean }>;
+  neglected: { targets: string[]; allies: string[] };
+  spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
+  quests: { daysAllDone: number; daysTracked: number };
+  guidance: { reply: string | null; post: string | null };
+}
+
+export interface DigestResponse {
+  weekKey: string;
+  from: string;
+  to: string;
+  facts: DigestFacts;
+  narrative: string | null;
+  narrativeError?: string;
+  model?: string | null;
+  costUsd?: number | null;
+  cached: boolean;
+  generatedAt?: string;
+}
+
+// --------------------------------------------------------- icebreakers (C9)
+
+export interface IcebreakersResponse {
+  handle: string;
+  icebreakers: { reply: string; dm: string };
+  /** Exactly what the openers were allowed to know — shown for transparency. */
+  grounding: string;
+  model: string;
+  costUsd: number;
 }
 
 // ---------------------------------------------------------------- people (C1)

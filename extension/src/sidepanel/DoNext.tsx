@@ -4,6 +4,7 @@
 // momentum lines. One $0 GET; snoozes persist server-side (followup_snoozes).
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { IcebreakerBox } from './Icebreakers.tsx';
 import {
   ApiError,
   type FollowupItem,
@@ -34,6 +35,8 @@ export function DoNextSection({
   const [data, setData] = useState<FollowupsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  // C9: at most one opener box open at a time — it's a nudge, not a workbench.
+  const [openerHandle, setOpenerHandle] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -118,6 +121,16 @@ export function DoNextSection({
                   )}
                   <button
                     type="button"
+                    className="donext-opener"
+                    title="Suggest an opener (C9)"
+                    onClick={() =>
+                      setOpenerHandle(openerHandle === item.handle ? null : item.handle)
+                    }
+                  >
+                    opener
+                  </button>
+                  <button
+                    type="button"
                     className="donext-snooze"
                     title={`Snooze ${SNOOZE_HOURS}h`}
                     disabled={busyKey === `${item.kind}:${item.handle}`}
@@ -125,6 +138,11 @@ export function DoNextSection({
                   >
                     zz
                   </button>
+                  {openerHandle === item.handle && (
+                    <div className="donext-opener-box">
+                      <IcebreakerBox settings={settings} handle={item.handle} />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

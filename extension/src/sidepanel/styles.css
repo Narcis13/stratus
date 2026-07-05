@@ -2056,3 +2056,135 @@ button.danger:hover:not(:disabled) {
   border-style: dashed;
   color: var(--text);
 }
+
+/* ------------------------------------------------- C9: quests & streaks */
+
+.donext-row {
+  flex-wrap: wrap;
+}
+
+.quest-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.quest-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.quest-mark {
+  width: 14px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.quest-done .quest-mark {
+  color: var(--ok);
+}
+
+.quest-done .quest-label {
+  color: var(--muted);
+}
+
+.quest-progress {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+.quest-streak {
+  font-weight: normal;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------- C9: Sunday digest */
+
+.digest-narrative p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.digest-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.digest-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+
+/* ------------------------------------------------------ C9: icebreakers */
+
+.icebreaker-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.icebreaker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.icebreaker-kind {
+  flex-shrink: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.icebreaker-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+}
+
+.icebreaker-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.icebreaker-grounding {
+  margin: 0;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.donext-opener {
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.donext-opener-box {
+  flex-basis: 100%;
+  margin-top: 4px;
+}

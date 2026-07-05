@@ -6,6 +6,7 @@
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ChannelTagPicker } from './ChannelTags.tsx';
+import { IcebreakerBox } from './Icebreakers.tsx';
 import {
   ApiError,
   type PersonAngleCell,
@@ -353,6 +354,13 @@ function Dossier({
 
       <NotesEditor settings={settings} handle={person.handle} initial={person.notes} />
       <QuickLog settings={settings} handle={person.handle} onLogged={onChanged} />
+
+      {/* C9 — two Grok-drafted conversation starters, grounded strictly on
+          this dossier. Sending stays manual. */}
+      <section className="brief-section">
+        <h3>Openers</h3>
+        <IcebreakerBox settings={settings} handle={person.handle} />
+      </section>
 
       {replies.count > 0 && (
         <section className="brief-section">

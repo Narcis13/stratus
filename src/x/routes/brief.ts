@@ -8,17 +8,30 @@
 // for UTC+3). Spend stays anchored to the UTC day so the number matches
 // /cost/today and the X billing window.
 
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
 import {
   accountSnapshots,
+  mentions,
   metricsSnapshots,
   postsPublished,
   replyDrafts,
   scheduledPosts,
+  streaks,
+  voiceAuthors,
 } from '../db/schema.ts';
+import {
+  allQuestsDone,
+  completedMap,
+  computeQuests,
+  computeStreak,
+  launchesAttended,
+  localDayKey,
+  neglectedTargetsAtDayStart,
+} from '../quests.ts';
+import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -186,7 +199,7 @@ brief.get('/brief', async (c) => {
   const utcDayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const utcDayEnd = new Date(utcDayStart.getTime() + DAY_MS);
 
-  const [snaps, published, scheduled, [postedDrafts], costRows] = await Promise.all([
+  const [snaps, published, scheduled, postedDraftRows, costRows] = await Promise.all([
     db
       .select({
         snapshotAt: accountSnapshots.snapshotAt,
@@ -224,9 +237,13 @@ brief.get('/brief', async (c) => {
     // A posted draft is near-terminal (only → discarded), so updatedAt is in
     // effect "when the human pasted it" — the only realtime posted signal we
     // have; manual replies posted outside Reply Master only show up after the
-    // next 03:00 discovery pass.
+    // next 03:00 discovery pass. Full rows (not a count) since C9: the quest
+    // block needs paste times (launch attendance) and handles (targets quest).
     db
-      .select({ n: sql<string>`count(*)` })
+      .select({
+        updatedAt: replyDrafts.updatedAt,
+        sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
+      })
       .from(replyDrafts)
       .where(
         and(
@@ -296,6 +313,106 @@ brief.get('/brief', async (c) => {
     })
     .sort((a, b) => b.costUsd - a.costUsd);
 
+  // ---------------------------------------------------------- quests (C9)
+  // All from rows already collected by other surfaces — no new reads billed.
+
+  const todayPublished = published.filter(
+    (p) => p.postedAt >= todayStart && p.postedAt < tomorrowStart,
+  );
+  const originalsToday = todayPublished.filter((p) => !p.isReply);
+  const replyPasteTimes = postedDraftRows.map((d) => d.updatedAt);
+
+  const [voiceRows, [answeredToday], [unansweredNow]] = await Promise.all([
+    db
+      .select({ handle: voiceAuthors.handle, followersCount: voiceAuthors.followersCount })
+      .from(voiceAuthors)
+      .where(eq(voiceAuthors.retired, false)),
+    db
+      .select({ n: sql<string>`count(*)` })
+      .from(mentions)
+      .where(
+        and(
+          eq(mentions.status, 'answered'),
+          gte(mentions.answeredAt, todayStart),
+          lt(mentions.answeredAt, tomorrowStart),
+        ),
+      ),
+    db.select({ n: sql<string>`count(*)` }).from(mentions).where(eq(mentions.status, 'unanswered')),
+  ]);
+
+  // Target roster = the same 2–10x band as /voice/targets; empty until the
+  // first daily pass writes an account snapshot.
+  const myFollowers = snaps.at(-1)?.followersCount ?? null;
+  const targetHandles = new Set<string>();
+  if (myFollowers !== null) {
+    const band = targetBand(myFollowers);
+    for (const a of voiceRows) {
+      if (a.followersCount !== null && a.followersCount >= band.min && a.followersCount <= band.max)
+        targetHandles.add(a.handle);
+    }
+  }
+
+  // Each target's last pasted reply BEFORE today — "neglected at day start"
+  // must not be erased by the very reply that satisfies the quest.
+  const priorOutbound = new Map<string, Date>();
+  if (targetHandles.size > 0) {
+    const priorRows = await db
+      .select({
+        handle: sql<string>`lower(${replyDrafts.sourceAuthorUsername})`,
+        last: sql`max(${replyDrafts.updatedAt})`.mapWith(replyDrafts.updatedAt),
+      })
+      .from(replyDrafts)
+      .where(
+        and(
+          eq(replyDrafts.status, 'posted'),
+          lt(replyDrafts.updatedAt, todayStart),
+          inArray(sql`lower(${replyDrafts.sourceAuthorUsername})`, [...targetHandles]),
+        ),
+      )
+      .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`);
+    for (const r of priorRows) priorOutbound.set(r.handle, r.last);
+  }
+  const neglectedAtStart = neglectedTargetsAtDayStart(targetHandles, priorOutbound, todayStart);
+  const repliedTodayHandles = new Set(
+    postedDraftRows.map((d) => d.sourceAuthorUsername.toLowerCase()),
+  );
+  let targetsTouched = 0;
+  for (const h of neglectedAtStart) if (repliedTodayHandles.has(h)) targetsTouched++;
+
+  const questItems = computeQuests({
+    repliesPostedToday: postedDraftRows.length,
+    repliesTarget: REPLY_TARGET.min,
+    originalsPostedToday: originalsToday.length,
+    neglectedTargetsAtDayStart: neglectedAtStart.size,
+    neglectedTargetsTouched: targetsTouched,
+    loopsClosedToday: Number(answeredToday?.n ?? 0),
+    openLoopsNow: Number(unansweredNow?.n ?? 0),
+    launchesToday: originalsToday.length,
+    launchesAttended: launchesAttended(
+      originalsToday.map((p) => p.postedAt),
+      replyPasteTimes,
+    ),
+  });
+
+  // Idempotent per day: every brief read overwrites today's row with the
+  // freshest quest state — the streak table is a diary, not an event log.
+  const dayKey = localDayKey(now, tzOffsetMin);
+  const completed = completedMap(questItems);
+  const allDone = allQuestsDone(questItems);
+  await db
+    .insert(streaks)
+    .values({ day: dayKey, completed, allDone, updatedAt: now })
+    .onConflictDoUpdate({
+      target: streaks.day,
+      set: { completed, allDone, updatedAt: now },
+    });
+  const streakRows = await db
+    .select({ day: streaks.day, allDone: streaks.allDone })
+    .from(streaks)
+    .orderBy(desc(streaks.day))
+    .limit(400);
+  const streak = computeStreak(streakRows, dayKey);
+
   return c.json({
     generatedAt: now,
     tzOffsetMin,
@@ -323,8 +440,13 @@ brief.get('/brief', async (c) => {
       gaps,
     },
     replyQuota: {
-      postedToday: Number(postedDrafts?.n ?? 0),
+      postedToday: postedDraftRows.length,
       target: REPLY_TARGET,
+    },
+    quests: {
+      day: dayKey,
+      items: questItems,
+      streak,
     },
     week: {
       from: weekAgo,

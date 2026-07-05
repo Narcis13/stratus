@@ -6,12 +6,13 @@
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ConversationsSection } from './Conversations.tsx';
+import { DigestSection } from './Digest.tsx';
 import { DoNextSection } from './DoNext.tsx';
 import { FansSection } from './Fans.tsx';
 import { LaunchRoomSection } from './LaunchRoom.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
-import { ApiError, type Brief, type BriefTweet, api } from './api.ts';
+import { ApiError, type Brief, type BriefQuests, type BriefTweet, api } from './api.ts';
 import { formatTime } from './datetime.ts';
 import type { Settings } from './storage.ts';
 
@@ -57,6 +58,9 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
           post fires; renders nothing outside that window. */}
       <LaunchRoomSection settings={settings} onOpenPerson={onOpenPerson} />
 
+      {/* Today's quests + streak (C9) — gentle checkmarks, never guilt. */}
+      {brief?.quests && <QuestsSection quests={brief.quests} />}
+
       {/* The follow-up queue (C5), capped at 5 — who do I owe, who to
           nurture, who's heating up. */}
       <DoNextSection settings={settings} onOpenPerson={onOpenPerson} />
@@ -84,7 +88,42 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
           <SpendLine brief={brief} />
         </>
       )}
+
+      {/* Sunday Digest (C9) — auto on Sundays, on demand the rest of the week. */}
+      <DigestSection settings={settings} />
     </div>
+  );
+}
+
+function QuestsSection({ quests }: { quests: BriefQuests }): JSX.Element {
+  const hit = quests.items.filter((q) => q.done).length;
+  return (
+    <section className="brief-section">
+      <h3>
+        Today's quests
+        <span className="quest-streak">
+          {quests.streak.current > 0
+            ? ` · ${quests.streak.current}-day streak`
+            : hit === quests.items.length
+              ? ' · streak starts today'
+              : ''}
+        </span>
+      </h3>
+      <ul className="quest-list">
+        {quests.items.map((q) => (
+          <li key={q.key} className={`quest-row${q.done ? ' quest-done' : ''}`}>
+            <span className="quest-mark">{q.done ? '✓' : '○'}</span>
+            <span className="quest-label">{q.label}</span>
+            <span className="quest-progress muted">
+              {q.note ?? (q.target > 0 ? `${q.n}/${q.target}` : '')}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {hit === quests.items.length && (
+        <div className="ok">All done — the rest of the day is yours.</div>
+      )}
+    </section>
   );
 }
 

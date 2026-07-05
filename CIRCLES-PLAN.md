@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 is next.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 + C9 shipped 2026-07-05. All phases complete.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
@@ -613,8 +613,9 @@ own-post performance of that topic on one screen.
 ## 3. New surface summary
 
 **Tables:** people, person_events, person_snapshots, radar_drafts, conversation_meta,
-ideas, channels, streaks (+ nullable columns: scheduled_posts.register, tags on
-voice_tweets/radar_drafts).
+ideas, channels, streaks, digests (C9 addition: caches the one weekly narration so
+re-opening the panel on Sunday never re-spends) (+ nullable columns:
+scheduled_posts.register, tags on voice_tweets/radar_drafts).
 
 **Routes:** /x/people (+/:handle, /followups, /fans, /sightings), /x/conversations,
 /x/radar/drafts, /x/playbook, /x/ideas, /x/channels, /x/digest.

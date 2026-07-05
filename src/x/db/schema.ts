@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // Migrated from Postgres (Neon) to local SQLite (bun:sqlite). Type mapping:
 //   timestamptz   -> integer({ mode: 'timestamp_ms' })  (epoch ms; app sees Date)
@@ -456,6 +456,38 @@ export const ideas = sqliteTable(
 export const followupSnoozes = sqliteTable('followup_snoozes', {
   itemKey: text('item_key').primaryKey(),
   snoozedUntil: integer('snoozed_until', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Quests & streaks (CIRCLES-PLAN C9): one row per LOCAL day (YYYY-MM-DD in the
+// viewer's timezone), written by the brief route on read — idempotent per day,
+// the last read of the day wins. `completed` maps quest key → hit; `allDone` is
+// the streak predicate. A day the panel never opened has no row and reads as a
+// break: the streak measures showing up, gently — no back-writing history.
+export const streaks = sqliteTable('streaks', {
+  day: text('day').primaryKey(),
+  completed: text('completed', { mode: 'json' }).$type<Record<string, boolean>>().notNull(),
+  allDone: integer('all_done', { mode: 'boolean' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Sunday Digest (CIRCLES-PLAN C9): the week's facts + the one Grok narration,
+// cached per week so re-opening the panel on Sunday never re-spends the ~$0.01
+// call. week_key = ISO date of the local Monday the week starts on; an explicit
+// ?refresh=true is the only path that regenerates.
+export const digests = sqliteTable('digests', {
+  weekKey: text('week_key').primaryKey(),
+  facts: text('facts', { mode: 'json' }).notNull(),
+  narrative: text('narrative').notNull(),
+  model: text('model').notNull(),
+  costUsd: real('cost_usd'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),

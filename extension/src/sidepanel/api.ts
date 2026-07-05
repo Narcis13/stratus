@@ -13,6 +13,7 @@ import {
   type BatchReplyResponse,
   type BatchReplyTweet,
   type Brief,
+  type BriefQuests,
   type BriefTweet,
   type Channel,
   type ChannelAggregate,
@@ -26,12 +27,15 @@ import {
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
+  type DigestFacts,
+  type DigestResponse,
   type FanItem,
   type FansResponse,
   type FollowupItem,
   type FollowupKind,
   type FollowupSnoozeBody,
   type FollowupsResponse,
+  type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
   type IdeaPatchBody,
@@ -94,7 +98,11 @@ export type {
   BatchReplyResponse,
   BatchReplyTweet,
   Brief,
+  BriefQuests,
   BriefTweet,
+  DigestFacts,
+  DigestResponse,
+  IcebreakersResponse,
   Channel,
   ChannelAggregate,
   ChannelCreateBody,
@@ -189,6 +197,15 @@ export const api = {
   // getTimezoneOffset() is UTC − local (e.g. -180 for UTC+3).
   brief(s: Settings): Promise<Brief> {
     return request<Brief>(s, `/x/brief?tzOffsetMin=${new Date().getTimezoneOffset()}`);
+  },
+
+  // C9 — the Sunday Digest. Cached per week server-side; only refresh=true
+  // re-spends the ~$0.01 narration call.
+  digest(s: Settings, opts: { week?: string; refresh?: boolean } = {}): Promise<DigestResponse> {
+    const q = new URLSearchParams({ tzOffsetMin: String(new Date().getTimezoneOffset()) });
+    if (opts.week) q.set('week', opts.week);
+    if (opts.refresh) q.set('refresh', 'true');
+    return request<DigestResponse>(s, `/x/digest?${q.toString()}`);
   },
 
   list(s: Settings, opts: ListOpts = {}): Promise<ScheduledPost[]> {
@@ -461,6 +478,15 @@ export const api = {
 
     snoozeFollowup(s: Settings, body: FollowupSnoozeBody): Promise<unknown> {
       return request<unknown>(s, '/x/people/followups', { method: 'PATCH', body });
+    },
+
+    // C9 — two conversation starters grounded strictly on real shared context.
+    icebreakers(s: Settings, handle: string): Promise<IcebreakersResponse> {
+      return request<IcebreakersResponse>(
+        s,
+        `/x/people/${encodeURIComponent(handle)}/icebreakers`,
+        { method: 'POST', body: {} },
+      );
     },
 
     // C5 — Top Fans: inbound-ranked "people who already notice you".

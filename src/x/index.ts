@@ -10,6 +10,7 @@ import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
 import { channelsRouter } from './routes/channels.ts';
 import { conversations } from './routes/conversations.ts';
+import { digest } from './routes/digest.ts';
 import { drafter } from './routes/drafter.ts';
 import { followups } from './routes/followups.ts';
 import { harvest } from './routes/harvest.ts';
@@ -69,6 +70,9 @@ export function mountX(app: Hono): void {
   app.route('/x', launch);
   // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.
   app.route('/x', conversations);
+  // C9: Sunday Digest — facts are $0 SQL; the one weekly narration checks
+  // XAI_API_KEY at runtime and degrades to facts-only without it.
+  app.route('/x', digest);
   // C4: the Playbook — pure SQL over measured outcomes, $0; only its
   // extract-winners POST needs Grok and it checks XAI_API_KEY at runtime.
   app.route('/x', playbook);
