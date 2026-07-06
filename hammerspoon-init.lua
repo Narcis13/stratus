@@ -34,7 +34,18 @@ hs.hotkey.bind({"cmd", "alt", "ctrl"}, "V", function()
       return
     end
     local c = chars[i]
-    hs.eventtap.keyStrokes(c)
+    if c == "\n" and chars[i - 1] == "\r" then
+      -- \r\n (Windows): am trimis deja Return la \r, sărim peste \n
+      i = i + 1
+      pendingTimer = hs.timer.doAfter(0, typeNext)
+      return
+    end
+    if c == "\n" or c == "\r" then
+      -- keyStrokes nu emite newline; trimitem o apăsare reală de Return
+      hs.eventtap.keyStroke({}, "return", 0)
+    else
+      hs.eventtap.keyStrokes(c)
+    end
     i = i + 1
 
     -- delay neregulat: ~20–70ms între caractere normale
