@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { personEvents } from '../db/schema.ts';
+import { accountSnapshots, personEvents, voiceAuthors } from '../db/schema.ts';
 import { logPersonEvents } from '../people/store.ts';
 import { buildAngleCrosstab, peopleRouter } from './people.ts';
 
@@ -150,6 +150,42 @@ describe('people routes', () => {
       (await send(`/x/people/${H}/events`, 'POST', { type: 'my_reply', summary: 'x' })).status,
     ).toBe(400);
     expect((await send(`/x/people/${H}/events`, 'POST', { type: 'note' })).status).toBe(400);
+  });
+});
+
+describe('GET /people/rankmap (S0.3)', () => {
+  beforeAll(async () => {
+    // "My size" = 1000 → 2–10x band is 2000–10000.
+    await db.insert(accountSnapshots).values({
+      followersCount: 1000,
+      followingCount: 100,
+      tweetCount: 500,
+      listedCount: 5,
+    });
+    await db.insert(voiceAuthors).values([
+      { handle: 'rankmap_target', followersCount: 5000, retired: false },
+      { handle: 'rankmap_toobig', followersCount: 50000, retired: false },
+      { handle: 'rankmap_retired', followersCount: 4000, retired: true },
+    ]);
+  });
+
+  test('maps engaged+ people and in-band targets; static path beats :handle', async () => {
+    const { status, body } = await getJson<{
+      count: number;
+      map: Record<string, { stage: string; isTarget: boolean }>;
+    }>('/x/people/rankmap');
+    expect(status).toBe(200);
+
+    // The engaged+ person H is present, and not a target (no voice-author row).
+    expect(body.map[H]).toBeDefined();
+    expect(body.map[H]?.isTarget).toBe(false);
+
+    // The in-band voice author is a bare target (no people row → stranger stage).
+    expect(body.map.rankmap_target).toEqual({ stage: 'stranger', isTarget: true });
+
+    // Out-of-band and retired authors never tier.
+    expect(body.map.rankmap_toobig).toBeUndefined();
+    expect(body.map.rankmap_retired).toBeUndefined();
   });
 });
 

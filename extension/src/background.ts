@@ -44,10 +44,12 @@ import {
   RADAR_SIGHTINGS_KEY,
   type RadarDraftRow,
   type RadarSighting,
+  type RankMap,
   appendDismissed,
   draftRowToSighting,
   isRadarSightings,
   mergeSightings,
+  stampTiers,
 } from './shared/radar.ts';
 import type { ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
 
@@ -182,6 +184,39 @@ function enqueueRadar(fn: () => Promise<void>): Promise<void> {
   return next;
 }
 
+// --- roster tiering (S0.3): who the author is beats how loud the post is ---
+//
+// A cached handle → {stage, isTarget} map from GET /x/people/rankmap. Refreshed
+// on the radar rehydrate cadence (panel mount), TTL 10 min. Every buffer write
+// re-stamps RadarSighting.personTier from this, so tiers reflect the latest
+// relationship state without the pure merge/rank code needing DB access.
+const RANKMAP_TTL_MS = 10 * 60 * 1000;
+let rankMap: RankMap = {};
+let rankMapAt = 0;
+let rankMapInflight: Promise<void> | null = null;
+
+async function refreshRankMap(): Promise<void> {
+  if (Date.now() - rankMapAt < RANKMAP_TTL_MS) return;
+  if (rankMapInflight) return rankMapInflight;
+  rankMapInflight = (async () => {
+    const res = await handleApiRequest({
+      type: 'stratus/api',
+      method: 'GET',
+      path: '/x/people/rankmap',
+    });
+    if (res.ok) {
+      const map = (res.data as { map?: RankMap } | undefined)?.map;
+      if (map && typeof map === 'object') {
+        rankMap = map;
+        rankMapAt = Date.now();
+      }
+    }
+  })().finally(() => {
+    rankMapInflight = null;
+  });
+  return rankMapInflight;
+}
+
 async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: string[] }> {
   const out = await chrome.storage.session.get([RADAR_SIGHTINGS_KEY, RADAR_DISMISSED_KEY]);
   const s = out[RADAR_SIGHTINGS_KEY];
@@ -194,8 +229,9 @@ async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: str
 
 async function addSightings(incoming: RadarSighting[]): Promise<void> {
   const { sightings, dismissed } = await readRadar();
+  const merged = mergeSightings(sightings, incoming, dismissed);
   await chrome.storage.session.set({
-    [RADAR_SIGHTINGS_KEY]: mergeSightings(sightings, incoming, dismissed),
+    [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
   });
 }
 
@@ -254,10 +290,12 @@ function markDraftsOnServer(tweetIds: string[], status: 'clicked' | 'expired'): 
   );
 }
 
-// Merge server drafts into the buffer. Only tweetIds the buffer does NOT hold
-// come in — a live sighting has fresher signals than its hours-old draft row,
-// and mergeSightings would let the stale copy win. Dismissed ids are filtered
-// by mergeSightings as usual. Returns how many entered.
+// Merge server drafts into the buffer and re-stamp every row's tier from the
+// current rankmap. Only tweetIds the buffer does NOT hold come in — a live
+// sighting has fresher signals than its hours-old draft row, and mergeSightings
+// would let the stale copy win. Dismissed ids are filtered by mergeSightings as
+// usual. Runs even with no rows so a refreshed rankmap re-tiers the whole
+// buffer. Returns how many drafts entered.
 async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
   const { sightings, dismissed } = await readRadar();
   const have = new Set(sightings.map((s) => s.tweetId));
@@ -268,26 +306,27 @@ async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
     const s = draftRowToSighting(row);
     if (s) incoming.push(s);
   }
-  if (incoming.length === 0) return 0;
+  const merged = incoming.length ? mergeSightings(sightings, incoming, dismissed) : sightings;
   await chrome.storage.session.set({
-    [RADAR_SIGHTINGS_KEY]: mergeSightings(sightings, incoming, dismissed),
+    [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
   });
   return incoming.length;
 }
 
 async function rehydrateFromServer(): Promise<{ added: number }> {
+  // Refresh the roster map first (10 min TTL) so the re-stamp below reflects the
+  // latest relationship state; a failed fetch keeps the last-known map.
+  await refreshRankMap();
   const res = await handleApiRequest({
     type: 'stratus/api',
     method: 'GET',
     path: '/x/radar/drafts',
     query: { status: 'ready' },
   });
-  if (!res.ok) return { added: 0 };
-  const rows = (res.data as { drafts?: RadarDraftRow[] } | undefined)?.drafts;
-  if (!Array.isArray(rows) || rows.length === 0) return { added: 0 };
+  const rows = res.ok ? (res.data as { drafts?: RadarDraftRow[] } | undefined)?.drafts : undefined;
   let added = 0;
   await enqueueRadar(async () => {
-    added = await rehydrateSightings(rows);
+    added = await rehydrateSightings(Array.isArray(rows) ? rows : []);
   });
   return { added };
 }

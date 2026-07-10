@@ -10,7 +10,7 @@
 //   PATCH /people/:handle           notes, tags, stage override (may demote), retired
 //   POST  /people/:handle/events    manual log entry (note | manual_dm_logged)
 
-import { type SQL, and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
@@ -42,10 +42,18 @@ import {
   type PersonSightingInput,
   recordSightings,
 } from '../people/sightings.ts';
-import { INBOUND_TYPES, OUTBOUND_TYPES, type Stage, isStage } from '../people/stage.ts';
+import {
+  INBOUND_TYPES,
+  OUTBOUND_TYPES,
+  STAGES,
+  type Stage,
+  isStage,
+  stageRank,
+} from '../people/stage.ts';
 import { normalizePersonHandle, recomputePerson, upsertPerson } from '../people/store.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
 import { buildReplyOutcomes } from './replies.ts';
+import { loadTargetHandles } from './voice.ts';
 
 // Moved to ../people/angles.ts (C3 needs it outside a route module); re-exported
 // so existing callers/tests keep their import site.
@@ -147,6 +155,45 @@ peopleRouter.get('/people', async (c) => {
     .limit(limit);
 
   return c.json({ count: rows.length, people: rows });
+});
+
+// ----------------------------------------------------------------- rankmap
+
+// Lightweight handle → {stage, isTarget} map for the Radar's roster-aware
+// ranking (S0.3). Returns only handles worth tiering: people at stage ≥ engaged
+// plus the current 2–10x targets roster. $0 — pure SQL. The extension background
+// caches this (10 min) and stamps RadarSighting.personTier from it.
+//
+// NOTE: registered before GET /people/:handle so the static path wins the match
+// (a person literally named @rankmap would otherwise shadow it).
+peopleRouter.get('/people/rankmap', async (c) => {
+  const targetHandles = await loadTargetHandles();
+  const targetSet = new Set(targetHandles);
+
+  const engagedRank = stageRank('engaged');
+  const engagedPlus = STAGES.filter((s) => stageRank(s) >= engagedRank);
+
+  // People at stage ≥ engaged, plus the target handles (so a target below
+  // engaged still surfaces with its true stage). retired people never tier.
+  const membership = targetHandles.length
+    ? or(inArray(people.stage, engagedPlus), inArray(people.handle, targetHandles))
+    : inArray(people.stage, engagedPlus);
+  const rows = await db
+    .select({ handle: people.handle, stage: people.stage })
+    .from(people)
+    .where(and(eq(people.retired, false), membership));
+
+  const map: Record<string, { stage: Stage; isTarget: boolean }> = {};
+  for (const r of rows) {
+    map[r.handle] = { stage: r.stage as Stage, isTarget: targetSet.has(r.handle) };
+  }
+  // A target with no people row (or a retired one) is still worth tiering — we
+  // just don't know its relationship stage, so it reads as a bare target.
+  for (const h of targetHandles) {
+    if (!map[h]) map[h] = { stage: 'stranger', isTarget: true };
+  }
+
+  return c.json({ count: Object.keys(map).length, map });
 });
 
 // ---------------------------------------------------------------- dossier

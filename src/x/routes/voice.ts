@@ -566,6 +566,31 @@ export function targetBand(myFollowers: number): { min: number; max: number } {
   return { min: 2 * myFollowers, max: 10 * myFollowers };
 }
 
+// The current targets roster as bare (lowercased) handles — the same 2–10x band
+// as GET /voice/targets, without the momentum/reply joins. $0. Empty until the
+// first daily pass writes an account snapshot (no "my size" to band against).
+// Used by GET /x/people/rankmap (S0.3) to tier Radar sightings.
+export async function loadTargetHandles(): Promise<string[]> {
+  const [acct] = await db
+    .select({ followersCount: accountSnapshots.followersCount })
+    .from(accountSnapshots)
+    .orderBy(desc(accountSnapshots.snapshotAt))
+    .limit(1);
+  if (!acct) return [];
+  const band = targetBand(acct.followersCount);
+  const rows = await db
+    .select({ handle: voiceAuthors.handle })
+    .from(voiceAuthors)
+    .where(
+      and(
+        eq(voiceAuthors.retired, false),
+        gte(voiceAuthors.followersCount, band.min),
+        lte(voiceAuthors.followersCount, band.max),
+      ),
+    );
+  return rows.map((r) => r.handle);
+}
+
 export interface FollowerSnapshotPoint {
   capturedAt: Date;
   followersCount: number;

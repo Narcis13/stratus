@@ -12,6 +12,21 @@ import type { TweetSignals } from '../replyBand.ts';
 
 export type RadarBand = 'hot' | 'warm';
 
+// Who the author is, as far as the people layer knows (S0.3). A warm post from
+// an ally/mutual compounds a real relationship; a hot post from a rando is a
+// lottery ticket — so tier beats band/vpm in the queue order.
+export type PersonTier = 'ally' | 'mutual' | 'target';
+
+// One entry of GET /x/people/rankmap: the author's relationship stage (for
+// stage ≥ engaged) plus whether they're in the current 2–10x targets roster.
+// Keyed by lowercased handle. The background caches the whole map (10 min TTL)
+// and derives each sighting's personTier from it.
+export interface RankMapEntry {
+  stage: string;
+  isTarget: boolean;
+}
+export type RankMap = Record<string, RankMapEntry>;
+
 export interface RadarSighting {
   tweetId: string;
   url: string;
@@ -30,6 +45,10 @@ export interface RadarSighting {
   // clicked sighting leaves the live queue for the "Clicked" view so the queue
   // stays the not-yet-worked set. Survives re-sightings like `reply`.
   clickedAt?: string;
+  // Roster tier of the author (S0.3), stamped by the background from the cached
+  // rankmap after every buffer write — always re-derived, never merged, so a
+  // stage change is reflected on the next write.
+  personTier?: PersonTier;
 }
 
 // chrome.storage.session keys — cleared when the browser closes, which is
@@ -83,10 +102,49 @@ export function appendDismissed(dismissed: string[], ids: string[]): string[] {
     : merged.slice(merged.length - RADAR_DISMISSED_CAP);
 }
 
-// Queue order per the plan: band first (hot over warm), then views-per-minute,
-// then recency.
+// The roster tier for a rankmap entry (S0.3). ally/mutual are relationships
+// worth compounding; a target is an in-band account worth building; everyone
+// else is null. An entry can be a target below mutual stage (a saved voice
+// author I've never talked to) — stage wins when it's ally/mutual, else the
+// target flag decides.
+export function personTierFor(entry: RankMapEntry | undefined): PersonTier | null {
+  if (!entry) return null;
+  if (entry.stage === 'ally') return 'ally';
+  if (entry.stage === 'mutual') return 'mutual';
+  if (entry.isTarget) return 'target';
+  return null;
+}
+
+// Re-derive personTier on every sighting from the current rankmap. Returns a
+// new array; only rows whose tier actually changed are cloned. Handles are
+// matched case-insensitively (rankmap keys are lowercased people handles; a
+// sighting's handle is the raw scraped username).
+export function stampTiers(sightings: RadarSighting[], map: RankMap): RadarSighting[] {
+  return sightings.map((s) => {
+    const tier = personTierFor(map[s.handle.toLowerCase()]);
+    if (tier === (s.personTier ?? null)) return s;
+    // Rebuild without personTier when it clears — exactOptionalPropertyTypes
+    // forbids assigning `undefined`, biome forbids `delete`.
+    const { personTier: _prev, ...rest } = s;
+    return tier ? { ...rest, personTier: tier } : rest;
+  });
+}
+
+// Higher tier ranks first: ally/mutual (an existing relationship) beat a target,
+// which beats an unknown author. ally and mutual share the top rung.
+function tierWeight(t: PersonTier | undefined): number {
+  if (t === 'ally' || t === 'mutual') return 2;
+  if (t === 'target') return 1;
+  return 0;
+}
+
+// Queue order (S0.3): who the author is first (roster tier), THEN band (hot over
+// warm), then views-per-minute, then recency — the original order preserved
+// within a tier.
 export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
   return [...sightings].sort((a, b) => {
+    const tw = tierWeight(b.personTier) - tierWeight(a.personTier);
+    if (tw !== 0) return tw;
     if (a.band !== b.band) return a.band === 'hot' ? -1 : 1;
     if (a.signals.vpm !== b.signals.vpm) return b.signals.vpm - a.signals.vpm;
     return b.lastSeenAt.localeCompare(a.lastSeenAt);

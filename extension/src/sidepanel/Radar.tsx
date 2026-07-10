@@ -296,6 +296,18 @@ function RadarRow({
         >
           {s.author ?? `@${s.handle}`}
         </button>
+        {s.personTier && (
+          <button
+            type="button"
+            className={`stage-chip radar-tier ${
+              s.personTier === 'target' ? 'radar-tier-target' : `stage-${s.personTier}`
+            }`}
+            title={`${tierLabel(s.personTier)} — open @${s.handle}'s dossier`}
+            onClick={() => onOpenPerson(s.handle)}
+          >
+            {s.personTier}
+          </button>
+        )}
         {s.reply && <span className="radar-ready">reply ready</span>}
         <button
           type="button"
@@ -329,6 +341,13 @@ function RadarRow({
       )}
     </li>
   );
+}
+
+// S0.3 chip tooltip — why this author outranks a louder rando.
+function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
+  if (tier === 'ally') return 'Ally — an established two-way relationship';
+  if (tier === 'mutual') return 'Mutual — you two go back and forth';
+  return 'Target — an in-band 2–10x account worth building';
 }
 
 // "1.5k views · 8 replies · 22m · 70/min · bait"
