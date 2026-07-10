@@ -209,6 +209,40 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
           </section>
 
           <section className="brief-section">
+            <h3>Media vs text-only ({data.mediaEffectiveness.totalMeasured} measured)</h3>
+            <table className="pb-table">
+              <tbody>
+                <tr>
+                  <td>with media</td>
+                  <td>{cellSummary(data.mediaEffectiveness.media, data.minN)}</td>
+                </tr>
+                <tr>
+                  <td>text-only</td>
+                  <td>{cellSummary(data.mediaEffectiveness.textOnly, data.minN)}</td>
+                </tr>
+                {data.mediaEffectiveness.unknown.posted > 0 && (
+                  <tr className="pb-thin">
+                    <td>unknown (pre-baseline)</td>
+                    <td>{cellSummary(data.mediaEffectiveness.unknown, data.minN)}</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            {data.mediaEffectiveness.viewsLift !== null ? (
+              <div className="status-line">
+                image lift: {data.mediaEffectiveness.viewsLift}x views
+                {data.mediaEffectiveness.profileVisitsLift !== null &&
+                  ` · ${data.mediaEffectiveness.profileVisitsLift}x profile clicks`}
+              </div>
+            ) : (
+              <div className="muted pb-note">
+                lift stays silent until both sides clear n≥{data.minN} — the text-only baseline the
+                studio's images will be judged against.
+              </div>
+            )}
+          </section>
+
+          <section className="brief-section">
             <h3>Pillar × register ({data.pillarRegister.totalMeasured} measured)</h3>
             {data.pillarRegister.cells.length === 0 ? (
               <div className="muted">No published drafter posts yet.</div>

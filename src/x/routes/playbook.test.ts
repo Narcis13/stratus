@@ -168,6 +168,32 @@ describe('playbook route', () => {
         device: 'direct address',
       })
       .onConflictDoNothing();
+
+    // §S0.2 media baseline: two media originals + two text-only originals, all
+    // measured. pb_p1 above stays hasMedia=null → the "unknown" bucket.
+    for (const m of [
+      { tweetId: 'pb_m1', hasMedia: true, views: 800, clicks: 12 },
+      { tweetId: 'pb_m2', hasMedia: true, views: 400, clicks: 8 },
+      { tweetId: 'pb_t1', hasMedia: false, views: 200, clicks: 4 },
+      { tweetId: 'pb_t2', hasMedia: false, views: 100, clicks: 2 },
+    ]) {
+      await db
+        .insert(postsPublished)
+        .values({
+          tweetId: m.tweetId,
+          text: `original ${m.tweetId}`,
+          postedAt: at(300),
+          isReply: false,
+          source: 'test',
+          hasMedia: m.hasMedia,
+        })
+        .onConflictDoNothing();
+      await db.insert(metricsSnapshots).values({
+        tweetId: m.tweetId,
+        publicMetrics: { impression_count: m.views, like_count: 1, reply_count: 0 },
+        nonPublicMetrics: { user_profile_clicks: m.clicks },
+      });
+    }
   });
 
   test('GET /x/playbook serves every stat with n and gates', async () => {
@@ -209,6 +235,27 @@ describe('playbook route', () => {
     // Nothing clears the default gate on 2 measured rows.
     expect(body.guidance.reply).toBeNull();
     expect(body.guidance.post).toBeNull();
+  });
+
+  test('media effectiveness buckets originals and gates the lift', async () => {
+    const gated = (await (await app.request('/x/playbook')).json()) as {
+      mediaEffectiveness: {
+        media: { n: number; medianViews: number | null };
+        textOnly: { n: number; medianViews: number | null };
+        unknown: { n: number; medianViews: number | null };
+        viewsLift: number | null;
+      };
+    };
+    expect(gated.mediaEffectiveness.media).toMatchObject({ n: 2, medianViews: 600 });
+    expect(gated.mediaEffectiveness.textOnly).toMatchObject({ n: 2, medianViews: 150 });
+    // pb_p1 (hasMedia null) is the unknown bucket — never counted as text-only.
+    expect(gated.mediaEffectiveness.unknown.medianViews).toBe(900);
+    expect(gated.mediaEffectiveness.viewsLift).toBeNull(); // n<20 per side
+
+    const open = (await (await app.request('/x/playbook?minN=1')).json()) as {
+      mediaEffectiveness: { viewsLift: number | null; profileVisitsLift: number | null };
+    };
+    expect(open.mediaEffectiveness.viewsLift).toBe(4); // 600 / 150
   });
 
   test('minN=1 opens the gates and the guidance speaks', async () => {

@@ -122,6 +122,12 @@ export const postsPublished = sqliteTable(
     pollCount: integer('poll_count').default(0).notNull(),
     retired: integer('retired', { mode: 'boolean' }).default(false).notNull(),
     lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
+    // Did the tweet carry media? (§S0.2 image-lift baseline). Nullable on
+    // purpose: stamped at discovery from the attachments field and at publish
+    // from the sent body, but rows written before this column existed can't be
+    // backfilled (the field was never stored) — null means "unknown", NEVER
+    // "no", so every aggregation buckets null separately.
+    hasMedia: integer('has_media', { mode: 'boolean' }),
   },
   (t) => [index('posts_published_next_poll_idx').on(t.nextPollAt).where(sql`retired = 0`)],
 );

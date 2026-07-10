@@ -10,6 +10,7 @@ import {
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildStructureEffectiveness,
@@ -281,6 +282,45 @@ describe('buildRelationshipLift', () => {
     expect(open.profileVisitsLift).toBe(2.5);
   });
 });
+
+describe('buildMediaEffectiveness', () => {
+  const rows = [
+    { hasMedia: true, outcome: out(500, 10) },
+    { hasMedia: true, outcome: out(300, 6) },
+    { hasMedia: false, outcome: out(200, 4) },
+    { hasMedia: false, outcome: out(100, 2) },
+    { hasMedia: false, outcome: null }, // posted, unmeasured
+    { hasMedia: null, outcome: out(999, 99) }, // pre-column, unknown
+  ];
+
+  test('buckets media / text-only / unknown separately', () => {
+    const r = buildMediaEffectiveness(rows, 2);
+    expect(r.media.n).toBe(2);
+    expect(r.media.medianViews).toBe(400);
+    // text-only counts the unmeasured row in `posted` but not in `n`.
+    expect(r.textOnly.posted).toBe(3);
+    expect(r.textOnly.n).toBe(2);
+    expect(r.textOnly.medianViews).toBe(150);
+    // null is its own bucket — never folded into text-only.
+    expect(r.unknown.n).toBe(1);
+    expect(r.unknown.medianViews).toBe(999);
+    expect(r.totalMeasured).toBe(5);
+  });
+
+  test('lift only when BOTH media and text-only clear the gate', () => {
+    const gated = buildMediaEffectiveness(rows, 3);
+    expect(gated.viewsLift).toBeNull();
+    expect(gated.media.sufficient).toBe(false);
+
+    const open = buildMediaEffectiveness(rows, 2);
+    expect(open.viewsLift).toBe(round(400 / 150));
+    expect(open.profileVisitsLift).toBe(round(8 / 3));
+  });
+});
+
+function round(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 describe('topAngles', () => {
   test('silent under the gate', () => {

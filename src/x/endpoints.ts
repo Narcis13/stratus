@@ -57,6 +57,14 @@ export interface XTweet {
     url_link_clicks: number;
     user_profile_clicks: number;
   };
+  // Present when the tweet carries media/polls. Requested on every owned read
+  // (fields.ts POST_FIELDS already lists `attachments` for the media expansion),
+  // so reading `media_keys` presence adds no cost — X bills per result, not per
+  // field (§S0.2 has_media baseline).
+  attachments?: {
+    media_keys?: string[];
+    poll_ids?: string[];
+  };
 }
 
 /** Cost: $0.001 (owned read). */

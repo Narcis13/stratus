@@ -336,6 +336,11 @@ async function postOne(
         inReplyToTweetId: replyTo?.tweetId ?? null,
         conversationId: replyTo?.conversationId ?? null,
         source: 'scheduled',
+        // §S0.2: we control the body, so this is a fact, not a guess — stratus
+        // can't attach media via API (OAuth 1.0a), so `body.media` is never set
+        // and every scheduled post is text-only. Derived (not hardcoded) so it
+        // stays correct if media upload ever lands. Feeds the has_media baseline.
+        hasMedia: (body.media?.media_ids?.length ?? 0) > 0,
         // Informational only — the daily 03:00 UTC pass snapshots every
         // non-retired row regardless of age. See workers/dailyMetrics.ts.
         nextPollAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),

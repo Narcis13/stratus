@@ -1,0 +1,1 @@
+ALTER TABLE `posts_published` ADD `has_media` integer;

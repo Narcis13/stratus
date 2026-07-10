@@ -959,6 +959,16 @@ export interface Playbook {
     viewsLift: number | null;
     profileVisitsLift: number | null;
   };
+  // Image-lift baseline (§S0.2): media vs text-only own originals. null bucket
+  // is "unknown" (pre-column rows), never folded into text-only.
+  mediaEffectiveness: {
+    media: PlaybookCell;
+    textOnly: PlaybookCell;
+    unknown: PlaybookCell;
+    totalMeasured: number;
+    viewsLift: number | null;
+    profileVisitsLift: number | null;
+  };
   guidance: { reply: string | null; post: string | null };
 }
 

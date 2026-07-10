@@ -30,12 +30,14 @@ import {
   type AngleRow,
   DEFAULT_MIN_CELL_N,
   type MeasuredOutcome,
+  type MediaRow,
   type PillarRegisterRow,
   type ReplyOrigin,
   type StructureRow,
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildStructureEffectiveness,
@@ -214,6 +216,23 @@ async function loadStructureRows(): Promise<StructureRow[]> {
   }));
 }
 
+// -------------------------------------------------- media vs text-only rows
+
+/** Own ORIGINAL posts only (isReply=false) — the studio composes images for
+ *  posts, and mixing reply view-distributions in would confound the baseline.
+ *  hasMedia is null on rows written before §S0.2 landed (bucketed as unknown). */
+async function loadMediaRows(): Promise<MediaRow[]> {
+  const posts = await db
+    .select({ tweetId: postsPublished.tweetId, hasMedia: postsPublished.hasMedia })
+    .from(postsPublished)
+    .where(eq(postsPublished.isReply, false));
+  const outcomes = await latestOutcomes(posts.map((p) => p.tweetId));
+  return posts.map((p) => ({
+    hasMedia: p.hasMedia,
+    outcome: outcomes.get(p.tweetId) ?? null,
+  }));
+}
+
 // ---------------------------------------------------- batch vs single rows
 
 async function loadOriginRows(): Promise<{
@@ -358,6 +377,7 @@ playbook.get('/playbook', async (c) => {
       replyRows.map((r) => ({ hasRelationship: r.hasRelationship, outcome: r.outcome })),
       minN,
     ),
+    mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
     // What the prompts would inject right now (always the default gate).
     guidance: {
       reply: topAngles(angleEffectiveness.overall),
