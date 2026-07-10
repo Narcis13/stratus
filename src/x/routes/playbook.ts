@@ -29,6 +29,7 @@ import {
 import {
   type AngleRow,
   DEFAULT_MIN_CELL_N,
+  type LatencyRow,
   type MeasuredOutcome,
   type MediaRow,
   type PillarRegisterRow,
@@ -37,11 +38,13 @@ import {
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildLatencyEffectiveness,
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildStructureEffectiveness,
   classifyReplyOrigin,
+  resolveAgeMin,
   scoreReplyOutcome,
   topAngles,
   topStructures,
@@ -173,6 +176,20 @@ function toAngleRows(rows: ReplyRow[], followers: Map<string, number>): AngleRow
   return rows.map((r) => ({
     angle: r.angle,
     authorFollowers: followers.get(r.handle) ?? null,
+    outcome: r.outcome,
+  }));
+}
+
+/** Reply rows keyed by tweet-age-at-draft (§S0.5). ageMin comes from the
+ *  capture-stamped signal first, else the post-time→draft-time gap (same ladder
+ *  as scoreReplyOutcome). */
+function toLatencyRows(rows: ReplyRow[]): LatencyRow[] {
+  return rows.map((r) => ({
+    ageMin: resolveAgeMin({
+      signals: r.signals,
+      sourcePostedAt: r.sourcePostedAt,
+      draftCreatedAt: r.createdAt,
+    }),
     outcome: r.outcome,
   }));
 }
@@ -378,6 +395,7 @@ playbook.get('/playbook', async (c) => {
       minN,
     ),
     mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
+    latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     // What the prompts would inject right now (always the default gate).
     guidance: {
       reply: topAngles(angleEffectiveness.overall),

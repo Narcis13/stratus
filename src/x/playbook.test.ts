@@ -4,19 +4,23 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type AngleRow,
+  type LatencyRow,
   type MeasuredOutcome,
   type ScoredReply,
   authorSizeBucket,
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildLatencyEffectiveness,
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildStructureEffectiveness,
   classifyReplyOrigin,
+  latencyBucket,
   median,
   normalizeReplyText,
+  resolveAgeMin,
   scoreReplyOutcome,
   topAngles,
   topStructures,
@@ -321,6 +325,109 @@ describe('buildMediaEffectiveness', () => {
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+describe('latencyBucket', () => {
+  test('boundaries and unknown', () => {
+    expect(latencyBucket(null)).toBe('unknown');
+    expect(latencyBucket(-1)).toBe('unknown');
+    expect(latencyBucket(Number.NaN)).toBe('unknown');
+    expect(latencyBucket(0)).toBe('<15m');
+    expect(latencyBucket(14.9)).toBe('<15m');
+    expect(latencyBucket(15)).toBe('15-60m');
+    expect(latencyBucket(59)).toBe('15-60m');
+    expect(latencyBucket(60)).toBe('1-6h');
+    expect(latencyBucket(359)).toBe('1-6h');
+    expect(latencyBucket(360)).toBe('>6h');
+    expect(latencyBucket(5000)).toBe('>6h');
+  });
+});
+
+describe('resolveAgeMin', () => {
+  test('prefers the capture-stamped signal', () => {
+    expect(
+      resolveAgeMin({
+        signals: { ageMin: 7 },
+        sourcePostedAt: new Date('2026-07-01T10:00:00Z'),
+        draftCreatedAt: new Date('2026-07-01T15:00:00Z'),
+      }),
+    ).toBe(7);
+  });
+
+  test('derives from post→draft gap when no signal', () => {
+    expect(
+      resolveAgeMin({
+        signals: null,
+        sourcePostedAt: new Date('2026-07-01T10:00:00Z'),
+        draftCreatedAt: new Date('2026-07-01T10:30:00Z'),
+      }),
+    ).toBe(30);
+  });
+
+  test('null when no signal and no source time', () => {
+    expect(
+      resolveAgeMin({ signals: null, sourcePostedAt: null, draftCreatedAt: new Date() }),
+    ).toBeNull();
+  });
+
+  test('clamps a negative gap to 0', () => {
+    expect(
+      resolveAgeMin({
+        signals: null,
+        sourcePostedAt: new Date('2026-07-01T10:30:00Z'),
+        draftCreatedAt: new Date('2026-07-01T10:00:00Z'),
+      }),
+    ).toBe(0);
+  });
+});
+
+describe('buildLatencyEffectiveness', () => {
+  const rows: LatencyRow[] = [
+    { ageMin: 5, outcome: out(500, 10) }, // <15m
+    { ageMin: 10, outcome: out(300, 6) }, // <15m
+    { ageMin: 30, outcome: out(150, 3) }, // 15-60m (middle — out of headline)
+    { ageMin: 120, outcome: out(200, 4) }, // 1-6h → late
+    { ageMin: 600, outcome: out(100, 2) }, // >6h → late
+    { ageMin: 120, outcome: null }, // late, posted but unmeasured
+    { ageMin: null, outcome: out(999, 99) }, // unknown
+  ];
+
+  test('cells split by bucket in chronological order', () => {
+    const r = buildLatencyEffectiveness(rows, 2);
+    expect(r.cells.map((c) => c.bucket)).toEqual(['<15m', '15-60m', '1-6h', '>6h', 'unknown']);
+    const early = r.cells.find((c) => c.bucket === '<15m');
+    expect(early).toMatchObject({ posted: 2, n: 2, medianViews: 400, sufficient: true });
+    // 1-6h counts the unmeasured row in posted but not n.
+    const oneToSix = r.cells.find((c) => c.bucket === '1-6h');
+    expect(oneToSix).toMatchObject({ posted: 2, n: 1 });
+    // unknown is its own bucket, never folded into a real one.
+    const unknown = r.cells.find((c) => c.bucket === 'unknown');
+    expect(unknown).toMatchObject({ n: 1, medianViews: 999 });
+    expect(r.totalMeasured).toBe(6);
+  });
+
+  test('early = <15m, late = 1h+ pooled (15-60m excluded from headline)', () => {
+    const r = buildLatencyEffectiveness(rows, 2);
+    expect(r.early).toMatchObject({ n: 2, medianViews: 400 });
+    // late pools 1-6h (200) + >6h (100), one unmeasured dropped from n.
+    expect(r.late).toMatchObject({ posted: 3, n: 2, medianViews: 150 });
+  });
+
+  test('lift only when BOTH early and late clear the gate', () => {
+    const gated = buildLatencyEffectiveness(rows, 3);
+    expect(gated.viewsLift).toBeNull();
+    expect(gated.early.sufficient).toBe(false);
+
+    const open = buildLatencyEffectiveness(rows, 2);
+    expect(open.viewsLift).toBe(round(400 / 150));
+    expect(open.profileVisitsLift).toBe(round(8 / 3));
+  });
+
+  test('default gate is 20 — silent on a thin sample', () => {
+    const r = buildLatencyEffectiveness(rows);
+    expect(r.viewsLift).toBeNull();
+    expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+  });
+});
 
 describe('topAngles', () => {
   test('silent under the gate', () => {

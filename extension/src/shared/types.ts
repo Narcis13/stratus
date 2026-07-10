@@ -938,6 +938,10 @@ export interface PlaybookAngleCell extends PlaybookCell {
   angle: string | null;
 }
 
+export interface PlaybookLatencyCell extends PlaybookCell {
+  bucket: '<15m' | '15-60m' | '1-6h' | '>6h' | 'unknown';
+}
+
 export interface PlaybookBandCell {
   band: 'hot' | 'warm' | 'skip' | null;
   n: number;
@@ -998,6 +1002,17 @@ export interface Playbook {
     textOnly: PlaybookCell;
     unknown: PlaybookCell;
     totalMeasured: number;
+    viewsLift: number | null;
+    profileVisitsLift: number | null;
+  };
+  // Reply-latency × outcome (§S0.5): grades the doctrine's "reply early" bet.
+  // `early` = replied <15m, `late` = replied ≥1h; lift only when both clear the
+  // gate. `cells` is the per-bucket table in chronological order.
+  latencyEffectiveness: {
+    cells: PlaybookLatencyCell[];
+    totalMeasured: number;
+    early: PlaybookCell;
+    late: PlaybookCell;
     viewsLift: number | null;
     profileVisitsLift: number | null;
   };

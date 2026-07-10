@@ -258,6 +258,32 @@ describe('playbook route', () => {
     expect(open.mediaEffectiveness.viewsLift).toBe(4); // 600 / 150
   });
 
+  test('latency buckets posted replies by age-at-draft', async () => {
+    const body = (await (await app.request('/x/playbook')).json()) as {
+      latencyEffectiveness: {
+        cells: Array<{ bucket: string; n: number; medianViews: number | null }>;
+        totalMeasured: number;
+        early: { n: number; medianViews: number | null };
+        late: { n: number };
+        viewsLift: number | null;
+      };
+    };
+    // Both seeded replies carry signals.ageMin=12 → the <15m bucket.
+    const early = body.latencyEffectiveness.cells.find((c) => c.bucket === '<15m');
+    expect(early).toMatchObject({ n: 2, medianViews: 250 });
+    expect(body.latencyEffectiveness.totalMeasured).toBe(2);
+    expect(body.latencyEffectiveness.early.n).toBe(2);
+    // No late (≥1h) replies were seeded → the doctrine grade stays silent.
+    expect(body.latencyEffectiveness.late.n).toBe(0);
+    expect(body.latencyEffectiveness.viewsLift).toBeNull();
+
+    // Even minN=1 can't manufacture a lift with an empty late cohort.
+    const open = (await (await app.request('/x/playbook?minN=1')).json()) as {
+      latencyEffectiveness: { viewsLift: number | null };
+    };
+    expect(open.latencyEffectiveness.viewsLift).toBeNull();
+  });
+
   test('minN=1 opens the gates and the guidance speaks', async () => {
     const res = await app.request('/x/playbook?minN=1');
     // biome-ignore lint/suspicious/noExplicitAny: the test walks the whole payload

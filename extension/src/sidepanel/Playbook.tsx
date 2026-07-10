@@ -243,6 +243,44 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
           </section>
 
           <section className="brief-section">
+            <h3>Reply latency ({data.latencyEffectiveness.totalMeasured} measured)</h3>
+            {data.latencyEffectiveness.cells.length === 0 ? (
+              <div className="muted">No posted replies yet.</div>
+            ) : (
+              <table className="pb-table">
+                <thead>
+                  <tr>
+                    <th>age at draft</th>
+                    <th>posted</th>
+                    <th>result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.latencyEffectiveness.cells.map((c) => (
+                    <tr key={c.bucket} className={c.bucket === 'unknown' ? 'pb-thin' : ''}>
+                      <td>{c.bucket}</td>
+                      <td>{c.posted}</td>
+                      <td>{cellSummary(c, data.minN)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {data.latencyEffectiveness.viewsLift !== null ? (
+              <div className="status-line">
+                early-reply lift: {data.latencyEffectiveness.viewsLift}x views (&lt;15m vs 1h+)
+                {data.latencyEffectiveness.profileVisitsLift !== null &&
+                  ` · ${data.latencyEffectiveness.profileVisitsLift}x profile clicks`}
+              </div>
+            ) : (
+              <div className="muted pb-note">
+                grade stays silent until both &lt;15m and 1h+ clear n≥{data.minN} — the number that
+                would justify (or retire) the Radar/Launch-Room push to reply fast.
+              </div>
+            )}
+          </section>
+
+          <section className="brief-section">
             <h3>Pillar × register ({data.pillarRegister.totalMeasured} measured)</h3>
             {data.pillarRegister.cells.length === 0 ? (
               <div className="muted">No published drafter posts yet.</div>
