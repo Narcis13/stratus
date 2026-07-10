@@ -1330,6 +1330,33 @@ button.danger:hover:not(:disabled) {
 .schedule-row input {
   flex: 1;
 }
+/* S0.4 — best-times hints under the schedule picker. */
+.best-times {
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.best-time-cell {
+  white-space: nowrap;
+}
+/* S0.4 — best-time-annotated cadence gaps in the Today tab. */
+.brief-gaps {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brief-gap-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+.brief-gap-score strong {
+  color: var(--text);
+}
 .thread-total {
   font-size: 11px;
 }

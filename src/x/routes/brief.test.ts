@@ -32,9 +32,19 @@ interface ConversionWindow {
   rate: number | null;
 }
 
+interface BriefGap {
+  hour: number;
+  n: number;
+  avgViewsPerDay: number | null;
+  avgViews: number | null;
+  score: number | null;
+  sufficient: boolean;
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   replyQuota: { postedToday: number };
+  today: { anchors: number[]; gaps: BriefGap[] };
   quests: {
     day: string;
     items: Quest[];
@@ -101,6 +111,24 @@ describe('brief quests (C9)', () => {
     // A launch happened and a reply was pasted inside its window.
     expect(byKey.get('launch')?.done).toBe(true);
     expect(byKey.get('launch')?.target).toBe(1);
+  });
+
+  test('today.gaps are best-times-annotated objects, sorted highest-value first (S0.4)', async () => {
+    const body = await getBrief();
+    expect(Array.isArray(body.today.gaps)).toBe(true);
+    // Rank: any sufficient gap (by score) outranks any "no data" gap.
+    let prevRank: number | null = null;
+    for (const g of body.today.gaps) {
+      expect(typeof g.hour).toBe('number');
+      expect(typeof g.n).toBe('number');
+      expect(typeof g.sufficient).toBe('boolean');
+      // Below the n≥3 gate a gap carries no score (renders as "no data").
+      if (!g.sufficient) expect(g.score).toBeNull();
+      else expect(typeof g.score).toBe('number');
+      const rank = g.sufficient ? 1_000_000 + (g.score ?? 0) : 0;
+      if (prevRank !== null) expect(rank).toBeLessThanOrEqual(prevRank);
+      prevRank = rank;
+    }
   });
 
   test('account carries S0.1 conversion for both windows', async () => {

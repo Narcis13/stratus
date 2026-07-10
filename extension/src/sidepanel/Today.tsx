@@ -225,7 +225,26 @@ function TodayPlan({ brief }: { brief: Brief }): JSX.Element {
         </ul>
       )}
       {gaps.length > 0 ? (
-        <div className="warn">No post slotted for {gaps.map(fmtHour).join(', ')}.</div>
+        <div className="warn brief-gaps-wrap">
+          <div>
+            {gaps.length === 1 ? 'Open slot' : `${gaps.length} open slots`} — highest-value first:
+          </div>
+          <ul className="brief-gaps">
+            {gaps.map((g) => (
+              <li key={g.hour} className="brief-gap-row">
+                <span className="post-time">{fmtHour(g.hour)}</span>
+                {g.sufficient ? (
+                  <span className="brief-gap-score">
+                    <strong>{fmtNum(g.avgViewsPerDay ?? g.avgViews)}</strong> avg views/day
+                    <span className="muted"> · n={g.n}</span>
+                  </span>
+                ) : (
+                  <span className="muted">no data (n={g.n})</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : (
         <div className="ok">All {anchors.length} slots filled.</div>
       )}

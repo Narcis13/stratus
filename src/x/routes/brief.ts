@@ -32,6 +32,7 @@ import {
   localDayKey,
   neglectedTargetsAtDayStart,
 } from '../quests.ts';
+import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -95,6 +96,45 @@ export function findScheduleGaps(postMinutes: number[], anchors: number[]): numb
     filled.add(best);
   }
   return anchors.filter((a) => !filled.has(a));
+}
+
+/** S0.4: one gap = an empty local anchor hour + its best-times score. `n` is
+ *  how many measured posts fell in that (weekday, hour) cell; `sufficient` is
+ *  n ≥ the advice gate — below it the extension renders "no data", never a
+ *  recommendation. Sorted highest-value-first (sufficient before "no data",
+ *  then by score, ties by hour) so the strategist fills the best hole first. */
+export interface AnnotatedGap {
+  hour: number;
+  n: number;
+  avgViewsPerDay: number | null;
+  avgViews: number | null;
+  score: number | null;
+  sufficient: boolean;
+}
+
+export function annotateGaps(
+  gapHours: number[],
+  cells: BestTimeCell[],
+  localWeekday: number,
+): AnnotatedGap[] {
+  return gapHours
+    .map((hour) => {
+      const cell = bestTimeCellFor(cells, localWeekday, hour);
+      const score = bestTimeScore(cell);
+      return {
+        hour,
+        n: cell?.posts ?? 0,
+        avgViewsPerDay: cell?.avgViewsPerDay ?? null,
+        avgViews: cell?.avgViews ?? null,
+        score,
+        sufficient: score != null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.sufficient !== b.sufficient) return a.sufficient ? -1 : 1;
+      if (a.score != null && b.score != null && a.score !== b.score) return b.score - a.score;
+      return a.hour - b.hour;
+    });
 }
 
 export interface FollowerPoint {
@@ -207,94 +247,103 @@ brief.get('/brief', async (c) => {
   const utcDayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const utcDayEnd = new Date(utcDayStart.getTime() + DAY_MS);
 
-  const [snaps, convSnaps, convPublished, published, scheduled, postedDraftRows, costRows] =
-    await Promise.all([
-      db
-        .select({
-          snapshotAt: accountSnapshots.snapshotAt,
-          followersCount: accountSnapshots.followersCount,
-        })
-        .from(accountSnapshots)
-        .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
-        .orderBy(asc(accountSnapshots.snapshotAt)),
-      // S0.1: follower series over the conversion horizon (superset of the
-      // sparkline window, so the 28d baseline exists).
-      db
-        .select({
-          snapshotAt: accountSnapshots.snapshotAt,
-          followersCount: accountSnapshots.followersCount,
-        })
-        .from(accountSnapshots)
-        .where(
-          gte(
-            accountSnapshots.snapshotAt,
-            new Date(now.getTime() - CONVERSION_SNAPSHOT_DAYS * DAY_MS),
-          ),
-        )
-        .orderBy(asc(accountSnapshots.snapshotAt)),
-      // S0.1: every own tweet (posts AND replies — each earns profile visits)
-      // posted in the last 28 days; clicks come from their latest snapshot below.
-      db
-        .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
-        .from(postsPublished)
-        .where(
-          gte(postsPublished.postedAt, new Date(now.getTime() - CONVERSION_TWEET_DAYS * DAY_MS)),
-        )
-        .orderBy(asc(postsPublished.postedAt)),
-      db
-        .select({
-          tweetId: postsPublished.tweetId,
-          text: postsPublished.text,
-          postedAt: postsPublished.postedAt,
-          isReply: postsPublished.isReply,
-        })
-        .from(postsPublished)
-        .where(gte(postsPublished.postedAt, weekAgo))
-        .orderBy(asc(postsPublished.postedAt)),
-      db
-        .select({
-          id: scheduledPosts.id,
-          text: scheduledPosts.text,
-          scheduledFor: scheduledPosts.scheduledFor,
-          status: scheduledPosts.status,
-        })
-        .from(scheduledPosts)
-        .where(
-          and(
-            gte(scheduledPosts.scheduledFor, todayStart),
-            lt(scheduledPosts.scheduledFor, tomorrowStart),
-            inArray(scheduledPosts.status, ['pending', 'posted', 'failed']),
-          ),
-        )
-        .orderBy(asc(scheduledPosts.scheduledFor)),
-      // A posted draft is near-terminal (only → discarded), so updatedAt is in
-      // effect "when the human pasted it" — the only realtime posted signal we
-      // have; manual replies posted outside Reply Master only show up after the
-      // next 03:00 discovery pass. Full rows (not a count) since C9: the quest
-      // block needs paste times (launch attendance) and handles (targets quest).
-      db
-        .select({
-          updatedAt: replyDrafts.updatedAt,
-          sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
-        })
-        .from(replyDrafts)
-        .where(
-          and(
-            eq(replyDrafts.status, 'posted'),
-            gte(replyDrafts.updatedAt, todayStart),
-            lt(replyDrafts.updatedAt, tomorrowStart),
-          ),
+  const [
+    snaps,
+    convSnaps,
+    convPublished,
+    published,
+    scheduled,
+    postedDraftRows,
+    costRows,
+    bestTimes,
+  ] = await Promise.all([
+    db
+      .select({
+        snapshotAt: accountSnapshots.snapshotAt,
+        followersCount: accountSnapshots.followersCount,
+      })
+      .from(accountSnapshots)
+      .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
+      .orderBy(asc(accountSnapshots.snapshotAt)),
+    // S0.1: follower series over the conversion horizon (superset of the
+    // sparkline window, so the 28d baseline exists).
+    db
+      .select({
+        snapshotAt: accountSnapshots.snapshotAt,
+        followersCount: accountSnapshots.followersCount,
+      })
+      .from(accountSnapshots)
+      .where(
+        gte(
+          accountSnapshots.snapshotAt,
+          new Date(now.getTime() - CONVERSION_SNAPSHOT_DAYS * DAY_MS),
         ),
-      db
-        .select({
-          platform: costEvents.platform,
-          costUsd: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)`,
-          calls: sql<string>`count(*)`,
-        })
-        .from(costEvents)
-        .where(and(gte(costEvents.ts, utcDayStart), lt(costEvents.ts, utcDayEnd)))
-        .groupBy(costEvents.platform),
-    ]);
+      )
+      .orderBy(asc(accountSnapshots.snapshotAt)),
+    // S0.1: every own tweet (posts AND replies — each earns profile visits)
+    // posted in the last 28 days; clicks come from their latest snapshot below.
+    db
+      .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
+      .from(postsPublished)
+      .where(gte(postsPublished.postedAt, new Date(now.getTime() - CONVERSION_TWEET_DAYS * DAY_MS)))
+      .orderBy(asc(postsPublished.postedAt)),
+    db
+      .select({
+        tweetId: postsPublished.tweetId,
+        text: postsPublished.text,
+        postedAt: postsPublished.postedAt,
+        isReply: postsPublished.isReply,
+      })
+      .from(postsPublished)
+      .where(gte(postsPublished.postedAt, weekAgo))
+      .orderBy(asc(postsPublished.postedAt)),
+    db
+      .select({
+        id: scheduledPosts.id,
+        text: scheduledPosts.text,
+        scheduledFor: scheduledPosts.scheduledFor,
+        status: scheduledPosts.status,
+      })
+      .from(scheduledPosts)
+      .where(
+        and(
+          gte(scheduledPosts.scheduledFor, todayStart),
+          lt(scheduledPosts.scheduledFor, tomorrowStart),
+          inArray(scheduledPosts.status, ['pending', 'posted', 'failed']),
+        ),
+      )
+      .orderBy(asc(scheduledPosts.scheduledFor)),
+    // A posted draft is near-terminal (only → discarded), so updatedAt is in
+    // effect "when the human pasted it" — the only realtime posted signal we
+    // have; manual replies posted outside Reply Master only show up after the
+    // next 03:00 discovery pass. Full rows (not a count) since C9: the quest
+    // block needs paste times (launch attendance) and handles (targets quest).
+    db
+      .select({
+        updatedAt: replyDrafts.updatedAt,
+        sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
+      })
+      .from(replyDrafts)
+      .where(
+        and(
+          eq(replyDrafts.status, 'posted'),
+          gte(replyDrafts.updatedAt, todayStart),
+          lt(replyDrafts.updatedAt, tomorrowStart),
+        ),
+      ),
+    db
+      .select({
+        platform: costEvents.platform,
+        costUsd: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)`,
+        calls: sql<string>`count(*)`,
+      })
+      .from(costEvents)
+      .where(and(gte(costEvents.ts, utcDayStart), lt(costEvents.ts, utcDayEnd)))
+      .groupBy(costEvents.platform),
+    // S0.4: best-times cells bucketed by the viewer's local clock so each
+    // cadence gap can carry the score of its (weekday, hour) cell.
+    loadBestTimeCells(tzOffsetMin),
+  ]);
 
   const tweetIds = published.map((p) => p.tweetId);
   const metricSnaps = tweetIds.length
@@ -353,10 +402,15 @@ brief.get('/brief', async (c) => {
   // list (so the user sees what to fix) but its slot reads as unfilled.
   const slotted = scheduled.filter((s) => s.status !== 'failed' && s.scheduledFor !== null);
   const anchors = pickAnchors(slotted.length);
-  const gaps = findScheduleGaps(
+  const gapHours = findScheduleGaps(
     slotted.map((s) => localMinuteOfDay(s.scheduledFor as Date, tzOffsetMin)),
     anchors,
   );
+  // S0.4: annotate each empty anchor with its best-times score for today's
+  // local weekday, highest-value hole first. `todayStart` is local midnight as
+  // a UTC instant, so shifting it back yields today's local weekday.
+  const todayLocalWeekday = new Date(todayStart.getTime() - tzOffsetMin * 60_000).getUTCDay();
+  const gaps = annotateGaps(gapHours, bestTimes.cells, todayLocalWeekday);
 
   const weekReplies = published.filter((p) => p.isReply).length;
   const weekPosts = published.length - weekReplies;

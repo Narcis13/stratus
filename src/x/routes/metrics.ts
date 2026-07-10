@@ -200,9 +200,10 @@ export interface BestTimeInput {
 }
 
 export interface BestTimeCell {
-  /** 0 = Sunday … 6 = Saturday, UTC. */
+  /** 0 = Sunday … 6 = Saturday. UTC unless `buildBestTimes` was given a
+   *  `tzOffsetMin`, in which case it's the viewer's local weekday. */
   weekday: number;
-  /** 0–23, UTC. */
+  /** 0–23. UTC or local, mirroring `weekday`. */
   hour: number;
   posts: number;
   avgViews: number | null;
@@ -214,8 +215,15 @@ export interface BestTimeCell {
   avgProfileVisits: number | null;
 }
 
+// Advice gate (S0.4): a cell with fewer than this many measured posts is "no
+// data", never a recommendation — same min-sample discipline as everywhere.
+export const BEST_TIME_MIN_N = 3;
+
 // Pure — exported for unit tests. One cell per (weekday, hour) that has posts.
-export function buildBestTimes(rows: BestTimeInput[]): BestTimeCell[] {
+// `tzOffsetMin` follows JS `Date.getTimezoneOffset()` (UTC − local); pass it to
+// bucket by the viewer's local wall clock instead of UTC (S0.4 — the composer
+// and brief schedule in local time). Default 0 keeps the raw UTC behavior.
+export function buildBestTimes(rows: BestTimeInput[], tzOffsetMin = 0): BestTimeCell[] {
   const cells = new Map<
     string,
     {
@@ -230,8 +238,9 @@ export function buildBestTimes(rows: BestTimeInput[]): BestTimeCell[] {
   >();
 
   for (const r of rows) {
-    const weekday = r.postedAt.getUTCDay();
-    const hour = r.postedAt.getUTCHours();
+    const shifted = new Date(r.postedAt.getTime() - tzOffsetMin * 60_000);
+    const weekday = shifted.getUTCDay();
+    const hour = shifted.getUTCHours();
     const key = `${weekday}:${hour}`;
     let cell = cells.get(key);
     if (!cell) {
@@ -267,9 +276,40 @@ function mean(values: number[]): number | null {
   return Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 100) / 100;
 }
 
-// Engagement by posted UTC hour × weekday over my non-reply posts — the
-// composer's slot suggestions. Pure SQL over already-billed snapshots, $0.
-metrics.get('/metrics/best-times', async (c) => {
+// The single scalar a cell is ranked/advised by: the age-normalized rate when
+// present, else raw average views. Null when the cell has no view data OR fewer
+// than `minN` measured posts (S0.4 gate — below the gate is "no data").
+export function bestTimeScore(
+  cell: BestTimeCell | undefined,
+  minN = BEST_TIME_MIN_N,
+): number | null {
+  if (!cell || cell.posts < minN) return null;
+  return cell.avgViewsPerDay ?? cell.avgViews ?? null;
+}
+
+// Cells that clear the gate, best-first — the advice list. Pure, exported.
+export function rankBestTimes(cells: BestTimeCell[], minN = BEST_TIME_MIN_N): BestTimeCell[] {
+  return cells
+    .filter((cell) => bestTimeScore(cell, minN) != null)
+    .sort((a, b) => (bestTimeScore(b, minN) ?? 0) - (bestTimeScore(a, minN) ?? 0));
+}
+
+// The cell for one (weekday, hour), or undefined if none. Pure, exported —
+// the brief looks up each cadence gap's cell by its local anchor hour.
+export function bestTimeCellFor(
+  cells: BestTimeCell[],
+  weekday: number,
+  hour: number,
+): BestTimeCell | undefined {
+  return cells.find((c) => c.weekday === weekday && c.hour === hour);
+}
+
+// The best-times query + build, shared by the route and the brief's gap
+// annotation. `tzOffsetMin` buckets by the viewer's local wall clock. $0 —
+// pure SQL over already-billed snapshots.
+export async function loadBestTimeCells(
+  tzOffsetMin = 0,
+): Promise<{ measuredPosts: number; cells: BestTimeCell[] }> {
   const posts = await db
     .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
     .from(postsPublished)
@@ -310,12 +350,34 @@ metrics.get('/metrics/best-times', async (c) => {
     });
   }
 
-  const cells = buildBestTimes(rows);
-  const ranked = [...cells]
-    .filter((cell) => cell.avgViewsPerDay != null || cell.avgViews != null)
-    .sort((a, b) => (b.avgViewsPerDay ?? b.avgViews ?? 0) - (a.avgViewsPerDay ?? a.avgViews ?? 0));
+  return { measuredPosts: rows.length, cells: buildBestTimes(rows, tzOffsetMin) };
+}
 
-  return c.json({ measuredPosts: rows.length, top: ranked.slice(0, 5), cells });
+// Engagement by posted hour × weekday over my non-reply posts — the composer's
+// slot suggestions (S0.4). `?tzOffsetMin=` (JS getTimezoneOffset semantics)
+// buckets by the viewer's local clock so "Wed 17:xx" means 17:xx *local*;
+// omitted → raw UTC. `top` is gated at n≥3 (advice, not noise); `cells` is the
+// full unfiltered grid so a consumer can gate differently. $0.
+metrics.get('/metrics/best-times', async (c) => {
+  const tzStr = c.req.query('tzOffsetMin');
+  let tzOffsetMin = 0;
+  if (tzStr !== undefined) {
+    const n = Number(tzStr);
+    if (!Number.isInteger(n) || Math.abs(n) > 16 * 60) {
+      return c.json({ error: 'invalid_tz_offset_min' }, 400);
+    }
+    tzOffsetMin = n;
+  }
+
+  const { measuredPosts, cells } = await loadBestTimeCells(tzOffsetMin);
+
+  return c.json({
+    measuredPosts,
+    tzOffsetMin,
+    minN: BEST_TIME_MIN_N,
+    top: rankBestTimes(cells).slice(0, 5),
+    cells,
+  });
 });
 
 // -------------------------------------------------------------- pillars §8.4

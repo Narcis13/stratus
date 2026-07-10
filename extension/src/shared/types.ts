@@ -588,6 +588,38 @@ export interface BriefScheduledPost {
   status: PostStatus;
 }
 
+// S0.4: engagement by local weekday × hour over own non-reply posts. weekday
+// (0=Sun) and hour are the viewer's local clock when fetched with tzOffsetMin.
+export interface BestTimeCell {
+  weekday: number;
+  hour: number;
+  posts: number;
+  avgViews: number | null;
+  avgViewsPerDay: number | null;
+  avgLikes: number | null;
+  avgProfileVisits: number | null;
+}
+
+export interface BestTimesResponse {
+  measuredPosts: number;
+  tzOffsetMin: number;
+  /** Advice gate: cells with fewer measured posts are "no data". */
+  minN: number;
+  top: BestTimeCell[];
+  cells: BestTimeCell[];
+}
+
+// S0.4: one empty cadence anchor + its best-times score for today's weekday.
+// `sufficient` is n ≥ the advice gate; below it the UI renders "no data".
+export interface BriefGap {
+  hour: number;
+  n: number;
+  avgViewsPerDay: number | null;
+  avgViews: number | null;
+  score: number | null;
+  sufficient: boolean;
+}
+
 // S0.1: earned-visit → follow conversion over a trailing window. rate is a
 // fraction (×100 for %), null below 20 summed clicks or with <2 follower points.
 export interface ConversionWindow {
@@ -619,7 +651,7 @@ export interface Brief {
     to: string;
     scheduled: BriefScheduledPost[];
     anchors: number[];
-    gaps: number[];
+    gaps: BriefGap[];
   };
   replyQuota: {
     postedToday: number;

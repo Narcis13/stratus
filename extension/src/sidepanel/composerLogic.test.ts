@@ -1,14 +1,32 @@
 import { describe, expect, test } from 'bun:test';
+import type { BestTimeCell } from '../shared/types.ts';
 import {
   ANCHORS_3,
   ANCHORS_4,
+  BEST_TIME_MIN_N,
+  bestTimeCellScore,
   estimatePostCostUsd,
   findScheduleGaps,
   jitterMinutes,
   pickAnchors,
   splitIntoThread,
+  suggestBestSlotDate,
   suggestSlotDate,
+  topCellsForWeekday,
 } from './composerLogic.ts';
+
+// Compact BestTimeCell builder for the S0.4 tests below.
+function cell(weekday: number, hour: number, posts: number, rate: number | null): BestTimeCell {
+  return {
+    weekday,
+    hour,
+    posts,
+    avgViews: rate,
+    avgViewsPerDay: rate,
+    avgLikes: null,
+    avgProfileVisits: null,
+  };
+}
 
 describe('pickAnchors', () => {
   test('3/day until 4 slots are filled', () => {
@@ -68,6 +86,68 @@ describe('suggestSlotDate', () => {
     const d = suggestSlotDate(now, [], 7, fixedJitter);
     expect(d?.getDate()).toBe(19);
     expect(d?.getHours()).toBe(9);
+  });
+});
+
+describe('best-times slot picker (S0.4)', () => {
+  const fixedJitter = () => 0; // → minute 4, never top-of-hour
+
+  test('bestTimeCellScore prefers per-day rate and gates at n≥3', () => {
+    expect(BEST_TIME_MIN_N).toBe(3);
+    expect(bestTimeCellScore(cell(3, 17, 6, 2100))).toBe(2100);
+    expect(bestTimeCellScore(cell(3, 17, 2, 9999))).toBeNull(); // below gate
+    expect(bestTimeCellScore(cell(3, 17, 3, null))).toBeNull(); // gate met, no data
+    expect(bestTimeCellScore(undefined)).toBeNull();
+  });
+
+  test('topCellsForWeekday returns gated cells best-first, capped', () => {
+    const cells = [
+      cell(4, 9, 5, 300),
+      cell(4, 13, 5, 900),
+      cell(4, 18, 5, 600),
+      cell(4, 8, 2, 9999), // below the n gate — excluded
+      cell(5, 12, 9, 5000), // wrong weekday — excluded
+    ];
+    expect(topCellsForWeekday(cells, 4).map((c) => c.hour)).toEqual([13, 18, 9]);
+    expect(topCellsForWeekday(cells, 4, 2).map((c) => c.hour)).toEqual([13, 18]);
+    // A weekday with no gated cells yields nothing (→ "no data" in the UI).
+    expect(topCellsForWeekday(cells, 0)).toEqual([]);
+  });
+
+  test('suggestBestSlotDate picks the highest-scoring open anchor, jittered', () => {
+    const now = new Date(2026, 5, 18, 7, 0); // Thu 07:00 local, before the 9 anchor
+    const cells = [cell(4, 9, 5, 300), cell(4, 13, 5, 900), cell(4, 18, 5, 600)];
+    const d = suggestBestSlotDate(now, [], cells, 7, fixedJitter);
+    expect(d?.getDate()).toBe(18);
+    expect(d?.getHours()).toBe(13); // 900 beats 600 and 300
+    expect(d?.getMinutes()).toBe(4); // jittered — never :00
+  });
+
+  test('falls back to the earliest open anchor when no cell has data', () => {
+    const now = new Date(2026, 5, 18, 7, 0);
+    const d = suggestBestSlotDate(now, [], [], 7, fixedJitter);
+    const earliest = suggestSlotDate(now, [], 7, fixedJitter);
+    expect(d?.getDate()).toBe(earliest?.getDate());
+    expect(d?.getHours()).toBe(earliest?.getHours());
+    expect(d?.getHours()).toBe(9);
+  });
+
+  test('skips a claimed anchor and picks the next best', () => {
+    const now = new Date(2026, 5, 18, 7, 0);
+    const claimed = [new Date(2026, 5, 18, 13, 5)]; // 13 anchor taken today
+    const cells = [cell(4, 9, 5, 300), cell(4, 13, 5, 900), cell(4, 18, 5, 600)];
+    const d = suggestBestSlotDate(now, claimed, cells, 0, fixedJitter); // today only
+    expect(d?.getHours()).toBe(18); // 13 gone → 600 beats 300
+  });
+
+  test('returns null when every anchor in the horizon is claimed', () => {
+    const now = new Date(2026, 5, 18, 7, 0);
+    const claimed = [
+      new Date(2026, 5, 18, 9, 5),
+      new Date(2026, 5, 18, 13, 5),
+      new Date(2026, 5, 18, 18, 5),
+    ];
+    expect(suggestBestSlotDate(now, claimed, [], 0, fixedJitter)).toBeNull();
   });
 });
 

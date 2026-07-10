@@ -33,6 +33,8 @@ import {
   passesSpecificityGate,
 } from './x/replies/prompt.ts';
 import {
+  type AnnotatedGap,
+  annotateGaps,
   attachLatestSnapshots,
   findScheduleGaps,
   followerTrend,
@@ -51,7 +53,16 @@ import {
   type RefreshLimiter,
   takeRefreshSlot,
 } from './x/routes/mentions.ts';
-import { aggregatePillars, buildAccountSeries, buildBestTimes } from './x/routes/metrics.ts';
+import {
+  BEST_TIME_MIN_N,
+  type BestTimeCell,
+  aggregatePillars,
+  bestTimeCellFor,
+  bestTimeScore,
+  buildAccountSeries,
+  buildBestTimes,
+  rankBestTimes,
+} from './x/routes/metrics.ts';
 import { type RadarBatchTweet, buildRadarDraftRows, radarDraftExpired } from './x/routes/radar.ts';
 import { parseBatchTweets } from './x/routes/replies.ts';
 import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
@@ -1072,6 +1083,46 @@ describe('brief pickAnchors / findScheduleGaps', () => {
   });
 });
 
+describe('brief annotateGaps (S0.4)', () => {
+  const c = (weekday: number, hour: number, posts: number, rate: number | null): BestTimeCell => ({
+    weekday,
+    hour,
+    posts,
+    avgViews: rate,
+    avgViewsPerDay: rate,
+    avgLikes: null,
+    avgProfileVisits: null,
+  });
+
+  test('annotates each gap with its cell and gates at n≥3', () => {
+    const cells = [c(3, 9, 5, 400), c(3, 13, 2, 9999), c(3, 18, 4, 800)];
+    const gaps = annotateGaps([9, 13, 18], cells, 3);
+    const byHour = new Map(gaps.map((g) => [g.hour, g]));
+    // n≥3 → sufficient with a score; the 2-post cell reads as "no data".
+    expect(byHour.get(9)?.sufficient).toBe(true);
+    expect(byHour.get(9)?.score).toBe(400);
+    expect(byHour.get(18)?.sufficient).toBe(true);
+    expect(byHour.get(13)?.sufficient).toBe(false);
+    expect(byHour.get(13)?.score).toBeNull();
+    expect(byHour.get(13)?.n).toBe(2);
+  });
+
+  test('sorts highest-value hole first, no-data gaps last (by hour)', () => {
+    const cells = [c(3, 9, 5, 400), c(3, 18, 4, 800)]; // 13 has no cell at all
+    const gaps: AnnotatedGap[] = annotateGaps([9, 13, 18], cells, 3);
+    expect(gaps.map((g) => g.hour)).toEqual([18, 9, 13]);
+    expect(gaps[2]?.n).toBe(0); // 13 had no measured posts
+    expect(gaps[2]?.sufficient).toBe(false);
+  });
+
+  test('looks up the requested weekday only', () => {
+    const cells = [c(2, 9, 5, 999)]; // Tuesday cell — must not leak into a Wednesday gap
+    const [gap] = annotateGaps([9], cells, 3);
+    expect(gap?.sufficient).toBe(false);
+    expect(gap?.n).toBe(0);
+  });
+});
+
 describe('brief followerTrend', () => {
   const pt = (iso: string, followers: number) => ({ snapshotAt: new Date(iso), followers });
   const now = new Date('2026-06-10T12:00:00Z');
@@ -1467,6 +1518,68 @@ describe('buildBestTimes (§8.4)', () => {
 
   test('empty input → no cells', () => {
     expect(buildBestTimes([])).toEqual([]);
+  });
+
+  test('tzOffsetMin buckets by the local wall clock (S0.4)', () => {
+    // 2026-06-08 23:30Z is Monday (UTC weekday 1); at UTC+3 (tzOffsetMin -180)
+    // it's Tuesday 02:30 local → weekday 2, hour 2.
+    const [cell] = buildBestTimes(
+      [
+        {
+          postedAt: new Date('2026-06-08T23:30:00Z'),
+          views: 100,
+          likes: 1,
+          profileVisits: 1,
+          ageAtSnapshotMin: 1440,
+        },
+      ],
+      -180,
+    );
+    expect(cell?.weekday).toBe(2);
+    expect(cell?.hour).toBe(2);
+  });
+});
+
+describe('best-times advice gate (S0.4)', () => {
+  const cell = (
+    over: Partial<BestTimeCell> & Pick<BestTimeCell, 'weekday' | 'hour' | 'posts'>,
+  ) => ({
+    avgViews: null,
+    avgViewsPerDay: null,
+    avgLikes: null,
+    avgProfileVisits: null,
+    ...over,
+  });
+
+  test('bestTimeScore prefers per-day rate, gates at n≥3', () => {
+    expect(BEST_TIME_MIN_N).toBe(3);
+    expect(
+      bestTimeScore(cell({ weekday: 1, hour: 9, posts: 3, avgViewsPerDay: 500, avgViews: 100 })),
+    ).toBe(500);
+    // no per-day rate → raw avg views
+    expect(bestTimeScore(cell({ weekday: 1, hour: 9, posts: 3, avgViews: 100 }))).toBe(100);
+    // below the gate → null even with data
+    expect(bestTimeScore(cell({ weekday: 1, hour: 9, posts: 2, avgViewsPerDay: 999 }))).toBeNull();
+    // no data at all → null
+    expect(bestTimeScore(cell({ weekday: 1, hour: 9, posts: 5 }))).toBeNull();
+    expect(bestTimeScore(undefined)).toBeNull();
+  });
+
+  test('rankBestTimes drops sub-gate cells and sorts by score desc', () => {
+    const ranked = rankBestTimes([
+      cell({ weekday: 1, hour: 9, posts: 5, avgViewsPerDay: 500 }),
+      cell({ weekday: 1, hour: 13, posts: 2, avgViewsPerDay: 9999 }), // below gate — excluded
+      cell({ weekday: 2, hour: 18, posts: 4, avgViewsPerDay: 800 }),
+    ]);
+    expect(ranked.map((c) => `${c.weekday}:${c.hour}`)).toEqual(['2:18', '1:9']);
+    expect(ranked.every((c) => c.posts >= BEST_TIME_MIN_N)).toBe(true);
+  });
+
+  test('bestTimeCellFor matches on weekday+hour', () => {
+    const cells = [cell({ weekday: 3, hour: 17, posts: 6, avgViewsPerDay: 2100 })];
+    expect(bestTimeCellFor(cells, 3, 17)?.posts).toBe(6);
+    expect(bestTimeCellFor(cells, 3, 18)).toBeUndefined();
+    expect(bestTimeCellFor(cells, 4, 17)).toBeUndefined();
   });
 });
 

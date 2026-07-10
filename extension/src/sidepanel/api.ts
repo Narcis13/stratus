@@ -12,7 +12,10 @@ import {
   type BatchReplyItem,
   type BatchReplyResponse,
   type BatchReplyTweet,
+  type BestTimeCell,
+  type BestTimesResponse,
   type Brief,
+  type BriefGap,
   type BriefQuests,
   type BriefTweet,
   type Channel,
@@ -98,7 +101,10 @@ export type {
   BatchReplyItem,
   BatchReplyResponse,
   BatchReplyTweet,
+  BestTimeCell,
+  BestTimesResponse,
   Brief,
+  BriefGap,
   BriefQuests,
   BriefTweet,
   DigestFacts,
@@ -217,6 +223,17 @@ export const api = {
     if (opts.status) q.set('status', opts.status);
     const qs = q.toString();
     return request<ScheduledPost[]>(s, `/x/posts/scheduled${qs ? `?${qs}` : ''}`);
+  },
+
+  // §8.4 / S0.4 — engagement by local weekday × hour, for the Composer's
+  // best-time slot picker. Bucketed in the browser's local timezone.
+  metrics: {
+    bestTimes(s: Settings): Promise<BestTimesResponse> {
+      return request<BestTimesResponse>(
+        s,
+        `/x/metrics/best-times?tzOffsetMin=${new Date().getTimezoneOffset()}`,
+      );
+    },
   },
 
   // Single-row fetch (§9.5) — thread members carry their siblings.

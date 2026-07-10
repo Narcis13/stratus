@@ -1,5 +1,5 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
-import type { PostPillar, PostRegister } from '../shared/types.ts';
+import type { BestTimeCell, PostPillar, PostRegister } from '../shared/types.ts';
 import {
   ApiError,
   type Idea,
@@ -9,7 +9,13 @@ import {
   type UpdateBody,
   api,
 } from './api.ts';
-import { estimatePostCostUsd, splitIntoThread, suggestSlotDate } from './composerLogic.ts';
+import {
+  estimatePostCostUsd,
+  splitIntoThread,
+  suggestBestSlotDate,
+  suggestSlotDate,
+  topCellsForWeekday,
+} from './composerLogic.ts';
 import {
   addDays,
   dateToLocalInput,
@@ -37,6 +43,20 @@ const URL_RE = /(^|\s)https?:\/\//i;
 const URL_EXTRACT_RE = /https?:\/\/\S+/g;
 // How far ahead "Suggest slot" scans the calendar for open anchors.
 const SLOT_HORIZON_DAYS = 7;
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+// Hours show as HH:xx — the :xx signals the mandatory minute jitter (never
+// top-of-hour), so a best-time slot never reads as a robotic 17:00.
+function fmtHour(h: number): string {
+  return `${String(h).padStart(2, '0')}:xx`;
+}
+
+function fmtViews(n: number): string {
+  if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return Math.round(n).toLocaleString();
+}
 
 type DraftCard = PostDraftResponse['drafts'][number];
 
@@ -67,6 +87,8 @@ export function ComposerPanel({
   const [scheduledFor, setScheduledFor] = useState('');
   const [loading, setLoading] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  // S0.4 — best-times cells (local weekday × hour) for the slot picker.
+  const [bestCells, setBestCells] = useState<BestTimeCell[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [original, setOriginal] = useState<ScheduledPostWithThread | null>(null);
@@ -85,6 +107,20 @@ export function ComposerPanel({
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
+
+  // S0.4 — best-times for the schedule picker; failure just hides the hints.
+  useEffect(() => {
+    let alive = true;
+    api.metrics
+      .bestTimes(settings)
+      .then((r) => alive && setBestCells(r.cells))
+      .catch(() => {
+        /* no best-times hints; Suggest slot / manual entry still work */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
 
   // C6 — open ideas feed the drafter's seed dropdown; free-typing stays allowed.
   const loadOpenIdeas = useCallback(() => {
@@ -169,6 +205,17 @@ export function ComposerPanel({
   const headHasUrl = threadMode ? URL_RE.test(segments[0] ?? '') : URL_RE.test(text);
   const overLimitSingle = !threadMode && !isEditing && text.length > TWEET_LIMIT;
 
+  // S0.4 — top-3 measured cells for the day being scheduled (the input's local
+  // weekday, or today when empty). Below the n gate they simply don't appear.
+  const selectedWeekday = (() => {
+    if (scheduledFor) {
+      const d = new Date(scheduledFor);
+      if (!Number.isNaN(d.getTime())) return d.getDay();
+    }
+    return new Date().getDay();
+  })();
+  const topSlots = topCellsForWeekday(bestCells, selectedWeekday);
+
   // Live cost preview (invariant #1) — what this post will bill before you save.
   const costPreview = estimatePostCostUsd(
     isThreadEdit
@@ -200,28 +247,48 @@ export function ComposerPanel({
     setNotice(`Split into ${segs.length} segments.`);
   };
 
-  // Propose the next open, jittered anchor slot (never top-of-hour).
-  const suggestSlot = async (): Promise<void> => {
+  // Every pending post's local time across the slot horizon — the claimed
+  // anchors both slot pickers avoid.
+  const readSlottedPending = async (now: Date): Promise<Date[]> => {
+    const pending = await api.list(settings, {
+      status: 'pending',
+      from: startOfLocalDay(now).toISOString(),
+      to: addDays(now, SLOT_HORIZON_DAYS + 1).toISOString(),
+    });
+    return pending
+      .filter((p) => p.scheduledFor)
+      .map((p) => new Date(p.scheduledFor as string))
+      .filter((d) => !Number.isNaN(d.getTime()));
+  };
+
+  // Propose the next open, jittered anchor slot (never top-of-hour). `best`
+  // ranks the open anchors by best-times score (S0.4); otherwise earliest wins.
+  const suggestSlot = async (best: boolean): Promise<void> => {
     setSuggesting(true);
     setError(null);
     setNotice(null);
     try {
       const now = new Date();
-      const pending = await api.list(settings, {
-        status: 'pending',
-        from: startOfLocalDay(now).toISOString(),
-        to: addDays(now, SLOT_HORIZON_DAYS + 1).toISOString(),
-      });
-      const slotted = pending
-        .filter((p) => p.scheduledFor)
-        .map((p) => new Date(p.scheduledFor as string))
-        .filter((d) => !Number.isNaN(d.getTime()));
-      const slot = suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS);
+      const slotted = await readSlottedPending(now);
+      const slot = best
+        ? suggestBestSlotDate(now, slotted, bestCells, SLOT_HORIZON_DAYS)
+        : suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS);
       if (!slot) {
         setError(`No open slot in the next ${SLOT_HORIZON_DAYS} days — every anchor is filled.`);
         return;
       }
       setScheduledFor(dateToLocalInput(slot));
+      if (best) {
+        const cell = bestCells.find(
+          (c) => c.weekday === slot.getDay() && c.hour === slot.getHours(),
+        );
+        const score = cell?.avgViewsPerDay ?? cell?.avgViews ?? null;
+        setNotice(
+          score != null
+            ? `Best open slot: ${WEEKDAYS[slot.getDay()]} ${fmtHour(slot.getHours())} · ${fmtViews(score)} avg views/day (n=${cell?.posts}).`
+            : 'No measured best-time yet — filled the earliest open slot instead.',
+        );
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not read the calendar');
     } finally {
@@ -574,9 +641,24 @@ export function ComposerPanel({
             disabled={isLocked}
           />
           {!isLocked && (
-            <button type="button" onClick={() => void suggestSlot()} disabled={suggesting}>
-              {suggesting ? '…' : 'Suggest slot'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => void suggestSlot(true)}
+                disabled={suggesting}
+                title="Fill the highest-scoring open anchor (jittered, never top-of-hour)"
+              >
+                {suggesting ? '…' : 'Best time'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void suggestSlot(false)}
+                disabled={suggesting}
+                title="Fill the earliest open anchor"
+              >
+                Next slot
+              </button>
+            </>
           )}
           {scheduledFor && !isLocked && (
             <button type="button" onClick={() => setScheduledFor('')} title="Clear → save as draft">
@@ -584,6 +666,23 @@ export function ComposerPanel({
             </button>
           )}
         </div>
+        {!isLocked &&
+          (topSlots.length > 0 ? (
+            <div className="best-times muted">
+              Best {WEEKDAYS[selectedWeekday]}:{' '}
+              {topSlots.map((c, i) => (
+                <span key={`${c.weekday}:${c.hour}`} className="best-time-cell">
+                  {i > 0 && ' · '}
+                  {fmtHour(c.hour)} <strong>{fmtViews(c.avgViewsPerDay ?? c.avgViews ?? 0)}</strong>
+                  /day (n={c.posts})
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="best-times muted">
+              No measured best-time for {WEEKDAYS[selectedWeekday]} yet (need ≥3 posts in a slot).
+            </div>
+          ))}
         <small className="muted">
           {scheduledFor
             ? 'Will save as pending and ship at this minute.'
