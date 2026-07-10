@@ -588,6 +588,15 @@ export interface BriefScheduledPost {
   status: PostStatus;
 }
 
+// S0.1: earned-visit → follow conversion over a trailing window. rate is a
+// fraction (×100 for %), null below 20 summed clicks or with <2 follower points.
+export interface ConversionWindow {
+  windowDays: number;
+  profileClicks: number;
+  followerDelta: number | null;
+  rate: number | null;
+}
+
 export interface Brief {
   generatedAt: string;
   tzOffsetMin: number;
@@ -596,6 +605,7 @@ export interface Brief {
     measuredAt: string | null;
     delta7d: number | null;
     sparkline: Array<{ snapshotAt: string; followers: number }>;
+    conversion: { d7: ConversionWindow; d28: ConversionWindow };
   };
   yesterday: {
     from: string;
@@ -661,6 +671,8 @@ export interface DigestFacts {
   from: string;
   to: string;
   followers: { start: number | null; end: number | null; delta: number | null };
+  // S0.1: earned-visit → follow conversion for the week (rate null < 20 clicks).
+  conversion: { profileClicks: number; followerDelta: number | null; rate: number | null };
   activity: { posts: number; replies: number; replyPct: number | null };
   topTweets: Array<{
     text: string;

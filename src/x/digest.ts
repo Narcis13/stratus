@@ -5,6 +5,7 @@
 // no-fabrication discipline as the reply prompt).
 
 import type { GrokMessage } from '../grok/index.ts';
+import { conversionRate } from './conversion.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -74,6 +75,8 @@ export interface DigestFacts {
   from: string;
   to: string;
   followers: { start: number | null; end: number | null; delta: number | null };
+  // S0.1: earned-visit → follow conversion for the week (rate null < 20 clicks).
+  conversion: { profileClicks: number; followerDelta: number | null; rate: number | null };
   activity: { posts: number; replies: number; replyPct: number | null };
   topTweets: DigestTweet[];
   stageTransitions: Array<{ handle: string; stage: string }>;
@@ -87,6 +90,8 @@ export interface DigestFacts {
 export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
   const first = i.followerPoints[0] ?? null;
   const last = i.followerPoints.at(-1) ?? null;
+  const followerDelta = first && last && first !== last ? last.followers - first.followers : null;
+  const profileClicks = i.tweets.reduce((s, t) => s + (t.profileVisits ?? 0), 0);
 
   const replies = i.tweets.filter((t) => t.isReply).length;
   const posts = i.tweets.length - replies;
@@ -116,7 +121,12 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
     followers: {
       start: first?.followers ?? null,
       end: last?.followers ?? null,
-      delta: first && last && first !== last ? last.followers - first.followers : null,
+      delta: followerDelta,
+    },
+    conversion: {
+      profileClicks,
+      followerDelta,
+      rate: conversionRate(profileClicks, followerDelta),
     },
     activity: {
       posts,

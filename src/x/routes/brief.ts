@@ -12,6 +12,7 @@ import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
+import { type ConversionTweet, computeConversion } from '../conversion.ts';
 import {
   accountSnapshots,
   mentions,
@@ -46,6 +47,13 @@ const ANCHORS_4 = [8, 12, 16, 20];
 
 const SPARKLINE_DAYS = 14;
 const LEADER_COUNT = 3;
+
+// S0.1 conversion needs a longer horizon than the 14-day sparkline: the 28-day
+// window wants a follower baseline ~28d old (fetch a little extra for it) plus
+// every own tweet's profile clicks over the last 28 days. Kept as dedicated
+// reads so widening them can't skew the sparkline, the week ratio, or quests.
+const CONVERSION_TWEET_DAYS = 28;
+const CONVERSION_SNAPSHOT_DAYS = 30;
 
 export const brief = new Hono();
 
@@ -199,69 +207,94 @@ brief.get('/brief', async (c) => {
   const utcDayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const utcDayEnd = new Date(utcDayStart.getTime() + DAY_MS);
 
-  const [snaps, published, scheduled, postedDraftRows, costRows] = await Promise.all([
-    db
-      .select({
-        snapshotAt: accountSnapshots.snapshotAt,
-        followersCount: accountSnapshots.followersCount,
-      })
-      .from(accountSnapshots)
-      .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
-      .orderBy(asc(accountSnapshots.snapshotAt)),
-    db
-      .select({
-        tweetId: postsPublished.tweetId,
-        text: postsPublished.text,
-        postedAt: postsPublished.postedAt,
-        isReply: postsPublished.isReply,
-      })
-      .from(postsPublished)
-      .where(gte(postsPublished.postedAt, weekAgo))
-      .orderBy(asc(postsPublished.postedAt)),
-    db
-      .select({
-        id: scheduledPosts.id,
-        text: scheduledPosts.text,
-        scheduledFor: scheduledPosts.scheduledFor,
-        status: scheduledPosts.status,
-      })
-      .from(scheduledPosts)
-      .where(
-        and(
-          gte(scheduledPosts.scheduledFor, todayStart),
-          lt(scheduledPosts.scheduledFor, tomorrowStart),
-          inArray(scheduledPosts.status, ['pending', 'posted', 'failed']),
+  const [snaps, convSnaps, convPublished, published, scheduled, postedDraftRows, costRows] =
+    await Promise.all([
+      db
+        .select({
+          snapshotAt: accountSnapshots.snapshotAt,
+          followersCount: accountSnapshots.followersCount,
+        })
+        .from(accountSnapshots)
+        .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
+        .orderBy(asc(accountSnapshots.snapshotAt)),
+      // S0.1: follower series over the conversion horizon (superset of the
+      // sparkline window, so the 28d baseline exists).
+      db
+        .select({
+          snapshotAt: accountSnapshots.snapshotAt,
+          followersCount: accountSnapshots.followersCount,
+        })
+        .from(accountSnapshots)
+        .where(
+          gte(
+            accountSnapshots.snapshotAt,
+            new Date(now.getTime() - CONVERSION_SNAPSHOT_DAYS * DAY_MS),
+          ),
+        )
+        .orderBy(asc(accountSnapshots.snapshotAt)),
+      // S0.1: every own tweet (posts AND replies — each earns profile visits)
+      // posted in the last 28 days; clicks come from their latest snapshot below.
+      db
+        .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
+        .from(postsPublished)
+        .where(
+          gte(postsPublished.postedAt, new Date(now.getTime() - CONVERSION_TWEET_DAYS * DAY_MS)),
+        )
+        .orderBy(asc(postsPublished.postedAt)),
+      db
+        .select({
+          tweetId: postsPublished.tweetId,
+          text: postsPublished.text,
+          postedAt: postsPublished.postedAt,
+          isReply: postsPublished.isReply,
+        })
+        .from(postsPublished)
+        .where(gte(postsPublished.postedAt, weekAgo))
+        .orderBy(asc(postsPublished.postedAt)),
+      db
+        .select({
+          id: scheduledPosts.id,
+          text: scheduledPosts.text,
+          scheduledFor: scheduledPosts.scheduledFor,
+          status: scheduledPosts.status,
+        })
+        .from(scheduledPosts)
+        .where(
+          and(
+            gte(scheduledPosts.scheduledFor, todayStart),
+            lt(scheduledPosts.scheduledFor, tomorrowStart),
+            inArray(scheduledPosts.status, ['pending', 'posted', 'failed']),
+          ),
+        )
+        .orderBy(asc(scheduledPosts.scheduledFor)),
+      // A posted draft is near-terminal (only → discarded), so updatedAt is in
+      // effect "when the human pasted it" — the only realtime posted signal we
+      // have; manual replies posted outside Reply Master only show up after the
+      // next 03:00 discovery pass. Full rows (not a count) since C9: the quest
+      // block needs paste times (launch attendance) and handles (targets quest).
+      db
+        .select({
+          updatedAt: replyDrafts.updatedAt,
+          sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
+        })
+        .from(replyDrafts)
+        .where(
+          and(
+            eq(replyDrafts.status, 'posted'),
+            gte(replyDrafts.updatedAt, todayStart),
+            lt(replyDrafts.updatedAt, tomorrowStart),
+          ),
         ),
-      )
-      .orderBy(asc(scheduledPosts.scheduledFor)),
-    // A posted draft is near-terminal (only → discarded), so updatedAt is in
-    // effect "when the human pasted it" — the only realtime posted signal we
-    // have; manual replies posted outside Reply Master only show up after the
-    // next 03:00 discovery pass. Full rows (not a count) since C9: the quest
-    // block needs paste times (launch attendance) and handles (targets quest).
-    db
-      .select({
-        updatedAt: replyDrafts.updatedAt,
-        sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
-      })
-      .from(replyDrafts)
-      .where(
-        and(
-          eq(replyDrafts.status, 'posted'),
-          gte(replyDrafts.updatedAt, todayStart),
-          lt(replyDrafts.updatedAt, tomorrowStart),
-        ),
-      ),
-    db
-      .select({
-        platform: costEvents.platform,
-        costUsd: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)`,
-        calls: sql<string>`count(*)`,
-      })
-      .from(costEvents)
-      .where(and(gte(costEvents.ts, utcDayStart), lt(costEvents.ts, utcDayEnd)))
-      .groupBy(costEvents.platform),
-  ]);
+      db
+        .select({
+          platform: costEvents.platform,
+          costUsd: sql<string>`coalesce(sum(${costEvents.costUsd}), 0)`,
+          calls: sql<string>`count(*)`,
+        })
+        .from(costEvents)
+        .where(and(gte(costEvents.ts, utcDayStart), lt(costEvents.ts, utcDayEnd)))
+        .groupBy(costEvents.platform),
+    ]);
 
   const tweetIds = published.map((p) => p.tweetId);
   const metricSnaps = tweetIds.length
@@ -278,6 +311,35 @@ brief.get('/brief', async (c) => {
     : [];
 
   const weekTweets = attachLatestSnapshots(published, metricSnaps);
+
+  // S0.1: profile-click sum per own tweet over the 28-day horizon (latest
+  // snapshot per tweet — same newest-first, first-wins read as everywhere).
+  const convTweetIds = convPublished.map((p) => p.tweetId);
+  const convSnapRows = convTweetIds.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          nonPublicMetrics: metricsSnapshots.nonPublicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, convTweetIds))
+        .orderBy(sql`${metricsSnapshots.snapshotAt} desc`)
+    : [];
+  const clicksByTweet = new Map<string, number | null>();
+  for (const s of convSnapRows) {
+    if (clicksByTweet.has(s.tweetId)) continue;
+    const priv = (s.nonPublicMetrics ?? null) as Record<string, number> | null;
+    clicksByTweet.set(s.tweetId, priv?.user_profile_clicks ?? null);
+  }
+  const conversionTweets: ConversionTweet[] = convPublished.map((p) => ({
+    postedAt: p.postedAt,
+    profileVisits: clicksByTweet.get(p.tweetId) ?? null,
+  }));
+  const conversion = computeConversion(
+    convSnaps.map((s) => ({ snapshotAt: s.snapshotAt, followers: s.followersCount })),
+    conversionTweets,
+    now,
+  );
 
   const yesterdayTweets = weekTweets.filter(
     (t) => t.postedAt >= yesterdayStart && t.postedAt < todayStart,
@@ -422,6 +484,8 @@ brief.get('/brief', async (c) => {
         now,
       ),
       sparkline: snaps.map((s) => ({ snapshotAt: s.snapshotAt, followers: s.followersCount })),
+      // S0.1: earned-visit → follow conversion, 7d and 28d (null rate < 20 clicks).
+      conversion,
     },
     yesterday: {
       from: yesterdayStart,

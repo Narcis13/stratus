@@ -46,6 +46,7 @@ describe('buildDigestFacts', () => {
   test('empty week produces nulls and zeros, never fabricated numbers', () => {
     const f = buildDigestFacts(BASE_INPUTS);
     expect(f.followers).toEqual({ start: null, end: null, delta: null });
+    expect(f.conversion).toEqual({ profileClicks: 0, followerDelta: null, rate: null });
     expect(f.activity).toEqual({ posts: 0, replies: 0, replyPct: null });
     expect(f.topTweets).toEqual([]);
     expect(f.spend.totalUsd).toBe(0);
@@ -65,6 +66,38 @@ describe('buildDigestFacts', () => {
       ],
     });
     expect(two.followers).toEqual({ start: 500, end: 527, delta: 27 });
+  });
+
+  test('conversion divides the week follower delta by summed profile clicks', () => {
+    const f = buildDigestFacts({
+      ...BASE_INPUTS,
+      followerPoints: [
+        { snapshotAt: new Date('2026-06-29T03:00:00Z'), followers: 500 },
+        { snapshotAt: new Date('2026-07-05T03:00:00Z'), followers: 509 },
+      ],
+      tweets: [
+        { text: 'a', isReply: false, views: 100, profileVisits: 200 },
+        { text: 'b', isReply: true, views: 900, profileVisits: 112 },
+        { text: 'unmeasured', isReply: false, views: null, profileVisits: null },
+      ],
+    });
+    expect(f.conversion.profileClicks).toBe(312);
+    expect(f.conversion.followerDelta).toBe(9);
+    expect(f.conversion.rate).toBeCloseTo(9 / 312, 10);
+  });
+
+  test('conversion rate is gated null below 20 clicks', () => {
+    const f = buildDigestFacts({
+      ...BASE_INPUTS,
+      followerPoints: [
+        { snapshotAt: new Date('2026-06-29T03:00:00Z'), followers: 500 },
+        { snapshotAt: new Date('2026-07-05T03:00:00Z'), followers: 509 },
+      ],
+      tweets: [{ text: 'a', isReply: false, views: 100, profileVisits: 5 }],
+    });
+    expect(f.conversion.profileClicks).toBe(5);
+    expect(f.conversion.followerDelta).toBe(9);
+    expect(f.conversion.rate).toBeNull();
   });
 
   test('top tweets are measured-only, ranked by views, capped at 3', () => {

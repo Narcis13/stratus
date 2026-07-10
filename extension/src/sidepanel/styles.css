@@ -603,6 +603,14 @@ button.danger:hover:not(:disabled) {
   color: var(--accent);
   flex-shrink: 0;
 }
+.brief-conversion {
+  font-size: 11px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.brief-conversion-window {
+  opacity: 0.7;
+}
 
 .brief-section {
   display: flex;

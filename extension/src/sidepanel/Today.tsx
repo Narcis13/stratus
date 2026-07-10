@@ -12,7 +12,14 @@ import { FansSection } from './Fans.tsx';
 import { LaunchRoomSection } from './LaunchRoom.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
-import { ApiError, type Brief, type BriefQuests, type BriefTweet, api } from './api.ts';
+import {
+  ApiError,
+  type Brief,
+  type BriefQuests,
+  type BriefTweet,
+  type ConversionWindow,
+  api,
+} from './api.ts';
 import { formatTime } from './datetime.ts';
 import type { Settings } from './storage.ts';
 
@@ -128,22 +135,51 @@ function QuestsSection({ quests }: { quests: BriefQuests }): JSX.Element {
 }
 
 function FollowersCard({ brief }: { brief: Brief }): JSX.Element {
-  const { followers, delta7d, sparkline } = brief.account;
+  const { followers, delta7d, sparkline, conversion } = brief.account;
   return (
-    <div className="brief-kpi">
-      <div>
-        <div className="brief-followers">{followers === null ? '—' : fmtNum(followers)}</div>
-        <div className="brief-kpi-label">
-          followers
-          {delta7d !== null && (
-            <span className={`brief-delta ${delta7d >= 0 ? 'up' : 'down'}`}>
-              {delta7d >= 0 ? '+' : ''}
-              {delta7d} / 7d
-            </span>
-          )}
+    <>
+      <div className="brief-kpi">
+        <div>
+          <div className="brief-followers">{followers === null ? '—' : fmtNum(followers)}</div>
+          <div className="brief-kpi-label">
+            followers
+            {delta7d !== null && (
+              <span className={`brief-delta ${delta7d >= 0 ? 'up' : 'down'}`}>
+                {delta7d >= 0 ? '+' : ''}
+                {delta7d} / 7d
+              </span>
+            )}
+          </div>
         </div>
+        <Sparkline points={sparkline.map((p) => p.followers)} />
       </div>
-      <Sparkline points={sparkline.map((p) => p.followers)} />
+      <ConversionLine conversion={conversion} />
+    </>
+  );
+}
+
+// S0.1: "is my profile leaking?" — earned visits → follows. Shows the 7d line
+// when it clears the 20-click gate, with the 28d rate trailing when present.
+function ConversionLine({
+  conversion,
+}: {
+  conversion: { d7: ConversionWindow; d28: ConversionWindow };
+}): JSX.Element | null {
+  const { d7, d28 } = conversion;
+  if (d7.rate === null && d28.rate === null) return null;
+  const primary = d7.rate !== null ? d7 : d28;
+  return (
+    <div className="brief-conversion muted">
+      {fmtNum(primary.profileClicks)} profile visits →{' '}
+      <span
+        className={`brief-delta ${primary.followerDelta !== null && primary.followerDelta < 0 ? 'down' : 'up'}`}
+      >
+        {(primary.followerDelta ?? 0) >= 0 ? '+' : ''}
+        {primary.followerDelta} followers
+      </span>{' '}
+      · {fmtPct(primary.rate)}{' '}
+      <span className="brief-conversion-window">{primary.windowDays}d</span>
+      {primary === d7 && d28.rate !== null && <span> · {fmtPct(d28.rate)} 28d</span>}
     </div>
   );
 }
@@ -345,6 +381,11 @@ function fmtNum(n: number | null): string {
 
 function fmtUsd(n: number): string {
   return `$${n.toFixed(4)}`;
+}
+
+function fmtPct(rate: number | null): string {
+  if (rate === null) return '–';
+  return `${(rate * 100).toFixed(1)}%`;
 }
 
 function fmtHour(h: number): string {

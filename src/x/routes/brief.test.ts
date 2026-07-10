@@ -25,7 +25,15 @@ interface Quest {
   note: string | null;
 }
 
+interface ConversionWindow {
+  windowDays: number;
+  profileClicks: number;
+  followerDelta: number | null;
+  rate: number | null;
+}
+
 interface BriefBody {
+  account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   replyQuota: { postedToday: number };
   quests: {
     day: string;
@@ -93,6 +101,21 @@ describe('brief quests (C9)', () => {
     // A launch happened and a reply was pasted inside its window.
     expect(byKey.get('launch')?.done).toBe(true);
     expect(byKey.get('launch')?.target).toBe(1);
+  });
+
+  test('account carries S0.1 conversion for both windows', async () => {
+    const body = await getBrief();
+    for (const w of [body.account.conversion.d7, body.account.conversion.d28]) {
+      expect(typeof w.windowDays).toBe('number');
+      expect(typeof w.profileClicks).toBe('number');
+      expect(w.profileClicks).toBeGreaterThanOrEqual(0);
+      // followerDelta/rate are number-or-null; rate is null under 20 clicks.
+      expect(w.followerDelta === null || typeof w.followerDelta === 'number').toBe(true);
+      expect(w.rate === null || typeof w.rate === 'number').toBe(true);
+      if (w.profileClicks < 20) expect(w.rate).toBeNull();
+    }
+    expect(body.account.conversion.d7.windowDays).toBe(7);
+    expect(body.account.conversion.d28.windowDays).toBe(28);
   });
 
   test('streak row is written idempotently — one row per day', async () => {

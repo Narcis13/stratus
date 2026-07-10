@@ -74,6 +74,12 @@ export function DigestSection({ settings }: { settings: Settings }): JSX.Element
                 {data.facts.followers.delta} followers
               </span>
             )}
+            {data.facts.conversion?.rate != null && (
+              <span title="earned profile visits that converted to follows this week">
+                {data.facts.conversion.profileClicks} visits →{' '}
+                {(data.facts.conversion.rate * 100).toFixed(1)}%
+              </span>
+            )}
             <span>
               {data.facts.activity.posts} posts · {data.facts.activity.replies} replies
             </span>
