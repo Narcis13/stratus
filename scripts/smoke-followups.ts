@@ -12,9 +12,11 @@ import { db } from '../src/db/client.ts';
 import {
   followupSnoozes,
   mentions,
+  metricsSnapshots,
   people,
   personEvents,
   postsPublished,
+  scheduledPosts,
   voiceAuthorSnapshots,
   voiceAuthors,
 } from '../src/x/db/schema.ts';
@@ -28,6 +30,8 @@ const CHAIN = 'smoke_c5_chain';
 const RISER = 'smoke_c5_riser';
 const MY_REPLY_ID = '96000000000000001';
 const THEIR_REPLY_ID = '96000000000000002';
+const REUP_ID = '96000000000000030';
+const REUP_SCHED_ID = 'smoke_c5_reup_sched';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Mirror mountX's order — followups must beat the :handle dossier route.
@@ -43,7 +47,11 @@ function fail(msg: string): never {
 async function cleanup(): Promise<void> {
   await db.delete(mentions).where(eq(mentions.tweetId, THEIR_REPLY_ID));
   await db.delete(postsPublished).where(eq(postsPublished.tweetId, MY_REPLY_ID));
+  await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, REUP_ID));
+  await db.delete(postsPublished).where(eq(postsPublished.tweetId, REUP_ID));
+  await db.delete(scheduledPosts).where(eq(scheduledPosts.id, REUP_SCHED_ID));
   await db.delete(followupSnoozes).where(like(followupSnoozes.itemKey, '%smoke_c5_%'));
+  await db.delete(followupSnoozes).where(eq(followupSnoozes.itemKey, `reup:${REUP_ID}`));
   await db.delete(voiceAuthorSnapshots).where(eq(voiceAuthorSnapshots.handle, RISER));
   await db.delete(voiceAuthors).where(eq(voiceAuthors.handle, RISER));
   for (const h of [ALLY, FAN, CHAIN, RISER]) {
@@ -54,7 +62,11 @@ async function cleanup(): Promise<void> {
 
 interface QueueBody {
   counts: { total: number; snoozed: number; byKind: Record<string, number> };
-  items: Array<{ kind: string; handle: string; tweetId?: string; reason: string }>;
+  items: Array<{ kind: string; handle: string; tweetId?: string; url?: string; reason: string }>;
+}
+
+function reupOf(q: QueueBody) {
+  return q.items.find((i) => i.kind === 'reup_candidate' && i.tweetId === REUP_ID);
 }
 
 async function queue(): Promise<QueueBody> {
@@ -146,6 +158,21 @@ for (const [daysAgo, followers] of [
   });
 }
 
+// 4b. Seed: re-up candidate — my own non-reply post 21d old, one snapshot far
+//     above the winner bar, not yet quote-tweeted.
+await db.insert(postsPublished).values({
+  tweetId: REUP_ID,
+  text: 'smoke: my proven winner',
+  postedAt: new Date(Date.now() - 21 * DAY_MS),
+  isReply: false,
+  source: 'smoke',
+});
+await db.insert(metricsSnapshots).values({
+  tweetId: REUP_ID,
+  publicMetrics: { impression_count: 250_000 },
+  snapshotAt: new Date(Date.now() - 20 * DAY_MS),
+});
+
 // 5. The queue classifies and ranks.
 let q = await queue();
 const kinds = new Map(q.items.map((i) => [i.handle, i.kind]));
@@ -158,8 +185,53 @@ if (order.indexOf(ALLY) > order.indexOf(RISER)) fail('momentum should ride at th
 console.log('queue: chain_live + neglected_ally + momentum classified and ranked OK');
 console.log(`  riser line: "${q.items.find((i) => i.handle === RISER)?.reason}"`);
 
-// 6. Snooze round-trip.
+// 5b. Re-up candidate surfaces, ranked between neglected_ally and momentum.
+const reup = reupOf(q);
+if (!reup) fail('re-up candidate missing from the queue');
+if (reup.url !== `https://x.com/i/web/status/${REUP_ID}`) fail(`bad re-up url: ${reup.url}`);
+const kindOrder = q.items.map((i) => i.kind);
+const reupIdx = q.items.findIndex((i) => i.tweetId === REUP_ID);
+if (kindOrder.lastIndexOf('neglected_ally') > reupIdx) fail('re-up should follow neglected_ally');
+if (kindOrder.indexOf('momentum') !== -1 && reupIdx > kindOrder.indexOf('momentum')) {
+  fail('re-up should rank above momentum');
+}
+console.log(`re-up candidate classified and ranked OK: "${reup.reason}"`);
+
+// 5c. A winner already carrying a quote_tweet_id row is excluded.
+await db.insert(scheduledPosts).values({
+  id: REUP_SCHED_ID,
+  text: 'smoke: quote draft',
+  status: 'draft',
+  source: 'drafter',
+  quoteTweetId: REUP_ID,
+});
+if (reupOf(await queue())) fail('already-quoted winner should be excluded');
+await db.delete(scheduledPosts).where(eq(scheduledPosts.id, REUP_SCHED_ID));
+console.log('re-up exclusion (already quoted) OK');
+
+// 5d. Re-up snooze round-trip (keyed on the tweet, not a handle).
 let r = await app.request('/x/people/followups', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    kind: 'reup_candidate',
+    tweetId: REUP_ID,
+    snoozedUntil: new Date(Date.now() + 3_600_000).toISOString(),
+  }),
+});
+if (r.status !== 200) fail(`PATCH reup snooze returned ${r.status}`);
+if (reupOf(await queue())) fail('snoozed re-up still in queue');
+r = await app.request('/x/people/followups', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ kind: 'reup_candidate', tweetId: REUP_ID, snoozedUntil: null }),
+});
+if (r.status !== 200) fail(`PATCH reup unsnooze returned ${r.status}`);
+if (!reupOf(await queue())) fail('unsnoozed re-up missing from queue');
+console.log('re-up snooze/unsnooze round-trip OK');
+
+// 6. Snooze round-trip.
+r = await app.request('/x/people/followups', {
   method: 'PATCH',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({

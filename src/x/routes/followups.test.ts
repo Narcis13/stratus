@@ -6,7 +6,15 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { followupSnoozes, mentions, people, personEvents, postsPublished } from '../db/schema.ts';
+import {
+  followupSnoozes,
+  mentions,
+  metricsSnapshots,
+  people,
+  personEvents,
+  postsPublished,
+  scheduledPosts,
+} from '../db/schema.ts';
 import { logPersonEvents } from '../people/store.ts';
 import { followups } from './followups.ts';
 import { peopleRouter } from './people.ts';
@@ -22,11 +30,19 @@ const FAN = 'c5_top_fan';
 const CHAIN = 'c5_chain_fan';
 const MY_REPLY_ID = '95000000000000001';
 const THEIR_REPLY_ID = '95000000000000002';
+// §S0.6 re-up winner: 21d old, huge measured views so it's the single best
+// candidate regardless of what other suites left in the shared DB.
+const REUP_ID = '95000000000000030';
+const REUP_SCHED_ID = 'c5_reup_sched';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface FollowupsBody {
   counts: { total: number; snoozed: number; byKind: Record<string, number> };
-  items: Array<{ kind: string; handle: string; tweetId?: string; url?: string }>;
+  items: Array<{ kind: string; handle: string; tweetId?: string; url?: string; reason?: string }>;
+}
+
+function reupItem(body: FollowupsBody) {
+  return body.items.find((i) => i.kind === 'reup_candidate' && i.tweetId === REUP_ID);
 }
 
 async function getJson<T>(path: string): Promise<{ status: number; body: T }> {
@@ -121,6 +137,101 @@ describe('followups routes', () => {
         status: 'unanswered',
       })
       .onConflictDoNothing();
+
+    // Re-up candidate: my own non-reply post, 21d old, one snapshot far above
+    // the winner bar, not yet quote-tweeted.
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: REUP_ID,
+        text: 'my proven winner',
+        postedAt: new Date(Date.now() - 21 * DAY_MS),
+        isReply: false,
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(metricsSnapshots)
+      .values({
+        tweetId: REUP_ID,
+        publicMetrics: { impression_count: 250_000 },
+        snapshotAt: new Date(Date.now() - 20 * DAY_MS),
+      })
+      .onConflictDoNothing();
+  });
+
+  test('surfaces the best re-up candidate, ranked above momentum', async () => {
+    const { body } = await getJson<FollowupsBody>('/x/people/followups');
+    const reup = reupItem(body);
+    expect(reup).toBeDefined();
+    expect(reup?.handle).toBe('');
+    expect(reup?.url).toBe(`https://x.com/i/web/status/${REUP_ID}`);
+    expect(reup?.reason).toContain('quote-tweet re-up');
+    expect(reup?.reason).toContain('250k views');
+
+    // reup ranks after every person kind and before any momentum item.
+    const order = body.items.map((i) => i.kind);
+    const reupIdx = body.items.findIndex((i) => i.tweetId === REUP_ID);
+    const firstMomentum = order.indexOf('momentum');
+    if (firstMomentum !== -1) expect(reupIdx).toBeLessThan(firstMomentum);
+    for (const personKind of ['chain_live', 'dm_ready', 'neglected_target', 'neglected_ally']) {
+      const last = order.lastIndexOf(personKind);
+      if (last !== -1) expect(reupIdx).toBeGreaterThan(last);
+    }
+  });
+
+  test('a winner already carrying a quote_tweet_id row is excluded', async () => {
+    await db.insert(scheduledPosts).values({
+      id: REUP_SCHED_ID,
+      text: 'quote draft',
+      status: 'draft',
+      source: 'drafter',
+      quoteTweetId: REUP_ID,
+    });
+    try {
+      const { body } = await getJson<FollowupsBody>('/x/people/followups');
+      expect(reupItem(body)).toBeUndefined();
+    } finally {
+      await db.delete(scheduledPosts).where(eq(scheduledPosts.id, REUP_SCHED_ID));
+    }
+  });
+
+  test('PATCH snooze by tweetId hides the re-up; unsnooze brings it back', async () => {
+    const until = new Date(Date.now() + 3_600_000).toISOString();
+    const snoozeRes = await patch<{ itemKey: string }>('/x/people/followups', {
+      kind: 'reup_candidate',
+      tweetId: REUP_ID,
+      snoozedUntil: until,
+    });
+    expect(snoozeRes.status).toBe(200);
+    expect(snoozeRes.body.itemKey).toBe(`reup:${REUP_ID}`);
+
+    let { body } = await getJson<FollowupsBody>('/x/people/followups');
+    expect(reupItem(body)).toBeUndefined();
+    expect(body.counts.snoozed).toBeGreaterThanOrEqual(1);
+
+    await patch('/x/people/followups', {
+      kind: 'reup_candidate',
+      tweetId: REUP_ID,
+      snoozedUntil: null,
+    });
+    ({ body } = await getJson<FollowupsBody>('/x/people/followups'));
+    expect(reupItem(body)).toBeDefined();
+  });
+
+  test('PATCH reup_candidate requires a numeric tweetId', async () => {
+    expect(
+      (await patch('/x/people/followups', { kind: 'reup_candidate', snoozedUntil: null })).status,
+    ).toBe(400);
+    expect(
+      (
+        await patch('/x/people/followups', {
+          kind: 'reup_candidate',
+          tweetId: 'nope',
+          snoozedUntil: null,
+        })
+      ).status,
+    ).toBe(400);
   });
 
   test('GET /people/followups is not swallowed by the :handle dossier route', async () => {
@@ -222,7 +333,11 @@ describe('followups routes', () => {
     // Keep the shared in-memory DB tidy for other suites.
     await db.delete(mentions).where(eq(mentions.tweetId, THEIR_REPLY_ID));
     await db.delete(postsPublished).where(eq(postsPublished.tweetId, MY_REPLY_ID));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, REUP_ID));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, REUP_ID));
+    await db.delete(scheduledPosts).where(eq(scheduledPosts.id, REUP_SCHED_ID));
     await db.delete(followupSnoozes).where(eq(followupSnoozes.itemKey, `neglected_ally:${ALLY}`));
+    await db.delete(followupSnoozes).where(eq(followupSnoozes.itemKey, `reup:${REUP_ID}`));
     for (const h of [ALLY, FAN]) {
       await db.delete(personEvents).where(eq(personEvents.handle, h));
       await db.delete(people).where(eq(people.handle, h));

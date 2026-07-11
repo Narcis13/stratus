@@ -16,6 +16,10 @@ export const FOLLOWUP_KINDS = [
   'dm_ready',
   'neglected_target',
   'neglected_ally',
+  // reup_candidate is NOT a person item (see pickReupCandidate) — it's a proven
+  // own post worth quote-tweeting again. Assembled by the route, ranked just
+  // above momentum. Kept in this list so isFollowupKind/PATCH-snooze accept it.
+  'reup_candidate',
   'momentum',
 ] as const;
 export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
@@ -42,6 +46,13 @@ export const BAND_ENTRY_HORIZON_DAYS = 30;
 /** Snooze rows key on this — one snooze per (kind, person). */
 export function followupKey(kind: FollowupKind, handle: string): string {
   return `${kind}:${handle}`;
+}
+
+/** reup_candidate snoozes key on the tweet, not a person — `reup:<tweetId>`.
+ *  Deliberately NOT `reup_candidate:<tweetId>` so the key stays short and the
+ *  reup path never collides with a person handle in followup_snoozes. */
+export function reupKey(tweetId: string): string {
+  return `reup:${tweetId}`;
 }
 
 export interface FollowupItem {
@@ -334,6 +345,75 @@ export function aboutToEnterBand(
   return followersCount + perDay * BAND_ENTRY_HORIZON_DAYS >= bandMin;
 }
 
+// ---------------------------------------------------------- reup candidate
+
+// §S0.6: a proven own post (measured views cleared WINNER_REREAD_MIN_VIEWS)
+// that's 14–60d old — old enough to be worth resurfacing, recent enough to
+// still land — and hasn't already been quote-tweeted. The age window and the
+// views/already-quoted filters live in the route SQL; this module ranks the
+// survivors and formats the single best one. One per queue read: a nudge, not
+// a backlog.
+export const REUP_MIN_AGE_DAYS = 14;
+export const REUP_MAX_AGE_DAYS = 60;
+
+export interface ReupCandidate {
+  tweetId: string;
+  /** Highest measured view count across the tweet's snapshots. */
+  views: number;
+  postedAt: Date;
+}
+
+export interface ReupPick {
+  item: FollowupItem | null;
+  /** Candidates hidden by an active reup snooze (same counting as classify). */
+  snoozed: number;
+}
+
+/** The single best re-up candidate (highest measured views), snooze-filtered.
+ *  Cap 1 — the queue surfaces one winner to quote, never a wall of them. */
+export function pickReupCandidate(
+  candidates: ReupCandidate[],
+  snoozes: Map<string, Date>,
+  now: Date,
+): ReupPick {
+  const nowMs = now.getTime();
+  let snoozed = 0;
+  const live: ReupCandidate[] = [];
+  for (const cand of candidates) {
+    const until = snoozes.get(reupKey(cand.tweetId));
+    if (until && until.getTime() > nowMs) {
+      snoozed++;
+      continue;
+    }
+    live.push(cand);
+  }
+  if (live.length === 0) return { item: null, snoozed };
+
+  live.sort((a, b) => {
+    if (b.views !== a.views) return b.views - a.views;
+    const dt = b.postedAt.getTime() - a.postedAt.getTime();
+    if (dt !== 0) return dt;
+    return a.tweetId.localeCompare(b.tweetId);
+  });
+  const best = live[0] as ReupCandidate;
+
+  return {
+    item: {
+      kind: 'reup_candidate',
+      // No person — the extension branches on kind and never renders a handle.
+      handle: '',
+      displayName: null,
+      stage: null,
+      reason: `${fmtViews(best.views)} views · posted ${fmtAgo(best.postedAt, now)} — quote-tweet re-up`,
+      at: best.postedAt,
+      tweetId: best.tweetId,
+      // /i/web/status/ opens the tweet without needing my own handle.
+      url: `https://x.com/i/web/status/${best.tweetId}`,
+    },
+    snoozed,
+  };
+}
+
 // ------------------------------------------------------------------ fans
 
 export const FAN_UNACKNOWLEDGED_DAYS = 7;
@@ -374,6 +454,11 @@ function fmtAgo(at: Date, now: Date): string {
   if (min < 60) return `${Math.round(min)}m ago`;
   if (min < 24 * 60) return `${Math.floor(min / 60)}h ago`;
   return `${Math.floor(min / 1440)}d ago`;
+}
+
+function fmtViews(n: number): string {
+  if (n >= 1000) return `${Math.round(n / 100) / 10}k`;
+  return String(n);
 }
 
 function fmtPct(n: number): string {

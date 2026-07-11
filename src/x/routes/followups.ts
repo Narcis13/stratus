@@ -14,16 +14,19 @@
 // 'followups' and 'fans' are valid usernames, so GET /people/:handle would
 // otherwise swallow both paths as dossier lookups (see mountX in ../index.ts).
 
-import { and, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
   accountSnapshots,
   followupSnoozes,
   mentions,
+  metricsSnapshots,
   people,
   personEvents,
   personSnapshots,
+  postsPublished,
+  scheduledPosts,
   voiceAuthorSnapshots,
   voiceAuthors,
 } from '../db/schema.ts';
@@ -33,13 +36,18 @@ import {
   type FollowerPoint,
   type FollowupPerson,
   type MomentumCandidate,
+  REUP_MAX_AGE_DAYS,
+  REUP_MIN_AGE_DAYS,
+  type ReupCandidate,
   aboutToEnterBand,
   classifyFollowups,
   fanUnacknowledged,
   followupKey,
   isFollowupKind,
   momentumInflection,
+  pickReupCandidate,
   rankFans,
+  reupKey,
 } from '../people/followups.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { myReplyTweetIds, normalizePersonHandle } from '../people/store.ts';
@@ -53,6 +61,10 @@ const FANS_DEFAULT_DAYS = 30;
 const FANS_MAX_DAYS = 365;
 const FANS_DEFAULT_LIMIT = 20;
 const FANS_MAX_LIMIT = 100;
+// Same bar the dailyMetrics winner re-read uses (§8.4) — a post only counts as
+// a re-up candidate if a snapshot measured it clearing this view count.
+const REUP_MIN_VIEWS = Number(process.env.WINNER_REREAD_MIN_VIEWS ?? '500');
+const TWEET_ID_RE = /^\d+$/;
 
 export const followups = new Hono();
 
@@ -204,16 +216,72 @@ followups.get('/people/followups', async (c) => {
     snoozes,
   });
 
+  // reup_candidate (§S0.6): proven own posts (measured views ≥ the winner bar)
+  // 14–60d old that haven't been quote-tweeted yet. Not a person item — pick
+  // the single best and ranked just above momentum at the queue tail.
+  const reup = pickReupCandidate(await loadReupCandidates(now), snoozes, now);
+  let finalItems = items;
+  if (reup.item) {
+    const momentumIdx = items.findIndex((i) => i.kind === 'momentum');
+    const at = momentumIdx === -1 ? items.length : momentumIdx;
+    finalItems = [...items.slice(0, at), reup.item, ...items.slice(at)];
+  }
+  const totalSnoozed = snoozed + reup.snoozed;
+
   const byKind: Record<string, number> = {};
-  for (const i of items) byKind[i.kind] = (byKind[i.kind] ?? 0) + 1;
+  for (const i of finalItems) byKind[i.kind] = (byKind[i.kind] ?? 0) + 1;
 
   return c.json({
     generatedAt: now,
     myFollowers,
-    counts: { total: items.length, snoozed, byKind },
-    items,
+    counts: { total: finalItems.length, snoozed: totalSnoozed, byKind },
+    items: finalItems,
   });
 });
+
+// Own non-reply posts 14–60d old whose peak measured views cleared the winner
+// bar, minus any tweet a scheduled_posts row already quotes (draft, pending, or
+// posted — we don't nag about a re-up that's already queued). Views come from
+// the max snapshot impression_count, same read as the dailyMetrics winner
+// re-read. Retired rows are kept: retire-before-snapshot (invariant #7) means
+// nearly every measured tweet is retired, so filtering on it would find nothing.
+async function loadReupCandidates(now: Date): Promise<ReupCandidate[]> {
+  const oldest = new Date(now.getTime() - REUP_MAX_AGE_DAYS * DAY_MS);
+  const newest = new Date(now.getTime() - REUP_MIN_AGE_DAYS * DAY_MS);
+  const winners = await db
+    .select({
+      tweetId: postsPublished.tweetId,
+      postedAt: postsPublished.postedAt,
+      views:
+        sql<number>`max(CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER))`.as(
+          'views',
+        ),
+    })
+    .from(postsPublished)
+    .innerJoin(metricsSnapshots, eq(metricsSnapshots.tweetId, postsPublished.tweetId))
+    .where(
+      and(
+        eq(postsPublished.isReply, false),
+        gte(postsPublished.postedAt, oldest),
+        lte(postsPublished.postedAt, newest),
+      ),
+    )
+    .groupBy(postsPublished.tweetId)
+    .having(
+      sql`max(CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER)) >= ${REUP_MIN_VIEWS}`,
+    );
+  if (winners.length === 0) return [];
+
+  const quotedRows = await db
+    .select({ quoteTweetId: scheduledPosts.quoteTweetId })
+    .from(scheduledPosts)
+    .where(isNotNull(scheduledPosts.quoteTweetId));
+  const alreadyQuoted = new Set(quotedRows.map((r) => r.quoteTweetId));
+
+  return winners
+    .filter((w) => !alreadyQuoted.has(w.tweetId))
+    .map((w) => ({ tweetId: w.tweetId, views: Number(w.views), postedAt: w.postedAt }));
+}
 
 // ----------------------------------------------------------------- snooze
 
@@ -225,9 +293,18 @@ followups.patch('/people/followups', async (c) => {
   const body = raw as Record<string, unknown>;
 
   if (!isFollowupKind(body.kind)) return c.json({ error: 'invalid_kind' }, 400);
-  const handle = normalizePersonHandle(body.handle);
-  if (!handle) return c.json({ error: 'invalid_handle' }, 400);
-  const itemKey = followupKey(body.kind, handle);
+
+  // reup_candidate snoozes on the tweet (reup:<tweetId>), not a person handle.
+  let itemKey: string;
+  if (body.kind === 'reup_candidate') {
+    const tweetId = typeof body.tweetId === 'string' ? body.tweetId.trim() : '';
+    if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
+    itemKey = reupKey(tweetId);
+  } else {
+    const handle = normalizePersonHandle(body.handle);
+    if (!handle) return c.json({ error: 'invalid_handle' }, 400);
+    itemKey = followupKey(body.kind, handle);
+  }
 
   if (body.snoozedUntil === null) {
     await db.delete(followupSnoozes).where(eq(followupSnoozes.itemKey, itemKey));

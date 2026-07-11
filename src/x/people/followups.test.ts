@@ -8,12 +8,15 @@ import {
   type FollowerPoint,
   type FollowupPerson,
   type MomentumCandidate,
+  type ReupCandidate,
   aboutToEnterBand,
   classifyFollowups,
   fanUnacknowledged,
   followupKey,
   momentumInflection,
+  pickReupCandidate,
   rankFans,
+  reupKey,
 } from './followups.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -262,6 +265,60 @@ describe('classifyFollowups', () => {
     );
     expect(snoozed).toBe(1);
     expect(items.map((i) => i.kind)).toEqual(['neglected_target']);
+  });
+});
+
+describe('pickReupCandidate', () => {
+  const cand = (tweetId: string, views: number, daysOld: number): ReupCandidate => ({
+    tweetId,
+    views,
+    postedAt: daysAgo(daysOld),
+  });
+
+  test('empty in → null, snoozed 0', () => {
+    expect(pickReupCandidate([], new Map(), NOW)).toEqual({ item: null, snoozed: 0 });
+  });
+
+  test('picks the single highest-views candidate, formats a re-up line', () => {
+    const { item, snoozed } = pickReupCandidate(
+      [cand('1001', 800, 20), cand('1002', 4200, 21), cand('1003', 1200, 30)],
+      new Map(),
+      NOW,
+    );
+    expect(snoozed).toBe(0);
+    expect(item?.kind).toBe('reup_candidate');
+    expect(item?.tweetId).toBe('1002');
+    expect(item?.handle).toBe('');
+    expect(item?.url).toBe('https://x.com/i/web/status/1002');
+    expect(item?.reason).toContain('4.2k views');
+    expect(item?.reason).toContain('quote-tweet re-up');
+  });
+
+  test('a snoozed candidate is skipped and counted; the next best surfaces', () => {
+    const snoozes = new Map([[reupKey('1002'), new Date(NOW.getTime() + DAY_MS)]]);
+    const { item, snoozed } = pickReupCandidate(
+      [cand('1001', 800, 20), cand('1002', 4200, 21)],
+      snoozes,
+      NOW,
+    );
+    expect(snoozed).toBe(1);
+    expect(item?.tweetId).toBe('1001');
+  });
+
+  test('an expired snooze does not hide the candidate', () => {
+    const snoozes = new Map([[reupKey('1002'), new Date(NOW.getTime() - DAY_MS)]]);
+    const { item, snoozed } = pickReupCandidate([cand('1002', 4200, 21)], snoozes, NOW);
+    expect(snoozed).toBe(0);
+    expect(item?.tweetId).toBe('1002');
+  });
+
+  test('ties on views break to the newer post, then tweetId', () => {
+    const { item } = pickReupCandidate(
+      [cand('1001', 1000, 30), cand('1002', 1000, 15)],
+      new Map(),
+      NOW,
+    );
+    expect(item?.tweetId).toBe('1002'); // newer wins the tie
   });
 });
 

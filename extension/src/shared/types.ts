@@ -872,6 +872,9 @@ export type FollowupKind =
   | 'dm_ready'
   | 'neglected_target'
   | 'neglected_ally'
+  // §S0.6: not a person — a proven own post worth quote-tweeting again. handle
+  // is empty; tweetId/url point at the post, click-through drafts via /posts/reup.
+  | 'reup_candidate'
   | 'momentum';
 
 export interface FollowupItem {
@@ -881,7 +884,7 @@ export interface FollowupItem {
   stage: PersonStage | null;
   reason: string;
   at: string | null;
-  /** chain_live only: the owed inbound tweet. */
+  /** chain_live: the owed inbound tweet. reup_candidate: my post to re-up. */
   tweetId?: string;
   url?: string;
 }
@@ -895,7 +898,10 @@ export interface FollowupsResponse {
 
 export interface FollowupSnoozeBody {
   kind: FollowupKind;
-  handle: string;
+  /** Person kinds. */
+  handle?: string;
+  /** reup_candidate snoozes on the tweet (reup:<tweetId>), not a handle. */
+  tweetId?: string;
   /** null = unsnooze. */
   snoozedUntil: string | null;
 }

@@ -1824,6 +1824,16 @@ button.danger:hover:not(:disabled) {
   border-color: var(--warn);
 }
 
+.donext-kind-reup_candidate {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.donext-self {
+  font-weight: 600;
+  color: var(--text);
+}
+
 .donext-snooze {
   padding: 0 6px;
   font-size: 10px;
