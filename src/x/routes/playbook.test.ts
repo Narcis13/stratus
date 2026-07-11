@@ -3,10 +3,12 @@
 // the joins land in the right stats, the minN knob, the guidance loaders, and
 // the C4 prompt-tail injection.
 
-import { beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
+  accountSnapshots,
   metricsSnapshots,
   people,
   postTemplates,
@@ -17,7 +19,7 @@ import {
 } from '../db/schema.ts';
 import { buildPostDraftInput } from '../posts/prompt.ts';
 import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
-import { loadPostGuidance, loadReplyGuidance, playbook } from './playbook.ts';
+import { loadPostGuidance, loadReplyGuidance, loadRosterCoverage, playbook } from './playbook.ts';
 
 const app = new Hono();
 app.route('/x', playbook);
@@ -232,6 +234,14 @@ describe('playbook route', () => {
     expect(body.relationshipLift.withoutRelationship.n).toBe(1);
     expect(body.relationshipLift.viewsLift).toBeNull(); // gated
 
+    // §S0.7 roster coverage rides along — assert the partition invariants
+    // (band-value correctness is covered by the pure test, which doesn't depend
+    // on whatever account snapshot other test files left as "latest").
+    const rc = body.rosterCoverage;
+    expect(typeof rc.total).toBe('number');
+    expect(rc.counts.in_band + rc.counts.above_band + rc.counts.below_band).toBe(rc.known);
+    expect(rc.known + rc.counts.unknown).toBe(rc.total);
+
     // Nothing clears the default gate on 2 measured rows.
     expect(body.guidance.reply).toBeNull();
     expect(body.guidance.post).toBeNull();
@@ -355,5 +365,83 @@ describe('playbook route', () => {
     } finally {
       if (prev !== undefined) process.env.XAI_API_KEY = prev;
     }
+  });
+});
+
+// §S0.7 — loadRosterCoverage over the real DB. A far-future account snapshot
+// forces a known 2–10x band regardless of what other files seeded (cleaned up
+// in afterAll so it never leaks); a distant-past window isolates these replies
+// from every other test's now-stamped posted drafts.
+describe('loadRosterCoverage (S0.7)', () => {
+  const FUTURE = new Date('2999-01-01T00:00:00Z'); // guaranteed latest snapshot
+  const WIN_START = new Date('2024-02-01T00:00:00Z');
+  const WIN_END = new Date('2024-02-08T00:00:00Z');
+  const PASTE = new Date('2024-02-03T12:00:00Z');
+  const specs = [
+    { id: 'c0000000-0000-4000-8000-000000000001', handle: 'rc_inband', followers: 50_000 },
+    { id: 'c0000000-0000-4000-8000-000000000002', handle: 'rc_inband2', followers: 40_000 },
+    { id: 'c0000000-0000-4000-8000-000000000003', handle: 'rc_toobig', followers: 500_000 },
+    { id: 'c0000000-0000-4000-8000-000000000004', handle: 'rc_unknown', followers: null },
+  ];
+
+  beforeAll(async () => {
+    // My size 10k → 2–10x band = 20k–100k.
+    await db.insert(accountSnapshots).values({
+      snapshotAt: FUTURE,
+      followersCount: 10_000,
+      followingCount: 100,
+      tweetCount: 500,
+      listedCount: 5,
+    });
+    for (const s of specs) {
+      if (s.followers !== null) {
+        await db
+          .insert(people)
+          .values({ handle: s.handle, followersCount: s.followers })
+          .onConflictDoNothing();
+      }
+      await db
+        .insert(replyDrafts)
+        .values({
+          id: s.id,
+          sourceTweetId: '7000',
+          sourceAuthorUsername: s.handle,
+          sourceText: 't',
+          sourceUrl: 'https://x.com/x/status/7000',
+          contextSnapshot: {},
+          replyText: 'r',
+          model: 'test',
+          status: 'posted',
+          updatedAt: PASTE,
+        })
+        .onConflictDoNothing();
+    }
+  });
+
+  afterAll(async () => {
+    await db.delete(accountSnapshots).where(eq(accountSnapshots.snapshotAt, FUTURE));
+    for (const s of specs) {
+      await db.delete(replyDrafts).where(eq(replyDrafts.id, s.id));
+      if (s.followers !== null) await db.delete(people).where(eq(people.handle, s.handle));
+    }
+  });
+
+  test('bands windowed posted replies by resolved author size', async () => {
+    const r = await loadRosterCoverage(WIN_START, WIN_END, 1);
+    expect(r.total).toBe(4);
+    expect(r.band).toEqual({ min: 20_000, max: 100_000 });
+    expect(r.counts).toEqual({ in_band: 2, above_band: 1, below_band: 0, unknown: 1 });
+    expect(r.known).toBe(3);
+    expect(r.inBandPctOfKnown).toBe(67); // 2/3
+    expect(r.majorityInBand).toBe(true); // 2 of 3 known
+  });
+
+  test('an empty window is all zeros', async () => {
+    const r = await loadRosterCoverage(
+      new Date('2023-01-01T00:00:00Z'),
+      new Date('2023-01-02T00:00:00Z'),
+    );
+    expect(r.total).toBe(0);
+    expect(r.majorityInBand).toBeNull();
   });
 });

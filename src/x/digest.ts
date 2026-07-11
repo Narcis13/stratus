@@ -6,6 +6,7 @@
 
 import type { GrokMessage } from '../grok/index.ts';
 import { conversionRate } from './conversion.ts';
+import type { RosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -68,6 +69,8 @@ export interface DigestFactInputs {
   streakDays: Array<{ day: string; allDone: boolean }>;
   /** The Playbook's gated guidance lines (null when the gate isn't met). */
   guidance: { reply: string | null; post: string | null };
+  /** §S0.7 — where the week's posted replies went vs my 2–10x target band. */
+  rosterCoverage: RosterCoverage;
 }
 
 export interface DigestFacts {
@@ -85,6 +88,8 @@ export interface DigestFacts {
   spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
   quests: { daysAllDone: number; daysTracked: number };
   guidance: { reply: string | null; post: string | null };
+  // S0.7: where this week's posted replies landed vs my 2–10x target band.
+  rosterCoverage: RosterCoverage;
 }
 
 export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
@@ -143,6 +148,7 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
       daysTracked: i.streakDays.length,
     },
     guidance: i.guidance,
+    rosterCoverage: i.rosterCoverage,
   };
 }
 

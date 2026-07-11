@@ -12,6 +12,7 @@ import {
   type PlaybookAngleCell,
   type PlaybookCell,
   type PlaybookExtractResult,
+  type PlaybookRosterCoverage,
   api,
 } from './api.ts';
 import type { Settings } from './storage.ts';
@@ -280,6 +281,8 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
             )}
           </section>
 
+          <RosterCoverageSection rc={data.rosterCoverage} minN={data.minN} />
+
           <section className="brief-section">
             <h3>Pillar × register ({data.pillarRegister.totalMeasured} measured)</h3>
             {data.pillarRegister.cells.length === 0 ? (
@@ -328,6 +331,74 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
         </>
       )}
     </div>
+  );
+}
+
+const ROSTER_ROWS: Array<{ key: keyof PlaybookRosterCoverage['counts']; label: string }> = [
+  { key: 'in_band', label: 'in-band (2–10x)' },
+  { key: 'above_band', label: 'above band (>10x)' },
+  { key: 'below_band', label: 'below band (<2x)' },
+  { key: 'unknown', label: 'unknown size' },
+];
+
+// §S0.7 — where the last 7 days' replies went vs my 2–10x target band. The
+// verdict speaks only over KNOWN-size replies once they clear the gate; the
+// unknown bucket is the roster gap, shown but never faulted.
+function RosterCoverageSection({
+  rc,
+  minN,
+}: {
+  rc: PlaybookRosterCoverage;
+  minN: number;
+}): JSX.Element {
+  return (
+    <section className="brief-section">
+      <h3>Roster coverage — last 7 days ({rc.total} replies)</h3>
+      {rc.total === 0 ? (
+        <div className="muted">No posted replies in the last 7 days.</div>
+      ) : (
+        <>
+          <table className="pb-table">
+            <thead>
+              <tr>
+                <th>author size</th>
+                <th>replies</th>
+                <th>share</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ROSTER_ROWS.map((r) => (
+                <tr key={r.key} className={r.key === 'unknown' ? 'pb-thin' : ''}>
+                  <td>{r.label}</td>
+                  <td>{rc.counts[r.key]}</td>
+                  <td>{fmtPct2(rc.pct[r.key])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {rc.band === null ? (
+            <div className="muted pb-note">
+              waiting for the daily account snapshot to set your 2–10x band — until then every
+              author reads as unknown size.
+            </div>
+          ) : rc.majorityInBand === null ? (
+            <div className="muted pb-note">
+              doctrine verdict stays silent until n≥{minN} replies to known-size authors ({rc.known}{' '}
+              so far).
+            </div>
+          ) : rc.majorityInBand ? (
+            <div className="status-line">
+              on doctrine: {rc.inBandPctOfKnown}% of known-size replies are in-band (majority)
+            </div>
+          ) : (
+            <div className="status-line">
+              off doctrine: only {rc.inBandPctOfKnown}% of known-size replies are in-band — aim the
+              70% at 2–10x accounts
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 
@@ -424,4 +495,9 @@ function fmtN(n: number | null): string {
 
 function fmtPct(r: number | null): string {
   return r === null ? '—' : `${Math.round(r * 100)}%`;
+}
+
+// Already an integer percentage (0–100), unlike fmtPct's 0–1 ratio input.
+function fmtPct2(p: number | null): string {
+  return p === null ? '—' : `${p}%`;
 }

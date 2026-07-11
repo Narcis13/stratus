@@ -80,6 +80,12 @@ describe('digest route', () => {
     expect(body.narrativeError).toBe('grok_not_configured');
     expect(body.facts.activity.posts).toBeGreaterThanOrEqual(1);
     expect(body.facts.followers).toBeDefined();
+    // §S0.7 roster coverage rides in the facts (this old week has no replies →
+    // an all-zero, verdict-null partition; the shape is what matters here).
+    const rc = body.facts.rosterCoverage;
+    expect(typeof rc.total).toBe('number');
+    expect(rc.known + rc.counts.unknown).toBe(rc.total);
+    expect(rc.majorityInBand).toBeNull();
   });
 
   test('any day of the week resolves to the same weekKey', async () => {

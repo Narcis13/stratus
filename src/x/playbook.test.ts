@@ -15,8 +15,10 @@ import {
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
+  buildRosterCoverage,
   buildStructureEffectiveness,
   classifyReplyOrigin,
+  classifyRosterBand,
   latencyBucket,
   median,
   normalizeReplyText,
@@ -426,6 +428,79 @@ describe('buildLatencyEffectiveness', () => {
     const r = buildLatencyEffectiveness(rows);
     expect(r.viewsLift).toBeNull();
     expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+  });
+});
+
+describe('classifyRosterBand', () => {
+  const band = { min: 20_000, max: 100_000 }; // my size = 10k → 2–10x
+
+  test('bands against my 2–10x window; nulls and no-band → unknown', () => {
+    expect(classifyRosterBand(50_000, band)).toBe('in_band');
+    expect(classifyRosterBand(20_000, band)).toBe('in_band'); // inclusive floor
+    expect(classifyRosterBand(100_000, band)).toBe('in_band'); // inclusive ceiling
+    expect(classifyRosterBand(19_999, band)).toBe('below_band');
+    expect(classifyRosterBand(100_001, band)).toBe('above_band');
+    expect(classifyRosterBand(null, band)).toBe('unknown');
+    expect(classifyRosterBand(Number.NaN, band)).toBe('unknown');
+    // No account size → we can't band anyone.
+    expect(classifyRosterBand(50_000, null)).toBe('unknown');
+  });
+});
+
+describe('buildRosterCoverage', () => {
+  const band = { min: 20_000, max: 100_000 };
+
+  test('counts + pct over total, verdict over known, gated on known', () => {
+    // 3 in-band, 1 above, 1 below, 1 unknown → known = 5.
+    const followers = [50_000, 40_000, 30_000, 200_000, 5_000, null];
+    const r = buildRosterCoverage(followers, band, 3);
+    expect(r.total).toBe(6);
+    expect(r.counts).toEqual({ in_band: 3, above_band: 1, below_band: 1, unknown: 1 });
+    expect(r.pct.in_band).toBe(50); // 3/6
+    expect(r.pct.unknown).toBe(17); // 1/6 → 17
+    expect(r.known).toBe(5);
+    expect(r.inBandPctOfKnown).toBe(60); // 3/5
+    expect(r.sufficient).toBe(true); // known 5 ≥ 3
+    expect(r.majorityInBand).toBe(true); // 3/5 > 0.5
+    expect(r.band).toEqual(band);
+  });
+
+  test('verdict is null under the gate (thin known sample)', () => {
+    const r = buildRosterCoverage([50_000, null, null], band, 3);
+    expect(r.known).toBe(1);
+    expect(r.sufficient).toBe(false);
+    expect(r.majorityInBand).toBeNull();
+    // The raw breakdown still renders.
+    expect(r.pct.in_band).toBe(33);
+  });
+
+  test('no account size → everyone unknown, no verdict', () => {
+    const r = buildRosterCoverage([50_000, 40_000], null, 1);
+    expect(r.counts.unknown).toBe(2);
+    expect(r.known).toBe(0);
+    expect(r.inBandPctOfKnown).toBeNull();
+    expect(r.majorityInBand).toBeNull();
+    expect(r.band).toBeNull();
+  });
+
+  test('in-band a minority of known → verdict false', () => {
+    // 2 in-band, 3 above → known 5, in-band 40% < 50%.
+    const r = buildRosterCoverage([50_000, 60_000, 200_000, 300_000, 400_000], band, 3);
+    expect(r.inBandPctOfKnown).toBe(40);
+    expect(r.majorityInBand).toBe(false);
+  });
+
+  test('empty window → zeros and null pct', () => {
+    const r = buildRosterCoverage([], band, 20);
+    expect(r.total).toBe(0);
+    expect(r.pct.in_band).toBeNull();
+    expect(r.majorityInBand).toBeNull();
+  });
+
+  test('default gate is 20', () => {
+    const followers = Array.from({ length: 19 }, () => 50_000);
+    expect(buildRosterCoverage(followers, band).sufficient).toBe(false);
+    expect(buildRosterCoverage([...followers, 50_000], band).sufficient).toBe(true);
   });
 });
 

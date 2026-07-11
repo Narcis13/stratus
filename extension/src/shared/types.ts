@@ -718,6 +718,8 @@ export interface DigestFacts {
   spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
   quests: { daysAllDone: number; daysTracked: number };
   guidance: { reply: string | null; post: string | null };
+  // S0.7: where this week's posted replies landed vs my 2–10x target band.
+  rosterCoverage: PlaybookRosterCoverage;
 }
 
 export interface DigestResponse {
@@ -966,6 +968,26 @@ export interface PlaybookBaitCell {
   sufficient: boolean;
 }
 
+// Roster coverage (§S0.7): where the window's posted replies went vs my 2–10x
+// target band. `pct` is each band's share of ALL replies; `majorityInBand` is
+// the gated doctrine verdict over KNOWN-size replies (null under the gate or
+// with no account size yet). Shared by the Playbook page and the digest facts.
+export interface PlaybookRosterCoverage {
+  total: number;
+  counts: { in_band: number; above_band: number; below_band: number; unknown: number };
+  pct: {
+    in_band: number | null;
+    above_band: number | null;
+    below_band: number | null;
+    unknown: number | null;
+  };
+  known: number;
+  inBandPctOfKnown: number | null;
+  sufficient: boolean;
+  majorityInBand: boolean | null;
+  band: { min: number; max: number } | null;
+}
+
 export interface Playbook {
   minN: number;
   angleEffectiveness: {
@@ -1022,6 +1044,9 @@ export interface Playbook {
     viewsLift: number | null;
     profileVisitsLift: number | null;
   };
+  // Roster coverage (§S0.7): of the last 7 days' posted replies, how many went
+  // to in-band (2–10x) vs above/below/unknown-size authors.
+  rosterCoverage: PlaybookRosterCoverage;
   guidance: { reply: string | null; post: string | null };
 }
 

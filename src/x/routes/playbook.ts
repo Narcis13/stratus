@@ -12,11 +12,12 @@
 // Aggregation logic is pure and lives in ../playbook.ts; this file only loads
 // rows and shapes the response.
 
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import {
+  accountSnapshots,
   metricsSnapshots,
   people,
   postTemplates,
@@ -34,6 +35,7 @@ import {
   type MediaRow,
   type PillarRegisterRow,
   type ReplyOrigin,
+  type RosterCoverage,
   type StructureRow,
   buildAngleEffectiveness,
   buildBandCalibration,
@@ -42,6 +44,7 @@ import {
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
+  buildRosterCoverage,
   buildStructureEffectiveness,
   classifyReplyOrigin,
   resolveAgeMin,
@@ -50,6 +53,7 @@ import {
   topStructures,
 } from '../playbook.ts';
 import type { PostContext, ReplyVariant } from '../replies/prompt.ts';
+import { targetBand } from './voice.ts';
 import {
   EXTRACT_PROMPT_PREFIX,
   TEMPLATE_EXTRACT_CACHE_KEY,
@@ -65,6 +69,9 @@ const MAX_PUBLISHED_REPLIES = 2000;
 // One-time winner extraction is bounded by the plan (≤20 × ~$0.005 ≈ $0.10).
 const MAX_WINNER_EXTRACT = 20;
 const MAX_MIN_N = 1000;
+// §S0.7 roster coverage window — the doctrine's "where did this week's replies
+// go" question (matches the Monday-Monday digest week, also 7 days).
+const ROSTER_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface SnapOutcome extends MeasuredOutcome {
   likes: number | null;
@@ -152,7 +159,7 @@ async function loadReplyRows(): Promise<ReplyRow[]> {
 
 /** Best-known follower count per handle: the people layer first (kept fresh by
  *  profile scrapes), the voice roster as fallback. */
-async function loadFollowersByHandle(handles: string[]): Promise<Map<string, number>> {
+export async function loadFollowersByHandle(handles: string[]): Promise<Map<string, number>> {
   const map = new Map<string, number>();
   if (handles.length === 0) return map;
   const voiceRows = await db
@@ -192,6 +199,51 @@ function toLatencyRows(rows: ReplyRow[]): LatencyRow[] {
     }),
     outcome: r.outcome,
   }));
+}
+
+// --------------------------------------------------- roster coverage (§S0.7)
+
+/** My current 2–10x target band from the latest account snapshot, or null when
+ *  no snapshot exists yet (the daily getMe hasn't run) — without my own size we
+ *  can't band anyone. */
+async function loadMyTargetBand(): Promise<{ min: number; max: number } | null> {
+  const [acct] = await db
+    .select({ followersCount: accountSnapshots.followersCount })
+    .from(accountSnapshots)
+    .orderBy(desc(accountSnapshots.snapshotAt))
+    .limit(1);
+  return acct ? targetBand(acct.followersCount) : null;
+}
+
+/** §S0.7 — of the posted replies pasted in [since, until), how many went to
+ *  in-band / above / below / unknown-size authors. Pure SQL over reply_drafts
+ *  (the only rows that carry the source author), followers resolved exactly
+ *  like the angle crosstab (people first, voice fallback), banded against my
+ *  own size. Shared by GET /playbook (trailing 7d) and the Sunday digest facts
+ *  (the digest week). updatedAt on a posted row is paste time (invariant used
+ *  by the brief quota and neglected-targets). */
+export async function loadRosterCoverage(
+  since: Date,
+  until: Date,
+  minN = DEFAULT_MIN_CELL_N,
+): Promise<RosterCoverage> {
+  const rows = await db
+    .select({ handle: sql<string>`lower(${replyDrafts.sourceAuthorUsername})` })
+    .from(replyDrafts)
+    .where(
+      and(
+        eq(replyDrafts.status, 'posted'),
+        gte(replyDrafts.updatedAt, since),
+        lt(replyDrafts.updatedAt, until),
+      ),
+    );
+  const followers = await loadFollowersByHandle([...new Set(rows.map((r) => r.handle))]);
+  const band = await loadMyTargetBand();
+  return buildRosterCoverage(
+    rows.map((r) => followers.get(r.handle) ?? null),
+    band,
+    minN,
+  );
 }
 
 // ------------------------------------------------- pillar × register rows
@@ -396,6 +448,11 @@ playbook.get('/playbook', async (c) => {
     ),
     mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
+    rosterCoverage: await loadRosterCoverage(
+      new Date(Date.now() - ROSTER_WINDOW_MS),
+      new Date(),
+      minN,
+    ),
     // What the prompts would inject right now (always the default gate).
     guidance: {
       reply: topAngles(angleEffectiveness.overall),

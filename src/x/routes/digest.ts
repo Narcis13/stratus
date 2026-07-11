@@ -31,7 +31,7 @@ import {
   weekBounds,
 } from '../digest.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
-import { loadPostGuidanceSafe, loadReplyGuidanceSafe } from './playbook.ts';
+import { loadPostGuidanceSafe, loadReplyGuidanceSafe, loadRosterCoverage } from './playbook.ts';
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -240,6 +240,9 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
     loadPostGuidanceSafe(),
   ]);
 
+  // §S0.7 — where the week's posted replies landed vs my 2–10x target band.
+  const rosterCoverage = await loadRosterCoverage(start, end);
+
   return buildDigestFacts({
     weekKey,
     start,
@@ -265,6 +268,7 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
     })),
     streakDays: streakRows,
     guidance: { reply: replyGuidance, post: postGuidance },
+    rosterCoverage,
   });
 }
 

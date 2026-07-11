@@ -83,6 +83,13 @@ export function DigestSection({ settings }: { settings: Settings }): JSX.Element
             <span>
               {data.facts.activity.posts} posts · {data.facts.activity.replies} replies
             </span>
+            {/* S0.7 — gated: absent on digests cached before this landed. */}
+            {data.facts.rosterCoverage?.majorityInBand != null && (
+              <span title="of this week's replies to known-size authors, share aimed at 2–10x targets (doctrine wants a majority)">
+                {data.facts.rosterCoverage.inBandPctOfKnown}% in-band
+                {data.facts.rosterCoverage.majorityInBand ? ' ✓' : ''}
+              </span>
+            )}
             {data.facts.quests.daysTracked > 0 && (
               <span>
                 {data.facts.quests.daysAllDone}/{data.facts.quests.daysTracked} quest days

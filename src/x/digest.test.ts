@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { buildDigestFacts, buildDigestInput, parseDigestNarrative, weekBounds } from './digest.ts';
+import { buildRosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -40,6 +41,7 @@ const BASE_INPUTS = {
   spendByPlatform: [],
   streakDays: [],
   guidance: { reply: null, post: null },
+  rosterCoverage: buildRosterCoverage([], null),
 };
 
 describe('buildDigestFacts', () => {
@@ -50,6 +52,13 @@ describe('buildDigestFacts', () => {
     expect(f.activity).toEqual({ posts: 0, replies: 0, replyPct: null });
     expect(f.topTweets).toEqual([]);
     expect(f.spend.totalUsd).toBe(0);
+  });
+
+  test('roster coverage passes through verbatim (S0.7)', () => {
+    const rc = buildRosterCoverage([50_000, 50_000], { min: 20_000, max: 100_000 }, 1);
+    const f = buildDigestFacts({ ...BASE_INPUTS, rosterCoverage: rc });
+    expect(f.rosterCoverage).toBe(rc);
+    expect(f.rosterCoverage.majorityInBand).toBe(true);
   });
 
   test('follower delta needs two points', () => {
