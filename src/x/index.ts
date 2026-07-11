@@ -4,6 +4,10 @@
 
 import type { Hono } from 'hono';
 import { registerHeartbeat, unregisterHeartbeat } from '../heartbeats.ts';
+// S2: the X platform's MCP tools. Re-exported so the platform-agnostic MCP
+// bridge (src/mcp.ts) reaches them through this public surface, not a deep
+// import — same discipline as mountX/startXWorkers.
+export { registerXTools } from './mcp.ts';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { brief } from './routes/brief.ts';

@@ -142,6 +142,16 @@ export function listTables(): TableInfo[] {
   return out;
 }
 
+// One table's schema + row count. Same whitelist/`tokens` guards as everything
+// else here — used by the S2 MCP `x_describe_table` tool.
+export function describeTable(name: string): TableInfo {
+  if (!whitelist().has(name)) throw new InspectError('unknown_table');
+  const columns = columnsFor(name);
+  if (columns.length === 0) throw new InspectError('unknown_table'); // declared, unmigrated
+  const row = conn().query(`SELECT count(*) AS n FROM "${name}"`).get() as { n: number };
+  return { name, rowCount: row.n, columns };
+}
+
 // SQLite column affinity for our TEXT/JSON columns is 'TEXT' (JSON is stored as
 // text); untyped columns report ''. Those are the ones a substring search makes
 // sense across.

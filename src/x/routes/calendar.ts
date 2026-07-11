@@ -30,6 +30,8 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { ideas, scheduledPosts } from '../db/schema.ts';
 import { containsUrl } from '../endpoints.ts';
+import { parsePillar } from '../posts/pillars.ts';
+import { getActivePillars } from './pillars.ts';
 
 const STATUSES = [
   'draft',
@@ -84,6 +86,16 @@ calendar.post('/posts/scheduled', async (c) => {
     );
   }
 
+  // Optional content pillar — validated against the live active slugs (same
+  // check as the drafter). Only touches the DB when a pillar is actually given.
+  let pillar: string | null = null;
+  if (body.pillar !== undefined && body.pillar !== null && body.pillar !== '') {
+    const slugs = (await getActivePillars()).map((p) => p.slug);
+    const resolved = parsePillar(body.pillar, slugs);
+    if (resolved === 'invalid') return c.json({ error: 'invalid_pillar' }, 400);
+    pillar = resolved ?? null;
+  }
+
   const [row] = await db
     .insert(scheduledPosts)
     .values({
@@ -91,6 +103,7 @@ calendar.post('/posts/scheduled', async (c) => {
       scheduledFor: scheduledFor ?? null,
       mediaIds: mediaIds ?? null,
       status,
+      pillar,
     })
     .returning();
 
