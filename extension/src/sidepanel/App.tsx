@@ -8,6 +8,7 @@ import { PeoplePanel } from './People.tsx';
 import { PlaybookPanel } from './Playbook.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
+import { StudioPanel, type StudioSeed } from './Studio.tsx';
 import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
@@ -18,6 +19,7 @@ type Tab =
   | 'channels'
   | 'calendar'
   | 'composer'
+  | 'studio'
   | 'harvest'
   | 'voice'
   | 'replies'
@@ -31,6 +33,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'channels', label: 'Channels' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
+  { id: 'studio', label: 'Studio' },
   { id: 'harvest', label: 'Harvest' },
   { id: 'voice', label: 'Voice' },
   { id: 'replies', label: 'Replies' },
@@ -47,6 +50,7 @@ export function App(): JSX.Element {
   // C1: handle to open in the People dossier — any handle rendered anywhere in
   // the panel routes here via openPerson.
   const [personHandle, setPersonHandle] = useState<string | null>(null);
+  const [studioSeed, setStudioSeed] = useState<StudioSeed | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const startEdit = (id: string) => {
@@ -63,6 +67,12 @@ export function App(): JSX.Element {
   const openPerson = (handle: string) => {
     setPersonHandle(handle.replace(/^@/, '').toLowerCase());
     setTab('people');
+  };
+  // S3: seed the Studio's quote card from the Composer ("Make visual") or a
+  // profile-click leader (quote-tweet + card is the strongest re-up format).
+  const openStudio = (seed: StudioSeed) => {
+    setStudioSeed(seed);
+    setTab('studio');
   };
   const onSaved = () => setRefreshKey((k) => k + 1);
 
@@ -99,7 +109,12 @@ export function App(): JSX.Element {
             <p className="muted">Configure API URL and bearer token first.</p>
           </div>
         ) : activeTab === 'today' ? (
-          <TodayPanel key={`today-${refreshKey}`} settings={settings} onOpenPerson={openPerson} />
+          <TodayPanel
+            key={`today-${refreshKey}`}
+            settings={settings}
+            onOpenPerson={openPerson}
+            onMakeVisual={(text) => openStudio({ text })}
+          />
         ) : activeTab === 'people' ? (
           <PeoplePanel
             settings={settings}
@@ -119,6 +134,13 @@ export function App(): JSX.Element {
             onClearEdit={clearEdit}
             onSaved={onSaved}
             onEdit={startEdit}
+            onMakeVisual={openStudio}
+          />
+        ) : activeTab === 'studio' ? (
+          <StudioPanel
+            settings={settings}
+            seed={studioSeed}
+            onClearSeed={() => setStudioSeed(null)}
           />
         ) : activeTab === 'harvest' ? (
           <HarvestPanel />

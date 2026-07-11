@@ -216,11 +216,16 @@ export const api = {
   },
 
   // C9 — the Sunday Digest. Cached per week server-side; only refresh=true
-  // re-spends the ~$0.01 narration call.
-  digest(s: Settings, opts: { week?: string; refresh?: boolean } = {}): Promise<DigestResponse> {
+  // re-spends the ~$0.01 narration call. factsOnly (S3 stat card) never
+  // triggers Grok narration — the read stays $0.
+  digest(
+    s: Settings,
+    opts: { week?: string; refresh?: boolean; factsOnly?: boolean } = {},
+  ): Promise<DigestResponse> {
     const q = new URLSearchParams({ tzOffsetMin: String(new Date().getTimezoneOffset()) });
     if (opts.week) q.set('week', opts.week);
     if (opts.refresh) q.set('refresh', 'true');
+    if (opts.factsOnly) q.set('factsOnly', 'true');
     return request<DigestResponse>(s, `/x/digest?${q.toString()}`);
   },
 

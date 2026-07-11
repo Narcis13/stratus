@@ -413,6 +413,8 @@ brief.get('/brief', async (c) => {
         text: scheduledPosts.text,
         scheduledFor: scheduledPosts.scheduledFor,
         status: scheduledPosts.status,
+        // S3: "visual made" marker — Today renders the amber post-manually chip.
+        mediaNote: scheduledPosts.mediaNote,
       })
       .from(scheduledPosts)
       .where(

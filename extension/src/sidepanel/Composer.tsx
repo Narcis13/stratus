@@ -35,6 +35,8 @@ interface Props {
   onSaved: (post: ScheduledPost) => void;
   /** Open one of the just-generated drafts in the editor (no calendar trip). */
   onEdit: (id: string) => void;
+  /** S3: seed the Studio's quote card with this text (and the row to stamp). */
+  onMakeVisual: (seed: { text: string; postId?: string }) => void;
 }
 
 const TWEET_LIMIT = 280;
@@ -80,6 +82,7 @@ export function ComposerPanel({
   onClearEdit,
   onSaved,
   onEdit,
+  onMakeVisual,
 }: Props): JSX.Element {
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
@@ -363,6 +366,17 @@ export function ComposerPanel({
     }
   };
 
+  // S3: drop the "visual made" marker (the visual was scrapped or already used).
+  const clearMediaNote = async (): Promise<void> => {
+    if (!original) return;
+    try {
+      await api.update(settings, original.id, { mediaNote: null });
+      setOriginal((prev) => (prev ? { ...prev, mediaNote: null } : prev));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not clear the marker');
+    }
+  };
+
   const onDelete = async () => {
     if (!original) return;
     const what = isThreadEdit ? 'this whole thread' : 'this post';
@@ -513,6 +527,22 @@ export function ComposerPanel({
                 ? `${original.seededBy.text.slice(0, 99)}…`
                 : original.seededBy.text}
               "
+            </div>
+          )}
+          {original.mediaNote && (
+            <div className="media-note-line">
+              <span className="badge badge-media" title={original.mediaNote}>
+                visual made — post manually with its image
+              </span>
+              {!isLocked && (
+                <button
+                  type="button"
+                  onClick={() => void clearMediaNote()}
+                  title="Remove the marker"
+                >
+                  ✕
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -704,6 +734,21 @@ export function ComposerPanel({
         <button type="submit" className="primary" disabled={loading || isLocked || !canSubmit}>
           {loading ? 'Saving…' : isEditing ? 'Save changes' : 'Save'}
         </button>
+        {(threadMode || isThreadEdit ? (threadSegments[0] ?? '').trim() : text.trim()).length >
+          0 && (
+          <button
+            type="button"
+            onClick={() =>
+              onMakeVisual({
+                text: (threadMode || isThreadEdit ? (threadSegments[0] ?? '') : text).trim(),
+                ...(isEditing && original ? { postId: original.id } : {}),
+              })
+            }
+            title="Open the Studio with this text as a branded quote card"
+          >
+            Make visual
+          </button>
+        )}
         {isEditing && !isLocked && (
           <button
             type="button"

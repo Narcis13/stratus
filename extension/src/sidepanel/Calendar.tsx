@@ -92,6 +92,14 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
                         <span className={`badge badge-${p.status}`}>{p.status}</span>
                         {p.threadId && <span className="badge">🧵</span>}
                         {p.quoteTweetId && <span className="badge">re-up</span>}
+                        {p.mediaNote && (
+                          <span
+                            className="badge badge-media"
+                            title={`${p.mediaNote} — post manually with its visual (the API can't attach images)`}
+                          >
+                            visual
+                          </span>
+                        )}
                         {p.pillar && <span className="badge badge-pillar">{p.pillar}</span>}
                         <span className="post-text">{p.text}</span>
                       </button>
@@ -121,6 +129,14 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
                   <span className={`badge badge-${p.status}`}>{p.status}</span>
                   {p.threadId && <span className="badge">🧵</span>}
                   {p.quoteTweetId && <span className="badge">re-up</span>}
+                  {p.mediaNote && (
+                    <span
+                      className="badge badge-media"
+                      title={`${p.mediaNote} — post manually with its visual (the API can't attach images)`}
+                    >
+                      visual
+                    </span>
+                  )}
                   {p.pillar && <span className="badge badge-pillar">{p.pillar}</span>}
                   <span className="post-text">{p.text}</span>
                 </button>

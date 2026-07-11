@@ -29,6 +29,8 @@ export interface ScheduledPost {
   pillar: string | null;
   /** Self-quote re-up target (§8.5). */
   quoteTweetId: string | null;
+  /** "Visual made" marker (S3) — the post must ship manually with its image. */
+  mediaNote: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -45,6 +47,7 @@ export interface CreateBody {
   scheduledFor?: string | null;
   status?: 'draft' | 'pending';
   mediaIds?: string[] | null;
+  mediaNote?: string;
 }
 
 export interface CreateThreadBody {
@@ -170,6 +173,8 @@ export interface UpdateBody {
   scheduledFor?: string | null;
   status?: 'draft' | 'pending' | 'cancelled';
   mediaIds?: string[] | null;
+  /** S3 "visual made" marker; null clears it. */
+  mediaNote?: string | null;
 }
 
 export interface ListOpts {
@@ -586,6 +591,8 @@ export interface BriefScheduledPost {
   text: string;
   scheduledFor: string | null;
   status: PostStatus;
+  /** S3 "visual made" marker — Today renders the amber post-manually chip. */
+  mediaNote: string | null;
 }
 
 // S0.4: engagement by local weekday × hour over own non-reply posts. weekday

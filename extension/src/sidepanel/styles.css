@@ -2246,3 +2246,128 @@ button.danger:hover:not(:disabled) {
   flex-basis: 100%;
   margin-top: 4px;
 }
+
+/* ---- Studio (SURFACES S3): brand kit, template picker, live preview ---- */
+.badge-media {
+  background: rgba(255, 180, 84, 0.18);
+  color: var(--warn);
+  text-transform: none;
+}
+
+.media-note-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.media-note-line button {
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+.studio-templates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.studio-template {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  cursor: pointer;
+}
+.studio-template .muted {
+  font-size: 10px;
+}
+.studio-template-active {
+  border-color: var(--accent);
+  background: rgba(79, 140, 255, 0.1);
+}
+
+.studio-preview {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: var(--bg-elev);
+  text-align: center;
+  min-height: 60px;
+}
+.studio-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.studio-kit {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: var(--bg-elev);
+}
+
+.studio-kit-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.studio-kit-row input[type="text"] {
+  flex: 1;
+}
+
+.studio-color {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.studio-color input[type="color"] {
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.studio-check {
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.studio-kit-actions {
+  margin-top: 4px;
+}
+
+.studio-import {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+  cursor: pointer;
+  font-size: 12px;
+}
+.studio-import input[type="file"] {
+  display: none;
+}
+
+.studio-data-row {
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}

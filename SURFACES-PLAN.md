@@ -1,8 +1,10 @@
 # SURFACES-PLAN.md — Close the loops, open the surfaces
 
-> Successor plan to `CIRCLES-PLAN.md` (C0–C9 all shipped 2026-07-05). Drafted 2026-07-10,
-> not yet adopted. Same contract as the previous plans: phases adopted in order, each
-> ends usable, `CLAUDE.md` phase-status updated in the same commit a phase lands.
+> Successor plan to `CIRCLES-PLAN.md` (C0–C9 all shipped 2026-07-05). Drafted 2026-07-10;
+> adopted in order since: S0.2–S0.9 shipped 2026-07-10/11, S1 + S2 shipped 2026-07-11,
+> **S3 shipped 2026-07-11** (see `CLAUDE.md` phase status). Same contract as the previous
+> plans: phases adopted in order, each ends usable, `CLAUDE.md` phase-status updated in
+> the same commit a phase lands.
 
 ## 0. Why this plan
 
@@ -244,7 +246,7 @@ in input rejected); 401 without bearer. `scripts/smoke-mcp.ts` ($0).
 
 ---
 
-## 4. Phase S3 — The Studio: deterministic visuals, client-side canvas ($0)
+## 4. Phase S3 — The Studio: deterministic visuals, client-side canvas ($0) — SHIPPED 2026-07-11
 
 **Job:** every post that deserves a visual gets one in <30s, in a consistent brand, with
 pixel-crisp text — composed in the extension, exported as PNG, **pasted manually** (the

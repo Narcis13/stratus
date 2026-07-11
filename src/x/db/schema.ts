@@ -94,6 +94,11 @@ export const scheduledPosts = sqliteTable(
     // Self-quote re-up (§8.5): when set, the publisher posts this row as a
     // quote tweet — only after verifying the quoted id is own via posts_published.
     quoteTweetId: text('quote_tweet_id'),
+    // "Visual made" marker (SURFACES S3): the Studio composed an image for this
+    // slot that the API cannot attach (OAuth 1.0a wall) — the post must be
+    // published manually with its PNG. Purely informational: the publisher
+    // ignores it (v1 keeps it untouched); Calendar/Today render an amber chip.
+    mediaNote: text('media_note'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .default(sql`(unixepoch() * 1000)`)
       .notNull(),

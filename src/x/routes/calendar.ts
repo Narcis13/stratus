@@ -96,6 +96,9 @@ calendar.post('/posts/scheduled', async (c) => {
     pillar = resolved ?? null;
   }
 
+  const mediaNote = parseMediaNote(body.mediaNote);
+  if (mediaNote === 'invalid') return c.json({ error: 'invalid_media_note' }, 400);
+
   const [row] = await db
     .insert(scheduledPosts)
     .values({
@@ -104,6 +107,7 @@ calendar.post('/posts/scheduled', async (c) => {
       mediaIds: mediaIds ?? null,
       status,
       pillar,
+      mediaNote,
     })
     .returning();
 
@@ -275,6 +279,11 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     if (m === 'invalid') return c.json({ error: 'invalid_media_ids' }, 400);
     updates.mediaIds = m;
   }
+  if (body.mediaNote !== undefined) {
+    const note = parseMediaNote(body.mediaNote);
+    if (note === 'invalid') return c.json({ error: 'invalid_media_note' }, 400);
+    updates.mediaNote = note;
+  }
   if (body.status !== undefined) {
     if (!isStatus(body.status)) return c.json({ error: 'invalid_status' }, 400);
     if (!(WRITABLE_STATUSES as readonly string[]).includes(body.status)) {
@@ -352,6 +361,7 @@ interface Body {
   text?: unknown;
   scheduledFor?: unknown;
   mediaIds?: unknown;
+  mediaNote?: unknown;
   status?: unknown;
   segments?: unknown;
   pillar?: unknown;
@@ -380,6 +390,18 @@ function parseMediaIds(value: unknown): string[] | null | 'invalid' {
   if (!Array.isArray(value)) return 'invalid';
   if (!value.every((v) => typeof v === 'string' && v.length > 0)) return 'invalid';
   return value as string[];
+}
+
+// "Visual made" marker (SURFACES S3). null / empty string clears it — the
+// Composer's chip has a one-click clear that PATCHes null.
+const MEDIA_NOTE_MAX = 280;
+function parseMediaNote(value: unknown): string | null | 'invalid' {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return 'invalid';
+  const note = value.trim();
+  if (!note) return null;
+  if (note.length > MEDIA_NOTE_MAX) return 'invalid';
+  return note;
 }
 
 function isStatus(v: unknown): v is Status {

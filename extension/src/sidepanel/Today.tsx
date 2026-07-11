@@ -27,9 +27,11 @@ interface Props {
   settings: Settings;
   /** C1: open a handle's dossier in the People tab. */
   onOpenPerson: (handle: string) => void;
+  /** S3: open the Studio's quote card seeded with this text. */
+  onMakeVisual: (text: string) => void;
 }
 
-export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
+export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX.Element {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +94,11 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
           <TodayPlan brief={brief} />
           <ReplyQuota brief={brief} />
           <Yesterday brief={brief} />
-          <Leaders settings={settings} tweets={brief.yesterday.profileClickLeaders} />
+          <Leaders
+            settings={settings}
+            tweets={brief.yesterday.profileClickLeaders}
+            onMakeVisual={onMakeVisual}
+          />
           <SpendLine brief={brief} />
         </>
       )}
@@ -264,6 +270,14 @@ function TodayPlan({ brief }: { brief: Brief }): JSX.Element {
             <li key={p.id} className="post-row brief-plan-row">
               <span className="post-time">{formatTime(p.scheduledFor)}</span>
               <span className={`badge badge-${p.status}`}>{p.status}</span>
+              {p.mediaNote && (
+                <span
+                  className="badge badge-media"
+                  title={`${p.mediaNote} — the API can't attach images; paste the PNG when this posts`}
+                >
+                  visual
+                </span>
+              )}
               <span className="post-text">{p.text}</span>
             </li>
           ))}
@@ -345,9 +359,11 @@ function Yesterday({ brief }: { brief: Brief }): JSX.Element {
 function Leaders({
   settings,
   tweets,
+  onMakeVisual,
 }: {
   settings: Settings;
   tweets: BriefTweet[];
+  onMakeVisual: (text: string) => void;
 }): JSX.Element | null {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -389,6 +405,15 @@ function Leaders({
                   title="Quote it with a new take — drafts land in the calendar"
                 >
                   {busyId === t.tweetId ? '…' : 'quote re-up'}
+                </button>
+              )}
+              {!t.isReply && (
+                <button
+                  type="button"
+                  onClick={() => onMakeVisual(t.text)}
+                  title="Frame the winner as a branded quote card — quote-tweet + card is the strongest re-up format"
+                >
+                  visual
                 </button>
               )}
             </div>
