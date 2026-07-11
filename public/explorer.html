@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>stratus explorer</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #10151c; --border: #30363d;
+    --text: #c9d1d9; --dim: #8b949e; --accent: #58a6ff; --accent-dim: #1f6feb;
+    --danger: #f85149; --ok: #3fb950; --warn: #d29922;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--mono);
+    font-size: 13px; display: flex; flex-direction: column; overflow: hidden;
+  }
+  a { color: var(--accent); }
+  button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; font-family: inherit; font-size: 12px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+  input, textarea {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 8px; font-family: inherit; font-size: 12px;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+  header {
+    display: flex; align-items: center; gap: 14px; padding: 8px 14px;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex: 0 0 auto;
+  }
+  header .brand { font-weight: 700; color: #fff; letter-spacing: .5px; }
+  header .tabs { display: flex; gap: 6px; }
+  header .tabs button.active { border-color: var(--accent); color: var(--accent); }
+  header .spacer { flex: 1; }
+  header .tokstate { color: var(--dim); font-size: 11px; }
+
+  .layout { flex: 1; display: flex; min-height: 0; }
+  .rail {
+    width: 240px; flex: 0 0 auto; border-right: 1px solid var(--border);
+    overflow-y: auto; background: var(--panel2);
+  }
+  .rail h3 { margin: 10px 12px 6px; font-size: 10px; text-transform: uppercase; color: var(--dim); letter-spacing: 1px; }
+  .rail .tbl {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 5px 12px; cursor: pointer; border-left: 2px solid transparent;
+  }
+  .rail .tbl:hover { background: var(--panel); }
+  .rail .tbl.active { background: var(--panel); border-left-color: var(--accent); color: var(--accent); }
+  .rail .tbl .cnt { color: var(--dim); font-size: 11px; }
+
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .toolbar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); flex: 0 0 auto; flex-wrap: wrap;
+  }
+  .toolbar .grow { flex: 1; }
+  .toolbar .muted { color: var(--dim); font-size: 11px; }
+  .search { width: 260px; }
+
+  .gridwrap { flex: 1; overflow: auto; position: relative; }
+  table.grid { border-collapse: collapse; width: 100%; }
+  table.grid th, table.grid td {
+    border: 1px solid var(--border); padding: 4px 8px; text-align: left;
+    white-space: nowrap; max-width: 420px; overflow: hidden; text-overflow: ellipsis;
+    vertical-align: top;
+  }
+  table.grid th {
+    position: sticky; top: 0; background: var(--panel); z-index: 2;
+    cursor: pointer; user-select: none; font-weight: 600;
+  }
+  table.grid th.pk { color: var(--warn); }
+  table.grid th .arrow { color: var(--accent); margin-left: 4px; }
+  table.grid tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+  table.grid tbody tr:hover { background: rgba(88,166,255,0.08); cursor: pointer; }
+  td.null { color: var(--dim); font-style: italic; }
+  td.num { color: #79c0ff; }
+  td.dt { color: #d2a8ff; }
+  td.json { color: #7ee787; }
+
+  .sqlpane { padding: 10px 12px; border-bottom: 1px solid var(--border); display: none; }
+  .sqlpane.show { display: block; }
+  .sqlpane textarea { width: 100%; height: 120px; resize: vertical; }
+  .sqlpane .row { display: flex; gap: 8px; margin-top: 8px; align-items: center; }
+  .err { color: var(--danger); font-size: 12px; }
+
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100%; width: 520px; max-width: 92vw;
+    background: var(--panel); border-left: 1px solid var(--border); z-index: 20;
+    transform: translateX(100%); transition: transform .15s ease; overflow-y: auto;
+    box-shadow: -12px 0 32px rgba(0,0,0,.4);
+  }
+  .drawer.open { transform: translateX(0); }
+  .drawer .dhead {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel);
+  }
+  .drawer .field { padding: 8px 14px; border-bottom: 1px solid var(--panel2); }
+  .drawer .field .k { color: var(--dim); font-size: 11px; margin-bottom: 3px; }
+  .drawer .field .v { white-space: pre-wrap; word-break: break-word; }
+  .drawer pre { margin: 0; white-space: pre-wrap; word-break: break-word; color: #7ee787; }
+
+  .colmenu {
+    position: absolute; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px; max-height: 320px; overflow-y: auto; z-index: 30;
+    display: none; min-width: 200px;
+  }
+  .colmenu.show { display: block; }
+  .colmenu label { display: flex; gap: 6px; align-items: center; padding: 3px 4px; cursor: pointer; }
+  .colmenu label:hover { background: var(--panel2); }
+
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none;
+    align-items: center; justify-content: center; z-index: 50;
+  }
+  .overlay.show { display: flex; }
+  .overlay .box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: 420px; max-width: 92vw; }
+  .overlay .box h2 { margin: 0 0 6px; font-size: 15px; color: #fff; }
+  .overlay .box p { color: var(--dim); font-size: 12px; margin: 0 0 12px; }
+  .overlay .box input { width: 100%; margin-bottom: 12px; }
+  .banner { padding: 6px 12px; font-size: 12px; display: none; }
+  .banner.show { display: block; }
+  .banner.error { background: rgba(248,81,73,.15); color: var(--danger); }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">stratus · explorer</span>
+    <div class="tabs">
+      <button id="tab-browse" class="active">Browse</button>
+      <button id="tab-sql">SQL</button>
+    </div>
+    <span class="spacer"></span>
+    <span class="tokstate" id="tokstate"></span>
+    <button id="btn-token">Change token</button>
+  </header>
+
+  <div class="banner error" id="banner"></div>
+
+  <div class="layout">
+    <aside class="rail" id="rail"><h3>Tables</h3></aside>
+    <main>
+      <div class="sqlpane" id="sqlpane">
+        <textarea id="sql" placeholder="SELECT * FROM posts_published ORDER BY posted_at DESC LIMIT 50"></textarea>
+        <div class="row">
+          <button class="primary" id="run">Run (⌘/Ctrl+Enter)</button>
+          <button id="sql-csv">Export CSV</button>
+          <span class="muted" id="sql-status"></span>
+          <span class="err" id="sql-err"></span>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <strong id="title">—</strong>
+        <input class="search" id="search" placeholder="search text columns…" />
+        <span class="grow"></span>
+        <span class="muted" id="pageinfo"></span>
+        <button id="prev">‹ prev</button>
+        <button id="next">next ›</button>
+        <button id="cols">Columns ▾</button>
+        <button id="csv">Export CSV</button>
+        <button id="refresh">↻</button>
+        <div class="colmenu" id="colmenu"></div>
+      </div>
+
+      <div class="gridwrap" id="gridwrap"></div>
+    </main>
+  </div>
+
+  <div class="drawer" id="drawer">
+    <div class="dhead"><strong>Row detail</strong><button id="drawer-close">✕ close</button></div>
+    <div id="drawer-body"></div>
+  </div>
+
+  <div class="overlay" id="overlay">
+    <div class="box">
+      <h2>API token</h2>
+      <p>Paste your bearer token. It's kept in this browser's localStorage only and sent as <code>Authorization: Bearer …</code> on every request.</p>
+      <input id="token-input" type="password" placeholder="bearer token" />
+      <button class="primary" id="token-save">Save</button>
+    </div>
+  </div>
+
+<script>
+const TOKEN_KEY = 'stratus_explorer_token';
+const state = {
+  token: localStorage.getItem(TOKEN_KEY) || '',
+  mode: 'browse',
+  tables: [],
+  table: null,
+  columns: [],        // ColumnInfo[] for the current table (browse) — meta
+  hidden: new Set(),  // hidden column names (browse only)
+  rows: [],
+  total: 0,
+  limit: 50,
+  offset: 0,
+  sort: null,
+  dir: 'asc',
+  q: '',
+  // What the grid currently shows (drives CSV export in both modes):
+  viewColumns: [],    // string[]
+  viewRows: [],       // Record[]
+};
+
+// ---- token / fetch -------------------------------------------------------
+const $ = (id) => document.getElementById(id);
+
+function setTokState() {
+  $('tokstate').textContent = state.token ? 'token set' : 'no token';
+}
+function promptToken() {
+  $('token-input').value = state.token;
+  $('overlay').classList.add('show');
+  $('token-input').focus();
+}
+$('token-save').onclick = () => {
+  const v = $('token-input').value.trim();
+  if (!v) return;
+  state.token = v;
+  localStorage.setItem(TOKEN_KEY, v);
+  $('overlay').classList.remove('show');
+  setTokState();
+  init();
+};
+$('token-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('token-save').click(); });
+$('btn-token').onclick = promptToken;
+
+function banner(msg) {
+  const b = $('banner');
+  if (!msg) { b.classList.remove('show'); return; }
+  b.textContent = msg; b.classList.add('show');
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    ...opts,
+    headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json', ...(opts.headers || {}) },
+  });
+  if (res.status === 401) { promptToken(); throw new Error('unauthorized'); }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+  return body;
+}
+
+// ---- value formatting ----------------------------------------------------
+function isEpochCol(name) {
+  return name === 'at' || name === 'ts' || /(_at|_ms|_until|_for|_time)$/i.test(name) || /Ms$/.test(name);
+}
+function fmtDateTime(ms) {
+  const d = new Date(Number(ms));
+  if (isNaN(d.getTime())) return String(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' +
+         pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+}
+function looksJson(v) {
+  if (typeof v !== 'string') return false;
+  const s = v.trim();
+  return (s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'));
+}
+// Returns { text, cls, title } for a cell.
+function cellDisplay(col, v) {
+  if (v === null || v === undefined) return { text: 'NULL', cls: 'null', title: '' };
+  if (typeof v === 'number' && isEpochCol(col) && v > 0) {
+    return { text: fmtDateTime(v), cls: 'dt', title: String(v) };
+  }
+  if (typeof v === 'number') return { text: String(v), cls: 'num', title: '' };
+  if (looksJson(v)) {
+    const one = v.replace(/\s+/g, ' ');
+    return { text: one.length > 80 ? one.slice(0, 80) + '…' : one, cls: 'json', title: v };
+  }
+  const s = String(v);
+  return { text: s.length > 120 ? s.slice(0, 120) + '…' : s, cls: '', title: s.length > 120 ? s : '' };
+}
+
+// ---- rail ----------------------------------------------------------------
+async function loadTables() {
+  const { tables } = await api('/x/data/tables');
+  state.tables = tables;
+  const rail = $('rail');
+  rail.innerHTML = '<h3>Tables (' + tables.length + ')</h3>';
+  for (const t of tables) {
+    const el = document.createElement('div');
+    el.className = 'tbl' + (t.name === state.table ? ' active' : '');
+    el.innerHTML = '<span>' + t.name + '</span><span class="cnt">' + t.rowCount.toLocaleString() + '</span>';
+    el.onclick = () => openTable(t.name);
+    rail.appendChild(el);
+  }
+}
+
+function openTable(name) {
+  const meta = state.tables.find((t) => t.name === name);
+  state.table = name;
+  state.columns = meta ? meta.columns : [];
+  state.hidden = new Set();
+  state.offset = 0; state.sort = null; state.dir = 'asc'; state.q = '';
+  $('search').value = '';
+  setMode('browse');
+  document.querySelectorAll('.rail .tbl').forEach((el) =>
+    el.classList.toggle('active', el.firstChild.textContent === name));
+  loadRows();
+}
+
+async function loadRows() {
+  if (!state.table) return;
+  const p = new URLSearchParams();
+  p.set('limit', state.limit); p.set('offset', state.offset);
+  if (state.sort) { p.set('sort', state.sort); p.set('dir', state.dir); }
+  if (state.q) p.set('q', state.q);
+  try {
+    banner('');
+    const r = await api('/x/data/' + encodeURIComponent(state.table) + '?' + p.toString());
+    state.rows = r.rows; state.total = r.total;
+    $('title').textContent = state.table;
+    const from = r.total === 0 ? 0 : state.offset + 1;
+    const to = Math.min(state.offset + state.limit, r.total);
+    $('pageinfo').textContent = from + '–' + to + ' of ' + r.total.toLocaleString();
+    renderBrowseGrid();
+  } catch (e) { banner(e.message); }
+}
+
+function renderBrowseGrid() {
+  const cols = state.columns.map((c) => c.name).filter((n) => !state.hidden.has(n));
+  state.viewColumns = cols;
+  state.viewRows = state.rows;
+  const meta = new Map(state.columns.map((c) => [c.name, c]));
+  renderGrid(cols, state.rows, {
+    sortable: true,
+    pkOf: (name) => meta.get(name) && meta.get(name).pk,
+  });
+}
+
+// ---- grid ----------------------------------------------------------------
+function renderGrid(cols, rows, opts = {}) {
+  const wrap = $('gridwrap');
+  if (!cols.length) { wrap.innerHTML = '<div style="padding:20px;color:var(--dim)">no columns</div>'; return; }
+  const table = document.createElement('table');
+  table.className = 'grid';
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  for (const c of cols) {
+    const th = document.createElement('th');
+    if (opts.pkOf && opts.pkOf(c)) th.className = 'pk';
+    let label = c;
+    if (opts.sortable && state.sort === c) label += '<span class="arrow">' + (state.dir === 'asc' ? '▲' : '▼') + '</span>';
+    th.innerHTML = label;
+    if (opts.sortable) th.onclick = () => toggleSort(c);
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    for (const c of cols) {
+      const td = document.createElement('td');
+      const d = cellDisplay(c, row[c]);
+      td.className = d.cls;
+      td.textContent = d.text;
+      if (d.title) td.title = d.title;
+      tr.appendChild(td);
+    }
+    tr.onclick = () => openDrawer(cols, row);
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  wrap.innerHTML = '';
+  wrap.appendChild(table);
+}
+
+function toggleSort(col) {
+  if (state.sort === col) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+  else { state.sort = col; state.dir = 'asc'; }
+  state.offset = 0;
+  loadRows();
+}
+
+// ---- drawer --------------------------------------------------------------
+function openDrawer(cols, row) {
+  const body = $('drawer-body');
+  body.innerHTML = '';
+  for (const c of cols) {
+    const v = row[c];
+    const field = document.createElement('div');
+    field.className = 'field';
+    const k = document.createElement('div'); k.className = 'k'; k.textContent = c;
+    field.appendChild(k);
+    const vEl = document.createElement('div'); vEl.className = 'v';
+    if (v === null || v === undefined) {
+      vEl.innerHTML = '<span class="null" style="color:var(--dim)">NULL</span>';
+    } else if (looksJson(v)) {
+      try { const pre = document.createElement('pre'); pre.textContent = JSON.stringify(JSON.parse(v), null, 2); vEl.appendChild(pre); }
+      catch { vEl.textContent = String(v); }
+    } else if (typeof v === 'number' && isEpochCol(c) && v > 0) {
+      vEl.textContent = fmtDateTime(v);
+      vEl.title = 'raw: ' + v;
+      const raw = document.createElement('span'); raw.style.color = 'var(--dim)'; raw.style.marginLeft = '8px';
+      raw.textContent = '(' + v + ')'; vEl.appendChild(raw);
+    } else {
+      vEl.textContent = String(v);
+    }
+    field.appendChild(vEl);
+    body.appendChild(field);
+  }
+  $('drawer').classList.add('open');
+}
+$('drawer-close').onclick = () => $('drawer').classList.remove('open');
+
+// ---- pagination / search / columns --------------------------------------
+$('prev').onclick = () => { if (state.offset > 0) { state.offset = Math.max(0, state.offset - state.limit); loadRows(); } };
+$('next').onclick = () => { if (state.offset + state.limit < state.total) { state.offset += state.limit; loadRows(); } };
+$('refresh').onclick = () => { if (state.mode === 'browse') loadRows(); };
+
+let searchTimer = null;
+$('search').addEventListener('input', (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { state.q = e.target.value.trim(); state.offset = 0; loadRows(); }, 300);
+});
+
+$('cols').onclick = (e) => {
+  e.stopPropagation();
+  const menu = $('colmenu');
+  menu.innerHTML = '';
+  for (const c of state.columns) {
+    const label = document.createElement('label');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !state.hidden.has(c.name);
+    cb.onchange = () => { if (cb.checked) state.hidden.delete(c.name); else state.hidden.add(c.name); renderBrowseGrid(); };
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(c.name));
+    menu.appendChild(label);
+  }
+  const r = e.target.getBoundingClientRect();
+  menu.style.top = (r.bottom + 4) + 'px';
+  menu.style.left = (r.left) + 'px';
+  menu.classList.add('show');
+};
+document.addEventListener('click', () => $('colmenu').classList.remove('show'));
+
+// ---- CSV -----------------------------------------------------------------
+function csvCell(v) {
+  // Formula-escape (same discipline as the harvester): a cell starting with
+  // =,+,-,@ or a control char would execute as a formula in Excel/Sheets.
+  let s = v === null || v === undefined ? '' : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+function exportCsv(cols, rows, filename) {
+  const lines = [cols.map(csvCell).join(',')];
+  for (const row of rows) lines.push(cols.map((c) => csvCell(row[c])).join(','));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+}
+$('csv').onclick = () => exportCsv(state.viewColumns, state.viewRows, (state.table || 'export') + '.csv');
+$('sql-csv').onclick = () => exportCsv(state.viewColumns, state.viewRows, 'query.csv');
+
+// ---- SQL mode ------------------------------------------------------------
+function setMode(mode) {
+  state.mode = mode;
+  $('tab-browse').classList.toggle('active', mode === 'browse');
+  $('tab-sql').classList.toggle('active', mode === 'sql');
+  $('sqlpane').classList.toggle('show', mode === 'sql');
+  // Browse-only toolbar bits are meaningless in SQL mode.
+  for (const id of ['search', 'prev', 'next', 'cols', 'csv', 'refresh'])
+    $(id).style.display = mode === 'sql' ? 'none' : '';
+  $('csv').style.display = 'none'; // browse csv hidden in sql; sql has its own
+  if (mode === 'browse') $('csv').style.display = '';
+}
+$('tab-browse').onclick = () => { setMode('browse'); if (state.table) loadRows(); };
+$('tab-sql').onclick = () => setMode('sql');
+
+async function runSql() {
+  const sql = $('sql').value.trim();
+  $('sql-err').textContent = ''; $('sql-status').textContent = '';
+  if (!sql) return;
+  try {
+    const r = await api('/x/data/query', { method: 'POST', body: JSON.stringify({ sql }) });
+    state.viewColumns = r.columns; state.viewRows = r.rows;
+    $('title').textContent = 'query result';
+    $('pageinfo').textContent = r.rowCount + ' rows' + (r.truncated ? ' (capped at 500)' : '');
+    $('sql-status').textContent = r.rowCount + ' rows' + (r.truncated ? ' · truncated to 500' : '');
+    renderGrid(r.columns, r.rows, { sortable: false });
+  } catch (e) { $('sql-err').textContent = e.message; }
+}
+$('run').onclick = runSql;
+$('sql').addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); runSql(); }
+});
+
+// ---- init ----------------------------------------------------------------
+async function init() {
+  setTokState();
+  if (!state.token) { promptToken(); return; }
+  try {
+    await loadTables();
+    if (state.tables.length && !state.table) openTable(state.tables[0].name);
+  } catch (e) {
+    if (e.message !== 'unauthorized') banner(e.message);
+  }
+}
+setMode('browse');
+init();
+</script>
+</body>
+</html>

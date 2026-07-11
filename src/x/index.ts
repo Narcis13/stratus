@@ -10,6 +10,7 @@ import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
 import { channelsRouter } from './routes/channels.ts';
 import { conversations } from './routes/conversations.ts';
+import { data, explorer } from './routes/data.ts';
 import { digest } from './routes/digest.ts';
 import { drafter } from './routes/drafter.ts';
 import { followups } from './routes/followups.ts';
@@ -60,6 +61,12 @@ export function mountX(app: Hono): void {
   app.route('/x', ideasRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
+  // S1: read-only data explorer API over the SQLite state — { readonly: true }
+  // connection, always mounted, $0. The explorer UI shell is served at the root
+  // path GET /explorer (data-free, public — every fetch it makes needs the
+  // bearer), so it sits OUTSIDE the /x/* auth middleware.
+  app.route('/x', data);
+  app.route('/', explorer);
   // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
   // 'followups'/'fans' are valid usernames, so GET /people/:handle would
   // otherwise swallow these static paths as dossier lookups.
