@@ -23,7 +23,12 @@ const kit: BrandKit = {
   handle: 'narcis',
   watermark: true,
   watermarkText: 'stratus',
+  imageStyleSuffix: 'flat vector, no text',
 };
+
+// A stub bitmap — templates only store the ref (no methods called), so a plain
+// object typed as ImageBitmap is enough to exercise the S4 background branch.
+const STUB_BG = { width: 1200, height: 675 } as unknown as ImageBitmap;
 
 function kinds(spec: { layers: Array<{ kind: string }> }): string[] {
   return spec.layers.map((l) => l.kind);
@@ -66,6 +71,27 @@ describe('quoteCardSpec', () => {
     const spec = quoteCardSpec({ text: 'x' }, kit);
     expect(spec.layers[0]).toMatchObject({ kind: 'fill', color: '#0f1419' });
     expect((spec.layers[0] as { color2?: string }).color2).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  test('S4 AI background: image cover + scrim UNDER the text', () => {
+    const spec = quoteCardSpec({ text: 'ship daily', background: STUB_BG }, kit);
+    // image (cover, full canvas) then a semi-transparent scrim, THEN the text.
+    expect(kinds(spec)).toEqual(['image', 'fill', 'rule', 'text', 'text', 'watermark']);
+    expect(spec.layers[0]).toMatchObject({
+      kind: 'image',
+      src: STUB_BG,
+      fit: 'cover',
+      box: { x: 0, y: 0, w: QUOTE_CARD.w, h: QUOTE_CARD.h },
+    });
+    // The scrim is an rgba wash of the brand bg — it keeps text legible.
+    expect((spec.layers[1] as { kind: string; color: string }).color).toMatch(/^rgba\(/);
+    // The quote still renders on top, unchanged.
+    expect(spec.layers[3]).toMatchObject({ kind: 'text', text: 'ship daily' });
+  });
+
+  test('background=null renders the plain gradient (backwards-compatible)', () => {
+    const spec = quoteCardSpec({ text: 'x', background: null }, kit);
+    expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'text', 'watermark']);
   });
 });
 

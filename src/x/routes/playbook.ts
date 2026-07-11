@@ -293,7 +293,7 @@ async function loadStructureRows(): Promise<StructureRow[]> {
 /** Own ORIGINAL posts only (isReply=false) — the studio composes images for
  *  posts, and mixing reply view-distributions in would confound the baseline.
  *  hasMedia is null on rows written before §S0.2 landed (bucketed as unknown). */
-async function loadMediaRows(): Promise<MediaRow[]> {
+export async function loadMediaRows(): Promise<MediaRow[]> {
   const posts = await db
     .select({ tweetId: postsPublished.tweetId, hasMedia: postsPublished.hasMedia })
     .from(postsPublished)

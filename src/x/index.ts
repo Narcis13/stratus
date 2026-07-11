@@ -10,6 +10,7 @@ import { registerHeartbeat, unregisterHeartbeat } from '../heartbeats.ts';
 export { registerXTools } from './mcp.ts';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
+import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
 import { channelsRouter } from './routes/channels.ts';
@@ -20,6 +21,7 @@ import { drafter } from './routes/drafter.ts';
 import { followups } from './routes/followups.ts';
 import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
+import { images } from './routes/images.ts';
 import { launch } from './routes/launch.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
@@ -65,6 +67,9 @@ export function mountX(app: Hono): void {
   app.route('/x', ideasRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
+  // S4: Studio asset library (composed PNGs + AI backgrounds as SQLite BLOBs),
+  // always mounted, $0. The image GENERATION route is Grok-gated below.
+  app.route('/x', assets);
   // S1: read-only data explorer API over the SQLite state — { readonly: true }
   // connection, always mounted, $0. The explorer UI shell is served at the root
   // path GET /explorer (data-free, public — every fetch it makes needs the
@@ -88,6 +93,9 @@ export function mountX(app: Hono): void {
   // extract-winners POST needs Grok and it checks XAI_API_KEY at runtime.
   app.route('/x', playbook);
   app.route('/x', createMentionsRouter(cfg));
+  // S4: image generation is always mounted; POST /x/images/generate checks the
+  // XAI key at runtime (503 without it), same as /pillars/draft and the digest.
+  app.route('/x', images);
   // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
   if (process.env.XAI_API_KEY) {
     app.route('/x', replies);

@@ -18,6 +18,7 @@ describe('brand kit round-trip', () => {
       handle: 'narcis',
       watermark: false,
       watermarkText: 'made by hand',
+      imageStyleSuffix: 'flat vector, no text',
     };
     expect(parseBrandKit(serializeBrandKit(kit))).toEqual(kit);
   });

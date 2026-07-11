@@ -13,6 +13,17 @@ export interface ApiRequest {
   path: string;
   query?: Record<string, string>;
   body?: unknown;
+  // §S4: when true, the background reads a non-JSON (image) response as bytes
+  // and returns `data: { base64, mediaType }` — the JSON message channel can't
+  // carry a Blob, so binary rides as base64. Used by GET /x/assets/:id/png to
+  // re-open a saved asset without ever leaving the one-transport discipline.
+  binary?: boolean;
+}
+
+/** Shape the background returns for a binary ApiRequest. */
+export interface BinaryPayload {
+  base64: string;
+  mediaType: string;
 }
 
 export type ApiResponse<T = unknown> =

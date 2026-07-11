@@ -160,6 +160,26 @@ async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
   }
 
   if (r.status === 204) return { ok: true, status: r.status, data: undefined };
+
+  // §S4: binary responses (image blobs) ride back as base64 — the message
+  // channel is JSON-only, so a Blob can't cross it. The caller opted in with
+  // `binary: true` and unpacks { base64, mediaType }.
+  if (req.binary) {
+    try {
+      const buf = new Uint8Array(await r.arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i] as number);
+      return {
+        ok: true,
+        status: r.status,
+        data: { base64: btoa(bin), mediaType: r.headers.get('content-type') ?? 'image/png' },
+      };
+    } catch (err) {
+      console.error('[stratus] binary read failed', err);
+      return { ok: false, status: r.status, code: 'binary_read_error' };
+    }
+  }
+
   let data: unknown;
   try {
     data = await r.json();

@@ -6,7 +6,7 @@
 
 import type { GrokMessage } from '../grok/index.ts';
 import { conversionRate } from './conversion.ts';
-import type { RosterCoverage } from './playbook.ts';
+import type { MediaEffectiveness, RosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -71,6 +71,12 @@ export interface DigestFactInputs {
   guidance: { reply: string | null; post: string | null };
   /** §S0.7 — where the week's posted replies went vs my 2–10x target band. */
   rosterCoverage: RosterCoverage;
+  /** §S4 — the week's AI image spend (platform 'xai' in cost_events). */
+  imageSpendUsd: number;
+  /** §S4/§S0.2 — media-vs-text-only medians over own originals (all-time; the
+   *  studio's whole job is to earn this lift). Numbers only when both sides
+   *  clear n≥20; below the gate the cells read insufficient. */
+  mediaVsText: MediaEffectiveness;
 }
 
 export interface DigestFacts {
@@ -90,6 +96,9 @@ export interface DigestFacts {
   guidance: { reply: string | null; post: string | null };
   // S0.7: where this week's posted replies landed vs my 2–10x target band.
   rosterCoverage: RosterCoverage;
+  // S4: the week's AI image spend + the media-vs-text lift the studio earns.
+  imageSpendUsd: number;
+  mediaVsText: MediaEffectiveness;
 }
 
 export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
@@ -149,6 +158,8 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
     },
     guidance: i.guidance,
     rosterCoverage: i.rosterCoverage,
+    imageSpendUsd: i.imageSpendUsd,
+    mediaVsText: i.mediaVsText,
   };
 }
 

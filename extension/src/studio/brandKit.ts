@@ -16,7 +16,15 @@ export interface BrandKit {
   handle: string;
   watermark: boolean;
   watermarkText: string;
+  /** SURFACES S4 — the fixed style suffix appended to every AI background
+   *  prompt. Consistency across months of posts IS the brand; the "no text"
+   *  clause is load-bearing (image models garble words — brand text is always
+   *  canvas-rendered on top, never generated). */
+  imageStyleSuffix: string;
 }
+
+export const DEFAULT_IMAGE_STYLE_SUFFIX =
+  'flat vector illustration, soft muted palette, subtle grain, generous negative space, no text, no letters, no words, no logos, no watermark';
 
 /** Bundled Inter (public/fonts/*.woff2, loaded via FontFace as 'StudioInter')
  *  keeps typography deterministic across machines; the tail is the fallback
@@ -30,6 +38,7 @@ export const DEFAULT_BRAND_KIT: BrandKit = {
   handle: '',
   watermark: true,
   watermarkText: 'stratus',
+  imageStyleSuffix: DEFAULT_IMAGE_STYLE_SUFFIX,
 };
 
 function isValidColor(v: unknown): v is string {
@@ -65,6 +74,10 @@ export function parseBrandKit(raw: string): BrandKit | null {
       typeof o.watermarkText === 'string' && o.watermarkText.trim() !== ''
         ? o.watermarkText.trim()
         : DEFAULT_BRAND_KIT.watermarkText,
+    imageStyleSuffix:
+      typeof o.imageStyleSuffix === 'string' && o.imageStyleSuffix.trim() !== ''
+        ? o.imageStyleSuffix.trim()
+        : DEFAULT_BRAND_KIT.imageStyleSuffix,
   };
 }
 

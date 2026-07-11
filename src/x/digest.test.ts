@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { buildDigestFacts, buildDigestInput, parseDigestNarrative, weekBounds } from './digest.ts';
-import { buildRosterCoverage } from './playbook.ts';
+import { buildMediaEffectiveness, buildRosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -42,6 +42,8 @@ const BASE_INPUTS = {
   streakDays: [],
   guidance: { reply: null, post: null },
   rosterCoverage: buildRosterCoverage([], null),
+  imageSpendUsd: 0,
+  mediaVsText: buildMediaEffectiveness([]),
 };
 
 describe('buildDigestFacts', () => {

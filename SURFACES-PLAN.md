@@ -303,7 +303,17 @@ snapshot-tested (layer lists, not pixels); brand-kit round-trip.
 
 ---
 
-## 5. Phase S4 — AI image layer (xAI grok-2-image)
+## 5. Phase S4 — AI image layer (xAI grok-2-image) — SHIPPED 2026-07-11
+
+> **Status: done.** `POST /x/images/generate` (grok-2-image → base64, never a raw URL;
+> 503 without the key; hard `XAI_IMAGE_DAILY_BUDGET_USD` 429 refusal; spend logged under
+> platform `xai`), the `media_assets` BLOB library (`POST/GET/GET :id/png/DELETE`, list
+> excludes blobs, 2MB cap), the Studio's AI-background compositing (image + scrim UNDER
+> the text) + brand-kit style suffix + Save-to-library + history rail (re-open via the new
+> binary transport), and the digest facts' `imageSpendUsd` + `mediaVsText` (gated n≥20).
+> Tests + `scripts/smoke-studio.ts` ($0 default, `--live` = one $0.07 gen). See CLAUDE.md
+> §"Surfaces S4" for the wiring. Remaining "done when" tail: the first real generated-
+> background post pasted into a live tweet.
 
 **Job:** non-text imagery — backgrounds, concept art for posts — generated on demand,
 composited **under** S3's deterministic text (models garble text; brand text is always

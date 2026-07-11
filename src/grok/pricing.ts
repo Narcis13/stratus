@@ -51,3 +51,28 @@ export function isKnownModel(model: string): boolean {
   const key = ALIASES[model] ?? model;
   return key in PRICES;
 }
+
+// ---------------------------------------------------------------- image models
+//
+// Image generation (SURFACES S4) is billed per image at a flat rate, NOT per
+// token — a different endpoint (/v1/images/generations) and a different meter.
+// Kept in the same xAI price module so there's one place spend is priced; the
+// image route logs a cost_events row under platform 'xai' (isolated from the
+// token-priced 'grok' text spend) so the daily image budget guard reads exactly
+// this bucket. ~$0.07/image for grok-2-image (Jul 2026).
+
+const IMAGE_PRICES: Record<string, number> = {
+  'grok-2-image': 0.07,
+  'grok-2-image-latest': 0.07,
+};
+
+/** USD for generating `n` images with `model`; 0 for an unmapped model (the
+ *  route shouts, same discipline as the token path's isKnownModel warning). */
+export function priceForImage(model: string, n: number): number {
+  const per = IMAGE_PRICES[model] ?? 0;
+  return per * Math.max(0, Math.trunc(n));
+}
+
+export function isKnownImageModel(model: string): boolean {
+  return model in IMAGE_PRICES;
+}

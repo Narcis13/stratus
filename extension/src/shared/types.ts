@@ -747,6 +747,67 @@ export interface DigestFacts {
   guidance: { reply: string | null; post: string | null };
   // S0.7: where this week's posted replies landed vs my 2–10x target band.
   rosterCoverage: PlaybookRosterCoverage;
+  // S4: the week's AI image spend + the all-time media-vs-text lift the Studio
+  // exists to earn. Optional — digests cached before S4 landed lack them.
+  imageSpendUsd?: number;
+  mediaVsText?: MediaEffectiveness;
+}
+
+// §S4/§S0.2 — media vs text-only own-originals; the shape the digest and the
+// Playbook both carry. Lift numbers only when both sides clear n≥20.
+export interface MediaEffectiveness {
+  media: PlaybookCell;
+  textOnly: PlaybookCell;
+  unknown: PlaybookCell;
+  totalMeasured: number;
+  viewsLift: number | null;
+  profileVisitsLift: number | null;
+}
+
+// ---- SURFACES S4: AI image generation + the Studio asset library ----
+
+export interface ImageGenerateBody {
+  prompt: string;
+  /** 1..2 — clamped server-side. */
+  n?: number;
+}
+
+export interface GeneratedImageItem {
+  /** data:<mime>;base64,… — ready to build an ImageBitmap (never a raw xAI URL). */
+  dataUrl: string;
+  mediaType: string;
+  revisedPrompt: string | null;
+}
+
+export interface ImageGenerateResponse {
+  images: GeneratedImageItem[];
+  model: string;
+  count: number;
+  costUsd: number;
+  requestId: string | null;
+}
+
+/** Asset metadata (never the blob) — the history-rail row shape. */
+export interface MediaAsset {
+  id: string;
+  kind: string;
+  prompt: string | null;
+  mediaType: string;
+  width: number | null;
+  height: number | null;
+  byteLength: number | null;
+  usedOnTweetId: string | null;
+  createdAt: string;
+}
+
+export interface AssetSaveBody {
+  pngBase64: string;
+  kind: string;
+  prompt?: string;
+  mediaType?: string;
+  width?: number;
+  height?: number;
+  usedOnTweetId?: string;
 }
 
 export interface DigestResponse {

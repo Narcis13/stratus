@@ -31,7 +31,13 @@ import {
   weekBounds,
 } from '../digest.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
-import { loadPostGuidanceSafe, loadReplyGuidanceSafe, loadRosterCoverage } from './playbook.ts';
+import { buildMediaEffectiveness } from '../playbook.ts';
+import {
+  loadMediaRows,
+  loadPostGuidanceSafe,
+  loadReplyGuidanceSafe,
+  loadRosterCoverage,
+} from './playbook.ts';
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -243,6 +249,12 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
   // §S0.7 — where the week's posted replies landed vs my 2–10x target band.
   const rosterCoverage = await loadRosterCoverage(start, end);
 
+  // §S4 — the week's AI image spend (isolated under platform 'xai') and the
+  // all-time media-vs-text lift the studio exists to earn (gated n≥20/side).
+  const imageSpendUsd =
+    Math.round(Number(costRows.find((r) => r.platform === 'xai')?.costUsd ?? 0) * 1e5) / 1e5;
+  const mediaVsText = buildMediaEffectiveness(await loadMediaRows());
+
   return buildDigestFacts({
     weekKey,
     start,
@@ -269,6 +281,8 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
     streakDays: streakRows,
     guidance: { reply: replyGuidance, post: postGuidance },
     rosterCoverage,
+    imageSpendUsd,
+    mediaVsText,
   });
 }
 

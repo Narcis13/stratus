@@ -4,9 +4,10 @@
 // The `Settings` parameter stays in the signatures so callers keep gating on
 // configuration, but the background loads its own copy from chrome.storage.
 
-import type { ApiRequest, ApiResponse } from '../shared/messages.ts';
+import type { ApiRequest, ApiResponse, BinaryPayload } from '../shared/messages.ts';
 import {
   ApiError,
+  type AssetSaveBody,
   type AuthorProfile,
   type BatchReplyGenerateBody,
   type BatchReplyItem,
@@ -39,13 +40,17 @@ import {
   type FollowupKind,
   type FollowupSnoozeBody,
   type FollowupsResponse,
+  type GeneratedImageItem,
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
   type IdeaPatchBody,
   type IdeaStatus,
   type IdeasResponse,
+  type ImageGenerateBody,
+  type ImageGenerateResponse,
   type ListOpts,
+  type MediaAsset,
   type Mention,
   type MentionPatchBody,
   type MentionStatus,
@@ -100,7 +105,12 @@ import type { Settings } from './storage.ts';
 
 export { ApiError };
 export type {
+  AssetSaveBody,
   AuthorProfile,
+  GeneratedImageItem,
+  ImageGenerateBody,
+  ImageGenerateResponse,
+  MediaAsset,
   BatchReplyGenerateBody,
   BatchReplyItem,
   BatchReplyResponse,
@@ -208,6 +218,16 @@ async function request<T>(_s: Settings, path: string, init: RequestInitLite = {}
   return res.data;
 }
 
+/** §S4 — fetch an image endpoint as base64 (the background reads the blob and
+ *  encodes it; the JSON channel can't carry a Blob). */
+async function requestBinary(_s: Settings, path: string): Promise<BinaryPayload> {
+  const payload: ApiRequest = { type: 'stratus/api', method: 'GET', path, binary: true };
+  const res = (await chrome.runtime.sendMessage(payload)) as ApiResponse<BinaryPayload> | undefined;
+  if (!res) throw new ApiError(0, 'no_response');
+  if (!res.ok) throw new ApiError(res.status, res.code);
+  return res.data;
+}
+
 export const api = {
   // The server computes "today"/"yesterday" in the browser's timezone;
   // getTimezoneOffset() is UTC − local (e.g. -180 for UTC+3).
@@ -279,6 +299,35 @@ export const api = {
     // §8.5 — quote-tweet re-up of one of my published posts.
     reup(s: Settings, body: PostReupBody): Promise<PostDraftResponse> {
       return request<PostDraftResponse>(s, '/x/posts/reup', { method: 'POST', body });
+    },
+  },
+
+  // S4 — AI backgrounds (xAI grok-2-image) composited UNDER the Studio's text.
+  // Base64 in the response (never a raw xAI URL); ~$0.07/image, watchdogged.
+  images: {
+    generate(s: Settings, body: ImageGenerateBody): Promise<ImageGenerateResponse> {
+      return request<ImageGenerateResponse>(s, '/x/images/generate', { method: 'POST', body });
+    },
+  },
+
+  // S4 — the Studio asset library: composed PNGs + generated backgrounds as
+  // SQLite blobs. list() is metadata only; png() streams bytes as base64.
+  assets: {
+    list(s: Settings): Promise<MediaAsset[]> {
+      return request<{ assets: MediaAsset[] }>(s, '/x/assets').then((r) => r.assets);
+    },
+
+    save(s: Settings, body: AssetSaveBody): Promise<MediaAsset> {
+      return request<MediaAsset>(s, '/x/assets', { method: 'POST', body });
+    },
+
+    /** Re-open a saved asset: raw PNG bytes as base64 (build an ImageBitmap). */
+    png(s: Settings, id: string): Promise<BinaryPayload> {
+      return requestBinary(s, `/x/assets/${encodeURIComponent(id)}/png`);
+    },
+
+    remove(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/assets/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
   },
 

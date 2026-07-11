@@ -25,8 +25,33 @@ import {
   quoteCardSpec,
   statCardSpec,
 } from '../studio/templates.ts';
-import { ApiError, api } from './api.ts';
+import { ApiError, type ContentPillar, type MediaAsset, api } from './api.ts';
 import type { Settings } from './storage.ts';
+
+/** ImageBitmap from a data: URL — same-origin, so it never taints the canvas
+ *  (the whole point of the server returning base64 instead of an xAI URL). */
+async function bitmapFromDataUrl(dataUrl: string): Promise<ImageBitmap> {
+  const blob = await (await fetch(dataUrl)).blob();
+  return createImageBitmap(blob);
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < buf.length; i++) bin += String.fromCharCode(buf[i] as number);
+  return btoa(bin);
+}
+
+/** Prompt seeding, not writing (§S4): pillar subject + the kit's fixed style
+ *  suffix. The "no text" clause in the suffix is load-bearing. */
+function seedImagePrompt(pillarLabel: string | null, styleSuffix: string): string {
+  const subject =
+    pillarLabel && pillarLabel.trim() !== '' ? pillarLabel.trim() : 'abstract concept';
+  return `${subject}. ${styleSuffix}`;
+}
+
+/** Templates that composite an AI background under their text. */
+const BG_TEMPLATES = new Set<TemplateId>(['quote', 'banner']);
 
 /** Seed handed over from the Composer's "Make visual" or a leader's re-up. */
 export interface StudioSeed {
@@ -89,6 +114,19 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const bannerSeeded = useRef(false);
 
   const [pfpBitmap, setPfpBitmap] = useState<ImageBitmap | null>(null);
+
+  // S4: AI background composited under the quote/banner text.
+  const [bgBitmap, setBgBitmap] = useState<ImageBitmap | null>(null);
+  const [bgPrompt, setBgPrompt] = useState('');
+  const [pillars, setPillars] = useState<ContentPillar[]>([]);
+  const [pillarSlug, setPillarSlug] = useState('');
+  const [genLoading, setGenLoading] = useState(false);
+  const [genCost, setGenCost] = useState<number | null>(null);
+  const bgPromptSeeded = useRef(false);
+
+  // S4: the asset library history rail.
+  const [library, setLibrary] = useState<MediaAsset[]>([]);
+  const [savingAsset, setSavingAsset] = useState(false);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
@@ -165,6 +203,132 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   }, [template, statData, statLoading, loadStatData, loadBannerData]);
 
+  // S4: history rail — metadata only ($0 read), refreshed after save/delete.
+  const loadLibrary = useCallback(async () => {
+    try {
+      setLibrary(await api.assets.list(settings));
+    } catch {
+      // The rest of the Studio works without the library.
+    }
+  }, [settings]);
+
+  // Seed the AI-background prompt from the first active pillar + the kit's fixed
+  // style suffix, and load the library — once, when a background-capable
+  // template first comes into view.
+  useEffect(() => {
+    if (!kit || !BG_TEMPLATES.has(template) || bgPromptSeeded.current) return;
+    bgPromptSeeded.current = true;
+    void (async () => {
+      try {
+        const ps = await api.pillars.list(settings, { active: true });
+        setPillars(ps);
+        setPillarSlug(ps[0]?.slug ?? '');
+        setBgPrompt(seedImagePrompt(ps[0]?.label ?? null, kit.imageStyleSuffix));
+      } catch {
+        setBgPrompt(seedImagePrompt(null, kit.imageStyleSuffix));
+      }
+      void loadLibrary();
+    })();
+  }, [kit, template, settings, loadLibrary]);
+
+  const reseedPrompt = (slug: string): void => {
+    setPillarSlug(slug);
+    if (kit)
+      setBgPrompt(
+        seedImagePrompt(pillars.find((p) => p.slug === slug)?.label ?? null, kit.imageStyleSuffix),
+      );
+  };
+
+  const generateBackground = async (): Promise<void> => {
+    const prompt = bgPrompt.trim();
+    if (prompt === '') {
+      setError('Add a prompt first.');
+      return;
+    }
+    setGenLoading(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.images.generate(settings, { prompt, n: 1 });
+      const first = res.images[0];
+      if (!first) {
+        setError('No image returned.');
+        return;
+      }
+      setBgBitmap(await bitmapFromDataUrl(first.dataUrl));
+      setGenCost(res.costUsd);
+      setNotice(`Background generated — $${res.costUsd.toFixed(3)}. Composited under your text.`);
+    } catch (e) {
+      const code = e instanceof ApiError ? e.code : '';
+      setError(
+        code === 'image_budget_exceeded'
+          ? "Daily image budget reached — a paint session can't melt the wallet. Try tomorrow."
+          : code === 'grok_not_configured'
+            ? 'Set XAI_API_KEY on the server to generate images.'
+            : e instanceof ApiError
+              ? `Generate failed: ${e.code}`
+              : 'Generate failed',
+      );
+    } finally {
+      setGenLoading(false);
+    }
+  };
+
+  const clearBackground = (): void => {
+    setBgBitmap(null);
+    setGenCost(null);
+  };
+
+  const saveToLibrary = async (): Promise<void> => {
+    const blob = lastBlob.current;
+    if (!blob) return;
+    setSavingAsset(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const pngBase64 = await blobToBase64(blob);
+      const t = TEMPLATES.find((x) => x.id === template);
+      const [w, h] = (t?.size ?? '').split('×').map((n) => Number.parseInt(n, 10));
+      await api.assets.save(settings, {
+        pngBase64,
+        kind: template,
+        ...(bgBitmap && bgPrompt.trim() !== '' ? { prompt: bgPrompt.trim() } : {}),
+        ...(Number.isFinite(w) ? { width: w } : {}),
+        ...(Number.isFinite(h) ? { height: h } : {}),
+      });
+      setNotice('Saved to your asset library.');
+      await loadLibrary();
+    } catch (e) {
+      setError(e instanceof ApiError ? `Save failed: ${e.code}` : 'Save failed');
+    } finally {
+      setSavingAsset(false);
+    }
+  };
+
+  const reopenAsset = async (asset: MediaAsset): Promise<void> => {
+    setError(null);
+    setNotice(null);
+    try {
+      const { base64, mediaType } = await api.assets.png(settings, asset.id);
+      const bmp = await bitmapFromDataUrl(`data:${mediaType};base64,${base64}`);
+      if (!BG_TEMPLATES.has(template)) setTemplate('quote');
+      setBgBitmap(bmp);
+      if (asset.prompt) setBgPrompt(asset.prompt);
+      setNotice('Re-opened as the background layer — add your text on top.');
+    } catch (e) {
+      setError(e instanceof ApiError ? `Open failed: ${e.code}` : 'Open failed');
+    }
+  };
+
+  const deleteAsset = async (id: string): Promise<void> => {
+    try {
+      await api.assets.remove(settings, id);
+      await loadLibrary();
+    } catch (e) {
+      setError(e instanceof ApiError ? `Delete failed: ${e.code}` : 'Delete failed');
+    }
+  };
+
   // The live preview: debounce edits, render, drop stale results.
   useEffect(() => {
     if (!kit) return;
@@ -175,7 +339,10 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
         await ensureStudioFonts();
         const spec =
           template === 'quote'
-            ? quoteCardSpec({ text: quoteText.trim() || 'Your words, pixel-crisp.' }, kit)
+            ? quoteCardSpec(
+                { text: quoteText.trim() || 'Your words, pixel-crisp.', background: bgBitmap },
+                kit,
+              )
             : template === 'stat'
               ? statCardSpec(statData ?? EMPTY_STAT, kit)
               : template === 'banner'
@@ -187,6 +354,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
                         .map((k) => k.trim())
                         .filter((k) => k !== ''),
                       followers: bannerMilestone ? bannerFollowers : null,
+                      background: bgBitmap,
                     },
                     kit,
                   )
@@ -218,6 +386,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     bannerFollowers,
     bannerMilestone,
     pfpBitmap,
+    bgBitmap,
   ]);
 
   useEffect(
@@ -367,6 +536,14 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
               disabled={!kit.watermark}
             />
           </div>
+          <label className="field">
+            <span>AI background style suffix (the brand — keep "no text")</span>
+            <textarea
+              value={kit.imageStyleSuffix}
+              onChange={(e) => patchKit({ imageStyleSuffix: e.target.value })}
+              rows={2}
+            />
+          </label>
           <div className="row studio-kit-actions">
             <button type="button" onClick={exportKit}>
               Export JSON
@@ -469,6 +646,43 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
         </label>
       )}
 
+      {BG_TEMPLATES.has(template) && (
+        <section className="studio-bg">
+          <div className="row studio-data-row">
+            <span className="muted">AI background (composited under your text)</span>
+            {bgBitmap && (
+              <button type="button" onClick={clearBackground}>
+                Remove background
+              </button>
+            )}
+          </div>
+          {pillars.length > 0 && (
+            <label className="field">
+              <span>Seed from pillar</span>
+              <select value={pillarSlug} onChange={(e) => reseedPrompt(e.target.value)}>
+                {pillars.map((p) => (
+                  <option key={p.slug} value={p.slug}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="field">
+            <span>
+              Prompt (style suffix from your brand kit; the "no text" clause is load-bearing)
+            </span>
+            <textarea value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} rows={3} />
+          </label>
+          <div className="row">
+            <button type="button" onClick={() => void generateBackground()} disabled={genLoading}>
+              {genLoading ? 'Generating…' : 'Generate background (~$0.07)'}
+            </button>
+            {genCost !== null && <span className="muted">last: ${genCost.toFixed(3)}</span>}
+          </div>
+        </section>
+      )}
+
       <div className="studio-preview">
         {previewUrl ? (
           <img src={previewUrl} alt={`${template} preview`} />
@@ -493,6 +707,14 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
         <button type="button" onClick={download} disabled={!lastBlob.current}>
           Download
         </button>
+        <button
+          type="button"
+          onClick={() => void saveToLibrary()}
+          disabled={!lastBlob.current || savingAsset}
+          title="Store this composed PNG in your asset library — re-open it later as a base layer"
+        >
+          {savingAsset ? 'Saving…' : 'Save to library'}
+        </button>
         {seedPostId && (
           <button
             type="button"
@@ -508,6 +730,42 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
         X can't receive images via the stratus API (OAuth 1.0a wall) — Copy, open the X composer,
         paste. Under 30 seconds, every time.
       </small>
+
+      {library.length > 0 && (
+        <section className="studio-library">
+          <div className="panel-header">
+            <h3>Library</h3>
+            <button type="button" onClick={() => void loadLibrary()}>
+              Refresh
+            </button>
+          </div>
+          <div className="studio-library-rail">
+            {library.map((a) => (
+              <div key={a.id} className="studio-asset">
+                <button
+                  type="button"
+                  className="studio-asset-open"
+                  onClick={() => void reopenAsset(a)}
+                  title={a.prompt ?? a.kind}
+                >
+                  <span className="studio-asset-kind">{a.kind}</span>
+                  <span className="muted">
+                    {a.width && a.height ? `${a.width}×${a.height}` : ''}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="studio-asset-del"
+                  onClick={() => void deleteAsset(a.id)}
+                  title="Delete asset"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

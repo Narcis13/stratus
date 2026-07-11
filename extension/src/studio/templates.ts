@@ -31,6 +31,25 @@ function background(kit: BrandKit): Layer {
   return { kind: 'fill', color: kit.bg, color2: shade(kit.bg, -0.4) };
 }
 
+// SURFACES S4: an AI background sits UNDER the text. The image is cover-fit to
+// the whole card, then a scrim (a semi-transparent wash of the brand bg) keeps
+// canvas-rendered text legible over arbitrary imagery — the brand text never
+// competes with the generated pixels. Without a background it's the plain
+// gradient fill, so every template stays backwards-compatible.
+function baseLayers(
+  kit: BrandKit,
+  w: number,
+  h: number,
+  bg: ImageBitmap | null | undefined,
+  scrimAlpha: number,
+): Layer[] {
+  if (!bg) return [background(kit)];
+  return [
+    { kind: 'image', src: bg, fit: 'cover', box: { x: 0, y: 0, w, h } },
+    { kind: 'fill', color: withAlpha(kit.bg, scrimAlpha) },
+  ];
+}
+
 function watermarkLayer(kit: BrandKit, ink: string, sizePx = 24, margin = 40): Layer[] {
   if (!kit.watermark || kit.watermarkText === '') return [];
   return [
@@ -48,13 +67,15 @@ function watermarkLayer(kit: BrandKit, ink: string, sizePx = 24, margin = 40): L
 
 export interface QuoteCardData {
   text: string;
+  /** SURFACES S4 — optional AI background composited under the quote. */
+  background?: ImageBitmap | null;
 }
 
 /** 1200×675 — a draft/tweet as a branded, pixel-crisp pull-quote. */
 export function quoteCardSpec(data: QuoteCardData, kit: BrandKit): RenderSpec {
   const ink = contrastOn(kit.bg);
   const layers: Layer[] = [
-    background(kit),
+    ...baseLayers(kit, QUOTE_CARD.w, QUOTE_CARD.h, data.background, 0.68),
     { kind: 'rule', box: { x: 96, y: 104, w: 96, h: 10 }, color: kit.accent },
     {
       kind: 'text',
@@ -253,6 +274,8 @@ export interface BannerData {
   /** Pillar keywords strip — prefilled from the active content pillars. */
   keywords: string[];
   followers: number | null;
+  /** SURFACES S4 — optional AI background composited under the header. */
+  background?: ImageBitmap | null;
 }
 
 /** 1500×500 — profile header: headline, pillar strip, live follower milestone.
@@ -263,7 +286,7 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
   const withMilestone = data.followers !== null;
 
   const layers: Layer[] = [
-    background(kit),
+    ...baseLayers(kit, BANNER.w, BANNER.h, data.background, 0.6),
     { kind: 'rule', box: { x: 80, y: 96, w: 88, h: 10 }, color: kit.accent },
     {
       kind: 'text',

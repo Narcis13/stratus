@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { blob, index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // Migrated from Postgres (Neon) to local SQLite (bun:sqlite). Type mapping:
 //   timestamptz   -> integer({ mode: 'timestamp_ms' })  (epoch ms; app sees Date)
@@ -63,6 +63,30 @@ export const channels = sqliteTable('channels', {
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
   updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Studio asset library (SURFACES S4): composed PNGs and AI-generated
+// backgrounds live as SQLite BLOBs — right at single-user scale (a handful of
+// KB-to-MB images), no external object store, and they ride the existing DB
+// backup story. `prompt` is the xAI prompt for a generated background (null for
+// a hand-composed card); `used_on_tweet_id` links an asset to the post it
+// shipped on. The list route returns metadata only — the blob is streamed by
+// GET /x/assets/:id/png so re-opening an asset as a base layer is one fetch.
+export const mediaAssets = sqliteTable('media_assets', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  kind: text('kind').notNull(),
+  prompt: text('prompt'),
+  png: blob('png').notNull(),
+  mediaType: text('media_type').notNull().default('image/png'),
+  width: integer('width'),
+  height: integer('height'),
+  byteLength: integer('byte_length'),
+  usedOnTweetId: text('used_on_tweet_id'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
 });
