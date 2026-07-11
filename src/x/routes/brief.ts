@@ -226,6 +226,114 @@ export function attachLatestSnapshots(posts: PublishedRow[], snaps: SnapRow[]): 
   });
 }
 
+// ------------------------------------------------------- pinned watch (S0.9)
+
+// Profile visits land on the pinned tweet, so a stale or out-performed pin
+// leaks the account's best first impression. Two nudges, never an action
+// (pinning stays manual in the X app): warn when the pin hasn't changed in
+// >21 days, or when a recent post has ≥3× its measured views.
+const PIN_STALE_DAYS = 21;
+const PIN_OUTPERFORM_RATIO = 3;
+/** Only originals posted this recently count as "your best work isn't pinned"
+ *  candidates — an old post the user already chose not to pin isn't news. */
+const PIN_CANDIDATE_DAYS = 30;
+
+export interface PinSeriesPoint {
+  snapshotAt: Date;
+  pinnedTweetId: string | null;
+}
+
+/** The current pin and when it was first observed. Walks the chronological
+ *  account-snapshot series: the current pin is the latest non-null
+ *  `pinned_tweet_id`, and `since` is the earliest snapshot in the latest
+ *  contiguous run of that same id. Snapshots with a null pin (every row before
+ *  the S0.9 column, plus days with nothing pinned) are ignored — `since` is
+ *  therefore never earlier than the first day we recorded a pin, so the >21d
+ *  warning can't fire on backfilled history. null when no pin recorded yet. */
+export function pinnedSince(series: PinSeriesPoint[]): {
+  pinnedTweetId: string | null;
+  since: Date | null;
+} {
+  const withPin = series
+    .filter((p) => p.pinnedTweetId != null)
+    .sort((a, b) => a.snapshotAt.getTime() - b.snapshotAt.getTime());
+  if (withPin.length === 0) return { pinnedTweetId: null, since: null };
+  const current = withPin[withPin.length - 1] as PinSeriesPoint;
+  let since = current.snapshotAt;
+  for (let i = withPin.length - 1; i >= 0; i--) {
+    const p = withPin[i] as PinSeriesPoint;
+    if (p.pinnedTweetId === current.pinnedTweetId) since = p.snapshotAt;
+    else break;
+  }
+  return { pinnedTweetId: current.pinnedTweetId, since };
+}
+
+export interface PinnedWatchPost {
+  tweetId: string;
+  text: string;
+  postedAt: Date;
+  views: number | null;
+}
+
+export interface PinnedWatch {
+  pinnedTweetId: string | null;
+  since: Date | null;
+  ageDays: number | null;
+  /** (a) the pin is unchanged > 21 days. */
+  stale: boolean;
+  pinnedViews: number | null;
+  /** (b) a last-30d post with ≥3× the pinned tweet's measured views. */
+  outperformer: {
+    tweetId: string;
+    text: string;
+    postedAt: Date;
+    views: number;
+    ratio: number;
+  } | null;
+}
+
+export function buildPinnedWatch(
+  pin: { pinnedTweetId: string | null; since: Date | null },
+  pinnedViews: number | null,
+  recentPosts: PinnedWatchPost[],
+  now: Date,
+): PinnedWatch {
+  const ageDays =
+    pin.since === null ? null : Math.floor((now.getTime() - pin.since.getTime()) / DAY_MS);
+  const stale = ageDays !== null && ageDays > PIN_STALE_DAYS;
+
+  let outperformer: PinnedWatch['outperformer'] = null;
+  // Need a known pin and a positive view count to compare against.
+  if (pin.pinnedTweetId !== null && pinnedViews !== null && pinnedViews > 0) {
+    const best = recentPosts
+      .filter(
+        (p) =>
+          p.tweetId !== pin.pinnedTweetId &&
+          p.views !== null &&
+          p.views >= pinnedViews * PIN_OUTPERFORM_RATIO,
+      )
+      .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0];
+    if (best && best.views !== null) {
+      outperformer = {
+        tweetId: best.tweetId,
+        text: best.text,
+        postedAt: best.postedAt,
+        views: best.views,
+        ratio: Math.round((best.views / pinnedViews) * 10) / 10,
+      };
+    }
+  }
+
+  return {
+    pinnedTweetId: pin.pinnedTweetId,
+    since: pin.since,
+    ageDays,
+    stale,
+    pinnedViews,
+    outperformer,
+  };
+}
+
 // ------------------------------------------------------------------ route
 
 brief.get('/brief', async (c) => {
@@ -266,11 +374,13 @@ brief.get('/brief', async (c) => {
       .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
       .orderBy(asc(accountSnapshots.snapshotAt)),
     // S0.1: follower series over the conversion horizon (superset of the
-    // sparkline window, so the 28d baseline exists).
+    // sparkline window, so the 28d baseline exists). S0.9 rides on the same
+    // 30d window for the pinned-post series (30d > the 21d staleness gate).
     db
       .select({
         snapshotAt: accountSnapshots.snapshotAt,
         followersCount: accountSnapshots.followersCount,
+        pinnedTweetId: accountSnapshots.pinnedTweetId,
       })
       .from(accountSnapshots)
       .where(
@@ -387,6 +497,59 @@ brief.get('/brief', async (c) => {
   const conversion = computeConversion(
     convSnaps.map((s) => ({ snapshotAt: s.snapshotAt, followers: s.followersCount })),
     conversionTweets,
+    now,
+  );
+
+  // S0.9 pinned-post watch: the pin series comes from the same 30d account
+  // snapshots. Compare the pinned tweet's measured views against recent
+  // originals — one metrics read covers the pinned tweet and every candidate.
+  const pin = pinnedSince(
+    convSnaps.map((s) => ({ snapshotAt: s.snapshotAt, pinnedTweetId: s.pinnedTweetId })),
+  );
+  const pinCandidates = await db
+    .select({
+      tweetId: postsPublished.tweetId,
+      text: postsPublished.text,
+      postedAt: postsPublished.postedAt,
+    })
+    .from(postsPublished)
+    .where(
+      and(
+        eq(postsPublished.isReply, false),
+        gte(postsPublished.postedAt, new Date(now.getTime() - PIN_CANDIDATE_DAYS * DAY_MS)),
+      ),
+    );
+  const pinViewIds = [
+    ...new Set([
+      ...(pin.pinnedTweetId ? [pin.pinnedTweetId] : []),
+      ...pinCandidates.map((p) => p.tweetId),
+    ]),
+  ];
+  const pinSnapRows = pinViewIds.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          publicMetrics: metricsSnapshots.publicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, pinViewIds))
+        .orderBy(sql`${metricsSnapshots.snapshotAt} desc`)
+    : [];
+  const pinViewsByTweet = new Map<string, number | null>();
+  for (const s of pinSnapRows) {
+    if (pinViewsByTweet.has(s.tweetId)) continue;
+    const pub = (s.publicMetrics ?? null) as Record<string, number> | null;
+    pinViewsByTweet.set(s.tweetId, pub?.impression_count ?? null);
+  }
+  const pinnedWatch = buildPinnedWatch(
+    pin,
+    pin.pinnedTweetId ? (pinViewsByTweet.get(pin.pinnedTweetId) ?? null) : null,
+    pinCandidates.map((p) => ({
+      tweetId: p.tweetId,
+      text: p.text,
+      postedAt: p.postedAt,
+      views: pinViewsByTweet.get(p.tweetId) ?? null,
+    })),
     now,
   );
 
@@ -541,6 +704,8 @@ brief.get('/brief', async (c) => {
       // S0.1: earned-visit → follow conversion, 7d and 28d (null rate < 20 clicks).
       conversion,
     },
+    // S0.9: pinned-post watch — stale or out-performed pin, a nudge to re-pin.
+    pinnedWatch,
     yesterday: {
       from: yesterdayStart,
       to: todayStart,

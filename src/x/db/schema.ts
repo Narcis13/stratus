@@ -182,6 +182,11 @@ export const accountSnapshots = sqliteTable('account_snapshots', {
   followingCount: integer('following_count').notNull(),
   tweetCount: integer('tweet_count').notNull(),
   listedCount: integer('listed_count').notNull(),
+  // S0.9 pinned-post watch: the tweet currently pinned to my profile, read for
+  // free on the same daily getMe() ($0.001). null on pre-S0.9 rows and whenever
+  // no tweet is pinned. The pin series lets the brief warn when the profile's
+  // landing page has gone stale (unchanged >21d) or been out-performed.
+  pinnedTweetId: text('pinned_tweet_id'),
 });
 
 // Swipe file of other people's tweets, kept for style/format reference. Pure

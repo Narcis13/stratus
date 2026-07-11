@@ -12,6 +12,7 @@ import {
   type PlaybookAngleCell,
   type PlaybookCell,
   type PlaybookExtractResult,
+  type PlaybookIdeaSurface,
   type PlaybookRosterCoverage,
   api,
 } from './api.ts';
@@ -243,6 +244,8 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
             )}
           </section>
 
+          <IdeaEffectivenessSection idea={data.ideaEffectiveness} minN={data.minN} />
+
           <section className="brief-section">
             <h3>Reply latency ({data.latencyEffectiveness.totalMeasured} measured)</h3>
             {data.latencyEffectiveness.cells.length === 0 ? (
@@ -331,6 +334,78 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
         </>
       )}
     </div>
+  );
+}
+
+// §S0.8 — does the Idea Inbox pay? Seeded (a captured idea seeded this draft)
+// vs unseeded medians, per surface. The lift is the payoff number; it stays
+// silent until both sides clear the gate. posts and replies are shown apart
+// because their view distributions differ — the pooled headline is dominated by
+// whichever surface has more volume.
+const IDEA_SURFACES: Array<{ key: 'posts' | 'replies'; label: string }> = [
+  { key: 'posts', label: 'posts' },
+  { key: 'replies', label: 'replies' },
+];
+
+function IdeaEffectivenessSection({
+  idea,
+  minN,
+}: {
+  idea: PlaybookIdeaSurface & {
+    posts: PlaybookIdeaSurface;
+    replies: PlaybookIdeaSurface;
+    totalSeeded: number;
+    totalMeasured: number;
+  };
+  minN: number;
+}): JSX.Element {
+  return (
+    <section className="brief-section">
+      <h3>
+        Idea Inbox payoff ({idea.totalSeeded} seeded / {idea.totalMeasured} measured)
+      </h3>
+      {idea.totalMeasured === 0 ? (
+        <div className="muted">No measured published drafts yet.</div>
+      ) : (
+        <>
+          <table className="pb-table">
+            <thead>
+              <tr>
+                <th>surface</th>
+                <th>seeded</th>
+                <th>unseeded</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>all (pooled)</td>
+                <td>{cellSummary(idea.seeded, minN)}</td>
+                <td>{cellSummary(idea.unseeded, minN)}</td>
+              </tr>
+              {IDEA_SURFACES.map((s) => (
+                <tr key={s.key} className="pb-thin">
+                  <td>{s.label}</td>
+                  <td>{cellSummary(idea[s.key].seeded, minN)}</td>
+                  <td>{cellSummary(idea[s.key].unseeded, minN)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {idea.viewsLift !== null ? (
+            <div className="status-line">
+              idea lift: {idea.viewsLift}x views
+              {idea.profileVisitsLift !== null && ` · ${idea.profileVisitsLift}x profile clicks`}
+              {idea.viewsLift >= 1 ? ' — the Idea Inbox pays' : ' — seeded drafts underperform'}
+            </div>
+          ) : (
+            <div className="muted pb-note">
+              payoff stays silent until both seeded and unseeded clear n≥{minN} — whether captured
+              ideas beat off-the-cuff drafts.
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

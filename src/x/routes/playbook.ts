@@ -18,6 +18,7 @@ import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import {
   accountSnapshots,
+  ideas,
   metricsSnapshots,
   people,
   postTemplates,
@@ -30,6 +31,7 @@ import {
 import {
   type AngleRow,
   DEFAULT_MIN_CELL_N,
+  type IdeaRow,
   type LatencyRow,
   type MeasuredOutcome,
   type MediaRow,
@@ -40,6 +42,7 @@ import {
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildIdeaEffectiveness,
   buildLatencyEffectiveness,
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
@@ -302,6 +305,57 @@ async function loadMediaRows(): Promise<MediaRow[]> {
   }));
 }
 
+// -------------------------------------------------- idea → outcome (§S0.8)
+
+/** §S0.8 — did the Idea Inbox pay? The C6 consume-provenance
+ *  (ideas.consumed_by_table/-id) is the only thing that says which published
+ *  drafts came from a captured idea; nothing read it back until now. The
+ *  population is the two draft surfaces that can carry a backlink (posted
+ *  scheduled_posts for originals, posted reply_drafts for replies) — a
+ *  hand-written post that never went through a drafter simply reads as unseeded,
+ *  which is exactly right. Outcomes via the §6.2 join (postedTweetId → latest
+ *  snapshot), same as every other cell. */
+export async function loadIdeaRows(): Promise<IdeaRow[]> {
+  const consumed = await db
+    .select({ table: ideas.consumedByTable, refId: ideas.consumedById })
+    .from(ideas)
+    .where(and(eq(ideas.status, 'consumed'), isNotNull(ideas.consumedById)));
+  const seededPostIds = new Set<string>();
+  const seededReplyIds = new Set<string>();
+  for (const c of consumed) {
+    if (!c.refId) continue;
+    if (c.table === 'scheduled_posts') seededPostIds.add(c.refId);
+    else if (c.table === 'reply_drafts') seededReplyIds.add(c.refId);
+  }
+
+  const posts = await db
+    .select({ id: scheduledPosts.id, postedTweetId: scheduledPosts.postedTweetId })
+    .from(scheduledPosts)
+    .where(and(eq(scheduledPosts.status, 'posted'), isNotNull(scheduledPosts.postedTweetId)));
+  const replies = await db
+    .select({ id: replyDrafts.id, postedTweetId: replyDrafts.postedTweetId })
+    .from(replyDrafts)
+    .where(and(eq(replyDrafts.status, 'posted'), isNotNull(replyDrafts.postedTweetId)));
+
+  const outcomes = await latestOutcomes([
+    ...posts.flatMap((p) => (p.postedTweetId ? [p.postedTweetId] : [])),
+    ...replies.flatMap((r) => (r.postedTweetId ? [r.postedTweetId] : [])),
+  ]);
+
+  return [
+    ...posts.map((p) => ({
+      kind: 'post' as const,
+      seeded: seededPostIds.has(p.id),
+      outcome: p.postedTweetId ? (outcomes.get(p.postedTweetId) ?? null) : null,
+    })),
+    ...replies.map((r) => ({
+      kind: 'reply' as const,
+      seeded: seededReplyIds.has(r.id),
+      outcome: r.postedTweetId ? (outcomes.get(r.postedTweetId) ?? null) : null,
+    })),
+  ];
+}
+
 // ---------------------------------------------------- batch vs single rows
 
 async function loadOriginRows(): Promise<{
@@ -447,6 +501,7 @@ playbook.get('/playbook', async (c) => {
       minN,
     ),
     mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
+    ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     rosterCoverage: await loadRosterCoverage(
       new Date(Date.now() - ROSTER_WINDOW_MS),

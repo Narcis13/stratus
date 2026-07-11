@@ -4,6 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type AngleRow,
+  type IdeaRow,
   type LatencyRow,
   type MeasuredOutcome,
   type ScoredReply,
@@ -11,6 +12,7 @@ import {
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildIdeaEffectiveness,
   buildLatencyEffectiveness,
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
@@ -327,6 +329,57 @@ describe('buildMediaEffectiveness', () => {
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+describe('buildIdeaEffectiveness', () => {
+  const rows: IdeaRow[] = [
+    // seeded posts
+    { kind: 'post', seeded: true, outcome: out(600, 12) },
+    { kind: 'post', seeded: true, outcome: out(400, 8) },
+    // unseeded posts
+    { kind: 'post', seeded: false, outcome: out(200, 4) },
+    { kind: 'post', seeded: false, outcome: out(100, 2) },
+    { kind: 'post', seeded: false, outcome: null }, // posted, unmeasured
+    // seeded replies
+    { kind: 'reply', seeded: true, outcome: out(3000, 30) },
+    // unseeded replies
+    { kind: 'reply', seeded: false, outcome: out(1000, 10) },
+    { kind: 'reply', seeded: false, outcome: out(2000, 20) },
+  ];
+
+  test('pooled headline and per-surface split', () => {
+    const r = buildIdeaEffectiveness(rows, 2);
+    // pooled: seeded = 600,400,3000 → median 600; unseeded = 200,100,1000,2000
+    expect(r.seeded).toMatchObject({ n: 3, medianViews: 600 });
+    expect(r.unseeded).toMatchObject({ n: 4, medianViews: median([200, 100, 1000, 2000]) });
+    // posts split (unmeasured counted in posted, not n)
+    expect(r.posts.seeded).toMatchObject({ n: 2, medianViews: 500 });
+    expect(r.posts.unseeded).toMatchObject({ posted: 3, n: 2, medianViews: 150 });
+    expect(r.replies.seeded).toMatchObject({ n: 1, medianViews: 3000 });
+    expect(r.replies.unseeded).toMatchObject({ n: 2, medianViews: 1500 });
+    expect(r.totalSeeded).toBe(3);
+    expect(r.totalMeasured).toBe(7);
+  });
+
+  test('lift only when BOTH sides clear the gate', () => {
+    // posts: 2 seeded, 2 unseeded — clears gate=2, gated at 3.
+    const gated = buildIdeaEffectiveness(rows, 3);
+    expect(gated.posts.viewsLift).toBeNull();
+    expect(gated.posts.seeded.sufficient).toBe(false);
+
+    const open = buildIdeaEffectiveness(rows, 2);
+    expect(open.posts.viewsLift).toBe(round(500 / 150));
+    expect(open.posts.profileVisitsLift).toBe(round(10 / 3));
+    // replies seeded n=1 never clears gate=2 → its own lift stays null.
+    expect(open.replies.viewsLift).toBeNull();
+  });
+
+  test('default gate is 20 — silent on a thin sample', () => {
+    const r = buildIdeaEffectiveness(rows);
+    expect(r.viewsLift).toBeNull();
+    expect(r.posts.viewsLift).toBeNull();
+    expect(r.replies.viewsLift).toBeNull();
+  });
+});
 
 describe('latencyBucket', () => {
   test('boundaries and unknown', () => {

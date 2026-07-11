@@ -23,6 +23,9 @@ export interface XUser {
   };
   verified_type?: string;
   subscription_type?: string;
+  // S0.9: the tweet pinned to the profile. Requested on the daily getMe() — a
+  // field, not an extra call, so it rides free on the same $0.001 owned read.
+  pinned_tweet_id?: string;
 }
 
 export interface XTweet {
@@ -72,7 +75,8 @@ export async function getMe(token: string): Promise<XUser> {
   const res = await xFetch<{ data: XUser }>('/2/users/me', {
     token,
     query: {
-      'user.fields': 'id,name,username,description,public_metrics,verified_type,subscription_type',
+      'user.fields':
+        'id,name,username,description,public_metrics,verified_type,subscription_type,pinned_tweet_id',
     },
   });
   return res.data;

@@ -88,6 +88,7 @@ export function TodayPanel({ settings, onOpenPerson }: Props): JSX.Element {
       {brief && (
         <>
           <FollowersCard brief={brief} />
+          <PinnedWatchCard brief={brief} />
           <TodayPlan brief={brief} />
           <ReplyQuota brief={brief} />
           <Yesterday brief={brief} />
@@ -181,6 +182,50 @@ function ConversionLine({
       <span className="brief-conversion-window">{primary.windowDays}d</span>
       {primary === d7 && d28.rate !== null && <span> · {fmtPct(d28.rate)} 28d</span>}
     </div>
+  );
+}
+
+// S0.9: profile visits land on the pinned tweet — warn when that first
+// impression has gone stale (unchanged >21d) or been out-performed by a recent
+// post. Nothing renders until there's an actual nudge to make. Pinning is
+// manual in the X app, so both messages point at the tweet to re-pin.
+function PinnedWatchCard({ brief }: { brief: Brief }): JSX.Element | null {
+  const w = brief.pinnedWatch;
+  if (!w || !w.pinnedTweetId || (!w.stale && !w.outperformer)) return null;
+  const pinnedUrl = `https://x.com/i/web/status/${w.pinnedTweetId}`;
+  return (
+    <section className="brief-section">
+      <h3>Pinned post</h3>
+      <div className="warn">
+        {w.stale && (
+          <div>
+            Your pin hasn't changed in <strong>{w.ageDays}</strong> days — profile visitors land
+            here first.{' '}
+            <a href={pinnedUrl} target="_blank" rel="noreferrer">
+              See the pinned tweet
+            </a>
+            .
+          </div>
+        )}
+        {w.outperformer && (
+          <div className="brief-pin-outperformer">
+            <div>
+              Your best work isn't pinned — a recent post has{' '}
+              <strong>{w.outperformer.ratio}×</strong> the pinned tweet's views (
+              {fmtNum(w.outperformer.views)} vs {fmtNum(w.pinnedViews)}).
+            </div>
+            <div className="brief-tweet-text">{w.outperformer.text}</div>
+            <a
+              href={`https://x.com/i/web/status/${w.outperformer.tweetId}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open it, then pin it
+            </a>
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 

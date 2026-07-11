@@ -170,6 +170,8 @@ async function snapshotAccount(token: string, result: RunResult): Promise<void> 
       followingCount: pm.following_count,
       tweetCount: pm.tweet_count,
       listedCount: pm.listed_count,
+      // S0.9: rides free on the same read. null when nothing is pinned.
+      pinnedTweetId: me.pinned_tweet_id ?? null,
     });
     result.accountSnapshotted = true;
   } catch (err) {

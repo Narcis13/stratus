@@ -1,0 +1,1 @@
+ALTER TABLE `account_snapshots` ADD `pinned_tweet_id` text;

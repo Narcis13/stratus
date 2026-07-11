@@ -34,13 +34,16 @@ import {
 } from './x/replies/prompt.ts';
 import {
   type AnnotatedGap,
+  type PinnedWatchPost,
   annotateGaps,
   attachLatestSnapshots,
+  buildPinnedWatch,
   findScheduleGaps,
   followerTrend,
   localDayStart,
   localMinuteOfDay,
   pickAnchors,
+  pinnedSince,
 } from './x/routes/brief.ts';
 import {
   type UnlinkedDraft,
@@ -1157,6 +1160,119 @@ describe('brief followerTrend', () => {
       now,
     );
     expect(t.delta7d).toBe(8);
+  });
+});
+
+describe('brief pinnedSince (S0.9)', () => {
+  const p = (iso: string, id: string | null) => ({ snapshotAt: new Date(iso), pinnedTweetId: id });
+
+  test('no recorded pin yet → nulls', () => {
+    expect(pinnedSince([])).toEqual({ pinnedTweetId: null, since: null });
+    // Pre-S0.9 rows carry a null pin and must be ignored.
+    expect(pinnedSince([p('2026-06-01T03:00:00Z', null)])).toEqual({
+      pinnedTweetId: null,
+      since: null,
+    });
+  });
+
+  test('unchanged pin → since is the earliest snapshot of the run', () => {
+    const r = pinnedSince([
+      p('2026-06-01T03:00:00Z', null), // backfilled history, ignored
+      p('2026-06-02T03:00:00Z', 'AAA'),
+      p('2026-06-03T03:00:00Z', 'AAA'),
+      p('2026-06-04T03:00:00Z', 'AAA'),
+    ]);
+    expect(r.pinnedTweetId).toBe('AAA');
+    expect(r.since).toEqual(new Date('2026-06-02T03:00:00Z'));
+  });
+
+  test('a pin change resets since to the start of the newest run', () => {
+    const r = pinnedSince([
+      p('2026-06-02T03:00:00Z', 'AAA'),
+      p('2026-06-03T03:00:00Z', 'AAA'),
+      p('2026-06-05T03:00:00Z', 'BBB'), // re-pinned
+      p('2026-06-06T03:00:00Z', 'BBB'),
+    ]);
+    expect(r.pinnedTweetId).toBe('BBB');
+    expect(r.since).toEqual(new Date('2026-06-05T03:00:00Z'));
+  });
+
+  test('unordered input is sorted before the walk', () => {
+    const r = pinnedSince([
+      p('2026-06-06T03:00:00Z', 'BBB'),
+      p('2026-06-02T03:00:00Z', 'AAA'),
+      p('2026-06-05T03:00:00Z', 'BBB'),
+    ]);
+    expect(r.pinnedTweetId).toBe('BBB');
+    expect(r.since).toEqual(new Date('2026-06-05T03:00:00Z'));
+  });
+});
+
+describe('brief buildPinnedWatch (S0.9)', () => {
+  const now = new Date('2026-07-11T12:00:00Z');
+  const post = (id: string, views: number | null, daysAgo = 3): PinnedWatchPost => ({
+    tweetId: id,
+    text: `post ${id}`,
+    postedAt: new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000),
+    views,
+  });
+
+  test('no pin recorded → all quiet', () => {
+    const w = buildPinnedWatch({ pinnedTweetId: null, since: null }, null, [], now);
+    expect(w).toEqual({
+      pinnedTweetId: null,
+      since: null,
+      ageDays: null,
+      stale: false,
+      pinnedViews: null,
+      outperformer: null,
+    });
+  });
+
+  test('(a) pin unchanged >21d is stale; exactly 21d is not', () => {
+    const day = 24 * 60 * 60 * 1000;
+    const stale = buildPinnedWatch(
+      { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 22 * day) },
+      100,
+      [],
+      now,
+    );
+    expect(stale.ageDays).toBe(22);
+    expect(stale.stale).toBe(true);
+
+    const fresh = buildPinnedWatch(
+      { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 21 * day) },
+      100,
+      [],
+      now,
+    );
+    expect(fresh.ageDays).toBe(21);
+    expect(fresh.stale).toBe(false);
+  });
+
+  test('(b) surfaces the top ≥3× post, ignoring the pin itself and sub-3× posts', () => {
+    const pin = { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 5 * 86_400_000) };
+    const w = buildPinnedWatch(
+      pin,
+      100,
+      [
+        post('AAA', 9999), // the pin itself, excluded
+        post('BBB', 250), // 2.5× — below the ratio
+        post('CCC', 300), // exactly 3×
+        post('DDD', 500), // 5× — the winner
+        post('EEE', null), // unmeasured, ignored
+      ],
+      now,
+    );
+    expect(w.outperformer?.tweetId).toBe('DDD');
+    expect(w.outperformer?.views).toBe(500);
+    expect(w.outperformer?.ratio).toBe(5);
+  });
+
+  test('(b) no outperformer when pinned views are null or zero', () => {
+    const pin = { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 5 * 86_400_000) };
+    expect(buildPinnedWatch(pin, null, [post('DDD', 500)], now).outperformer).toBeNull();
+    expect(buildPinnedWatch(pin, 0, [post('DDD', 500)], now).outperformer).toBeNull();
   });
 });
 

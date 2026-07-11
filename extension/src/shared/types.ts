@@ -629,6 +629,25 @@ export interface ConversionWindow {
   rate: number | null;
 }
 
+// S0.9: pinned-post watch. `stale` = the pin is unchanged >21d; `outperformer`
+// = a last-30d post with ≥3× the pinned tweet's measured views. Both are
+// nudges to re-pin (pinning stays manual in the X app). All null/false until
+// the daily getMe() has recorded at least one pin.
+export interface PinnedWatch {
+  pinnedTweetId: string | null;
+  since: string | null;
+  ageDays: number | null;
+  stale: boolean;
+  pinnedViews: number | null;
+  outperformer: {
+    tweetId: string;
+    text: string;
+    postedAt: string;
+    views: number;
+    ratio: number;
+  } | null;
+}
+
 export interface Brief {
   generatedAt: string;
   tzOffsetMin: number;
@@ -639,6 +658,7 @@ export interface Brief {
     sparkline: Array<{ snapshotAt: string; followers: number }>;
     conversion: { d7: ConversionWindow; d28: ConversionWindow };
   };
+  pinnedWatch: PinnedWatch;
   yesterday: {
     from: string;
     to: string;
@@ -1047,7 +1067,23 @@ export interface Playbook {
   // Roster coverage (§S0.7): of the last 7 days' posted replies, how many went
   // to in-band (2–10x) vs above/below/unknown-size authors.
   rosterCoverage: PlaybookRosterCoverage;
+  // Idea → outcome (§S0.8): does the Idea Inbox pay? The top-level seeded/
+  // unseeded is the pooled headline; posts/replies split it out since the two
+  // surfaces have different view distributions. Lift only when both sides gate.
+  ideaEffectiveness: PlaybookIdeaSurface & {
+    posts: PlaybookIdeaSurface;
+    replies: PlaybookIdeaSurface;
+    totalSeeded: number;
+    totalMeasured: number;
+  };
   guidance: { reply: string | null; post: string | null };
+}
+
+export interface PlaybookIdeaSurface {
+  seeded: PlaybookCell;
+  unseeded: PlaybookCell;
+  viewsLift: number | null;
+  profileVisitsLift: number | null;
 }
 
 export interface PlaybookExtractResult {

@@ -9,6 +9,7 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
   accountSnapshots,
+  ideas,
   metricsSnapshots,
   people,
   postTemplates,
@@ -17,9 +18,16 @@ import {
   replyDrafts,
   scheduledPosts,
 } from '../db/schema.ts';
+import { buildIdeaEffectiveness } from '../playbook.ts';
 import { buildPostDraftInput } from '../posts/prompt.ts';
 import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
-import { loadPostGuidance, loadReplyGuidance, loadRosterCoverage, playbook } from './playbook.ts';
+import {
+  loadIdeaRows,
+  loadPostGuidance,
+  loadReplyGuidance,
+  loadRosterCoverage,
+  playbook,
+} from './playbook.ts';
 
 const app = new Hono();
 app.route('/x', playbook);
@@ -242,6 +250,14 @@ describe('playbook route', () => {
     expect(rc.counts.in_band + rc.counts.above_band + rc.counts.below_band).toBe(rc.known);
     expect(rc.known + rc.counts.unknown).toBe(rc.total);
 
+    // §S0.8 idea → outcome rides along — assert the partition invariant (every
+    // measured row lands in exactly one seeded/unseeded cell, pooled and split).
+    const ie = body.ideaEffectiveness;
+    expect(ie.seeded.n + ie.unseeded.n).toBe(ie.totalMeasured);
+    expect(
+      ie.posts.seeded.n + ie.posts.unseeded.n + ie.replies.seeded.n + ie.replies.unseeded.n,
+    ).toBe(ie.totalMeasured);
+
     // Nothing clears the default gate on 2 measured rows.
     expect(body.guidance.reply).toBeNull();
     expect(body.guidance.post).toBeNull();
@@ -443,5 +459,124 @@ describe('loadRosterCoverage (S0.7)', () => {
     );
     expect(r.total).toBe(0);
     expect(r.majorityInBand).toBeNull();
+  });
+});
+
+// §S0.8 — loadIdeaRows over the real DB: the consumed-idea → draft → snapshot
+// join. Seeded rows are deterministic because ONLY this block creates a consumed
+// idea that backlinks a real posted draft (other tests point at fake ids). The
+// outcome join is metrics_snapshots-by-postedTweetId, so no posts_published row
+// is needed. All rows are cleaned up in afterAll.
+describe('loadIdeaRows (S0.8)', () => {
+  const POST_ID = 's08-post-row';
+  const REPLY_ID = 's08-reply-row';
+  const POST_TWEET = 's08_pt';
+  const REPLY_TWEET = 's08_rt';
+  const IDEA_POST = 'd0000000-0000-4000-8000-000000000001';
+  const IDEA_REPLY = 'd0000000-0000-4000-8000-000000000002';
+
+  beforeAll(async () => {
+    await db
+      .insert(scheduledPosts)
+      .values({ id: POST_ID, text: 's08 seeded post', status: 'posted', postedTweetId: POST_TWEET })
+      .onConflictDoNothing();
+    await db
+      .insert(replyDrafts)
+      .values({
+        id: REPLY_ID,
+        sourceTweetId: '8000',
+        sourceAuthorUsername: 's08_author',
+        sourceText: 't',
+        sourceUrl: 'https://x.com/x/status/8000',
+        contextSnapshot: {},
+        replyText: 's08 seeded reply',
+        model: 'test',
+        status: 'posted',
+        postedTweetId: REPLY_TWEET,
+      })
+      .onConflictDoNothing();
+    // metrics_snapshots.tweetId FKs to posts_published — seed the parent rows.
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: POST_TWEET,
+        text: 's08 seeded post',
+        postedAt: at(300),
+        isReply: false,
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: REPLY_TWEET,
+        text: 's08 seeded reply',
+        postedAt: at(200),
+        isReply: true,
+        inReplyToTweetId: '8000',
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db.insert(metricsSnapshots).values({
+      tweetId: POST_TWEET,
+      publicMetrics: { impression_count: 1234, like_count: 3, reply_count: 0 },
+      nonPublicMetrics: { user_profile_clicks: 15 },
+    });
+    await db.insert(metricsSnapshots).values({
+      tweetId: REPLY_TWEET,
+      publicMetrics: { impression_count: 2468, like_count: 5, reply_count: 0 },
+      nonPublicMetrics: { user_profile_clicks: 25 },
+    });
+    await db
+      .insert(ideas)
+      .values([
+        {
+          id: IDEA_POST,
+          text: 's08 idea → post',
+          status: 'consumed',
+          consumedByTable: 'scheduled_posts',
+          consumedById: POST_ID,
+        },
+        {
+          id: IDEA_REPLY,
+          text: 's08 idea → reply',
+          status: 'consumed',
+          consumedByTable: 'reply_drafts',
+          consumedById: REPLY_ID,
+        },
+      ])
+      .onConflictDoNothing();
+  });
+
+  afterAll(async () => {
+    await db.delete(ideas).where(eq(ideas.id, IDEA_POST));
+    await db.delete(ideas).where(eq(ideas.id, IDEA_REPLY));
+    await db.delete(scheduledPosts).where(eq(scheduledPosts.id, POST_ID));
+    await db.delete(replyDrafts).where(eq(replyDrafts.id, REPLY_ID));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, POST_TWEET));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, REPLY_TWEET));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, POST_TWEET));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, REPLY_TWEET));
+  });
+
+  test('joins consumed ideas to their drafts and measured outcomes', async () => {
+    const idea = buildIdeaEffectiveness(await loadIdeaRows(), 1);
+    // Exactly the two rows this block seeds are attributed as seeded.
+    expect(idea.posts.seeded).toMatchObject({ n: 1, medianViews: 1234, medianProfileVisits: 15 });
+    expect(idea.replies.seeded).toMatchObject({ n: 1, medianViews: 2468, medianProfileVisits: 25 });
+    expect(idea.totalSeeded).toBe(2);
+    // Pooled seeded median over the two surfaces.
+    expect(idea.seeded).toMatchObject({ n: 2, medianViews: (1234 + 2468) / 2 });
+    // The main-describe's posted originals/replies (pb_p1, pb_r1…) are unseeded,
+    // so both surfaces have an unseeded baseline → the lift computes at minN=1.
+    expect(idea.posts.unseeded.n).toBeGreaterThanOrEqual(1);
+    expect(typeof idea.posts.viewsLift).toBe('number');
+  });
+
+  test('the default gate keeps the payoff silent on this thin sample', async () => {
+    const idea = buildIdeaEffectiveness(await loadIdeaRows());
+    expect(idea.viewsLift).toBeNull();
+    expect(idea.posts.viewsLift).toBeNull();
+    expect(idea.replies.viewsLift).toBeNull();
   });
 });

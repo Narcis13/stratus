@@ -41,8 +41,18 @@ interface BriefGap {
   sufficient: boolean;
 }
 
+interface PinnedWatchBody {
+  pinnedTweetId: string | null;
+  since: string | null;
+  ageDays: number | null;
+  stale: boolean;
+  pinnedViews: number | null;
+  outperformer: { tweetId: string; text: string; views: number; ratio: number } | null;
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
+  pinnedWatch: PinnedWatchBody;
   replyQuota: { postedToday: number };
   today: { anchors: number[]; gaps: BriefGap[] };
   quests: {
@@ -128,6 +138,23 @@ describe('brief quests (C9)', () => {
       const rank = g.sufficient ? 1_000_000 + (g.score ?? 0) : 0;
       if (prevRank !== null) expect(rank).toBeLessThanOrEqual(prevRank);
       prevRank = rank;
+    }
+  });
+
+  test('account carries S0.9 pinned-watch, all-quiet when no pin is recorded', async () => {
+    const body = await getBrief();
+    const w = body.pinnedWatch;
+    expect(typeof w).toBe('object');
+    expect(w.pinnedTweetId === null || typeof w.pinnedTweetId === 'string').toBe(true);
+    expect(typeof w.stale).toBe('boolean');
+    expect(w.ageDays === null || typeof w.ageDays === 'number').toBe(true);
+    expect(w.pinnedViews === null || typeof w.pinnedViews === 'number').toBe(true);
+    expect(w.outperformer === null || typeof w.outperformer === 'object').toBe(true);
+    // No test seeds a pinned_tweet_id, so the series has no pin → nothing to warn.
+    if (w.pinnedTweetId === null) {
+      expect(w.stale).toBe(false);
+      expect(w.outperformer).toBeNull();
+      expect(w.since).toBeNull();
     }
   });
 
