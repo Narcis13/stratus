@@ -47,6 +47,19 @@ A recurring theme you'll see everywhere: **stratus drafts, you post.** Actual po
 
 ---
 
+## Power & operator surfaces (S1–S4)
+
+Beyond the side-panel tabs, stratus ships four cross-cutting surfaces from the `SURFACES-PLAN.md` roadmap. These are documented on their own because they aren't tabs — two are developer/operator tools, and two make up the visual Studio.
+
+| Surface | What it's for |
+|---|---|
+| **[S1 — Data Explorer](./s1-data-explorer.md)** | A read-only browser microscope over the production SQLite (`/explorer`), plus the shared read-only data core. Browse, sort, search, run ad-hoc `SELECT`. |
+| **[S2 — MCP server](./s2-mcp-server.md)** | `POST /mcp` — lets Claude Code (or any MCP client) interrogate the whole X operation: query the DB, call any route, draft a post. Never billed. |
+| **[S3 — The Studio](./s3-studio.md)** | The Studio tab: deterministic, brand-consistent visuals (quote/stat/banner/pfp) composed in-browser, exported as PNG, pasted manually. |
+| **[S4 — AI image layer](./s4-ai-image-layer.md)** | AI-generated backgrounds (Grok Imagine) composited *under* the Studio's canvas text, with a hard daily budget and a BLOB asset library. |
+
+---
+
 ## A few terms you'll meet
 
 - **Band (hot / warm / skip)** — stratus scores a tweet by how much reach it's getting (views, replies, age, velocity) to decide whether replying to it is worth your time and money. See **[Replies](./replies-tab.md)**.
