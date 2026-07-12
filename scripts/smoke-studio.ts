@@ -4,12 +4,12 @@
 //
 //   default ($0): asset base64 round-trip, list-excludes-blobs, 2MB cap, the
 //                 budget-refusal 429, and delete — all pre-network, no spend.
-//   --live       : additionally fires ONE real generation (~$0.07) and asserts
-//                 the base64 image comes back and the $0.07 lands under 'xai'
+//   --live       : additionally fires ONE real generation (~$0.02) and asserts
+//                 the base64 image comes back and the ~$0.02 lands under 'xai'
 //                 in /cost/today.
 //
 // Run: bun run scripts/smoke-studio.ts            (default, $0)
-//      bun run scripts/smoke-studio.ts --live     (one $0.07 generation)
+//      bun run scripts/smoke-studio.ts --live     (one ~$0.02 generation)
 
 import { eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
@@ -133,13 +133,13 @@ ok('deleted; stream 404s');
 await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId));
 
 if (!LIVE) {
-  console.log('\nPASS ($0). Re-run with --live to fire one real ~$0.07 generation.');
+  console.log('\nPASS ($0). Re-run with --live to fire one real ~$0.02 generation.');
   process.exit(0);
 }
 
-// ---- live path: one real generation (~$0.07) ----
+// ---- live path: one real generation (~$0.02) ----
 if (!process.env.XAI_API_KEY) fail('--live needs XAI_API_KEY set');
-console.log('\nLIVE — one real grok-2-image generation (~$0.07)…');
+console.log('\nLIVE — one real grok-imagine-image generation (~$0.02)…');
 
 async function xaiSpendToday(): Promise<number> {
   const from = new Date();
@@ -171,5 +171,5 @@ const after = await xaiSpendToday();
 if (after <= before) fail(`image spend did not increase (${before} → ${after})`);
 ok(`/cost 'xai' spend rose $${before.toFixed(3)} → $${after.toFixed(3)}`);
 
-console.log('\nPASS (--live). The $0.07 is real and now shows in /cost/today under xai.');
+console.log('\nPASS (--live). The ~$0.02 is real and now shows in /cost/today under xai.');
 process.exit(0);

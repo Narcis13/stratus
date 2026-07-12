@@ -676,7 +676,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
           </label>
           <div className="row">
             <button type="button" onClick={() => void generateBackground()} disabled={genLoading}>
-              {genLoading ? 'Generating…' : 'Generate background (~$0.07)'}
+              {genLoading ? 'Generating…' : 'Generate background (~$0.02)'}
             </button>
             {genCost !== null && <span className="muted">last: ${genCost.toFixed(3)}</span>}
           </div>

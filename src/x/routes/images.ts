@@ -1,5 +1,6 @@
 // AI image generation (SURFACES S4). POST /x/images/generate turns a prompt
-// into base64 images via xAI's grok-2-image, for the Studio to composite UNDER
+// into base64 images via xAI's Grok Imagine (grok-imagine-image), for the
+// Studio to composite UNDER
 // its deterministic brand text (models garble words; text is canvas-rendered on
 // top). Always mounted — the XAI key is checked at runtime (503 without it,
 // same shape as pillar drafting), so the Studio can degrade gracefully.

@@ -15,7 +15,13 @@ import { costEvents } from '../db/shared-schema.ts';
 import { isKnownImageModel, priceForImage } from './pricing.ts';
 
 const GROK_API_BASE = 'https://api.x.ai/v1';
-export const DEFAULT_IMAGE_MODEL = 'grok-2-image';
+// Grok Imagine — the current image family (xAI retired grok-2-image). The base
+// model is $0.02/image and fine for a Studio background composited UNDER text;
+// grok-imagine-image-quality ($0.05) is available via opts.model.
+export const DEFAULT_IMAGE_MODEL = 'grok-imagine-image';
+// 1 USD = 10,000,000,000 ticks (1 cent = 100,000,000). The generations response
+// reports the exact bill in ticks — we prefer it over the fallback price table.
+const USD_TICKS_PER_DOLLAR = 1e10;
 
 export interface GenerateImagesOptions {
   prompt: string;
@@ -44,7 +50,8 @@ export interface GenerateImagesResult {
 }
 
 interface ImagesResponse {
-  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string }>;
+  data?: Array<{ b64_json?: string; url?: string; revised_prompt?: string; mime_type?: string }>;
+  usage?: { cost_in_usd_ticks?: number };
   error?: { message?: string; type?: string; code?: string };
 }
 
@@ -95,11 +102,14 @@ export async function generateImages(opts: GenerateImagesOptions): Promise<Gener
         const data = (await res.json()) as ImagesResponse;
         const images = await extractImages(data);
         const durationMs = performance.now() - start;
-        // Bill for what X actually returned, not what we asked for.
-        const costUsd = priceForImage(model, images.length);
-        if (!isKnownImageModel(model) && images.length > 0) {
+        // Prefer xAI's reported bill (exact, never stale) over the fallback
+        // table; only fall back — and only then warn about an unmapped model —
+        // when the response omits usage.
+        const reportedCost = ticksToUsd(data.usage?.cost_in_usd_ticks);
+        const costUsd = reportedCost ?? priceForImage(model, images.length);
+        if (reportedCost === null && !isKnownImageModel(model) && images.length > 0) {
           console.warn(
-            `grok images: model '${model}' has no price-table entry — this call logged $0. Add it to src/grok/pricing.ts.`,
+            `grok images: model '${model}' has no price-table entry and the response reported no usage — this call logged $0. Add it to src/grok/pricing.ts.`,
           );
         }
         logImageCost({
@@ -148,12 +158,21 @@ export async function generateImages(opts: GenerateImagesOptions): Promise<Gener
   throw lastErr ?? new Error('generateImages: exhausted attempts');
 }
 
+function ticksToUsd(ticks: number | undefined): number | null {
+  if (typeof ticks !== 'number' || !Number.isFinite(ticks) || ticks < 0) return null;
+  return ticks / USD_TICKS_PER_DOLLAR;
+}
+
 async function extractImages(data: ImagesResponse): Promise<GeneratedImage[]> {
   const out: GeneratedImage[] = [];
   for (const item of data.data ?? []) {
     const revisedPrompt = item.revised_prompt ?? null;
     if (item.b64_json) {
-      out.push({ base64: item.b64_json, mediaType: sniffFromBase64(item.b64_json), revisedPrompt });
+      out.push({
+        base64: item.b64_json,
+        mediaType: item.mime_type ?? sniffFromBase64(item.b64_json),
+        revisedPrompt,
+      });
       continue;
     }
     // Defensive fallback: a model ignored response_format and returned a URL.

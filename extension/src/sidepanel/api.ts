@@ -302,8 +302,8 @@ export const api = {
     },
   },
 
-  // S4 — AI backgrounds (xAI grok-2-image) composited UNDER the Studio's text.
-  // Base64 in the response (never a raw xAI URL); ~$0.07/image, watchdogged.
+  // S4 — AI backgrounds (xAI grok-imagine-image) composited UNDER the Studio's
+  // text. Base64 in the response (never a raw xAI URL); ~$0.02/image, watchdogged.
   images: {
     generate(s: Settings, body: ImageGenerateBody): Promise<ImageGenerateResponse> {
       return request<ImageGenerateResponse>(s, '/x/images/generate', { method: 'POST', body });
