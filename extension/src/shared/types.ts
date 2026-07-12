@@ -663,7 +663,9 @@ export interface Brief {
     measuredAt: string | null;
     delta7d: number | null;
     sparkline: Array<{ snapshotAt: string; followers: number }>;
-    conversion: { d7: ConversionWindow; d28: ConversionWindow };
+    // Optional: absent when the deployed server predates S0.1 — the panel must
+    // tolerate a brief payload without it rather than crash on destructure.
+    conversion?: { d7: ConversionWindow; d28: ConversionWindow };
   };
   pinnedWatch: PinnedWatch;
   yesterday: {

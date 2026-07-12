@@ -170,8 +170,10 @@ function FollowersCard({ brief }: { brief: Brief }): JSX.Element {
 function ConversionLine({
   conversion,
 }: {
-  conversion: { d7: ConversionWindow; d28: ConversionWindow };
+  conversion: { d7: ConversionWindow; d28: ConversionWindow } | undefined;
 }): JSX.Element | null {
+  // Absent when the server predates S0.1 — render nothing rather than crash.
+  if (!conversion) return null;
   const { d7, d28 } = conversion;
   if (d7.rate === null && d28.rate === null) return null;
   const primary = d7.rate !== null ? d7 : d28;
