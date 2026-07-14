@@ -33,12 +33,17 @@ import {
   passesSpecificityGate,
 } from './x/replies/prompt.ts';
 import {
+  type AnnotatedGap,
+  type PinnedWatchPost,
+  annotateGaps,
   attachLatestSnapshots,
+  buildPinnedWatch,
   findScheduleGaps,
   followerTrend,
   localDayStart,
   localMinuteOfDay,
   pickAnchors,
+  pinnedSince,
 } from './x/routes/brief.ts';
 import {
   type UnlinkedDraft,
@@ -51,7 +56,17 @@ import {
   type RefreshLimiter,
   takeRefreshSlot,
 } from './x/routes/mentions.ts';
-import { aggregatePillars, buildAccountSeries, buildBestTimes } from './x/routes/metrics.ts';
+import {
+  BEST_TIME_MIN_N,
+  type BestTimeCell,
+  aggregatePillars,
+  bestTimeCellFor,
+  bestTimeScore,
+  buildAccountSeries,
+  buildBestTimes,
+  rankBestTimes,
+} from './x/routes/metrics.ts';
+import { type RadarBatchTweet, buildRadarDraftRows, radarDraftExpired } from './x/routes/radar.ts';
 import { parseBatchTweets } from './x/routes/replies.ts';
 import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
 import {
@@ -519,6 +534,100 @@ describe('batch replies (Radar §7.2)', () => {
       ),
     ).toEqual({ error: 'too_many_tweets' });
   });
+
+  test('parseBatchTweets carries band + signals through (C0) and rejects junk', () => {
+    const signals = { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false };
+    const ok = parseBatchTweets([
+      { tweetId: '111', handle: 'alice', text: 'a', band: 'hot', signals },
+      { tweetId: '222', handle: 'bob', text: 'b' },
+    ]);
+    if ('error' in ok) throw new Error(ok.error);
+    expect(ok.tweets[0]?.band).toBe('hot');
+    expect(ok.tweets[0]?.signals).toEqual(signals);
+    expect('band' in (ok.tweets[1] ?? {})).toBe(false);
+
+    expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
+      error: 'invalid_tweet_band_0',
+    });
+    expect(
+      parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', signals: { views: -1 } }]),
+    ).toEqual({ error: 'invalid_tweet_signals_0' });
+  });
+});
+
+describe('radar drafts (C0)', () => {
+  const tweets: RadarBatchTweet[] = [
+    {
+      tweetId: '111',
+      handle: 'alice',
+      author: 'Alice',
+      text: 'shipping beats planning',
+      url: 'https://x.com/alice/status/111',
+      band: 'hot',
+      signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+    },
+    // author fell back to handle at parse time → stored as null, not duplicated
+    { tweetId: '222', handle: 'bob', author: 'bob', text: 'AI take' },
+  ];
+
+  test('buildRadarDraftRows pairs replies with their tweets and keeps signals', () => {
+    const rows = buildRadarDraftRows(tweets, [
+      { tweetId: '111', text: 'my reply', angle: 'contrarian' },
+      { tweetId: '222', text: 'other reply', angle: 'extends' },
+      { tweetId: '999', text: 'unknown id dropped', angle: 'extends' },
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({
+      tweetId: '111',
+      url: 'https://x.com/alice/status/111',
+      handle: 'alice',
+      author: 'Alice',
+      snippet: 'shipping beats planning',
+      band: 'hot',
+      signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+      replyText: 'my reply',
+      angle: 'contrarian',
+    });
+    expect(rows[1]?.author).toBeNull();
+    expect(rows[1]?.band).toBeNull();
+    expect(rows[1]?.url).toBeNull();
+  });
+
+  test('radarDraftExpired flips at exactly 48h', () => {
+    const drafted = new Date('2026-07-01T00:00:00Z');
+    const t = drafted.getTime();
+    expect(radarDraftExpired(drafted, t + 47 * 3600_000)).toBe(false);
+    expect(radarDraftExpired(drafted, t + 48 * 3600_000)).toBe(true);
+  });
+});
+
+// CIRCLES-PLAN C0 item 1: the top comments scraped into PostContext must
+// survive the trip into contextSnapshot untruncated — C1 mines them. The
+// route stores parseContext's output verbatim, so this round-trip IS the
+// persistence contract (the prompt render may cap at 10; storage never does).
+describe('contextSnapshot keeps top comments (C0)', () => {
+  test('all comments survive parseContext + JSON round-trip, full text, in order', () => {
+    const topComments = Array.from({ length: 12 }, (_, i) => ({
+      author: `Commenter ${i}`,
+      handle: `@commenter${i}`,
+      text: `comment ${i} — ${'long enough that truncation would show '.repeat(8)}`,
+    }));
+    const out = parseContext({
+      tweetId: '123456',
+      handle: '@someone',
+      author: 'Some One',
+      text: 'a tweet',
+      url: 'https://x.com/someone/status/123456',
+      postedAt: '2026-06-10T08:00:00Z',
+      metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
+      topComments,
+    });
+    if ('error' in out) throw new Error(out.error);
+    expect(out.topComments).toEqual(topComments);
+    // what the DB json column stores and returns
+    const roundTrip = JSON.parse(JSON.stringify(out)) as { topComments: unknown };
+    expect(roundTrip.topComments).toEqual(topComments);
+  });
 });
 
 describe('replies parseContext signals', () => {
@@ -977,6 +1086,46 @@ describe('brief pickAnchors / findScheduleGaps', () => {
   });
 });
 
+describe('brief annotateGaps (S0.4)', () => {
+  const c = (weekday: number, hour: number, posts: number, rate: number | null): BestTimeCell => ({
+    weekday,
+    hour,
+    posts,
+    avgViews: rate,
+    avgViewsPerDay: rate,
+    avgLikes: null,
+    avgProfileVisits: null,
+  });
+
+  test('annotates each gap with its cell and gates at n≥3', () => {
+    const cells = [c(3, 9, 5, 400), c(3, 13, 2, 9999), c(3, 18, 4, 800)];
+    const gaps = annotateGaps([9, 13, 18], cells, 3);
+    const byHour = new Map(gaps.map((g) => [g.hour, g]));
+    // n≥3 → sufficient with a score; the 2-post cell reads as "no data".
+    expect(byHour.get(9)?.sufficient).toBe(true);
+    expect(byHour.get(9)?.score).toBe(400);
+    expect(byHour.get(18)?.sufficient).toBe(true);
+    expect(byHour.get(13)?.sufficient).toBe(false);
+    expect(byHour.get(13)?.score).toBeNull();
+    expect(byHour.get(13)?.n).toBe(2);
+  });
+
+  test('sorts highest-value hole first, no-data gaps last (by hour)', () => {
+    const cells = [c(3, 9, 5, 400), c(3, 18, 4, 800)]; // 13 has no cell at all
+    const gaps: AnnotatedGap[] = annotateGaps([9, 13, 18], cells, 3);
+    expect(gaps.map((g) => g.hour)).toEqual([18, 9, 13]);
+    expect(gaps[2]?.n).toBe(0); // 13 had no measured posts
+    expect(gaps[2]?.sufficient).toBe(false);
+  });
+
+  test('looks up the requested weekday only', () => {
+    const cells = [c(2, 9, 5, 999)]; // Tuesday cell — must not leak into a Wednesday gap
+    const [gap] = annotateGaps([9], cells, 3);
+    expect(gap?.sufficient).toBe(false);
+    expect(gap?.n).toBe(0);
+  });
+});
+
 describe('brief followerTrend', () => {
   const pt = (iso: string, followers: number) => ({ snapshotAt: new Date(iso), followers });
   const now = new Date('2026-06-10T12:00:00Z');
@@ -1011,6 +1160,119 @@ describe('brief followerTrend', () => {
       now,
     );
     expect(t.delta7d).toBe(8);
+  });
+});
+
+describe('brief pinnedSince (S0.9)', () => {
+  const p = (iso: string, id: string | null) => ({ snapshotAt: new Date(iso), pinnedTweetId: id });
+
+  test('no recorded pin yet → nulls', () => {
+    expect(pinnedSince([])).toEqual({ pinnedTweetId: null, since: null });
+    // Pre-S0.9 rows carry a null pin and must be ignored.
+    expect(pinnedSince([p('2026-06-01T03:00:00Z', null)])).toEqual({
+      pinnedTweetId: null,
+      since: null,
+    });
+  });
+
+  test('unchanged pin → since is the earliest snapshot of the run', () => {
+    const r = pinnedSince([
+      p('2026-06-01T03:00:00Z', null), // backfilled history, ignored
+      p('2026-06-02T03:00:00Z', 'AAA'),
+      p('2026-06-03T03:00:00Z', 'AAA'),
+      p('2026-06-04T03:00:00Z', 'AAA'),
+    ]);
+    expect(r.pinnedTweetId).toBe('AAA');
+    expect(r.since).toEqual(new Date('2026-06-02T03:00:00Z'));
+  });
+
+  test('a pin change resets since to the start of the newest run', () => {
+    const r = pinnedSince([
+      p('2026-06-02T03:00:00Z', 'AAA'),
+      p('2026-06-03T03:00:00Z', 'AAA'),
+      p('2026-06-05T03:00:00Z', 'BBB'), // re-pinned
+      p('2026-06-06T03:00:00Z', 'BBB'),
+    ]);
+    expect(r.pinnedTweetId).toBe('BBB');
+    expect(r.since).toEqual(new Date('2026-06-05T03:00:00Z'));
+  });
+
+  test('unordered input is sorted before the walk', () => {
+    const r = pinnedSince([
+      p('2026-06-06T03:00:00Z', 'BBB'),
+      p('2026-06-02T03:00:00Z', 'AAA'),
+      p('2026-06-05T03:00:00Z', 'BBB'),
+    ]);
+    expect(r.pinnedTweetId).toBe('BBB');
+    expect(r.since).toEqual(new Date('2026-06-05T03:00:00Z'));
+  });
+});
+
+describe('brief buildPinnedWatch (S0.9)', () => {
+  const now = new Date('2026-07-11T12:00:00Z');
+  const post = (id: string, views: number | null, daysAgo = 3): PinnedWatchPost => ({
+    tweetId: id,
+    text: `post ${id}`,
+    postedAt: new Date(now.getTime() - daysAgo * 24 * 60 * 60 * 1000),
+    views,
+  });
+
+  test('no pin recorded → all quiet', () => {
+    const w = buildPinnedWatch({ pinnedTweetId: null, since: null }, null, [], now);
+    expect(w).toEqual({
+      pinnedTweetId: null,
+      since: null,
+      ageDays: null,
+      stale: false,
+      pinnedViews: null,
+      outperformer: null,
+    });
+  });
+
+  test('(a) pin unchanged >21d is stale; exactly 21d is not', () => {
+    const day = 24 * 60 * 60 * 1000;
+    const stale = buildPinnedWatch(
+      { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 22 * day) },
+      100,
+      [],
+      now,
+    );
+    expect(stale.ageDays).toBe(22);
+    expect(stale.stale).toBe(true);
+
+    const fresh = buildPinnedWatch(
+      { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 21 * day) },
+      100,
+      [],
+      now,
+    );
+    expect(fresh.ageDays).toBe(21);
+    expect(fresh.stale).toBe(false);
+  });
+
+  test('(b) surfaces the top ≥3× post, ignoring the pin itself and sub-3× posts', () => {
+    const pin = { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 5 * 86_400_000) };
+    const w = buildPinnedWatch(
+      pin,
+      100,
+      [
+        post('AAA', 9999), // the pin itself, excluded
+        post('BBB', 250), // 2.5× — below the ratio
+        post('CCC', 300), // exactly 3×
+        post('DDD', 500), // 5× — the winner
+        post('EEE', null), // unmeasured, ignored
+      ],
+      now,
+    );
+    expect(w.outperformer?.tweetId).toBe('DDD');
+    expect(w.outperformer?.views).toBe(500);
+    expect(w.outperformer?.ratio).toBe(5);
+  });
+
+  test('(b) no outperformer when pinned views are null or zero', () => {
+    const pin = { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 5 * 86_400_000) };
+    expect(buildPinnedWatch(pin, null, [post('DDD', 500)], now).outperformer).toBeNull();
+    expect(buildPinnedWatch(pin, 0, [post('DDD', 500)], now).outperformer).toBeNull();
   });
 });
 
@@ -1372,6 +1634,68 @@ describe('buildBestTimes (§8.4)', () => {
 
   test('empty input → no cells', () => {
     expect(buildBestTimes([])).toEqual([]);
+  });
+
+  test('tzOffsetMin buckets by the local wall clock (S0.4)', () => {
+    // 2026-06-08 23:30Z is Monday (UTC weekday 1); at UTC+3 (tzOffsetMin -180)
+    // it's Tuesday 02:30 local → weekday 2, hour 2.
+    const [cell] = buildBestTimes(
+      [
+        {
+          postedAt: new Date('2026-06-08T23:30:00Z'),
+          views: 100,
+          likes: 1,
+          profileVisits: 1,
+          ageAtSnapshotMin: 1440,
+        },
+      ],
+      -180,
+    );
+    expect(cell?.weekday).toBe(2);
+    expect(cell?.hour).toBe(2);
+  });
+});
+
+describe('best-times advice gate (S0.4)', () => {
+  const cell = (
+    over: Partial<BestTimeCell> & Pick<BestTimeCell, 'weekday' | 'hour' | 'posts'>,
+  ) => ({
+    avgViews: null,
+    avgViewsPerDay: null,
+    avgLikes: null,
+    avgProfileVisits: null,
+    ...over,
+  });
+
+  test('bestTimeScore prefers per-day rate, gates at n≥3', () => {
+    expect(BEST_TIME_MIN_N).toBe(3);
+    expect(
+      bestTimeScore(cell({ weekday: 1, hour: 9, posts: 3, avgViewsPerDay: 500, avgViews: 100 })),
+    ).toBe(500);
+    // no per-day rate → raw avg views
+    expect(bestTimeScore(cell({ weekday: 1, hour: 9, posts: 3, avgViews: 100 }))).toBe(100);
+    // below the gate → null even with data
+    expect(bestTimeScore(cell({ weekday: 1, hour: 9, posts: 2, avgViewsPerDay: 999 }))).toBeNull();
+    // no data at all → null
+    expect(bestTimeScore(cell({ weekday: 1, hour: 9, posts: 5 }))).toBeNull();
+    expect(bestTimeScore(undefined)).toBeNull();
+  });
+
+  test('rankBestTimes drops sub-gate cells and sorts by score desc', () => {
+    const ranked = rankBestTimes([
+      cell({ weekday: 1, hour: 9, posts: 5, avgViewsPerDay: 500 }),
+      cell({ weekday: 1, hour: 13, posts: 2, avgViewsPerDay: 9999 }), // below gate — excluded
+      cell({ weekday: 2, hour: 18, posts: 4, avgViewsPerDay: 800 }),
+    ]);
+    expect(ranked.map((c) => `${c.weekday}:${c.hour}`)).toEqual(['2:18', '1:9']);
+    expect(ranked.every((c) => c.posts >= BEST_TIME_MIN_N)).toBe(true);
+  });
+
+  test('bestTimeCellFor matches on weekday+hour', () => {
+    const cells = [cell({ weekday: 3, hour: 17, posts: 6, avgViewsPerDay: 2100 })];
+    expect(bestTimeCellFor(cells, 3, 17)?.posts).toBe(6);
+    expect(bestTimeCellFor(cells, 3, 18)).toBeUndefined();
+    expect(bestTimeCellFor(cells, 4, 17)).toBeUndefined();
   });
 });
 

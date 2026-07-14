@@ -8,17 +8,32 @@
 // for UTC+3). Spend stays anchored to the UTC day so the number matches
 // /cost/today and the X billing window.
 
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
+import { type ConversionTweet, computeConversion } from '../conversion.ts';
 import {
   accountSnapshots,
+  mentions,
   metricsSnapshots,
   postsPublished,
   replyDrafts,
   scheduledPosts,
+  streaks,
+  voiceAuthors,
 } from '../db/schema.ts';
+import {
+  allQuestsDone,
+  completedMap,
+  computeQuests,
+  computeStreak,
+  launchesAttended,
+  localDayKey,
+  neglectedTargetsAtDayStart,
+} from '../quests.ts';
+import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
+import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -33,6 +48,13 @@ const ANCHORS_4 = [8, 12, 16, 20];
 
 const SPARKLINE_DAYS = 14;
 const LEADER_COUNT = 3;
+
+// S0.1 conversion needs a longer horizon than the 14-day sparkline: the 28-day
+// window wants a follower baseline ~28d old (fetch a little extra for it) plus
+// every own tweet's profile clicks over the last 28 days. Kept as dedicated
+// reads so widening them can't skew the sparkline, the week ratio, or quests.
+const CONVERSION_TWEET_DAYS = 28;
+const CONVERSION_SNAPSHOT_DAYS = 30;
 
 export const brief = new Hono();
 
@@ -74,6 +96,45 @@ export function findScheduleGaps(postMinutes: number[], anchors: number[]): numb
     filled.add(best);
   }
   return anchors.filter((a) => !filled.has(a));
+}
+
+/** S0.4: one gap = an empty local anchor hour + its best-times score. `n` is
+ *  how many measured posts fell in that (weekday, hour) cell; `sufficient` is
+ *  n ≥ the advice gate — below it the extension renders "no data", never a
+ *  recommendation. Sorted highest-value-first (sufficient before "no data",
+ *  then by score, ties by hour) so the strategist fills the best hole first. */
+export interface AnnotatedGap {
+  hour: number;
+  n: number;
+  avgViewsPerDay: number | null;
+  avgViews: number | null;
+  score: number | null;
+  sufficient: boolean;
+}
+
+export function annotateGaps(
+  gapHours: number[],
+  cells: BestTimeCell[],
+  localWeekday: number,
+): AnnotatedGap[] {
+  return gapHours
+    .map((hour) => {
+      const cell = bestTimeCellFor(cells, localWeekday, hour);
+      const score = bestTimeScore(cell);
+      return {
+        hour,
+        n: cell?.posts ?? 0,
+        avgViewsPerDay: cell?.avgViewsPerDay ?? null,
+        avgViews: cell?.avgViews ?? null,
+        score,
+        sufficient: score != null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.sufficient !== b.sufficient) return a.sufficient ? -1 : 1;
+      if (a.score != null && b.score != null && a.score !== b.score) return b.score - a.score;
+      return a.hour - b.hour;
+    });
 }
 
 export interface FollowerPoint {
@@ -165,6 +226,114 @@ export function attachLatestSnapshots(posts: PublishedRow[], snaps: SnapRow[]): 
   });
 }
 
+// ------------------------------------------------------- pinned watch (S0.9)
+
+// Profile visits land on the pinned tweet, so a stale or out-performed pin
+// leaks the account's best first impression. Two nudges, never an action
+// (pinning stays manual in the X app): warn when the pin hasn't changed in
+// >21 days, or when a recent post has ≥3× its measured views.
+const PIN_STALE_DAYS = 21;
+const PIN_OUTPERFORM_RATIO = 3;
+/** Only originals posted this recently count as "your best work isn't pinned"
+ *  candidates — an old post the user already chose not to pin isn't news. */
+const PIN_CANDIDATE_DAYS = 30;
+
+export interface PinSeriesPoint {
+  snapshotAt: Date;
+  pinnedTweetId: string | null;
+}
+
+/** The current pin and when it was first observed. Walks the chronological
+ *  account-snapshot series: the current pin is the latest non-null
+ *  `pinned_tweet_id`, and `since` is the earliest snapshot in the latest
+ *  contiguous run of that same id. Snapshots with a null pin (every row before
+ *  the S0.9 column, plus days with nothing pinned) are ignored — `since` is
+ *  therefore never earlier than the first day we recorded a pin, so the >21d
+ *  warning can't fire on backfilled history. null when no pin recorded yet. */
+export function pinnedSince(series: PinSeriesPoint[]): {
+  pinnedTweetId: string | null;
+  since: Date | null;
+} {
+  const withPin = series
+    .filter((p) => p.pinnedTweetId != null)
+    .sort((a, b) => a.snapshotAt.getTime() - b.snapshotAt.getTime());
+  if (withPin.length === 0) return { pinnedTweetId: null, since: null };
+  const current = withPin[withPin.length - 1] as PinSeriesPoint;
+  let since = current.snapshotAt;
+  for (let i = withPin.length - 1; i >= 0; i--) {
+    const p = withPin[i] as PinSeriesPoint;
+    if (p.pinnedTweetId === current.pinnedTweetId) since = p.snapshotAt;
+    else break;
+  }
+  return { pinnedTweetId: current.pinnedTweetId, since };
+}
+
+export interface PinnedWatchPost {
+  tweetId: string;
+  text: string;
+  postedAt: Date;
+  views: number | null;
+}
+
+export interface PinnedWatch {
+  pinnedTweetId: string | null;
+  since: Date | null;
+  ageDays: number | null;
+  /** (a) the pin is unchanged > 21 days. */
+  stale: boolean;
+  pinnedViews: number | null;
+  /** (b) a last-30d post with ≥3× the pinned tweet's measured views. */
+  outperformer: {
+    tweetId: string;
+    text: string;
+    postedAt: Date;
+    views: number;
+    ratio: number;
+  } | null;
+}
+
+export function buildPinnedWatch(
+  pin: { pinnedTweetId: string | null; since: Date | null },
+  pinnedViews: number | null,
+  recentPosts: PinnedWatchPost[],
+  now: Date,
+): PinnedWatch {
+  const ageDays =
+    pin.since === null ? null : Math.floor((now.getTime() - pin.since.getTime()) / DAY_MS);
+  const stale = ageDays !== null && ageDays > PIN_STALE_DAYS;
+
+  let outperformer: PinnedWatch['outperformer'] = null;
+  // Need a known pin and a positive view count to compare against.
+  if (pin.pinnedTweetId !== null && pinnedViews !== null && pinnedViews > 0) {
+    const best = recentPosts
+      .filter(
+        (p) =>
+          p.tweetId !== pin.pinnedTweetId &&
+          p.views !== null &&
+          p.views >= pinnedViews * PIN_OUTPERFORM_RATIO,
+      )
+      .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0];
+    if (best && best.views !== null) {
+      outperformer = {
+        tweetId: best.tweetId,
+        text: best.text,
+        postedAt: best.postedAt,
+        views: best.views,
+        ratio: Math.round((best.views / pinnedViews) * 10) / 10,
+      };
+    }
+  }
+
+  return {
+    pinnedTweetId: pin.pinnedTweetId,
+    since: pin.since,
+    ageDays,
+    stale,
+    pinnedViews,
+    outperformer,
+  };
+}
+
 // ------------------------------------------------------------------ route
 
 brief.get('/brief', async (c) => {
@@ -186,7 +355,16 @@ brief.get('/brief', async (c) => {
   const utcDayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const utcDayEnd = new Date(utcDayStart.getTime() + DAY_MS);
 
-  const [snaps, published, scheduled, [postedDrafts], costRows] = await Promise.all([
+  const [
+    snaps,
+    convSnaps,
+    convPublished,
+    published,
+    scheduled,
+    postedDraftRows,
+    costRows,
+    bestTimes,
+  ] = await Promise.all([
     db
       .select({
         snapshotAt: accountSnapshots.snapshotAt,
@@ -195,6 +373,30 @@ brief.get('/brief', async (c) => {
       .from(accountSnapshots)
       .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
       .orderBy(asc(accountSnapshots.snapshotAt)),
+    // S0.1: follower series over the conversion horizon (superset of the
+    // sparkline window, so the 28d baseline exists). S0.9 rides on the same
+    // 30d window for the pinned-post series (30d > the 21d staleness gate).
+    db
+      .select({
+        snapshotAt: accountSnapshots.snapshotAt,
+        followersCount: accountSnapshots.followersCount,
+        pinnedTweetId: accountSnapshots.pinnedTweetId,
+      })
+      .from(accountSnapshots)
+      .where(
+        gte(
+          accountSnapshots.snapshotAt,
+          new Date(now.getTime() - CONVERSION_SNAPSHOT_DAYS * DAY_MS),
+        ),
+      )
+      .orderBy(asc(accountSnapshots.snapshotAt)),
+    // S0.1: every own tweet (posts AND replies — each earns profile visits)
+    // posted in the last 28 days; clicks come from their latest snapshot below.
+    db
+      .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
+      .from(postsPublished)
+      .where(gte(postsPublished.postedAt, new Date(now.getTime() - CONVERSION_TWEET_DAYS * DAY_MS)))
+      .orderBy(asc(postsPublished.postedAt)),
     db
       .select({
         tweetId: postsPublished.tweetId,
@@ -211,6 +413,8 @@ brief.get('/brief', async (c) => {
         text: scheduledPosts.text,
         scheduledFor: scheduledPosts.scheduledFor,
         status: scheduledPosts.status,
+        // S3: "visual made" marker — Today renders the amber post-manually chip.
+        mediaNote: scheduledPosts.mediaNote,
       })
       .from(scheduledPosts)
       .where(
@@ -224,9 +428,13 @@ brief.get('/brief', async (c) => {
     // A posted draft is near-terminal (only → discarded), so updatedAt is in
     // effect "when the human pasted it" — the only realtime posted signal we
     // have; manual replies posted outside Reply Master only show up after the
-    // next 03:00 discovery pass.
+    // next 03:00 discovery pass. Full rows (not a count) since C9: the quest
+    // block needs paste times (launch attendance) and handles (targets quest).
     db
-      .select({ n: sql<string>`count(*)` })
+      .select({
+        updatedAt: replyDrafts.updatedAt,
+        sourceAuthorUsername: replyDrafts.sourceAuthorUsername,
+      })
       .from(replyDrafts)
       .where(
         and(
@@ -244,6 +452,9 @@ brief.get('/brief', async (c) => {
       .from(costEvents)
       .where(and(gte(costEvents.ts, utcDayStart), lt(costEvents.ts, utcDayEnd)))
       .groupBy(costEvents.platform),
+    // S0.4: best-times cells bucketed by the viewer's local clock so each
+    // cadence gap can carry the score of its (weekday, hour) cell.
+    loadBestTimeCells(tzOffsetMin),
   ]);
 
   const tweetIds = published.map((p) => p.tweetId);
@@ -262,6 +473,88 @@ brief.get('/brief', async (c) => {
 
   const weekTweets = attachLatestSnapshots(published, metricSnaps);
 
+  // S0.1: profile-click sum per own tweet over the 28-day horizon (latest
+  // snapshot per tweet — same newest-first, first-wins read as everywhere).
+  const convTweetIds = convPublished.map((p) => p.tweetId);
+  const convSnapRows = convTweetIds.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          nonPublicMetrics: metricsSnapshots.nonPublicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, convTweetIds))
+        .orderBy(sql`${metricsSnapshots.snapshotAt} desc`)
+    : [];
+  const clicksByTweet = new Map<string, number | null>();
+  for (const s of convSnapRows) {
+    if (clicksByTweet.has(s.tweetId)) continue;
+    const priv = (s.nonPublicMetrics ?? null) as Record<string, number> | null;
+    clicksByTweet.set(s.tweetId, priv?.user_profile_clicks ?? null);
+  }
+  const conversionTweets: ConversionTweet[] = convPublished.map((p) => ({
+    postedAt: p.postedAt,
+    profileVisits: clicksByTweet.get(p.tweetId) ?? null,
+  }));
+  const conversion = computeConversion(
+    convSnaps.map((s) => ({ snapshotAt: s.snapshotAt, followers: s.followersCount })),
+    conversionTweets,
+    now,
+  );
+
+  // S0.9 pinned-post watch: the pin series comes from the same 30d account
+  // snapshots. Compare the pinned tweet's measured views against recent
+  // originals — one metrics read covers the pinned tweet and every candidate.
+  const pin = pinnedSince(
+    convSnaps.map((s) => ({ snapshotAt: s.snapshotAt, pinnedTweetId: s.pinnedTweetId })),
+  );
+  const pinCandidates = await db
+    .select({
+      tweetId: postsPublished.tweetId,
+      text: postsPublished.text,
+      postedAt: postsPublished.postedAt,
+    })
+    .from(postsPublished)
+    .where(
+      and(
+        eq(postsPublished.isReply, false),
+        gte(postsPublished.postedAt, new Date(now.getTime() - PIN_CANDIDATE_DAYS * DAY_MS)),
+      ),
+    );
+  const pinViewIds = [
+    ...new Set([
+      ...(pin.pinnedTweetId ? [pin.pinnedTweetId] : []),
+      ...pinCandidates.map((p) => p.tweetId),
+    ]),
+  ];
+  const pinSnapRows = pinViewIds.length
+    ? await db
+        .select({
+          tweetId: metricsSnapshots.tweetId,
+          publicMetrics: metricsSnapshots.publicMetrics,
+        })
+        .from(metricsSnapshots)
+        .where(inArray(metricsSnapshots.tweetId, pinViewIds))
+        .orderBy(sql`${metricsSnapshots.snapshotAt} desc`)
+    : [];
+  const pinViewsByTweet = new Map<string, number | null>();
+  for (const s of pinSnapRows) {
+    if (pinViewsByTweet.has(s.tweetId)) continue;
+    const pub = (s.publicMetrics ?? null) as Record<string, number> | null;
+    pinViewsByTweet.set(s.tweetId, pub?.impression_count ?? null);
+  }
+  const pinnedWatch = buildPinnedWatch(
+    pin,
+    pin.pinnedTweetId ? (pinViewsByTweet.get(pin.pinnedTweetId) ?? null) : null,
+    pinCandidates.map((p) => ({
+      tweetId: p.tweetId,
+      text: p.text,
+      postedAt: p.postedAt,
+      views: pinViewsByTweet.get(p.tweetId) ?? null,
+    })),
+    now,
+  );
+
   const yesterdayTweets = weekTweets.filter(
     (t) => t.postedAt >= yesterdayStart && t.postedAt < todayStart,
   );
@@ -274,10 +567,15 @@ brief.get('/brief', async (c) => {
   // list (so the user sees what to fix) but its slot reads as unfilled.
   const slotted = scheduled.filter((s) => s.status !== 'failed' && s.scheduledFor !== null);
   const anchors = pickAnchors(slotted.length);
-  const gaps = findScheduleGaps(
+  const gapHours = findScheduleGaps(
     slotted.map((s) => localMinuteOfDay(s.scheduledFor as Date, tzOffsetMin)),
     anchors,
   );
+  // S0.4: annotate each empty anchor with its best-times score for today's
+  // local weekday, highest-value hole first. `todayStart` is local midnight as
+  // a UTC instant, so shifting it back yields today's local weekday.
+  const todayLocalWeekday = new Date(todayStart.getTime() - tzOffsetMin * 60_000).getUTCDay();
+  const gaps = annotateGaps(gapHours, bestTimes.cells, todayLocalWeekday);
 
   const weekReplies = published.filter((p) => p.isReply).length;
   const weekPosts = published.length - weekReplies;
@@ -296,6 +594,106 @@ brief.get('/brief', async (c) => {
     })
     .sort((a, b) => b.costUsd - a.costUsd);
 
+  // ---------------------------------------------------------- quests (C9)
+  // All from rows already collected by other surfaces — no new reads billed.
+
+  const todayPublished = published.filter(
+    (p) => p.postedAt >= todayStart && p.postedAt < tomorrowStart,
+  );
+  const originalsToday = todayPublished.filter((p) => !p.isReply);
+  const replyPasteTimes = postedDraftRows.map((d) => d.updatedAt);
+
+  const [voiceRows, [answeredToday], [unansweredNow]] = await Promise.all([
+    db
+      .select({ handle: voiceAuthors.handle, followersCount: voiceAuthors.followersCount })
+      .from(voiceAuthors)
+      .where(eq(voiceAuthors.retired, false)),
+    db
+      .select({ n: sql<string>`count(*)` })
+      .from(mentions)
+      .where(
+        and(
+          eq(mentions.status, 'answered'),
+          gte(mentions.answeredAt, todayStart),
+          lt(mentions.answeredAt, tomorrowStart),
+        ),
+      ),
+    db.select({ n: sql<string>`count(*)` }).from(mentions).where(eq(mentions.status, 'unanswered')),
+  ]);
+
+  // Target roster = the same 2–10x band as /voice/targets; empty until the
+  // first daily pass writes an account snapshot.
+  const myFollowers = snaps.at(-1)?.followersCount ?? null;
+  const targetHandles = new Set<string>();
+  if (myFollowers !== null) {
+    const band = targetBand(myFollowers);
+    for (const a of voiceRows) {
+      if (a.followersCount !== null && a.followersCount >= band.min && a.followersCount <= band.max)
+        targetHandles.add(a.handle);
+    }
+  }
+
+  // Each target's last pasted reply BEFORE today — "neglected at day start"
+  // must not be erased by the very reply that satisfies the quest.
+  const priorOutbound = new Map<string, Date>();
+  if (targetHandles.size > 0) {
+    const priorRows = await db
+      .select({
+        handle: sql<string>`lower(${replyDrafts.sourceAuthorUsername})`,
+        last: sql`max(${replyDrafts.updatedAt})`.mapWith(replyDrafts.updatedAt),
+      })
+      .from(replyDrafts)
+      .where(
+        and(
+          eq(replyDrafts.status, 'posted'),
+          lt(replyDrafts.updatedAt, todayStart),
+          inArray(sql`lower(${replyDrafts.sourceAuthorUsername})`, [...targetHandles]),
+        ),
+      )
+      .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`);
+    for (const r of priorRows) priorOutbound.set(r.handle, r.last);
+  }
+  const neglectedAtStart = neglectedTargetsAtDayStart(targetHandles, priorOutbound, todayStart);
+  const repliedTodayHandles = new Set(
+    postedDraftRows.map((d) => d.sourceAuthorUsername.toLowerCase()),
+  );
+  let targetsTouched = 0;
+  for (const h of neglectedAtStart) if (repliedTodayHandles.has(h)) targetsTouched++;
+
+  const questItems = computeQuests({
+    repliesPostedToday: postedDraftRows.length,
+    repliesTarget: REPLY_TARGET.min,
+    originalsPostedToday: originalsToday.length,
+    neglectedTargetsAtDayStart: neglectedAtStart.size,
+    neglectedTargetsTouched: targetsTouched,
+    loopsClosedToday: Number(answeredToday?.n ?? 0),
+    openLoopsNow: Number(unansweredNow?.n ?? 0),
+    launchesToday: originalsToday.length,
+    launchesAttended: launchesAttended(
+      originalsToday.map((p) => p.postedAt),
+      replyPasteTimes,
+    ),
+  });
+
+  // Idempotent per day: every brief read overwrites today's row with the
+  // freshest quest state — the streak table is a diary, not an event log.
+  const dayKey = localDayKey(now, tzOffsetMin);
+  const completed = completedMap(questItems);
+  const allDone = allQuestsDone(questItems);
+  await db
+    .insert(streaks)
+    .values({ day: dayKey, completed, allDone, updatedAt: now })
+    .onConflictDoUpdate({
+      target: streaks.day,
+      set: { completed, allDone, updatedAt: now },
+    });
+  const streakRows = await db
+    .select({ day: streaks.day, allDone: streaks.allDone })
+    .from(streaks)
+    .orderBy(desc(streaks.day))
+    .limit(400);
+  const streak = computeStreak(streakRows, dayKey);
+
   return c.json({
     generatedAt: now,
     tzOffsetMin,
@@ -305,7 +703,11 @@ brief.get('/brief', async (c) => {
         now,
       ),
       sparkline: snaps.map((s) => ({ snapshotAt: s.snapshotAt, followers: s.followersCount })),
+      // S0.1: earned-visit → follow conversion, 7d and 28d (null rate < 20 clicks).
+      conversion,
     },
+    // S0.9: pinned-post watch — stale or out-performed pin, a nudge to re-pin.
+    pinnedWatch,
     yesterday: {
       from: yesterdayStart,
       to: todayStart,
@@ -323,8 +725,13 @@ brief.get('/brief', async (c) => {
       gaps,
     },
     replyQuota: {
-      postedToday: Number(postedDrafts?.n ?? 0),
+      postedToday: postedDraftRows.length,
       target: REPLY_TARGET,
+    },
+    quests: {
+      day: dayKey,
+      items: questItems,
+      streak,
     },
     week: {
       from: weekAgo,

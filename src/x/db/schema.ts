@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { blob, index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 // Migrated from Postgres (Neon) to local SQLite (bun:sqlite). Type mapping:
 //   timestamptz   -> integer({ mode: 'timestamp_ms' })  (epoch ms; app sees Date)
@@ -44,6 +44,53 @@ export const contentPillars = sqliteTable('content_pillars', {
     .notNull(),
 });
 
+// Channels (CIRCLES-PLAN C8): topic rooms over everything — pillars organize
+// output, channels organize input + people. A channel is tags + a saved view,
+// deliberately shallow: a tag is the channel's slug stored in the `tags` JSON
+// column of people/ideas/voice_tweets/radar_drafts, so deleting a channel just
+// leaves harmless strings behind (no FK, no cascade). `pillar` optionally maps
+// the channel to a content-pillar slug so the aggregate view can pull own-post
+// performance; `keywords` feed the pure $0 auto-suggest (human always confirms).
+export const channels = sqliteTable('channels', {
+  slug: text('slug').primaryKey(),
+  label: text('label').notNull(),
+  color: text('color'),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  pillar: text('pillar'),
+  keywords: text('keywords', { mode: 'json' }).$type<string[]>(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Studio asset library (SURFACES S4): composed PNGs and AI-generated
+// backgrounds live as SQLite BLOBs — right at single-user scale (a handful of
+// KB-to-MB images), no external object store, and they ride the existing DB
+// backup story. `prompt` is the xAI prompt for a generated background (null for
+// a hand-composed card); `used_on_tweet_id` links an asset to the post it
+// shipped on. The list route returns metadata only — the blob is streamed by
+// GET /x/assets/:id/png so re-opening an asset as a base layer is one fetch.
+export const mediaAssets = sqliteTable('media_assets', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  kind: text('kind').notNull(),
+  prompt: text('prompt'),
+  png: blob('png').notNull(),
+  mediaType: text('media_type').notNull().default('image/png'),
+  width: integer('width'),
+  height: integer('height'),
+  byteLength: integer('byte_length'),
+  usedOnTweetId: text('used_on_tweet_id'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
 export const scheduledPosts = sqliteTable(
   'scheduled_posts',
   {
@@ -65,9 +112,17 @@ export const scheduledPosts = sqliteTable(
     threadPosition: integer('thread_position'),
     // Content pillar declared by the drafter (§8.4) — feeds /x/metrics/pillars.
     pillar: text('pillar'),
+    // Register declared by the drafter (C4: plain | spicy | reflective) — feeds
+    // the Playbook's pillar × register scorecard. Null on hand-written posts.
+    register: text('register'),
     // Self-quote re-up (§8.5): when set, the publisher posts this row as a
     // quote tweet — only after verifying the quoted id is own via posts_published.
     quoteTweetId: text('quote_tweet_id'),
+    // "Visual made" marker (SURFACES S3): the Studio composed an image for this
+    // slot that the API cannot attach (OAuth 1.0a wall) — the post must be
+    // published manually with its PNG. Purely informational: the publisher
+    // ignores it (v1 keeps it untouched); Calendar/Today render an amber chip.
+    mediaNote: text('media_note'),
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .default(sql`(unixepoch() * 1000)`)
       .notNull(),
@@ -96,6 +151,12 @@ export const postsPublished = sqliteTable(
     pollCount: integer('poll_count').default(0).notNull(),
     retired: integer('retired', { mode: 'boolean' }).default(false).notNull(),
     lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
+    // Did the tweet carry media? (§S0.2 image-lift baseline). Nullable on
+    // purpose: stamped at discovery from the attachments field and at publish
+    // from the sent body, but rows written before this column existed can't be
+    // backfilled (the field was never stored) — null means "unknown", NEVER
+    // "no", so every aggregation buckets null separately.
+    hasMedia: integer('has_media', { mode: 'boolean' }),
   },
   (t) => [index('posts_published_next_poll_idx').on(t.nextPollAt).where(sql`retired = 0`)],
 );
@@ -121,6 +182,24 @@ export const metricsSnapshots = sqliteTable(
   (t) => [index('metrics_snapshots_tweet_snapshot_idx').on(t.tweetId, t.snapshotAt)],
 );
 
+// Structure templates extracted from MY OWN published winners (CIRCLES-PLAN
+// C4) — the §8.3 voiceExtract pipeline pointed at posts_published top rows.
+// One-time Grok pass per tweet (~$0.005, bounded ≤20/call); feeds the
+// Playbook's skeleton/hook effectiveness stat and topStructures() guidance.
+export const postTemplates = sqliteTable('post_templates', {
+  tweetId: text('tweet_id')
+    .primaryKey()
+    .references(() => postsPublished.tweetId),
+  hookType: text('hook_type').notNull(),
+  skeleton: text('skeleton').notNull(),
+  lineBreakPattern: text('line_break_pattern').notNull(),
+  templateLength: text('template_length').notNull(),
+  device: text('device').notNull(),
+  extractedAt: integer('extracted_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
 // One row per UTC day from the dailyMetrics pass — the follower-growth KPI
 // series. Counts come free on the same $0.001 getMe() owned read.
 export const accountSnapshots = sqliteTable('account_snapshots', {
@@ -132,6 +211,11 @@ export const accountSnapshots = sqliteTable('account_snapshots', {
   followingCount: integer('following_count').notNull(),
   tweetCount: integer('tweet_count').notNull(),
   listedCount: integer('listed_count').notNull(),
+  // S0.9 pinned-post watch: the tweet currently pinned to my profile, read for
+  // free on the same daily getMe() ($0.001). null on pre-S0.9 rows and whenever
+  // no tweet is pinned. The pin series lets the brief warn when the profile's
+  // landing page has gone stale (unchanged >21d) or been out-performed.
+  pinnedTweetId: text('pinned_tweet_id'),
 });
 
 // Swipe file of other people's tweets, kept for style/format reference. Pure
@@ -208,6 +292,8 @@ export const voiceTweets = sqliteTable(
     templateLength: text('template_length'),
     device: text('device'),
     templateExtractedAt: integer('template_extracted_at', { mode: 'timestamp_ms' }),
+    // Channel slugs (C8) — a saved tweet can live in several topic rooms.
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
   },
   (t) => [index('voice_tweets_author_created_idx').on(t.authorHandle, t.createdAt)],
 );
@@ -263,6 +349,190 @@ export const replyDrafts = sqliteTable(
   ],
 );
 
+// Radar batch drafts (CIRCLES-PLAN C0): the server-side copy of replies drafted
+// by POST /x/replies/generate-batch. The session ring buffer in the extension
+// used to be the ONLY holder — a browser restart lost every drafted reply (Grok
+// money already spent). Rows auto-expire by status flip (never delete) after
+// 48h: a radar reply to a dead post is worthless anyway.
+export const radarDrafts = sqliteTable(
+  'radar_drafts',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    tweetId: text('tweet_id').notNull(),
+    url: text('url'),
+    handle: text('handle').notNull(),
+    author: text('author'),
+    snippet: text('snippet').notNull(),
+    // Band + classifier inputs as the Radar saw them at draft time. Nullable:
+    // CLI callers of generate-batch may not send them (those rows can't
+    // rehydrate the panel queue, which needs signals to rank/render).
+    band: text('band'),
+    signals: text('signals', { mode: 'json' }),
+    replyText: text('reply_text').notNull(),
+    angle: text('angle').notNull(),
+    // Channel slugs (C8) — tagged from the Radar row, keyed by tweet_id.
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    status: text('status').notNull().default('ready'), // ready | clicked | expired
+    draftedAt: integer('drafted_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [
+    index('radar_drafts_status_drafted_idx').on(t.status, t.draftedAt),
+    index('radar_drafts_tweet_idx').on(t.tweetId),
+  ],
+);
+
+// The people layer (CIRCLES-PLAN C1): one row per human the system has ever
+// encountered — mention authors, reply targets, saved voice authors. NOT merged
+// with voice_authors (different jobs: swipe-file vs relationship); the
+// lowercased handle is the join key between the two. `stage` describes
+// reciprocity only (see src/x/people/stage.ts) and only ratchets up
+// automatically; a human can demote via PATCH /x/people/:handle.
+export const people = sqliteTable(
+  'people',
+  {
+    handle: text('handle').primaryKey(),
+    xUserId: text('x_user_id'),
+    displayName: text('display_name'),
+    bio: text('bio'),
+    followersCount: integer('followers_count'),
+    followingCount: integer('following_count'),
+    stage: text('stage').notNull().default('stranger'),
+    // stranger | noticed | engaged | responded | mutual | ally
+    stageUpdatedAt: integer('stage_updated_at', { mode: 'timestamp_ms' }),
+    notes: text('notes'),
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    // First surface that created the row: mention | voice | reply | harvest | manual
+    source: text('source'),
+    firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' }),
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
+    // Their last mention/reply to me — the reply-back signal.
+    lastInboundAt: integer('last_inbound_at', { mode: 'timestamp_ms' }),
+    // My last posted reply to them.
+    lastOutboundAt: integer('last_outbound_at', { mode: 'timestamp_ms' }),
+    retired: integer('retired', { mode: 'boolean' }).default(false).notNull(),
+  },
+  (t) => [index('people_stage_idx').on(t.stage)],
+);
+
+// Append-only interaction log — the timeline IS the CRM. Event ids are
+// DETERMINISTIC when a ref exists (`type:ref_table:ref_id`, see
+// src/x/people/store.ts) so backfill and live hooks can INSERT OR IGNORE and
+// never double-log the same underlying row.
+export const personEvents = sqliteTable(
+  'person_events',
+  {
+    id: text('id').primaryKey(),
+    handle: text('handle')
+      .notNull()
+      .references(() => people.handle),
+    // saved_tweet | saved_author | my_reply | their_mention |
+    // their_reply_to_me | hover_sighting | harvest_seen | note | manual_dm_logged
+    type: text('type').notNull(),
+    refTable: text('ref_table'),
+    refId: text('ref_id'),
+    summary: text('summary'),
+    at: integer('at', { mode: 'timestamp_ms' }).notNull(),
+  },
+  (t) => [index('person_events_handle_at_idx').on(t.handle, t.at)],
+);
+
+// Follower series for non-voice people (C6 passive hover capture will feed
+// this); voice authors keep their series in voice_author_snapshots — the
+// dossier route joins both by handle.
+export const personSnapshots = sqliteTable(
+  'person_snapshots',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    handle: text('handle')
+      .notNull()
+      .references(() => people.handle),
+    followersCount: integer('followers_count').notNull(),
+    capturedAt: integer('captured_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('person_snapshots_handle_captured_idx').on(t.handle, t.capturedAt)],
+);
+
+// Idea Inbox (CIRCLES-PLAN C6): captured post/reply seeds that survive their
+// first use. `replyMaster:idea` used to be delete-after-one-use; now consuming
+// is an explicit status flip with a backlink (consumed_by_table/-id points at
+// the reply_drafts or scheduled_posts row the idea seeded), and a consumed
+// idea can be re-opened. Rows come from the panel quick-add or the extension's
+// "Send selection to stratus ideas" context menu ($0 DOM, Romanian welcome).
+export const ideas = sqliteTable(
+  'ideas',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    text: text('text').notNull(),
+    sourceUrl: text('source_url'),
+    tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    status: text('status').notNull().default('open'), // open | consumed | discarded
+    consumedByTable: text('consumed_by_table'),
+    consumedById: text('consumed_by_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('ideas_status_created_idx').on(t.status, t.createdAt)],
+);
+
+// Follow-up queue snoozes (CIRCLES-PLAN C5) — conversation_meta pattern for
+// the computed queue: items are recomputed on every GET /x/people/followups,
+// so the only state worth persisting is "stop showing me this one until X".
+// item_key is `${kind}:${handle}` (see src/x/people/followups.ts).
+export const followupSnoozes = sqliteTable('followup_snoozes', {
+  itemKey: text('item_key').primaryKey(),
+  snoozedUntil: integer('snoozed_until', { mode: 'timestamp_ms' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Quests & streaks (CIRCLES-PLAN C9): one row per LOCAL day (YYYY-MM-DD in the
+// viewer's timezone), written by the brief route on read — idempotent per day,
+// the last read of the day wins. `completed` maps quest key → hit; `allDone` is
+// the streak predicate. A day the panel never opened has no row and reads as a
+// break: the streak measures showing up, gently — no back-writing history.
+export const streaks = sqliteTable('streaks', {
+  day: text('day').primaryKey(),
+  completed: text('completed', { mode: 'json' }).$type<Record<string, boolean>>().notNull(),
+  allDone: integer('all_done', { mode: 'boolean' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Sunday Digest (CIRCLES-PLAN C9): the week's facts + the one Grok narration,
+// cached per week so re-opening the panel on Sunday never re-spends the ~$0.01
+// call. week_key = ISO date of the local Monday the week starts on; an explicit
+// ?refresh=true is the only path that regenerates.
+export const digests = sqliteTable('digests', {
+  weekKey: text('week_key').primaryKey(),
+  facts: text('facts', { mode: 'json' }).notNull(),
+  narrative: text('narrative').notNull(),
+  model: text('model').notNull(),
+  costUsd: real('cost_usd'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
 // Mention inbox (§7.5): mentions of me, pulled incrementally (since_id = max
 // stored tweet_id) by the daily pass and the on-demand refresh — owned reads,
 // $0.001/result. `status` drives the panel's Inbox: rows arrive 'unanswered';
@@ -289,6 +559,21 @@ export const mentions = sqliteTable(
   },
   (t) => [index('mentions_status_posted_idx').on(t.status, t.postedAt)],
 );
+
+// Slack-style read state for conversations (CIRCLES-PLAN C2). Threads
+// themselves are NOT stored — GET /x/conversations groups posts_published +
+// mentions by conversation_id on read; this table only remembers what a thread
+// view can't recompute: when the user last read it, snoozed it, or muted it.
+// conversation_id falls back to the mention's own tweet_id when X gave none.
+export const conversationMeta = sqliteTable('conversation_meta', {
+  conversationId: text('conversation_id').primaryKey(),
+  snoozedUntil: integer('snoozed_until', { mode: 'timestamp_ms' }),
+  lastReadAt: integer('last_read_at', { mode: 'timestamp_ms' }),
+  muted: integer('muted', { mode: 'boolean' }).default(false).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
 
 // $0 ingestion of the extension's DOM harvester (OVERHAUL-PLAN §6.3). One run
 // per harvest click; repeated harvests of the same tweet intentionally create

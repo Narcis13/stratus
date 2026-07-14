@@ -2,6 +2,7 @@
 // the background service worker. The background worker is the only place that
 // reads the bearer token and attaches the Authorization header.
 
+import type { EarlyReply } from './launch.ts';
 import type { RadarSighting } from './radar.ts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -12,6 +13,17 @@ export interface ApiRequest {
   path: string;
   query?: Record<string, string>;
   body?: unknown;
+  // §S4: when true, the background reads a non-JSON (image) response as bytes
+  // and returns `data: { base64, mediaType }` — the JSON message channel can't
+  // carry a Blob, so binary rides as base64. Used by GET /x/assets/:id/png to
+  // re-open a saved asset without ever leaving the one-transport discipline.
+  binary?: boolean;
+}
+
+/** Shape the background returns for a binary ApiRequest. */
+export interface BinaryPayload {
+  base64: string;
+  mediaType: string;
 }
 
 export type ApiResponse<T = unknown> =
@@ -54,6 +66,19 @@ export interface RadarClick {
   clickedAt: string;
 }
 
+// Rehydrate the session buffer from the server's radar_drafts copy (C0) —
+// sent by the panel on mount; the background (single writer + Authorization
+// owner) fetches GET /x/radar/drafts?status=ready and merges rows the buffer
+// doesn't already hold, so a browser restart no longer loses drafted replies.
+export interface RadarRehydrate {
+  type: 'stratus/radar-rehydrate';
+}
+
+export function isRadarRehydrate(msg: unknown): msg is RadarRehydrate {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/radar-rehydrate';
+}
+
 export function isRadarReport(msg: unknown): msg is RadarReport {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
@@ -80,4 +105,56 @@ export function isRadarClick(msg: unknown): msg is RadarClick {
     typeof m.tweetId === 'string' &&
     typeof m.clickedAt === 'string'
   );
+}
+
+// --- Launch Room (C7) — all routed through the background: it owns the
+// chrome.alarms schedule and is the single writer of the launch:* session keys.
+
+/** Panel → background on Today mount: re-sync alarms against today's pending
+ *  scheduled posts (the 15-min periodic alarm covers the rest of the day). */
+export interface LaunchSync {
+  type: 'stratus/launch-sync';
+}
+
+/** Content script → background: is a Launch Room live right now? Response:
+ *  `{ ok: true, active: ActiveLaunch | null }`. */
+export interface LaunchGet {
+  type: 'stratus/launch-get';
+}
+
+/** Content script → background: early repliers parsed from the launched
+ *  tweet's status page. tweetId names the launch so a stale report (room
+ *  already over / different launch) is dropped. */
+export interface LaunchReport {
+  type: 'stratus/launch-report';
+  tweetId: string;
+  replies: EarlyReply[];
+}
+
+/** Panel → background: close the room early. */
+export interface LaunchDismiss {
+  type: 'stratus/launch-dismiss';
+}
+
+export function isLaunchSync(msg: unknown): msg is LaunchSync {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/launch-sync';
+}
+
+export function isLaunchGet(msg: unknown): msg is LaunchGet {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/launch-get';
+}
+
+export function isLaunchReport(msg: unknown): msg is LaunchReport {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return (
+    m.type === 'stratus/launch-report' && typeof m.tweetId === 'string' && Array.isArray(m.replies)
+  );
+}
+
+export function isLaunchDismiss(msg: unknown): msg is LaunchDismiss {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/launch-dismiss';
 }

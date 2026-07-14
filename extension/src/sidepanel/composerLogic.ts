@@ -6,6 +6,7 @@
 // No React, no chrome, no Date.now() inside — `now`/`rand` are injected so the
 // logic stays deterministic in tests.
 
+import type { BestTimeCell } from '../shared/types.ts';
 import { addDays, isSameLocalDay, startOfLocalDay } from './datetime.ts';
 
 // Cadence anchors mirror md_to_schedule.ts / brief.ts — 3/day and 4/day local
@@ -64,6 +65,76 @@ export function suggestSlotDate(
     }
   }
   return null;
+}
+
+// ------------------------------------------------------------- best times S0.4
+
+// Advice gate: a cell with fewer measured posts is "no data", not a
+// recommendation — mirrors BEST_TIME_MIN_N on the server.
+export const BEST_TIME_MIN_N = 3;
+
+// The one scalar a cell is ranked by — age-normalized rate, else raw views.
+// Null below the n gate or with no view data.
+export function bestTimeCellScore(
+  cell: BestTimeCell | undefined,
+  minN = BEST_TIME_MIN_N,
+): number | null {
+  if (!cell || cell.posts < minN) return null;
+  return cell.avgViewsPerDay ?? cell.avgViews ?? null;
+}
+
+// Top gated cells for one local weekday, best-first — the "Best times for Wed"
+// display. Cells below the gate are dropped (never advice from thin data).
+export function topCellsForWeekday(
+  cells: BestTimeCell[],
+  weekday: number,
+  limit = 3,
+  minN = BEST_TIME_MIN_N,
+): BestTimeCell[] {
+  return cells
+    .filter((c) => c.weekday === weekday && bestTimeCellScore(c, minN) != null)
+    .sort((a, b) => (bestTimeCellScore(b, minN) ?? 0) - (bestTimeCellScore(a, minN) ?? 0))
+    .slice(0, limit);
+}
+
+// Like suggestSlotDate, but ranks the open anchors by best-times score instead
+// of earliest-first. Candidates are still only the cadence-ladder anchors (so
+// the cadence is respected) and the minute is still jittered (never top-of-
+// hour). Slots whose cell clears the n gate outrank those that don't; among
+// equals, the earliest wins — so an empty/thin history degrades exactly to
+// suggestSlotDate. Returns null if every anchor in the horizon is claimed.
+export function suggestBestSlotDate(
+  now: Date,
+  scheduledLocal: Date[],
+  cells: BestTimeCell[],
+  horizonDays = 7,
+  rand: () => number = Math.random,
+): Date | null {
+  const candidates: Array<{ date: Date; score: number | null }> = [];
+  for (let d = 0; d <= horizonDays; d++) {
+    const day = startOfLocalDay(addDays(now, d));
+    const dayPosts = scheduledLocal.filter((s) => isSameLocalDay(s, day));
+    const anchors = pickAnchors(dayPosts.length);
+    const gaps = findScheduleGaps(
+      dayPosts.map((p) => p.getHours() * 60 + p.getMinutes()),
+      anchors,
+    );
+    for (const hour of gaps) {
+      const cand = new Date(day);
+      cand.setHours(hour, jitterMinutes(rand), 0, 0);
+      if (cand.getTime() <= now.getTime() + 60_000) continue;
+      const cell = cells.find((c) => c.weekday === day.getDay() && c.hour === hour);
+      candidates.push({ date: cand, score: bestTimeCellScore(cell) });
+    }
+  }
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => {
+    if (a.score != null && b.score != null && a.score !== b.score) return b.score - a.score;
+    if (a.score != null && b.score == null) return -1;
+    if (a.score == null && b.score != null) return 1;
+    return a.date.getTime() - b.date.getTime();
+  });
+  return (candidates[0] as { date: Date }).date;
 }
 
 // --------------------------------------------------------------------- cost

@@ -8,6 +8,7 @@
 
 import type { GrokMessage } from '../../grok/index.ts';
 import type { Band } from '../../shared/replyBand.ts';
+import { RELATIONSHIP_INSTRUCTION } from '../people/relationship.ts';
 import { type PillarDef, renderPillars } from '../posts/pillars.ts';
 
 // Band verdict + the exact classifier inputs, frozen at capture time by the
@@ -37,6 +38,15 @@ export interface PostContext {
   signals?: PostSignals;
   /** Thread context (§7.5 mention inbox): my post the target tweet replies to. */
   parent?: { text: string };
+  /** Rendered {{RELATIONSHIP}} block (CIRCLES-PLAN C3). Server-stamped from the
+   *  people layer — parseContext never accepts it from the client. Persisted
+   *  via contextSnapshot so outcome analysis can compare relationship-aware
+   *  drafts against cold ones (feeds C4). */
+  relationship?: string;
+  /** Gated Playbook guidance line (CIRCLES-PLAN C4, topAngles). Server-stamped
+   *  only, same discipline as `relationship`; persisted via contextSnapshot so
+   *  guided drafts stay distinguishable from unguided ones. */
+  guidance?: string;
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
@@ -223,6 +233,8 @@ export interface BatchTweet {
   author: string;
   text: string;
   url?: string;
+  /** Rendered relationship brief (C3), ≤2 lines/person — server-stamped. */
+  relationship?: string;
 }
 
 export interface BatchReply {
@@ -282,10 +294,19 @@ Return JSON of the shape \`{"replies": [{"id": "<post id>", "text": "…", "angl
 }
 
 function renderBatchTweet(t: BatchTweet, i: number): string {
-  return [`POST ${i + 1} (id: ${t.tweetId})`, `@${stripAt(t.handle)} (${t.author}):`, t.text].join(
-    '\n',
-  );
+  const lines = [
+    `POST ${i + 1} (id: ${t.tweetId})`,
+    `@${stripAt(t.handle)} (${t.author}):`,
+    t.text,
+  ];
+  if (t.relationship && t.relationship.trim() !== '') lines.push(t.relationship);
+  return lines.join('\n');
 }
+
+// C3: the per-post RELATIONSHIP lines carry the facts; the how-to-use-them
+// instruction rides ONCE per batch, in the variable tail (never the static
+// head — the cacheable prefix must not change with who's in the queue).
+const BATCH_RELATIONSHIP_NOTE = `Some posts above carry a RELATIONSHIP line — my real prior history with that author. ${RELATIONSHIP_INSTRUCTION}`;
 
 // Builds the single user message: stable instruction head, then the posts and
 // the optional steer at the very end (cacheable-prefix layout).
@@ -294,12 +315,19 @@ export function buildBatchGrokInput(
   idea?: string,
   override?: string,
   pillars?: PillarDef[],
+  guidance?: string,
 ): GrokMessage[] {
   const head = override && override.trim().length > 0 ? override : batchReplyHead();
   const rendered = tweets.map((t, i) => renderBatchTweet(t, i)).join('\n\n');
   const ideaText = idea?.trim() ?? '';
-  let content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
+  let content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}`;
+  if (tweets.some((t) => t.relationship && t.relationship.trim() !== '')) {
+    content += `\n\n${BATCH_RELATIONSHIP_NOTE}`;
+  }
+  content += `\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
   if (pillars && pillars.length > 0) content += `\n\n${renderReplyPillarsBlock(pillars)}`;
+  // C4: gated Playbook guidance rides once per batch, at the variable tail.
+  if (guidance && guidance.trim() !== '') content += `\n\n${guidance}`;
   return [{ role: 'user', content }];
 }
 
@@ -380,8 +408,17 @@ export function buildGrokInput(
     // Custom overrides may predate the {{IDEA}} token — still honor the steer.
     content = `${content}\n\n<idea>${ideaText}</idea>`;
   }
+  // C3: relationship block at the variable tail — the template (and its
+  // byte-sync test against reply prompt.md) stays untouched.
+  if (ctx.relationship && ctx.relationship.trim() !== '') {
+    content = `${content}\n\n${ctx.relationship}`;
+  }
   if (pillars && pillars.length > 0) {
     content = `${content}\n\n${renderReplyPillarsBlock(pillars)}`;
+  }
+  // C4: gated Playbook guidance, same variable-tail pattern.
+  if (ctx.guidance && ctx.guidance.trim() !== '') {
+    content = `${content}\n\n${ctx.guidance}`;
   }
   return [{ role: 'user', content }];
 }

@@ -36,7 +36,9 @@ import {
   buildPostDraftsSchema,
   parsePostDrafts,
 } from '../posts/prompt.ts';
+import { consumeIdeaSafe } from './ideas.ts';
 import { getActivePillars } from './pillars.ts';
+import { loadPostGuidanceSafe } from './playbook.ts';
 
 // Three posts of JSON run ~300 tokens; xAI doesn't count reasoning tokens
 // against the cap (verified live on the reply route under a 350 cap).
@@ -51,10 +53,14 @@ const WINNERS_SCAN_LIMIT = 200;
 const PROMPT_CACHE_KEY = 'stratus-x-post-draft';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface RawBody {
   pillar?: unknown;
   idea?: unknown;
+  // C6 Idea Inbox: id of the stored idea the steer came from — a successful
+  // draft call consumes it (status flip + backlink, routes/ideas.ts).
+  ideaId?: unknown;
   voiceTweetId?: unknown;
   tweetId?: unknown;
   model?: unknown;
@@ -70,7 +76,7 @@ drafter.post('/posts/draft', async (c) => {
     pillars.map((p) => p.slug),
   );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, model, reasoningEffort } = parsed;
+  const { body, pillar, idea, ideaId, model, reasoningEffort } = parsed;
 
   let remix: RemixSource | null = null;
   if (body.voiceTweetId !== undefined && body.voiceTweetId !== null) {
@@ -95,6 +101,7 @@ drafter.post('/posts/draft', async (c) => {
   return generateAndInsert(c, {
     pillar,
     idea,
+    ideaId,
     remix,
     model,
     reasoningEffort,
@@ -110,7 +117,7 @@ drafter.post('/posts/reup', async (c) => {
     pillars.map((p) => p.slug),
   );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, model, reasoningEffort } = parsed;
+  const { body, pillar, idea, ideaId, model, reasoningEffort } = parsed;
 
   const tweetId = typeof body.tweetId === 'string' ? body.tweetId.trim() : '';
   if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
@@ -128,6 +135,7 @@ drafter.post('/posts/reup', async (c) => {
   return generateAndInsert(c, {
     pillar,
     idea: steer,
+    ideaId,
     remix: null,
     model,
     reasoningEffort,
@@ -141,6 +149,7 @@ drafter.post('/posts/reup', async (c) => {
 interface GenerateOptions {
   pillar: PostPillar | undefined;
   idea: string | undefined;
+  ideaId: string | undefined;
   remix: RemixSource | null;
   model: string | undefined;
   reasoningEffort: ReasoningEffort;
@@ -151,12 +160,16 @@ interface GenerateOptions {
 async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Response> {
   const winners = await topWinners();
   const slugs = opts.pillars.map((p) => p.slug);
+  // Playbook guidance (C4): gated topStructures line from my own measured
+  // winners, appended at the variable tail. Best-effort; null under the gate.
+  const guidance = await loadPostGuidanceSafe();
   const messages = buildPostDraftInput({
     winners,
     remix: opts.remix,
     pillars: opts.pillars,
     ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
+    ...(guidance !== null ? { guidance } : {}),
   });
 
   let result: Awaited<ReturnType<typeof askGrok>>;
@@ -202,10 +215,18 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
         status: 'draft',
         source: 'drafter',
         pillar: v.pillar,
+        // C4: the chosen register lands on the row so the Playbook's
+        // pillar × register scorecard has something to aggregate.
+        register: v.register,
         quoteTweetId: opts.quoteTweetId,
       })),
     )
     .returning();
+
+  // C6: the idea seeded this batch — consume it, backlinked to the first draft
+  // row (the batch shares one call; "seeded by" surfaces on that row's detail).
+  const first = rows[0];
+  if (opts.ideaId && first) await consumeIdeaSafe(opts.ideaId, 'scheduled_posts', first.id);
 
   return c.json(
     {
@@ -277,6 +298,7 @@ interface ParsedCommon {
   body: RawBody;
   pillar: PostPillar | undefined;
   idea: string | undefined;
+  ideaId: string | undefined;
   model: string | undefined;
   reasoningEffort: ReasoningEffort;
 }
@@ -303,6 +325,14 @@ async function parseCommon(
     if (trimmed !== '') idea = trimmed;
   }
 
+  let ideaId: string | undefined;
+  if (body.ideaId !== undefined && body.ideaId !== null) {
+    if (typeof body.ideaId !== 'string' || !UUID_RE.test(body.ideaId)) {
+      return { error: 'invalid_idea_id' };
+    }
+    ideaId = body.ideaId;
+  }
+
   let model: string | undefined;
   if (body.model !== undefined && body.model !== null) {
     if (typeof body.model !== 'string' || body.model.trim() === '') {
@@ -320,5 +350,5 @@ async function parseCommon(
     reasoningEffort = r;
   }
 
-  return { body, pillar, idea, model, reasoningEffort };
+  return { body, pillar, idea, ideaId, model, reasoningEffort };
 }

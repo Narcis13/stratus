@@ -13,7 +13,7 @@
 //   GET    /voice/authors?retired=    list authors + tweet counts
 //   GET    /voice/targets                                  the 2–10x reply-target roster (§7.4)
 //   GET    /voice/tweets?author=&q=&limit=&retired=        query the stash
-//   PATCH  /voice/tweets/:tweetId     { retired }          archive / unarchive a tweet
+//   PATCH  /voice/tweets/:tweetId     { retired?, tags?, addTags? }  archive / channel tags (C8)
 //   DELETE /voice/tweets/:tweetId                          hard-remove a tweet
 //   PATCH  /voice/authors/:handle     { retired }          archive / unarchive an author
 //   DELETE /voice/authors/:handle                          hard-remove an author (409 if it has tweets)
@@ -40,6 +40,8 @@ import {
   voiceAuthors,
   voiceTweets,
 } from '../db/schema.ts';
+import { safeLogPersonEvents, snippet, upsertPerson } from '../people/store.ts';
+import { parseChannelTags } from './channels.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 // Twitter usernames: 1–15 chars, alphanumeric + underscore.
@@ -110,6 +112,33 @@ export function createVoiceRouter(): Hono {
       .from(voiceAuthors)
       .where(eq(voiceAuthors.handle, tweet.handle));
 
+    // People layer (C1): a saved tweet notices its author. Fill-only person
+    // upsert (hover-card grade); the follower series for voice authors stays
+    // in voice_author_snapshots. Best-effort, never fails the save.
+    await upsertPerson(tweet.handle, {
+      source: 'voice',
+      fields: {
+        displayName: hover?.displayName ?? tweet.displayName,
+        bio: hover?.bio ?? null,
+        followersCount: hover?.followersCount ?? null,
+        followingCount: hover?.followingCount ?? null,
+        xUserId: hover?.xUserId ?? null,
+      },
+    }).catch((err) => console.error('people: voice upsert failed:', err));
+    await safeLogPersonEvents(
+      [
+        {
+          handle: tweet.handle,
+          type: 'saved_tweet',
+          refTable: 'voice_tweets',
+          refId: tweet.tweetId,
+          summary: `saved their tweet: "${snippet(tweet.text)}"`,
+          at: now,
+        },
+      ],
+      { source: 'voice' },
+    );
+
     return c.json({ tweet: saved, author }, 201);
   });
 
@@ -160,6 +189,34 @@ export function createVoiceRouter(): Hono {
         capturedAt: now,
       });
     }
+
+    // People layer (C1): a full profile capture is authoritative — overwrite.
+    // saved_author's deterministic id means only the first enrich logs an
+    // event; repeat enriches refresh the person fields silently.
+    await upsertPerson(handle, {
+      source: 'voice',
+      overwrite: true,
+      fields: {
+        displayName: profile.displayName,
+        bio: profile.bio,
+        followersCount: profile.followersCount,
+        followingCount: profile.followingCount,
+        xUserId: profile.xUserId,
+      },
+    }).catch((err) => console.error('people: enrich upsert failed:', err));
+    await safeLogPersonEvents(
+      [
+        {
+          handle,
+          type: 'saved_author',
+          refTable: 'voice_authors',
+          refId: handle,
+          summary: 'saved their profile to the voice library',
+          at: now,
+        },
+      ],
+      { source: 'voice' },
+    );
 
     return c.json(row);
   });
@@ -435,13 +492,47 @@ export function createVoiceRouter(): Hono {
     if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
 
     const body = await readJson(c.req.raw);
-    if (!body || typeof body.retired !== 'boolean') {
-      return c.json({ error: 'invalid_retired' }, 400);
+    if (!body) return c.json({ error: 'invalid_body' }, 400);
+
+    const updates: Partial<typeof voiceTweets.$inferInsert> = {};
+
+    if (body.retired !== undefined) {
+      if (typeof body.retired !== 'boolean') return c.json({ error: 'invalid_retired' }, 400);
+      updates.retired = body.retired;
     }
+
+    // Channel tags (C8): `tags` replaces the set (null clears); `addTags`
+    // merges server-side — the additive form the content script's save chips
+    // use, so a chip click never races a read-modify-write in the page.
+    if (body.tags !== undefined && body.addTags !== undefined) {
+      return c.json({ error: 'tags_or_add_tags_not_both' }, 400);
+    }
+    if (body.tags !== undefined) {
+      const tags = parseChannelTags(body.tags);
+      if (tags === 'invalid') return c.json({ error: 'invalid_tags' }, 400);
+      updates.tags = tags;
+    }
+    if (body.addTags !== undefined) {
+      const addTags = parseChannelTags(body.addTags);
+      if (addTags === 'invalid' || addTags === null) {
+        return c.json({ error: 'invalid_add_tags' }, 400);
+      }
+      const [existing] = await db
+        .select({ tags: voiceTweets.tags })
+        .from(voiceTweets)
+        .where(eq(voiceTweets.tweetId, tweetId));
+      if (!existing) return c.json({ error: 'not_found' }, 404);
+      const merged = [...(existing.tags ?? [])];
+      for (const t of addTags) if (!merged.includes(t)) merged.push(t);
+      updates.tags = merged;
+    }
+
+    if (Object.keys(updates).length === 0) return c.json({ error: 'empty_patch' }, 400);
+    updates.updatedAt = new Date();
 
     const [updated] = await db
       .update(voiceTweets)
-      .set({ retired: body.retired, updatedAt: new Date() })
+      .set(updates)
       .where(eq(voiceTweets.tweetId, tweetId))
       .returning();
 
@@ -473,6 +564,31 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // small enough that a good reply is actually seen.
 export function targetBand(myFollowers: number): { min: number; max: number } {
   return { min: 2 * myFollowers, max: 10 * myFollowers };
+}
+
+// The current targets roster as bare (lowercased) handles — the same 2–10x band
+// as GET /voice/targets, without the momentum/reply joins. $0. Empty until the
+// first daily pass writes an account snapshot (no "my size" to band against).
+// Used by GET /x/people/rankmap (S0.3) to tier Radar sightings.
+export async function loadTargetHandles(): Promise<string[]> {
+  const [acct] = await db
+    .select({ followersCount: accountSnapshots.followersCount })
+    .from(accountSnapshots)
+    .orderBy(desc(accountSnapshots.snapshotAt))
+    .limit(1);
+  if (!acct) return [];
+  const band = targetBand(acct.followersCount);
+  const rows = await db
+    .select({ handle: voiceAuthors.handle })
+    .from(voiceAuthors)
+    .where(
+      and(
+        eq(voiceAuthors.retired, false),
+        gte(voiceAuthors.followersCount, band.min),
+        lte(voiceAuthors.followersCount, band.max),
+      ),
+    );
+  return rows.map((r) => r.handle);
 }
 
 export interface FollowerSnapshotPoint {
@@ -582,6 +698,8 @@ interface Body {
   tweet?: unknown;
   author?: unknown;
   retired?: unknown;
+  tags?: unknown;
+  addTags?: unknown;
   displayName?: unknown;
   bio?: unknown;
   followersCount?: unknown;

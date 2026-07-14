@@ -10,12 +10,16 @@ const KEY_APPLY_PILLARS_REPLIES = 'applyPillarsToReplies';
 // When on, a Reply Master draft is "typed" char-by-char into the focused reply
 // box (content script reads this key directly). Default off → copy-to-clipboard.
 const KEY_AUTOTYPE_REPLY = 'autoTypeReplyDraft';
+// C6 passive hover capture — default ON (opt-out): absent key means enabled,
+// only an explicit `false` disables. The content script reads this key directly.
+const KEY_PASSIVE_CAPTURE = 'passiveCapture';
 
 export interface Settings {
   apiUrl: string;
   bearer: string;
   applyPillarsToReplies: boolean;
   autoTypeReplyDraft: boolean;
+  passiveCapture: boolean;
 }
 
 export const EMPTY_SETTINGS: Settings = {
@@ -23,6 +27,7 @@ export const EMPTY_SETTINGS: Settings = {
   bearer: '',
   applyPillarsToReplies: false,
   autoTypeReplyDraft: false,
+  passiveCapture: true,
 };
 
 export async function getSettings(): Promise<Settings> {
@@ -31,12 +36,14 @@ export async function getSettings(): Promise<Settings> {
     KEY_BEARER,
     KEY_APPLY_PILLARS_REPLIES,
     KEY_AUTOTYPE_REPLY,
+    KEY_PASSIVE_CAPTURE,
   ]);
   return {
     apiUrl: typeof out[KEY_API_URL] === 'string' ? out[KEY_API_URL] : '',
     bearer: typeof out[KEY_BEARER] === 'string' ? out[KEY_BEARER] : '',
     applyPillarsToReplies: out[KEY_APPLY_PILLARS_REPLIES] === true,
     autoTypeReplyDraft: out[KEY_AUTOTYPE_REPLY] === true,
+    passiveCapture: out[KEY_PASSIVE_CAPTURE] !== false,
   };
 }
 
@@ -46,6 +53,7 @@ export async function saveSettings(s: Settings): Promise<void> {
     [KEY_BEARER]: s.bearer.trim(),
     [KEY_APPLY_PILLARS_REPLIES]: s.applyPillarsToReplies === true,
     [KEY_AUTOTYPE_REPLY]: s.autoTypeReplyDraft === true,
+    [KEY_PASSIVE_CAPTURE]: s.passiveCapture !== false,
   });
 }
 
@@ -60,6 +68,8 @@ export async function patchSettings(partial: Partial<Settings>): Promise<void> {
     out[KEY_APPLY_PILLARS_REPLIES] = partial.applyPillarsToReplies === true;
   if (partial.autoTypeReplyDraft !== undefined)
     out[KEY_AUTOTYPE_REPLY] = partial.autoTypeReplyDraft === true;
+  if (partial.passiveCapture !== undefined)
+    out[KEY_PASSIVE_CAPTURE] = partial.passiveCapture !== false;
   await chrome.storage.local.set(out);
 }
 
@@ -88,7 +98,8 @@ export function useSettings(): { settings: Settings; loading: boolean } {
         !(KEY_API_URL in changes) &&
         !(KEY_BEARER in changes) &&
         !(KEY_APPLY_PILLARS_REPLIES in changes) &&
-        !(KEY_AUTOTYPE_REPLY in changes)
+        !(KEY_AUTOTYPE_REPLY in changes) &&
+        !(KEY_PASSIVE_CAPTURE in changes)
       )
         return;
       getSettings().then((s) => alive && setSettings(s));

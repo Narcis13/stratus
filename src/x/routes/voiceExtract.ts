@@ -20,8 +20,10 @@ import { voiceTweets } from '../db/schema.ts';
 const TWEET_ID_RE = /^\d{1,32}$/;
 const DEFAULT_BATCH_LIMIT = 20;
 const MAX_BATCH_LIMIT = 50;
-const MAX_OUTPUT_TOKENS = 250;
-const PROMPT_CACHE_KEY = 'stratus-x-template-extract';
+// Shared with the C4 own-winner extraction (routes/playbook.ts) — one prompt,
+// one cache key, one output cap, so the two extract paths can never drift.
+export const TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS = 250;
+export const TEMPLATE_EXTRACT_CACHE_KEY = 'stratus-x-template-extract';
 
 export const TEMPLATE_LENGTHS = ['short', 'medium', 'long'] as const;
 export type TemplateLength = (typeof TEMPLATE_LENGTHS)[number];
@@ -63,7 +65,7 @@ export const TEMPLATE_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const EXTRACT_PROMPT_PREFIX = `Analyze the STRUCTURE of the X post below for a personal swipe file. Describe only the reusable skeleton — the shape of the writing, never its topic, claims, or specifics. Someone reading your output alone must not be able to tell what the post was about.
+export const EXTRACT_PROMPT_PREFIX = `Analyze the STRUCTURE of the X post below for a personal swipe file. Describe only the reusable skeleton — the shape of the writing, never its topic, claims, or specifics. Someone reading your output alone must not be able to tell what the post was about.
 
 Return JSON: {"hookType": "…", "skeleton": "…", "lineBreakPattern": "…", "length": "…", "device": "…"}
 - hookType: the first-line hook pattern in 2-4 words ("stat hook", "contrast hook", "story hook", "question hook", "bold claim", …).
@@ -113,10 +115,10 @@ async function extractOne(
     result = await askGrok({
       prompt: EXTRACT_PROMPT_PREFIX + tweet.text,
       reasoningEffort: 'low',
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
+      maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
       temperature: 0.2,
       jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
-      promptCacheKey: PROMPT_CACHE_KEY,
+      promptCacheKey: TEMPLATE_EXTRACT_CACHE_KEY,
     });
   } catch (err) {
     if (err instanceof GrokApiError) return { error: `grok_${err.status}` };

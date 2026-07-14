@@ -4,30 +4,81 @@
 // The `Settings` parameter stays in the signatures so callers keep gating on
 // configuration, but the background loads its own copy from chrome.storage.
 
-import type { ApiRequest, ApiResponse } from '../shared/messages.ts';
+import type { ApiRequest, ApiResponse, BinaryPayload } from '../shared/messages.ts';
 import {
   ApiError,
+  type AssetSaveBody,
   type AuthorProfile,
   type BatchReplyGenerateBody,
   type BatchReplyItem,
   type BatchReplyResponse,
   type BatchReplyTweet,
+  type BestTimeCell,
+  type BestTimesResponse,
   type Brief,
+  type BriefGap,
+  type BriefQuests,
   type BriefTweet,
+  type Channel,
+  type ChannelAggregate,
+  type ChannelCreateBody,
+  type ChannelPatchBody,
   type ContentPillar,
+  type ConversationItem,
+  type ConversationPatchBody,
+  type ConversationThread,
+  type ConversationsResponse,
+  type ConversionWindow,
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
+  type DigestFacts,
+  type DigestResponse,
+  type FanItem,
+  type FansResponse,
+  type FollowupItem,
+  type FollowupKind,
+  type FollowupSnoozeBody,
+  type FollowupsResponse,
+  type GeneratedImageItem,
+  type IcebreakersResponse,
+  type Idea,
+  type IdeaCreateBody,
+  type IdeaPatchBody,
+  type IdeaStatus,
+  type IdeasResponse,
+  type ImageGenerateBody,
+  type ImageGenerateResponse,
   type ListOpts,
+  type MediaAsset,
   type Mention,
   type MentionPatchBody,
   type MentionStatus,
   type MentionsRefreshResult,
   type MentionsResponse,
+  type PeopleListOpts,
+  type PeopleListResponse,
+  type Person,
+  type PersonAngleCell,
+  type PersonDossier,
+  type PersonEvent,
+  type PersonEventCreateBody,
+  type PersonListItem,
+  type PersonPatchBody,
+  type PersonReplyOutcome,
+  type PersonStage,
   type PillarCreateBody,
   type PillarDraftBody,
   type PillarDraftResult,
   type PillarUpdateBody,
+  type PinnedWatch,
+  type Playbook,
+  type PlaybookAngleCell,
+  type PlaybookCell,
+  type PlaybookExtractResult,
+  type PlaybookIdeaSurface,
+  type PlaybookLatencyCell,
+  type PlaybookRosterCoverage,
   type PostContext,
   type PostDraftBody,
   type PostDraftResponse,
@@ -54,17 +105,50 @@ import type { Settings } from './storage.ts';
 
 export { ApiError };
 export type {
+  AssetSaveBody,
   AuthorProfile,
+  GeneratedImageItem,
+  ImageGenerateBody,
+  ImageGenerateResponse,
+  MediaAsset,
   BatchReplyGenerateBody,
   BatchReplyItem,
   BatchReplyResponse,
   BatchReplyTweet,
+  BestTimeCell,
+  BestTimesResponse,
   Brief,
+  BriefGap,
+  BriefQuests,
   BriefTweet,
+  DigestFacts,
+  DigestResponse,
+  IcebreakersResponse,
+  Channel,
+  ChannelAggregate,
+  ChannelCreateBody,
+  ChannelPatchBody,
   ContentPillar,
+  ConversationItem,
+  ConversationPatchBody,
+  ConversationThread,
+  ConversationsResponse,
+  ConversionWindow,
   CreateBody,
   CreateThreadBody,
   CreateThreadResponse,
+  FanItem,
+  FansResponse,
+  FollowupItem,
+  FollowupKind,
+  FollowupSnoozeBody,
+  FollowupsResponse,
+  Idea,
+  IdeaCreateBody,
+  IdeaPatchBody,
+  IdeaStatus,
+  IdeasResponse,
+  PinnedWatch,
   ListOpts,
   Mention,
   PillarCreateBody,
@@ -75,6 +159,24 @@ export type {
   MentionStatus,
   MentionsRefreshResult,
   MentionsResponse,
+  PeopleListOpts,
+  PeopleListResponse,
+  Person,
+  Playbook,
+  PlaybookAngleCell,
+  PlaybookCell,
+  PlaybookExtractResult,
+  PlaybookIdeaSurface,
+  PlaybookLatencyCell,
+  PlaybookRosterCoverage,
+  PersonAngleCell,
+  PersonDossier,
+  PersonEvent,
+  PersonEventCreateBody,
+  PersonListItem,
+  PersonPatchBody,
+  PersonReplyOutcome,
+  PersonStage,
   PostContext,
   PostDraftBody,
   PostDraftResponse,
@@ -116,11 +218,35 @@ async function request<T>(_s: Settings, path: string, init: RequestInitLite = {}
   return res.data;
 }
 
+/** §S4 — fetch an image endpoint as base64 (the background reads the blob and
+ *  encodes it; the JSON channel can't carry a Blob). */
+async function requestBinary(_s: Settings, path: string): Promise<BinaryPayload> {
+  const payload: ApiRequest = { type: 'stratus/api', method: 'GET', path, binary: true };
+  const res = (await chrome.runtime.sendMessage(payload)) as ApiResponse<BinaryPayload> | undefined;
+  if (!res) throw new ApiError(0, 'no_response');
+  if (!res.ok) throw new ApiError(res.status, res.code);
+  return res.data;
+}
+
 export const api = {
   // The server computes "today"/"yesterday" in the browser's timezone;
   // getTimezoneOffset() is UTC − local (e.g. -180 for UTC+3).
   brief(s: Settings): Promise<Brief> {
     return request<Brief>(s, `/x/brief?tzOffsetMin=${new Date().getTimezoneOffset()}`);
+  },
+
+  // C9 — the Sunday Digest. Cached per week server-side; only refresh=true
+  // re-spends the ~$0.01 narration call. factsOnly (S3 stat card) never
+  // triggers Grok narration — the read stays $0.
+  digest(
+    s: Settings,
+    opts: { week?: string; refresh?: boolean; factsOnly?: boolean } = {},
+  ): Promise<DigestResponse> {
+    const q = new URLSearchParams({ tzOffsetMin: String(new Date().getTimezoneOffset()) });
+    if (opts.week) q.set('week', opts.week);
+    if (opts.refresh) q.set('refresh', 'true');
+    if (opts.factsOnly) q.set('factsOnly', 'true');
+    return request<DigestResponse>(s, `/x/digest?${q.toString()}`);
   },
 
   list(s: Settings, opts: ListOpts = {}): Promise<ScheduledPost[]> {
@@ -130,6 +256,17 @@ export const api = {
     if (opts.status) q.set('status', opts.status);
     const qs = q.toString();
     return request<ScheduledPost[]>(s, `/x/posts/scheduled${qs ? `?${qs}` : ''}`);
+  },
+
+  // §8.4 / S0.4 — engagement by local weekday × hour, for the Composer's
+  // best-time slot picker. Bucketed in the browser's local timezone.
+  metrics: {
+    bestTimes(s: Settings): Promise<BestTimesResponse> {
+      return request<BestTimesResponse>(
+        s,
+        `/x/metrics/best-times?tzOffsetMin=${new Date().getTimezoneOffset()}`,
+      );
+    },
   },
 
   // Single-row fetch (§9.5) — thread members carry their siblings.
@@ -165,6 +302,35 @@ export const api = {
     },
   },
 
+  // S4 — AI backgrounds (xAI grok-imagine-image) composited UNDER the Studio's
+  // text. Base64 in the response (never a raw xAI URL); ~$0.02/image, watchdogged.
+  images: {
+    generate(s: Settings, body: ImageGenerateBody): Promise<ImageGenerateResponse> {
+      return request<ImageGenerateResponse>(s, '/x/images/generate', { method: 'POST', body });
+    },
+  },
+
+  // S4 — the Studio asset library: composed PNGs + generated backgrounds as
+  // SQLite blobs. list() is metadata only; png() streams bytes as base64.
+  assets: {
+    list(s: Settings): Promise<MediaAsset[]> {
+      return request<{ assets: MediaAsset[] }>(s, '/x/assets').then((r) => r.assets);
+    },
+
+    save(s: Settings, body: AssetSaveBody): Promise<MediaAsset> {
+      return request<MediaAsset>(s, '/x/assets', { method: 'POST', body });
+    },
+
+    /** Re-open a saved asset: raw PNG bytes as base64 (build an ImageBitmap). */
+    png(s: Settings, id: string): Promise<BinaryPayload> {
+      return requestBinary(s, `/x/assets/${encodeURIComponent(id)}/png`);
+    },
+
+    remove(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/assets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+
   // §8.6 — editable content pillars (Voice → Pillars subtab + Composer dropdown).
   pillars: {
     list(s: Settings, opts: { active?: boolean } = {}): Promise<ContentPillar[]> {
@@ -190,6 +356,42 @@ export const api = {
     // Grok proposal (not persisted) — review/edit, then create/update to save.
     draft(s: Settings, body: PillarDraftBody): Promise<PillarDraftResult> {
       return request<PillarDraftResult>(s, '/x/pillars/draft', { method: 'POST', body });
+    },
+  },
+
+  // C8 — channels: topic rooms as saved views over tags.
+  channels: {
+    list(s: Settings, opts: { active?: boolean } = {}): Promise<Channel[]> {
+      const qs = opts.active === undefined ? '' : `?active=${opts.active}`;
+      return request<Channel[]>(s, `/x/channels${qs}`);
+    },
+
+    aggregate(s: Settings, slug: string): Promise<ChannelAggregate> {
+      return request<ChannelAggregate>(s, `/x/channels/${encodeURIComponent(slug)}`);
+    },
+
+    create(s: Settings, body: ChannelCreateBody): Promise<Channel> {
+      return request<Channel>(s, '/x/channels', { method: 'POST', body });
+    },
+
+    update(s: Settings, slug: string, body: ChannelPatchBody): Promise<Channel> {
+      return request<Channel>(s, `/x/channels/${encodeURIComponent(slug)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, slug: string): Promise<unknown> {
+      return request<unknown>(s, `/x/channels/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    },
+
+    // Channel tags on a radar row, keyed by tweetId (every draft row of that
+    // tweet gets them so any copy rehydrates correctly).
+    tagRadarDraft(s: Settings, tweetId: string, tags: string[]): Promise<unknown> {
+      return request<unknown>(s, `/x/radar/drafts/${encodeURIComponent(tweetId)}/tags`, {
+        method: 'PATCH',
+        body: { tags },
+      });
     },
   },
 
@@ -241,6 +443,14 @@ export const api = {
       });
     },
 
+    // C8 — replace a saved tweet's channel tags.
+    setTweetTags(s: Settings, tweetId: string, tags: string[]): Promise<VoiceTweet> {
+      return request<VoiceTweet>(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}`, {
+        method: 'PATCH',
+        body: { tags },
+      });
+    },
+
     retireTweet(s: Settings, tweetId: string, retired: boolean): Promise<VoiceTweet> {
       return request<VoiceTweet>(s, `/x/voice/tweets/${encodeURIComponent(tweetId)}`, {
         method: 'PATCH',
@@ -264,6 +474,123 @@ export const api = {
     deleteAuthor(s: Settings, handle: string): Promise<unknown> {
       return request<unknown>(s, `/x/voice/authors/${encodeURIComponent(handle)}`, {
         method: 'DELETE',
+      });
+    },
+  },
+
+  // C6 — the Idea Inbox: capture seeds, consume them explicitly, reopen freely.
+  ideas: {
+    list(s: Settings, opts: { status?: IdeaStatus | 'all'; limit?: number } = {}): Promise<Idea[]> {
+      const q = new URLSearchParams();
+      if (opts.status) q.set('status', opts.status);
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<IdeasResponse>(s, `/x/ideas${qs ? `?${qs}` : ''}`).then((r) => r.ideas);
+    },
+
+    create(s: Settings, body: IdeaCreateBody): Promise<Idea> {
+      return request<Idea>(s, '/x/ideas', { method: 'POST', body });
+    },
+
+    patch(s: Settings, id: string, body: IdeaPatchBody): Promise<Idea> {
+      return request<Idea>(s, `/x/ideas/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    },
+
+    remove(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/ideas/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+
+  // C4 — the measured playbook + one-time own-winner template extraction.
+  playbook: {
+    get(s: Settings, opts: { minN?: number } = {}): Promise<Playbook> {
+      const qs = opts.minN !== undefined ? `?minN=${opts.minN}` : '';
+      return request<Playbook>(s, `/x/playbook${qs}`);
+    },
+
+    extractWinners(s: Settings, limit?: number): Promise<PlaybookExtractResult> {
+      return request<PlaybookExtractResult>(s, '/x/playbook/extract-winners', {
+        method: 'POST',
+        body: limit !== undefined ? { limit } : {},
+      });
+    },
+  },
+
+  // C1 — the people layer: list, dossier, notes/stage edits, manual log.
+  people: {
+    list(s: Settings, opts: PeopleListOpts = {}): Promise<PeopleListResponse> {
+      const q = new URLSearchParams();
+      if (opts.stage) q.set('stage', opts.stage);
+      if (opts.tag) q.set('tag', opts.tag);
+      if (opts.q) q.set('q', opts.q);
+      if (opts.sort) q.set('sort', opts.sort);
+      if (opts.retired) q.set('retired', 'true');
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<PeopleListResponse>(s, `/x/people${qs ? `?${qs}` : ''}`);
+    },
+
+    dossier(s: Settings, handle: string): Promise<PersonDossier> {
+      return request<PersonDossier>(s, `/x/people/${encodeURIComponent(handle)}`);
+    },
+
+    patch(s: Settings, handle: string, body: PersonPatchBody): Promise<Person> {
+      return request<Person>(s, `/x/people/${encodeURIComponent(handle)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    addEvent(
+      s: Settings,
+      handle: string,
+      body: PersonEventCreateBody,
+    ): Promise<{ person: Person; event: PersonEvent }> {
+      return request(s, `/x/people/${encodeURIComponent(handle)}/events`, {
+        method: 'POST',
+        body,
+      });
+    },
+
+    // C5 — the follow-up queue: who do I owe, who to nurture, who's heating up.
+    followups(s: Settings): Promise<FollowupsResponse> {
+      return request<FollowupsResponse>(s, '/x/people/followups');
+    },
+
+    snoozeFollowup(s: Settings, body: FollowupSnoozeBody): Promise<unknown> {
+      return request<unknown>(s, '/x/people/followups', { method: 'PATCH', body });
+    },
+
+    // C9 — two conversation starters grounded strictly on real shared context.
+    icebreakers(s: Settings, handle: string): Promise<IcebreakersResponse> {
+      return request<IcebreakersResponse>(
+        s,
+        `/x/people/${encodeURIComponent(handle)}/icebreakers`,
+        { method: 'POST', body: {} },
+      );
+    },
+
+    // C5 — Top Fans: inbound-ranked "people who already notice you".
+    fans(s: Settings, opts: { days?: number; limit?: number } = {}): Promise<FansResponse> {
+      const q = new URLSearchParams();
+      if (opts.days !== undefined) q.set('days', String(opts.days));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<FansResponse>(s, `/x/people/fans${qs ? `?${qs}` : ''}`);
+    },
+  },
+
+  // C2 — the mention inbox as threads, with Slack-style read state.
+  conversations: {
+    list(s: Settings, opts: { limit?: number } = {}): Promise<ConversationsResponse> {
+      const qs = opts.limit !== undefined ? `?limit=${opts.limit}` : '';
+      return request<ConversationsResponse>(s, `/x/conversations${qs}`);
+    },
+
+    patch(s: Settings, conversationId: string, body: ConversationPatchBody): Promise<unknown> {
+      return request<unknown>(s, `/x/conversations/${encodeURIComponent(conversationId)}`, {
+        method: 'PATCH',
+        body,
       });
     },
   },

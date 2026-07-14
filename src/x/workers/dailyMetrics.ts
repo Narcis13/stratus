@@ -170,6 +170,8 @@ async function snapshotAccount(token: string, result: RunResult): Promise<void> 
       followingCount: pm.following_count,
       tweetCount: pm.tweet_count,
       listedCount: pm.listed_count,
+      // S0.9: rides free on the same read. null when nothing is pinned.
+      pinnedTweetId: me.pinned_tweet_id ?? null,
     });
     result.accountSnapshotted = true;
   } catch (err) {
@@ -221,6 +223,10 @@ async function discover(
         inReplyToTweetId: repliedTo?.id ?? null,
         conversationId: tweet.conversation_id ?? null,
         source: 'manual',
+        // §S0.2: the discovery read requests `attachments` for free — media_keys
+        // presence is the text-only-vs-media baseline. Absent on a read tweet
+        // means no media (false), never unknown.
+        hasMedia: (tweet.attachments?.media_keys?.length ?? 0) > 0,
         nextPollAt: new Date(postedAt.getTime() + DAY_MS),
       })
       .onConflictDoNothing()

@@ -14,6 +14,9 @@ export function mountGrok(app: Hono): void {
 }
 
 export { askGrok, GrokApiError } from './client.ts';
+export { generateImages, GrokImageError, DEFAULT_IMAGE_MODEL } from './images.ts';
+export type { GenerateImagesOptions, GenerateImagesResult, GeneratedImage } from './images.ts';
+export { priceForImage, isKnownImageModel } from './pricing.ts';
 export type {
   AskGrokOptions,
   AskGrokResult,

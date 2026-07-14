@@ -1,0 +1,1 @@
+ALTER TABLE `scheduled_posts` ADD `media_note` text;

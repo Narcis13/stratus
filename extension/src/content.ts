@@ -20,12 +20,30 @@
 //
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
+import { suggestChannels } from './channelSuggest.ts';
 import { initHarvest } from './harvester.ts';
 import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
 import type { Band, TweetSignals } from './replyBand.ts';
-import type { ApiRequest, ApiResponse, RadarReport } from './shared/messages.ts';
+import { parseEarlyReplies } from './shared/earlyReplies.ts';
+import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
+import type {
+  ApiRequest,
+  ApiResponse,
+  LaunchGet,
+  LaunchReport,
+  RadarReport,
+} from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 import type { RadarBand, RadarSighting } from './shared/radar.ts';
+import {
+  type HoverCardData,
+  type PersonSighting,
+  SIGHTING_BATCH_MAX,
+  SIGHTING_FLUSH_MS,
+  cardHasData,
+  mergePendingSighting,
+  shouldReportSighting,
+} from './shared/sightings.ts';
 import type {
   AuthorProfile,
   PostContext,
@@ -39,12 +57,17 @@ import type {
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
+const CHAN_CHIP_CLASS = 'stratus-chan-chip';
+const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const BAND_BADGE_CLASS = 'stratus-band-badge';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
 const REPLY_SYSTEM_PROMPT_KEY = 'replyMaster:systemPromptOverride';
 const REPLY_IDEA_KEY = 'replyMaster:idea';
+// C6: set when the steer was picked from the Idea Inbox dropdown — rides along
+// as `ideaId` so the server consumes the stored idea (status flip + backlink).
+const REPLY_IDEA_ID_KEY = 'replyMaster:ideaId';
 const REPLY_TOP_COMMENTS_MAX = 10;
 const REPLY_BTN_LABEL = '🪄 Reply Master';
 const SAVE_BTN_LABEL = 'Save to stratus';
@@ -182,6 +205,28 @@ function injectStyles(): void {
     }
     .${BAND_BADGE_CLASS}[data-band="hot"]  { color: rgb(0, 186, 124); border: 1px solid rgba(0, 186, 124, 0.5); background: rgba(0, 186, 124, 0.10); }
     .${BAND_BADGE_CLASS}[data-band="warm"] { color: rgb(214, 150, 0); border: 1px solid rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${CHAN_WRAP_CLASS} { display: inline-flex; gap: 4px; margin-left: 4px; align-items: center; }
+    .${CHAN_CHIP_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      color: rgb(29, 155, 240);
+      border: 1px dashed rgba(29, 155, 240, 0.5);
+      background: transparent;
+      white-space: nowrap;
+    }
+    .${CHAN_CHIP_CLASS}:hover { background: rgba(29, 155, 240, 0.1); }
+    .${CHAN_CHIP_CLASS}[data-state="tagged"] {
+      color: rgb(0, 186, 124);
+      border: 1px solid rgb(0, 186, 124);
+      cursor: default;
+    }
   `;
   document.head.appendChild(style);
 }
@@ -395,6 +440,92 @@ async function scrapeAuthorFromHoverCard(
   };
 }
 
+// -------------------------------------------------- channel chips (C8, $0)
+
+// Active channels for the save-time chips, fetched through the background API
+// channel and cached a few minutes — one GET serves a whole browsing session.
+const CHANNEL_CACHE_TTL_MS = 5 * 60_000;
+const CHANNEL_CHIP_MAX = 3;
+const CHANNEL_CHIPS_PERSIST_MS = 15_000;
+let channelCache: { channels: { slug: string; keywords: string[] | null }[]; at: number } | null =
+  null;
+
+async function getActiveChannels(): Promise<{ slug: string; keywords: string[] | null }[]> {
+  if (channelCache && Date.now() - channelCache.at < CHANNEL_CACHE_TTL_MS) {
+    return channelCache.channels;
+  }
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/channels?active=true',
+  };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as
+      | ApiResponse<{ slug: string; keywords: string[] | null }[]>
+      | undefined;
+    if (res?.ok && Array.isArray(res.data)) {
+      channelCache = { channels: res.data, at: Date.now() };
+      return res.data;
+    }
+  } catch (err) {
+    console.warn('[stratus] channels fetch failed', err);
+  }
+  return channelCache?.channels ?? [];
+}
+
+// After a successful save, offer keyword-suggested channel chips next to the
+// button — the C8 "chip picker in the confirmation" affordance. One click tags
+// the just-saved voice tweet (additive PATCH, so quick successive clicks can't
+// clobber each other). Suggest-only keeps the action row light; the full
+// picker lives in the panel's Voice tab.
+async function offerChannelChips(btn: HTMLButtonElement, tweet: ScrapedTweet): Promise<void> {
+  const channels = await getActiveChannels();
+  const suggested = suggestChannels(tweet.text, channels).slice(0, CHANNEL_CHIP_MAX);
+  if (suggested.length === 0 || !btn.isConnected) return;
+
+  btn.parentElement?.querySelector(`.${CHAN_WRAP_CLASS}`)?.remove();
+  const wrap = document.createElement('span');
+  wrap.className = CHAN_WRAP_CLASS;
+  for (const slug of suggested) {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = CHAN_CHIP_CLASS;
+    chip.textContent = `+ #${slug}`;
+    chip.title = `Tag the saved tweet into #${slug}`;
+    chip.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (chip.dataset.state === 'tagged') return;
+      chip.disabled = true;
+      void (async () => {
+        const req: ApiRequest = {
+          type: 'stratus/api',
+          method: 'PATCH',
+          path: `/x/voice/tweets/${tweet.tweetId}`,
+          body: { addTags: [slug] },
+        };
+        let ok = false;
+        try {
+          const res = (await chrome.runtime.sendMessage(req)) as ApiResponse | undefined;
+          ok = res?.ok === true;
+        } catch (err) {
+          console.warn('[stratus] tag failed', err);
+        }
+        if (ok) {
+          chip.dataset.state = 'tagged';
+          chip.textContent = `✓ #${slug}`;
+        } else {
+          chip.textContent = `! #${slug}`;
+          chip.disabled = false;
+        }
+      })();
+    });
+    wrap.appendChild(chip);
+  }
+  btn.insertAdjacentElement('afterend', wrap);
+  setTimeout(() => wrap.remove(), CHANNEL_CHIPS_PERSIST_MS);
+}
+
 // --------------------------------------------------------------- save tweet
 
 function setState(
@@ -459,6 +590,7 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
 
   if (res?.ok) {
     setState(btn, 'saved', author ? 'Saved + author' : 'Saved');
+    void offerChannelChips(btn, tweet);
   } else {
     const code = res && !res.ok ? res.code : 'no_response';
     setState(btn, 'failed', `Failed: ${code}`);
@@ -739,12 +871,19 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   let systemPromptOverride: string | undefined;
   let idea: string | undefined;
+  let ideaId: string | undefined;
   try {
-    const out = await chrome.storage.local.get([REPLY_SYSTEM_PROMPT_KEY, REPLY_IDEA_KEY]);
+    const out = await chrome.storage.local.get([
+      REPLY_SYSTEM_PROMPT_KEY,
+      REPLY_IDEA_KEY,
+      REPLY_IDEA_ID_KEY,
+    ]);
     const v = out[REPLY_SYSTEM_PROMPT_KEY];
     if (typeof v === 'string' && v.trim() !== '') systemPromptOverride = v;
     const i = out[REPLY_IDEA_KEY];
     if (typeof i === 'string' && i.trim() !== '') idea = i.trim();
+    const id = out[REPLY_IDEA_ID_KEY];
+    if (idea && typeof id === 'string' && id !== '') ideaId = id;
   } catch (err) {
     console.warn('[stratus] reply master read override failed', err);
   }
@@ -757,6 +896,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
       context: ctx,
       ...(systemPromptOverride ? { systemPromptOverride } : {}),
       ...(idea ? { idea } : {}),
+      ...(ideaId ? { ideaId } : {}),
       ...(force ? { override: true } : {}),
     },
   };
@@ -797,7 +937,9 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   try {
     await chrome.storage.local.set({ [REPLY_MASTER_STORAGE_KEY]: draft });
     // The idea steered this draft; clear it so it can't leak into the next one.
-    if (idea) await chrome.storage.local.remove(REPLY_IDEA_KEY);
+    // (When it came from the Idea Inbox the server already consumed the row —
+    // re-use is one click from the Ideas tab.)
+    if (idea) await chrome.storage.local.remove([REPLY_IDEA_KEY, REPLY_IDEA_ID_KEY]);
   } catch (err) {
     console.warn('[stratus] storage.set lastDraft failed', err);
   }
@@ -984,6 +1126,203 @@ function flushRadar(): void {
   })();
 }
 
+// ------------------------------------------------- passive hover capture (C6)
+//
+// When X renders a hover card because the user hovered a handle naturally, we
+// parse it with the same readers the explicit-save path uses and queue an
+// upsert for POST /x/people/sightings — the roster grows itself from normal
+// browsing, no clicks. No hovers are synthesised here; we only read cards X
+// already drew (the explicit-save path's synthetic hover gets captured too,
+// which is harmless — it upserts the same person). Batched per 2s flush,
+// per-handle resend throttled to 60s; the server dedupes events once a day.
+
+const PASSIVE_CAPTURE_KEY = 'passiveCapture';
+const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
+
+// Default ON (opt-out via Settings): absent key means enabled.
+let passiveCaptureEnabled = true;
+
+function initPassiveCaptureSetting(): void {
+  chrome.storage.local
+    .get(PASSIVE_CAPTURE_KEY)
+    .then((out) => {
+      passiveCaptureEnabled = out[PASSIVE_CAPTURE_KEY] !== false;
+    })
+    .catch(() => {
+      /* keep default */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[PASSIVE_CAPTURE_KEY];
+    if (change) passiveCaptureEnabled = change.newValue !== false;
+  });
+}
+
+// Cards whose parse already produced data — never re-captured. A card seen
+// while still a skeleton (all fields null) is NOT marked, so a later mutation
+// scan retries it once X fills it in.
+const capturedHoverCards = new WeakSet<Element>();
+
+const pendingSightings = new Map<string, PersonSighting>();
+const sightingSentAt = new Map<string, number>();
+let sightingFlushTimer: number | null = null;
+
+// The card's own @handle link is the only reliable identity marker: first
+// anchor whose text starts with '@' and whose pathname is a plain username.
+function hoverCardHandle(card: Element): string | null {
+  for (const a of card.querySelectorAll<HTMLAnchorElement>('a[href^="/"]')) {
+    if (!a.textContent?.trim().startsWith('@')) continue;
+    const seg = a.pathname.split('/').filter(Boolean);
+    const h = seg[0];
+    if (seg.length === 1 && h && HANDLE_RE.test(h) && !RESERVED_HANDLES.has(h.toLowerCase())) {
+      return h.toLowerCase();
+    }
+  }
+  return null;
+}
+
+function parseHoverCardData(card: Element, handle: string): HoverCardData {
+  const nameEl = card.querySelector('[data-testid="User-Name"]');
+  const displayName = nameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  const bio = readHoverCardBio(card, handle);
+  const { followers, following } = readCountsFrom(card);
+  return {
+    displayName,
+    bio,
+    followersCount: followers,
+    followingCount: following,
+    xUserId: readUserIdFromFollowButton(card),
+  };
+}
+
+function capturePassiveHoverCards(): void {
+  if (!passiveCaptureEnabled) return;
+  for (const card of document.querySelectorAll('[data-testid="HoverCard"]')) {
+    if (capturedHoverCards.has(card)) continue;
+    const handle = hoverCardHandle(card);
+    if (!handle) continue;
+    const data = parseHoverCardData(card, handle);
+    if (!cardHasData(data)) continue; // skeleton — retry on a later scan
+    capturedHoverCards.add(card);
+    recordPersonSighting(handle, data);
+  }
+}
+
+function recordPersonSighting(handle: string, card: HoverCardData): void {
+  if (!shouldReportSighting(sightingSentAt.get(handle), Date.now())) return;
+  const sighting: PersonSighting = { handle, card, seenAt: new Date().toISOString() };
+  pendingSightings.set(handle, mergePendingSighting(pendingSightings.get(handle), sighting));
+  if (sightingFlushTimer === null) {
+    sightingFlushTimer = window.setTimeout(flushSightings, SIGHTING_FLUSH_MS);
+  }
+}
+
+function flushSightings(): void {
+  sightingFlushTimer = null;
+  if (pendingSightings.size === 0) return;
+  const sightings = [...pendingSightings.values()].slice(0, SIGHTING_BATCH_MAX);
+  for (const s of sightings) pendingSightings.delete(s.handle);
+  if (pendingSightings.size > 0) {
+    // Overflow beyond one server batch waits for the next window.
+    sightingFlushTimer = window.setTimeout(flushSightings, SIGHTING_FLUSH_MS);
+  }
+
+  if (sightingSentAt.size > 3000) sightingSentAt.clear();
+  const at = Date.now();
+  for (const s of sightings) sightingSentAt.set(s.handle, at);
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/people/sightings',
+    body: { sightings },
+  };
+  void (async () => {
+    try {
+      const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+      if (res && !res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] sighting report failed', res.code);
+      }
+    } catch (err) {
+      console.warn('[stratus] sighting report failed', err);
+    }
+  })();
+}
+
+// --------------------------------------------------------- launch room (C7)
+//
+// While a Launch Room is live and the user has the launched tweet open, the
+// early replies are right there in the DOM — stream them to the background
+// (radar transport pattern: batched flush, per-tweet dedupe, $0). The room
+// state lives with the background; we ask it whether a launch is live on a
+// 30s throttle instead of reading chrome.storage.session (untrusted context).
+
+const LAUNCH_GET_THROTTLE_MS = 30_000;
+
+let launchTweetId: string | null = null;
+let launchCheckedAt = 0;
+let launchCheckInFlight = false;
+const launchReported = new Set<string>();
+const pendingLaunchReplies = new Map<string, EarlyReply>();
+let launchFlushTimer: number | null = null;
+
+function refreshActiveLaunch(): void {
+  launchCheckInFlight = true;
+  const msg: LaunchGet = { type: 'stratus/launch-get' };
+  void chrome.runtime
+    .sendMessage(msg)
+    .then((res: { ok: boolean; active: ActiveLaunch | null } | undefined) => {
+      const next = res?.ok && res.active ? res.active.tweetId : null;
+      if (next !== launchTweetId) {
+        launchTweetId = next;
+        launchReported.clear();
+        if (next) scheduleScan(); // capture what's already rendered
+      }
+    })
+    .catch(() => {
+      /* background asleep mid-navigation — next throttle window retries */
+    })
+    .finally(() => {
+      launchCheckedAt = Date.now();
+      launchCheckInFlight = false;
+    });
+}
+
+function captureLaunchReplies(): void {
+  const focusedId = focusedTweetIdFromUrl();
+  if (!focusedId) return;
+  if (!launchCheckInFlight && Date.now() - launchCheckedAt > LAUNCH_GET_THROTTLE_MS) {
+    refreshActiveLaunch();
+  }
+  if (!launchTweetId || launchTweetId !== focusedId) return;
+
+  const selfHandle = location.pathname.match(/^\/([^/]+)\/status\//)?.[1] ?? null;
+  for (const r of parseEarlyReplies(document, focusedId, selfHandle)) {
+    if (launchReported.has(r.tweetId) || pendingLaunchReplies.has(r.tweetId)) continue;
+    pendingLaunchReplies.set(r.tweetId, r);
+  }
+  if (pendingLaunchReplies.size > 0 && launchFlushTimer === null) {
+    launchFlushTimer = window.setTimeout(flushLaunchReplies, RADAR_FLUSH_MS);
+  }
+}
+
+function flushLaunchReplies(): void {
+  launchFlushTimer = null;
+  if (pendingLaunchReplies.size === 0 || !launchTweetId) return;
+  const replies = [...pendingLaunchReplies.values()];
+  pendingLaunchReplies.clear();
+  for (const r of replies) launchReported.add(r.tweetId);
+
+  const msg: LaunchReport = { type: 'stratus/launch-report', tweetId: launchTweetId, replies };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] launch report failed', err);
+    }
+  })();
+}
+
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
@@ -994,6 +1333,8 @@ function scan(root: ParentNode): void {
     if (focusedId) attachReplyMasterButton(article, focusedId);
   }
   syncAuthorButton();
+  capturePassiveHoverCards();
+  captureLaunchReplies();
 }
 
 let scheduled = false;
@@ -1012,6 +1353,7 @@ function start(): void {
   injectStyles();
   initHarvest();
   initTypeFromClipboard();
+  initPassiveCaptureSetting();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });

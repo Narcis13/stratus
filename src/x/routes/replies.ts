@@ -21,8 +21,19 @@ import type { ReasoningEffort } from '../../grok/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import {
+  type RelationshipFacts,
+  renderRelationship,
+  renderRelationshipBrief,
+} from '../people/relationship.ts';
+import {
+  loadRelationshipFacts,
+  normalizePersonHandle,
+  safeLogPersonEvents,
+  snippet,
+  upsertPerson,
+} from '../people/store.ts';
+import {
   BATCH_REPLY_SCHEMA,
-  type BatchTweet,
   type PostContext,
   type PostSignals,
   REPLY_PROMPT_TEMPLATE,
@@ -34,7 +45,10 @@ import {
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
+import { consumeIdeaSafe } from './ideas.ts';
 import { getActivePillars } from './pillars.ts';
+import { loadReplyGuidanceSafe } from './playbook.ts';
+import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
 // (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
@@ -77,6 +91,9 @@ const MAX_OUTCOMES_LIMIT = 1000;
 interface RawBody {
   context?: unknown;
   idea?: unknown;
+  // C6 Idea Inbox: when the steer came from a stored idea, its id rides along
+  // so a successful draft consumes it (status flip + backlink, routes/ideas.ts).
+  ideaId?: unknown;
   override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
@@ -114,6 +131,14 @@ replies.post('/replies/generate', async (c) => {
     }
     const trimmed = body.idea.trim();
     if (trimmed !== '') idea = trimmed;
+  }
+
+  let ideaId: string | undefined;
+  if (body.ideaId !== undefined && body.ideaId !== null) {
+    if (typeof body.ideaId !== 'string' || !UUID_RE.test(body.ideaId)) {
+      return c.json({ error: 'invalid_idea_id' }, 400);
+    }
+    ideaId = body.ideaId;
   }
 
   let model: string | undefined;
@@ -159,6 +184,23 @@ replies.post('/replies/generate', async (c) => {
   // (CLI callers, older extension builds) — every draft stays a labeled
   // training row for the BAND recalibration crosstab (§6.2).
   if (!ctx.signals) ctx.signals = { band, ...gateSignals };
+
+  // Relationship block (C3): what the people layer knows about this handle,
+  // injected at the variable tail so the prompt stops meeting everyone for the
+  // first time. Stamped into ctx BEFORE the insert so contextSnapshot records
+  // exactly what the model saw (outcome analysis for C4). Best-effort — a
+  // people-layer read must never block the draft.
+  const relationship = renderRelationship(
+    await loadRelationshipFactsSafe(normalizePersonHandle(ctx.handle)),
+    new Date(),
+  );
+  if (relationship !== '') ctx.relationship = relationship;
+
+  // Playbook guidance (C4): the gated topAngles line, stamped into ctx before
+  // the insert (like relationship) so contextSnapshot records whether this
+  // draft was steered by measured data. Best-effort; null under the gate.
+  const guidance = await loadReplyGuidanceSafe();
+  if (guidance) ctx.guidance = guidance;
 
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
   const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs);
@@ -247,16 +289,22 @@ replies.post('/replies/generate', async (c) => {
     })
     .returning();
 
+  // C6: the steer came from the Idea Inbox — consume it with the backlink.
+  // A band-gate refusal or Grok failure never reaches here, so a failed
+  // generate leaves the idea open.
+  if (ideaId && row) await consumeIdeaSafe(ideaId, 'reply_drafts', row.id);
+
   return c.json(row, 201);
 });
 
 // --------------------------------------------------------- batch (Radar §7.2)
 //
 // One Grok call drafts a reply for a whole queue of hot/warm tweets the Radar
-// collected. Unlike /replies/generate this does NOT persist drafts or run the
-// band gate (the Radar already filtered to hot/warm): the replies live in the
-// extension's session ring buffer, copied to the clipboard when the user opens
-// a tweet. Cheap, ephemeral, re-runnable as the queue grows.
+// collected. Unlike /replies/generate this does NOT create reply_drafts rows or
+// run the band gate (the Radar already filtered to hot/warm): the replies live
+// in the extension's session ring buffer, copied to the clipboard when the user
+// opens a tweet. Since CIRCLES-PLAN C0 each reply also lands in `radar_drafts`
+// so a browser restart no longer loses paid-for drafts (routes/radar.ts).
 
 interface BatchBody {
   tweets?: unknown;
@@ -319,8 +367,28 @@ replies.post('/replies/generate-batch', async (c) => {
     applyPillars = body.applyPillars;
   }
 
+  // Relationship briefs (C3): same block per tweet, capped to 2 lines/person
+  // (renderRelationshipBrief) to protect the token budget. One lookup per
+  // distinct handle; best-effort.
+  const now = new Date();
+  const briefByHandle = new Map<string, string>();
+  for (const t of tweets) {
+    const handle = normalizePersonHandle(t.handle);
+    if (!handle || briefByHandle.has(handle)) continue;
+    briefByHandle.set(
+      handle,
+      renderRelationshipBrief(await loadRelationshipFactsSafe(handle), now),
+    );
+  }
+  for (const t of tweets) {
+    const brief = briefByHandle.get(normalizePersonHandle(t.handle) ?? '');
+    if (brief) t.relationship = brief;
+  }
+
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
-  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs);
+  // Playbook guidance (C4): one gated line for the whole batch, variable tail.
+  const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance);
   // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
   const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
 
@@ -370,6 +438,10 @@ replies.post('/replies/generate-batch', async (c) => {
     out.push({ tweetId: r.tweetId, text: r.text, angle: r.angle });
   }
 
+  // C0: the server keeps the copy — the session ring buffer alone lost every
+  // draft on browser restart. Never fails the response (money already spent).
+  await persistRadarDrafts(tweets, out);
+
   return c.json({
     replies: out,
     count: out.length,
@@ -381,12 +453,16 @@ replies.post('/replies/generate-batch', async (c) => {
 });
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
-export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { error: string } {
+// Optional band/signals (C0) carry the Radar's capture-time verdict into
+// `radar_drafts`; they never reach the Grok prompt.
+export function parseBatchTweets(
+  value: unknown,
+): { tweets: RadarBatchTweet[] } | { error: string } {
   if (!Array.isArray(value)) return { error: 'invalid_tweets' };
   if (value.length === 0) return { error: 'empty_tweets' };
   if (value.length > MAX_BATCH_TWEETS) return { error: 'too_many_tweets' };
 
-  const tweets: BatchTweet[] = [];
+  const tweets: RadarBatchTweet[] = [];
   const seen = new Set<string>();
   for (let i = 0; i < value.length; i++) {
     const t = value[i];
@@ -403,13 +479,53 @@ export function parseBatchTweets(value: unknown): { tweets: BatchTweet[] } | { e
       return { error: `invalid_tweet_text_${i}` };
     }
 
+    let band: 'hot' | 'warm' | undefined;
+    if (r.band !== undefined && r.band !== null) {
+      if (r.band !== 'hot' && r.band !== 'warm') return { error: `invalid_tweet_band_${i}` };
+      band = r.band;
+    }
+
+    let signals: TweetSignals | undefined;
+    if (r.signals !== undefined && r.signals !== null) {
+      const parsed = parseTweetSignals(r.signals);
+      if (parsed === null) return { error: `invalid_tweet_signals_${i}` };
+      signals = parsed;
+    }
+
     seen.add(tweetId);
     const author =
       typeof r.author === 'string' && r.author.trim() !== '' ? r.author.trim() : handleRaw;
     const url = typeof r.url === 'string' ? r.url : undefined;
-    tweets.push({ tweetId, handle: handleRaw, author, text: r.text, ...(url ? { url } : {}) });
+    tweets.push({
+      tweetId,
+      handle: handleRaw,
+      author,
+      text: r.text,
+      ...(url ? { url } : {}),
+      ...(band ? { band } : {}),
+      ...(signals ? { signals } : {}),
+    });
   }
   return { tweets };
+}
+
+// Classifier inputs without the verdict (TweetSignals, not PostSignals).
+function parseTweetSignals(value: unknown): TweetSignals | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const s = value as Record<string, unknown>;
+  const nums: Record<'views' | 'replies' | 'ageMin' | 'vpm', number> = {
+    views: 0,
+    replies: 0,
+    ageMin: 0,
+    vpm: 0,
+  };
+  for (const k of ['views', 'replies', 'ageMin', 'vpm'] as const) {
+    const n = s[k];
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) return null;
+    nums[k] = n;
+  }
+  if (typeof s.bait !== 'boolean') return null;
+  return { ...nums, bait: s.bait };
 }
 
 // ---------------------------------------------------------------- list/get
@@ -721,6 +837,31 @@ replies.patch('/replies/:id', async (c) => {
   updates.updatedAt = new Date();
   const [row] = await db.update(replyDrafts).set(updates).where(eq(replyDrafts.id, id)).returning();
 
+  // People layer (C1): a draft flipping to `posted` is my_reply on its target —
+  // updatedAt is in effect paste time. Best-effort, never fails the PATCH.
+  if (updates.status === 'posted') {
+    const handle = normalizePersonHandle(existing.sourceAuthorUsername);
+    if (handle) {
+      await upsertPerson(handle, {
+        source: 'reply',
+        fields: { displayName: existing.sourceAuthorDisplayName },
+      }).catch((err) => console.error('people: reply upsert failed:', err));
+      await safeLogPersonEvents(
+        [
+          {
+            handle,
+            type: 'my_reply',
+            refTable: 'reply_drafts',
+            refId: id,
+            summary: `replied to: "${snippet(existing.sourceText)}"`,
+            at: updates.updatedAt,
+          },
+        ],
+        { source: 'reply' },
+      );
+    }
+  }
+
   return c.json(row);
 });
 
@@ -739,6 +880,21 @@ replies.delete('/replies/:id', async (c) => {
 });
 
 // --------------------------------------------------------------- validation
+
+// The people layer informs the draft; it never blocks it. A failed lookup
+// (or an invalid handle) just means the prompt meets this person cold.
+async function loadRelationshipFactsSafe(handle: string | null): Promise<RelationshipFacts | null> {
+  if (!handle) return null;
+  try {
+    return await loadRelationshipFacts(handle);
+  } catch (err) {
+    console.error(
+      'people: relationship lookup failed (draft proceeds cold):',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
 
 function isStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);

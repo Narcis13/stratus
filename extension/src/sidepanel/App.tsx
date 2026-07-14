@@ -1,22 +1,44 @@
 import { type JSX, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
+import { ChannelsPanel } from './Channels.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
+import { IdeasPanel } from './Ideas.tsx';
+import { PeoplePanel } from './People.tsx';
+import { PlaybookPanel } from './Playbook.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
+import { StudioPanel, type StudioSeed } from './Studio.tsx';
 import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
 
-type Tab = 'today' | 'calendar' | 'composer' | 'harvest' | 'voice' | 'replies' | 'settings';
+type Tab =
+  | 'today'
+  | 'people'
+  | 'channels'
+  | 'calendar'
+  | 'composer'
+  | 'studio'
+  | 'harvest'
+  | 'voice'
+  | 'replies'
+  | 'ideas'
+  | 'playbook'
+  | 'settings';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'today', label: 'Today' },
+  { id: 'people', label: 'People' },
+  { id: 'channels', label: 'Channels' },
   { id: 'calendar', label: 'Calendar' },
   { id: 'composer', label: 'Composer' },
+  { id: 'studio', label: 'Studio' },
   { id: 'harvest', label: 'Harvest' },
   { id: 'voice', label: 'Voice' },
   { id: 'replies', label: 'Replies' },
+  { id: 'ideas', label: 'Ideas' },
+  { id: 'playbook', label: 'Playbook' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -25,6 +47,10 @@ export function App(): JSX.Element {
   const [tab, setTab] = useState<Tab>('today');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [remixTweetId, setRemixTweetId] = useState<string | null>(null);
+  // C1: handle to open in the People dossier — any handle rendered anywhere in
+  // the panel routes here via openPerson.
+  const [personHandle, setPersonHandle] = useState<string | null>(null);
+  const [studioSeed, setStudioSeed] = useState<StudioSeed | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const startEdit = (id: string) => {
@@ -37,6 +63,16 @@ export function App(): JSX.Element {
     setEditingId(null);
     setRemixTweetId(tweetId);
     setTab('composer');
+  };
+  const openPerson = (handle: string) => {
+    setPersonHandle(handle.replace(/^@/, '').toLowerCase());
+    setTab('people');
+  };
+  // S3: seed the Studio's quote card from the Composer ("Make visual") or a
+  // profile-click leader (quote-tweet + card is the strongest re-up format).
+  const openStudio = (seed: StudioSeed) => {
+    setStudioSeed(seed);
+    setTab('studio');
   };
   const onSaved = () => setRefreshKey((k) => k + 1);
 
@@ -73,7 +109,20 @@ export function App(): JSX.Element {
             <p className="muted">Configure API URL and bearer token first.</p>
           </div>
         ) : activeTab === 'today' ? (
-          <TodayPanel key={`today-${refreshKey}`} settings={settings} />
+          <TodayPanel
+            key={`today-${refreshKey}`}
+            settings={settings}
+            onOpenPerson={openPerson}
+            onMakeVisual={(text) => openStudio({ text })}
+          />
+        ) : activeTab === 'people' ? (
+          <PeoplePanel
+            settings={settings}
+            openHandle={personHandle}
+            onClearOpen={() => setPersonHandle(null)}
+          />
+        ) : activeTab === 'channels' ? (
+          <ChannelsPanel settings={settings} onOpenPerson={openPerson} />
         ) : activeTab === 'calendar' ? (
           <CalendarPanel key={`cal-${refreshKey}`} settings={settings} onEdit={startEdit} />
         ) : activeTab === 'composer' ? (
@@ -85,13 +134,28 @@ export function App(): JSX.Element {
             onClearEdit={clearEdit}
             onSaved={onSaved}
             onEdit={startEdit}
+            onMakeVisual={openStudio}
+          />
+        ) : activeTab === 'studio' ? (
+          <StudioPanel
+            settings={settings}
+            seed={studioSeed}
+            onClearSeed={() => setStudioSeed(null)}
           />
         ) : activeTab === 'harvest' ? (
           <HarvestPanel />
         ) : activeTab === 'voice' ? (
-          <VoicePanel settings={settings} onRemix={startRemix} />
+          <VoicePanel settings={settings} onRemix={startRemix} onOpenPerson={openPerson} />
         ) : activeTab === 'replies' ? (
-          <RepliesPanel key={`replies-${refreshKey}`} settings={settings} />
+          <RepliesPanel
+            key={`replies-${refreshKey}`}
+            settings={settings}
+            onOpenPerson={openPerson}
+          />
+        ) : activeTab === 'ideas' ? (
+          <IdeasPanel settings={settings} />
+        ) : activeTab === 'playbook' ? (
+          <PlaybookPanel settings={settings} />
         ) : (
           <SettingsPanel />
         )}

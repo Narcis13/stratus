@@ -1,6 +1,7 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: PROPOSED (2026-07-01). Companion to `PLAN.md` (which stays the canonical plan for
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 + C9 shipped 2026-07-05. All phases complete.
+> Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
 >
@@ -119,6 +120,14 @@ product layers on top. Each phase is independently shippable and usable.
 
 *Goal: three small changes so no more people/context data evaporates while we build C1.*
 
+> **SHIPPED 2026-07-02.** Notes vs the plan below: (1) verified — `contextSnapshot` was
+> never truncated server-side (only the prompt render caps at 10); a round-trip test now
+> locks the contract. (2) `radar_drafts` landed with a `PATCH /x/radar/drafts` status
+> route on top of the planned GET: clicks/dismissals mirror from the extension so worked
+> rows don't resurrect at the next rehydrate; rehydration routes through the background
+> (`stratus/radar-rehydrate`), keeping it the buffer's single writer. Expiry is a lazy
+> status flip on GET. (3) as planned. See CLAUDE.md phase status for the full entry.
+
 1. **Persist top comments.** `POST /x/replies/generate` already receives
    `PostContext.comments` (≤10 × {author, handle, text}) and discards it after the Grok
    call. Keep it: it already rides inside `contextSnapshot` — verify it's not stripped,
@@ -146,6 +155,27 @@ replies; a reply draft row shows the comments it saw.
 
 *Goal: one row per human the system has ever encountered, with an auto-advancing
 relationship stage and a full interaction timeline. The foundation phase.*
+
+> **SHIPPED 2026-07-02.** Notes vs the plan below: (1) event ids are
+> deterministic (`type:ref_table:ref_id`, INSERT OR IGNORE) so the backfill and
+> the live hooks share one idempotent id space — re-running either never
+> double-logs. (2) A mention that replies to one of my published replies logs
+> `their_reply_to_me` *instead of* (not in addition to) `their_mention` — one
+> event per underlying row, cleaner timeline, same inbound weight in the stage
+> engine. (3) "Two-way exchange day" is defined as a UTC day with ≥1 inbound
+> AND ≥1 outbound event; ally = 4 such days inside any rolling 60d window
+> (historical windows count — ratchet semantics). `harvest_seen` is
+> timeline-only, it never advances a stage. (4) The stage ratchet is applied at
+> recompute (`maxStage(current, computed)`): PATCH may demote, but the next
+> qualifying recompute re-promotes. (5) `person_snapshots` exists but stays
+> empty until C6 — voice enriches keep writing `voice_author_snapshots` only;
+> the dossier merges both series. (6) Backfill skips `contextSnapshot.comments`
+> (marked optional below) — commenters on someone else's post aren't
+> interactions with me; C6 passive capture is the ambient path. (7) Extension
+> shipped as a full People tab from day one (open question 1), with
+> click-throughs from Targets/Radar/Inbox/Replies-editor/Voice and a
+> "Start their file" manual-add for unknown handles (POST /events creates the
+> person). See CLAUDE.md phase status for the full entry.
 
 ### Schema (`src/x/db/schema.ts`)
 
@@ -251,6 +281,21 @@ with this person?" in one screen.
 *Goal: stop rendering mentions as a flat list; render exchanges as threads, and surface
 the ones where the last word is theirs.*
 
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) open-loop definition refined —
+> an *unanswered* inbound with no post of mine after it; a mention marked
+> answered/dismissed by hand settles the loop immediately, before daily discovery sees
+> the pasted reply. (2) chain detection checks the owed inbound's `inReplyToTweetId`
+> against `myReplyTweetIds` (all my published replies) *and* in-thread outbound reply
+> rows, so a reply whose conversation_id discovery hasn't filled yet still flags.
+> (3) mentions with null conversation_id get tweetId-keyed fallback threads — nothing
+> drops out of the inbox. (4) snoozed/muted threads leave the actionable tier (counts +
+> ranking); ranking is server-side: chains first, open loops oldest-debt-first, settled
+> by latest activity. (5) the flat Inbox.tsx (already unrendered) was deleted; the
+> threaded ConversationsSection renders at the Today tab's top slot, refresh budget and
+> the §7.5 draft/copy/done flow carried over unchanged. Chain flag NOT yet observed on
+> a real exchange (synthetic only, via scripts/smoke-conversations.ts) — watch the first
+> live one. See CLAUDE.md phase status for the full entry.
+
 - **No heavyweight conversation table.** `conversationId` already exists on both
   `posts_published` and `mentions`. `GET /x/conversations` groups the union by
   conversationId, ordered by latest activity: each thread = my posts + their mentions in
@@ -279,6 +324,26 @@ a real exchange.
 
 *Goal: the Reply Master prompt stops meeting everyone for the first time.*
 
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) no literal `{{RELATIONSHIP}}`
+> token — the block rides as server-stamped `PostContext.relationship` /
+> `BatchTweet.relationship` fields and `buildGrokInput`/`buildBatchGrokInput` append it
+> at the variable tail (template + byte-sync test untouched, as planned); parseContext /
+> parseBatchTweets never accept the field from the client, so a caller can't forge a
+> history. Stamping into ctx before the insert makes `contextSnapshot` record exactly
+> what the model saw, for free. (2) pure renderers live in
+> `src/x/people/relationship.ts` (`renderRelationship`, `renderRelationshipBrief`,
+> `pickAnglePreference`); the facts loader `loadRelationshipFacts` in people/store.ts
+> (null when the person is unknown or has zero events); `buildAngleCrosstab` moved to
+> `src/x/people/angles.ts` (routes/people.ts re-exports it). (3) angle preference is
+> gated at ≥3 measured replies to this person (`MIN_MEASURED_FOR_ANGLE_PREFERENCE`) and
+> picked by median profile visits, views as tie-break. (4) the single path looks up the
+> relationship AFTER the band gate (a refused call never pays the read); batch does one
+> lookup per distinct handle and carries the shared use-as-context instruction once, in
+> the variable tail. (5) all lookups are best-effort — a people-layer failure yields a
+> cold draft, never a failed one. "Done when" NOT yet observed live — watch the first
+> mutual-stage reply build on the prior exchange. See CLAUDE.md phase status for the
+> full entry.
+
 - `buildGrokInput` / `buildBatchGrokInput` (src/x/replies/prompt.ts) gain an optional
   `{{RELATIONSHIP}}` block rendered **at the variable tail** (same pattern as the §8.6
   pillars opt-in — `reply prompt.md` / `REPLY_PROMPT_TEMPLATE` stay byte-identical, the
@@ -306,6 +371,26 @@ a real exchange.
 
 *Goal: the measured-but-unused feedback signals become (a) a page the human reads and
 (b) constraints the prompts consume. Insights stop living in a manually-run eval script.*
+
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) all six stats live in pure
+> `src/x/playbook.ts`, loaders + `GET /x/playbook` (?minN=, default 20) in
+> `src/x/routes/playbook.ts` (always mounted, $0). (2) own-winner templates land in a
+> new `post_templates` table (not columns on posts_published) via
+> `POST /x/playbook/extract-winners` — runtime XAI check → 503, bounded ≤20/call,
+> skips already-extracted rows so re-running only picks up new winners; it reuses the
+> §8.3 prompt/schema/cache-key verbatim (now exported from routes/voiceExtract.ts).
+> (3) batch-vs-single attributes a published reply to the Radar only when BOTH the
+> target matches a radar_drafts tweet AND the posted text equals the drafted reply
+> (collapsed whitespace) — a draft-linked postedTweetId always wins; the rest count as
+> `unattributed`. (4) guidance is server-stamped only: `PostContext.guidance` (persisted
+> via contextSnapshot, so guided drafts stay distinguishable), a 5th arg on
+> buildBatchGrokInput, `BuildPostDraftOptions.guidance` — all at the variable tail,
+> templates + byte-sync tests untouched; loaders are best-effort
+> (`loadReplyGuidanceSafe`/`loadPostGuidanceSafe` — a playbook failure never fails a
+> draft) and always gate on the DEFAULT n≥20 even when the page is viewed at a lower
+> minN. (5) extension got a **Playbook** tab (its own tab, not under Today); gated cells
+> render the literal "insufficient data (n=…)". `scripts/smoke-playbook.ts` is the
+> rerunnable $0 check. See CLAUDE.md phase status for the full entry.
 
 - `src/x/playbook.ts` — pure aggregation over existing tables, each stat guarded by a
   min-sample gate (cell shows `insufficient data (n=7)` below threshold; default n≥20
@@ -342,6 +427,20 @@ in a draft call's rendered prompt.
 
 *Goal: the relationship layer starts telling you what to do today.*
 
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) the classifier is pure
+> (`src/x/people/followups.ts`); routes in `src/x/routes/followups.ts`, mounted BEFORE
+> peopleRouter because 'followups'/'fans' are valid usernames the `:handle` dossier
+> route would otherwise swallow. (2) snoozes landed as the small `followup_snoozes`
+> table (item_key `kind:handle` PK — the conversation_meta pattern, not tags).
+> (3) **momentum is computed at read time inside GET /x/people/followups**, not in the
+> nightly dailyMetrics pass — same $0 and the same queue line, but no stored flags to
+> go stale (the C2 "no conversation table" discipline); inflection = latest ≥3d segment
+> growing ≥5%/wk AND faster than the series before it, band entry = mutual+ people
+> projected to cross 2x my size within 30d at their current followers/day. (4) one item
+> per person (highest-priority kind wins) and a snoozed item doesn't hide the person's
+> lower-priority items. `scripts/smoke-followups.ts` is the rerunnable $0 check. See
+> CLAUDE.md phase status for the full entry.
+
 - **Follow-up queue.** `GET /x/people/followups` computes, from people + events:
   - `chain_live`: inbound reply to my reply, < 24h old (also flagged in C2) — top priority
   - `dm_ready`: person just advanced to responded/mutual (stage_updated_at recent) — the
@@ -373,6 +472,24 @@ should I nurture, who's heating up" in one glance.
 ## Phase C6 — Passive contact capture + Idea Inbox
 
 *Goal: the roster grows itself from natural browsing, and ideas stop dying after one use.*
+
+> **SHIPPED 2026-07-04.** Notes vs the plan below: (1) hover_sighting events dedupe
+> once/day/handle via the deterministic-id trick (`hover_sighting:hover:<handle>:<day>`
+> + INSERT OR IGNORE, `src/x/people/sightings.ts`); person_snapshots points are gated
+> once/day/handle too — momentum is followers/day, sub-daily points are resend noise.
+> (2) The content script sends batches through the existing background ApiRequest
+> channel (no new message type needed; the pure throttle/merge core is
+> `extension/src/shared/sightings.ts`, bun:tested). Skeleton cards (all-null parse)
+> are retried on later scans instead of being marked captured. (3) Idea consumption is
+> SERVER-side on the paying path: /replies/generate and /posts/draft accept `ideaId`
+> and consume after their insert (consumeIdeaSafe only advances `open`, never clobbers
+> first provenance, never fails the draft); a band-gate refusal leaves the idea open.
+> (4) The drafter's 3-draft batch backlinks the FIRST inserted row. (5) Reply Master
+> carries the picked idea via a second storage key `replyMaster:ideaId`; both keys
+> clear after a successful generate (the row is consumed — reopen is one click).
+> (6) First-run note (open question 3) is a dismissible line atop the People tab.
+> See CLAUDE.md phase status for the full entry; `scripts/smoke-c6.ts` is the
+> rerunnable check ($0).
 
 - **Passive hover capture.** Content script: when X renders a hover card because the
   **user hovered naturally** (no synthesized events beyond the existing explicit-save
@@ -432,6 +549,19 @@ get human replies inside 30 minutes without the user having remembered on their 
 
 *Goal: topics become places. Pillars organize output; channels organize input + people.*
 
+> **SHIPPED 2026-07-05.** Notes vs the plan below: (1) the keyword map lives ON the
+> channel row (`keywords` JSON column), so the auto-suggest is data-driven and one pure
+> module (`src/shared/channelSuggest.ts`, extension shim — the replyBand pattern) scores
+> identically on server and page. (2) tag writes: voice-tweet PATCH takes replace
+> (`tags`) or additive (`addTags` — what the save-time chips use, so quick clicks can't
+> race); radar drafts tag by tweetId via `PATCH /x/radar/drafts/:tweetId/tags`. (3) the
+> "confirmation toast" chip picker became inline suggest-chips next to the Save button
+> (there was never a toast) — max 3, keyword-suggested only, one click tags; the full
+> picker lives in the panel rows. Radar rows show the picker once a reply is drafted
+> (that's when a server-side row exists to hold tags). (4) the switcher is a Channels
+> tab with a Discord-style left rail, not a global rail. DELETE is clean by design —
+> tags survive as harmless strings. See CLAUDE.md phase status for the full entry.
+
 - New table `channels` (slug PK, label, color, sort_order, active) + the existing
   `tags` JSON columns on people/ideas (C1/C6) plus new nullable `tags` on voice_tweets
   and radar_drafts. A tag is a channel slug; a channel is a saved view.
@@ -483,8 +613,9 @@ own-post performance of that topic on one screen.
 ## 3. New surface summary
 
 **Tables:** people, person_events, person_snapshots, radar_drafts, conversation_meta,
-ideas, channels, streaks (+ nullable columns: scheduled_posts.register, tags on
-voice_tweets/radar_drafts).
+ideas, channels, streaks, digests (C9 addition: caches the one weekly narration so
+re-opening the panel on Sunday never re-spends) (+ nullable columns:
+scheduled_posts.register, tags on voice_tweets/radar_drafts).
 
 **Routes:** /x/people (+/:handle, /followups, /fans, /sightings), /x/conversations,
 /x/radar/drafts, /x/playbook, /x/ideas, /x/channels, /x/digest.
@@ -506,15 +637,16 @@ channel rail, quest strip, passive-capture toggle, idea quick-add.
 - Multi-tenant anything. One user, one wallet, one bearer.
 - Merging voice_authors into people (different jobs; join by handle instead).
 
-## 5. Open questions (decide before C1 ships)
+## 5. Open questions (all decided with C1, 2026-07-02)
 
 1. Does `people` deserve its own extension tab from day one, or live under Today until
-   C5 makes it operational? (Lean: section first, tab at C5.)
-2. Stage thresholds (2 exchange-days → mutual, 4/60d → ally) are guesses — revisit after
-   30 days of real events, same spirit as the BAND ≥100 gate.
-3. Passive capture default ON or OFF at first install? (Lean: ON with a visible first-run
-   note — it's the phase that makes the product feel alive.)
-4. CLAUDE.md scope amendment: land it with C1's commit, per one-file-one-truth.
+   C5 makes it operational? **DECIDED: tab from day one** — shipped in C1.
+2. Stage thresholds (2 exchange-days → mutual, 4/60d → ally) are guesses — **DECIDED:
+   ship as-is, revisit after 30 days of real events**, same spirit as the BAND ≥100 gate.
+3. Passive capture default ON or OFF at first install? **DECIDED: ON** with a visible
+   first-run note (lands with C6).
+4. CLAUDE.md scope amendment: **DECIDED: landed with C0's commit** — the four-goal
+   vision is expressed from the top of CLAUDE.md, per one-file-one-truth.
 
 ---
 

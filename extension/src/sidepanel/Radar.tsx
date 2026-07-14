@@ -10,7 +10,7 @@
 
 import { type JSX, useEffect, useState } from 'react';
 import { formatCount } from '../replyBand.ts';
-import type { RadarClick, RadarDismiss, RadarReplies } from '../shared/messages.ts';
+import type { RadarClick, RadarDismiss, RadarRehydrate, RadarReplies } from '../shared/messages.ts';
 import {
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
@@ -19,6 +19,7 @@ import {
   rankSightings,
   splitClicked,
 } from '../shared/radar.ts';
+import { ChannelTagPicker } from './ChannelTags.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
 import type { Settings } from './storage.ts';
 
@@ -85,13 +86,28 @@ function markClicked(tweetId: string): void {
   })();
 }
 
-export function RadarSection({ settings }: { settings: Settings }): JSX.Element {
+export function RadarSection({
+  settings,
+  onOpenPerson,
+}: {
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const ranked = rankSightings(useRadarSightings());
   const { queue, clicked } = splitClicked(ranked);
   const { ready, fresh } = groupQueue(queue);
   const [view, setView] = useState<'queue' | 'clicked'>('queue');
   const [drafting, setDrafting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+
+  // C0: ask the background to pull the server's radar_drafts copy — after a
+  // browser restart the session buffer is empty but paid-for drafts survive.
+  useEffect(() => {
+    const msg: RadarRehydrate = { type: 'stratus/radar-rehydrate' };
+    chrome.runtime
+      .sendMessage(msg)
+      .catch((err) => console.warn('[stratus] radar rehydrate failed', err));
+  }, []);
 
   // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
   const undrafted = fresh.slice(0, RADAR_DRAFT_CAP);
@@ -100,12 +116,16 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
     if (undrafted.length === 0) return;
     setDrafting(true);
     setNote(null);
+    // band/signals ride along for the server's radar_drafts copy (C0) — they
+    // never reach the Grok prompt.
     const tweets: BatchReplyTweet[] = undrafted.map((s) => ({
       tweetId: s.tweetId,
       handle: s.handle,
       author: s.author ?? s.handle,
       text: s.text,
       url: s.url,
+      band: s.band,
+      signals: s.signals,
     }));
     try {
       const res = await api.replies.generateBatch(settings, { tweets });
@@ -181,9 +201,21 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
         ) : (
           <>
             {ready.length > 0 && (
-              <RadarGroup label={`Reply ready (${ready.length})`} rows={ready} />
+              <RadarGroup
+                label={`Reply ready (${ready.length})`}
+                rows={ready}
+                settings={settings}
+                onOpenPerson={onOpenPerson}
+              />
             )}
-            {fresh.length > 0 && <RadarGroup label={`New (${fresh.length})`} rows={fresh} />}
+            {fresh.length > 0 && (
+              <RadarGroup
+                label={`New (${fresh.length})`}
+                rows={fresh}
+                settings={settings}
+                onOpenPerson={onOpenPerson}
+              />
+            )}
           </>
         )
       ) : clicked.length === 0 ? (
@@ -191,7 +223,7 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
       ) : (
         <ul className="radar-list">
           {clicked.map((s) => (
-            <RadarRow key={s.tweetId} s={s} />
+            <RadarRow key={s.tweetId} s={s} settings={settings} onOpenPerson={onOpenPerson} />
           ))}
         </ul>
       )}
@@ -199,21 +231,43 @@ export function RadarSection({ settings }: { settings: Settings }): JSX.Element 
   );
 }
 
-function RadarGroup({ label, rows }: { label: string; rows: RadarSighting[] }): JSX.Element {
+function RadarGroup({
+  label,
+  rows,
+  settings,
+  onOpenPerson,
+}: {
+  label: string;
+  rows: RadarSighting[];
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   return (
     <>
       <div className="radar-group-label">{label}</div>
       <ul className="radar-list">
         {rows.map((s) => (
-          <RadarRow key={s.tweetId} s={s} />
+          <RadarRow key={s.tweetId} s={s} settings={settings} onOpenPerson={onOpenPerson} />
         ))}
       </ul>
     </>
   );
 }
 
-function RadarRow({ s }: { s: RadarSighting }): JSX.Element {
+function RadarRow({
+  s,
+  settings,
+  onOpenPerson,
+}: {
+  s: RadarSighting;
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
   const [copied, setCopied] = useState(false);
+  // C8: channel tags live on the server's radar_drafts copy (keyed by tweetId),
+  // which only exists once a reply was drafted — so the picker shows then.
+  // Session-local mirror; the persisted copy is what the aggregate reads.
+  const [tags, setTags] = useState<string[]>([]);
 
   // Opening a drafted tweet copies its reply (user gesture → clipboard allowed)
   // and moves the row to the Clicked view; the anchor's default still opens the
@@ -234,7 +288,26 @@ function RadarRow({ s }: { s: RadarSighting }): JSX.Element {
     <li className={`radar-row${s.reply ? ' radar-row-replied' : ''}`}>
       <div className="radar-row-head">
         <span className={`radar-band radar-band-${s.band}`}>{s.band}</span>
-        <span className="radar-author">{s.author ?? `@${s.handle}`}</span>
+        <button
+          type="button"
+          className="radar-author person-link"
+          title={`Open @${s.handle}'s dossier`}
+          onClick={() => onOpenPerson(s.handle)}
+        >
+          {s.author ?? `@${s.handle}`}
+        </button>
+        {s.personTier && (
+          <button
+            type="button"
+            className={`stage-chip radar-tier ${
+              s.personTier === 'target' ? 'radar-tier-target' : `stage-${s.personTier}`
+            }`}
+            title={`${tierLabel(s.personTier)} — open @${s.handle}'s dossier`}
+            onClick={() => onOpenPerson(s.handle)}
+          >
+            {s.personTier}
+          </button>
+        )}
         {s.reply && <span className="radar-ready">reply ready</span>}
         <button
           type="button"
@@ -255,8 +328,26 @@ function RadarRow({ s }: { s: RadarSighting }): JSX.Element {
           <span className="radar-reply-hint">{copied ? 'copied ✓' : 'open → copies'}</span>
         </div>
       )}
+      {s.reply && (
+        <ChannelTagPicker
+          settings={settings}
+          tags={tags}
+          onSave={async (next) => {
+            await api.channels.tagRadarDraft(settings, s.tweetId, next);
+            setTags(next);
+          }}
+          suggestFrom={s.text}
+        />
+      )}
     </li>
   );
+}
+
+// S0.3 chip tooltip — why this author outranks a louder rando.
+function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
+  if (tier === 'ally') return 'Ally — an established two-way relationship';
+  if (tier === 'mutual') return 'Mutual — you two go back and forth';
+  return 'Target — an in-band 2–10x account worth building';
 }
 
 // "1.5k views · 8 replies · 22m · 70/min · bait"

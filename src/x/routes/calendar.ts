@@ -28,8 +28,10 @@ import { randomUUID } from 'node:crypto';
 import { type SQL, and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { scheduledPosts } from '../db/schema.ts';
+import { ideas, scheduledPosts } from '../db/schema.ts';
 import { containsUrl } from '../endpoints.ts';
+import { parsePillar } from '../posts/pillars.ts';
+import { getActivePillars } from './pillars.ts';
 
 const STATUSES = [
   'draft',
@@ -84,6 +86,19 @@ calendar.post('/posts/scheduled', async (c) => {
     );
   }
 
+  // Optional content pillar — validated against the live active slugs (same
+  // check as the drafter). Only touches the DB when a pillar is actually given.
+  let pillar: string | null = null;
+  if (body.pillar !== undefined && body.pillar !== null && body.pillar !== '') {
+    const slugs = (await getActivePillars()).map((p) => p.slug);
+    const resolved = parsePillar(body.pillar, slugs);
+    if (resolved === 'invalid') return c.json({ error: 'invalid_pillar' }, 400);
+    pillar = resolved ?? null;
+  }
+
+  const mediaNote = parseMediaNote(body.mediaNote);
+  if (mediaNote === 'invalid') return c.json({ error: 'invalid_media_note' }, 400);
+
   const [row] = await db
     .insert(scheduledPosts)
     .values({
@@ -91,6 +106,8 @@ calendar.post('/posts/scheduled', async (c) => {
       scheduledFor: scheduledFor ?? null,
       mediaIds: mediaIds ?? null,
       status,
+      pillar,
+      mediaNote,
     })
     .returning();
 
@@ -206,14 +223,22 @@ calendar.get('/posts/scheduled/:id', async (c) => {
   const [row] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, id));
   if (!row) return c.json({ error: 'not_found' }, 404);
 
-  if (!row.threadId) return c.json(row);
+  // C6 provenance: the Idea Inbox idea whose consume backlinks this row —
+  // "seeded by" in the detail view, content archaeology for free.
+  const [seed] = await db
+    .select({ id: ideas.id, text: ideas.text, status: ideas.status })
+    .from(ideas)
+    .where(and(eq(ideas.consumedByTable, 'scheduled_posts'), eq(ideas.consumedById, id)));
+  const seededBy = seed ?? null;
+
+  if (!row.threadId) return c.json({ ...row, seededBy });
 
   const thread = await db
     .select()
     .from(scheduledPosts)
     .where(eq(scheduledPosts.threadId, row.threadId))
     .orderBy(asc(scheduledPosts.threadPosition));
-  return c.json({ ...row, thread });
+  return c.json({ ...row, thread, seededBy });
 });
 
 calendar.patch('/posts/scheduled/:id', async (c) => {
@@ -253,6 +278,11 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     const m = parseMediaIds(body.mediaIds);
     if (m === 'invalid') return c.json({ error: 'invalid_media_ids' }, 400);
     updates.mediaIds = m;
+  }
+  if (body.mediaNote !== undefined) {
+    const note = parseMediaNote(body.mediaNote);
+    if (note === 'invalid') return c.json({ error: 'invalid_media_note' }, 400);
+    updates.mediaNote = note;
   }
   if (body.status !== undefined) {
     if (!isStatus(body.status)) return c.json({ error: 'invalid_status' }, 400);
@@ -331,6 +361,7 @@ interface Body {
   text?: unknown;
   scheduledFor?: unknown;
   mediaIds?: unknown;
+  mediaNote?: unknown;
   status?: unknown;
   segments?: unknown;
   pillar?: unknown;
@@ -359,6 +390,18 @@ function parseMediaIds(value: unknown): string[] | null | 'invalid' {
   if (!Array.isArray(value)) return 'invalid';
   if (!value.every((v) => typeof v === 'string' && v.length > 0)) return 'invalid';
   return value as string[];
+}
+
+// "Visual made" marker (SURFACES S3). null / empty string clears it — the
+// Composer's chip has a one-click clear that PATCHes null.
+const MEDIA_NOTE_MAX = 280;
+function parseMediaNote(value: unknown): string | null | 'invalid' {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return 'invalid';
+  const note = value.trim();
+  if (!note) return null;
+  if (note.length > MEDIA_NOTE_MAX) return 'invalid';
+  return note;
 }
 
 function isStatus(v: unknown): v is Status {

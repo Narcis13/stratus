@@ -2,13 +2,18 @@ import { describe, expect, test } from 'bun:test';
 import {
   RADAR_CAP,
   RADAR_DISMISSED_CAP,
+  type RadarDraftRow,
   type RadarSighting,
+  type RankMap,
   appendDismissed,
+  draftRowToSighting,
   groupQueue,
   isRadarSightings,
   mergeSightings,
+  personTierFor,
   rankSightings,
   splitClicked,
+  stampTiers,
 } from './radar.ts';
 
 function sighting(id: string, over: Partial<RadarSighting> = {}): RadarSighting {
@@ -142,6 +147,103 @@ describe('rankSightings', () => {
     rankSightings(rows);
     expect(rows[0]?.tweetId).toBe('1');
   });
+
+  test('roster tier leads band/vpm/recency (S0.3)', () => {
+    const rows = [
+      sighting('hot-rando', {
+        band: 'hot',
+        signals: { views: 5000, replies: 20, ageMin: 8, vpm: 200, bait: false },
+      }),
+      sighting('warm-mutual', {
+        band: 'warm',
+        personTier: 'mutual',
+        signals: { views: 300, replies: 2, ageMin: 30, vpm: 10, bait: false },
+      }),
+      sighting('warm-target', {
+        band: 'warm',
+        personTier: 'target',
+        signals: { views: 400, replies: 3, ageMin: 25, vpm: 16, bait: false },
+      }),
+      sighting('hot-target', {
+        band: 'hot',
+        personTier: 'target',
+        signals: { views: 1200, replies: 5, ageMin: 12, vpm: 100, bait: false },
+      }),
+    ];
+    // ally/mutual first, then target (hot target beats warm target on band),
+    // then the loud rando last.
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
+      'warm-mutual',
+      'hot-target',
+      'warm-target',
+      'hot-rando',
+    ]);
+  });
+
+  test('ally and mutual share the top tier; band/vpm break the tie', () => {
+    const rows = [
+      sighting('ally-warm', {
+        band: 'warm',
+        personTier: 'ally',
+        signals: { views: 200, replies: 1, ageMin: 40, vpm: 5, bait: false },
+      }),
+      sighting('mutual-hot', {
+        band: 'hot',
+        personTier: 'mutual',
+        signals: { views: 900, replies: 6, ageMin: 15, vpm: 60, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['mutual-hot', 'ally-warm']);
+  });
+});
+
+describe('personTierFor', () => {
+  test('ally/mutual stage → that tier; a target below mutual → target; else null', () => {
+    expect(personTierFor({ stage: 'ally', isTarget: false })).toBe('ally');
+    expect(personTierFor({ stage: 'mutual', isTarget: true })).toBe('mutual');
+    expect(personTierFor({ stage: 'engaged', isTarget: true })).toBe('target');
+    expect(personTierFor({ stage: 'noticed', isTarget: true })).toBe('target');
+    expect(personTierFor({ stage: 'engaged', isTarget: false })).toBeNull();
+    expect(personTierFor({ stage: 'responded', isTarget: false })).toBeNull();
+    expect(personTierFor(undefined)).toBeNull();
+  });
+});
+
+describe('stampTiers', () => {
+  const map: RankMap = {
+    ally_h: { stage: 'ally', isTarget: false },
+    target_h: { stage: 'noticed', isTarget: true },
+  };
+
+  test('derives personTier from the rankmap, matching handles case-insensitively', () => {
+    const rows = [
+      sighting('1', { handle: 'Ally_H' }),
+      sighting('2', { handle: 'target_h' }),
+      sighting('3', { handle: 'nobody' }),
+    ];
+    const out = stampTiers(rows, map);
+    expect(out[0]?.personTier).toBe('ally');
+    expect(out[1]?.personTier).toBe('target');
+    expect(out[2]?.personTier).toBeUndefined();
+  });
+
+  test('clears a stale tier when the author dropped out of the map', () => {
+    const rows = [sighting('1', { handle: 'ally_h', personTier: 'target' })];
+    const out = stampTiers(rows, {});
+    expect(out[0]?.personTier).toBeUndefined();
+  });
+
+  test('returns the same reference for rows whose tier is unchanged', () => {
+    const row = sighting('1', { handle: 'ally_h', personTier: 'ally' });
+    const out = stampTiers([row], map);
+    expect(out[0]).toBe(row);
+  });
+
+  test('an empty map clears all tiers (no rankmap loaded yet)', () => {
+    const rows = [sighting('1', { handle: 'ally_h', personTier: 'ally' }), sighting('2')];
+    const out = stampTiers(rows, {});
+    expect(out.every((s) => s.personTier === undefined)).toBe(true);
+  });
 });
 
 describe('splitClicked', () => {
@@ -184,5 +286,58 @@ describe('isRadarSightings', () => {
     expect(isRadarSightings(undefined)).toBe(false);
     expect(isRadarSightings([{ tweetId: 1 }])).toBe(false);
     expect(isRadarSightings([sighting('1'), { nope: true }])).toBe(false);
+  });
+});
+
+describe('draftRowToSighting (C0 rehydration)', () => {
+  const row: RadarDraftRow = {
+    id: 'uuid-1',
+    tweetId: '111',
+    url: 'https://x.com/alice/status/111',
+    handle: 'alice',
+    author: 'Alice',
+    snippet: 'shipping beats planning',
+    band: 'hot',
+    signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+    replyText: 'my drafted reply',
+    angle: 'contrarian',
+    status: 'ready',
+    draftedAt: '2026-07-01T10:00:00.000Z',
+    createdAt: '2026-07-01T10:00:00.000Z',
+  };
+
+  test('rebuilds a reply-ready sighting from a server row', () => {
+    const s = draftRowToSighting(row);
+    expect(s).toEqual({
+      tweetId: '111',
+      url: 'https://x.com/alice/status/111',
+      handle: 'alice',
+      author: 'Alice',
+      text: 'shipping beats planning',
+      band: 'hot',
+      signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
+      firstSeenAt: '2026-07-01T10:00:00.000Z',
+      lastSeenAt: '2026-07-01T10:00:00.000Z',
+      reply: 'my drafted reply',
+    });
+  });
+
+  test('falls back to a built status URL when the row has none', () => {
+    const s = draftRowToSighting({ ...row, url: null });
+    expect(s?.url).toBe('https://x.com/alice/status/111');
+  });
+
+  test('rows without band/signals cannot rehydrate (no rank, no why-line)', () => {
+    expect(draftRowToSighting({ ...row, band: null })).toBeNull();
+    expect(draftRowToSighting({ ...row, signals: null })).toBeNull();
+  });
+
+  test('rehydrated sightings merge cleanly and keep their reply', () => {
+    const s = draftRowToSighting(row);
+    if (!s) throw new Error('expected sighting');
+    const merged = mergeSightings([], [s], []);
+    expect(merged[0]?.reply).toBe('my drafted reply');
+    // dismissed ids stay gone even through rehydration
+    expect(mergeSightings([], [s], ['111'])).toEqual([]);
   });
 });

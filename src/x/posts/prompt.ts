@@ -273,6 +273,10 @@ export interface BuildPostDraftOptions {
   /** Active pillars rendered into the PILLARS block. Defaults to the seed set
    *  so the prompt is never pillar-less even on a fresh/empty DB. */
   pillars?: PillarDef[];
+  /** Gated Playbook guidance line (CIRCLES-PLAN C4, topStructures). Appended
+   *  at the variable tail — the template / post prompt.md byte-sync test is
+   *  untouched, same pattern as the reply prompt's relationship block. */
+  guidance?: string;
 }
 
 export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] {
@@ -284,6 +288,9 @@ export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] 
   content = content.split(REMIX_PLACEHOLDER).join(renderRemix(opts.remix ?? null));
   content = content.split(PILLAR_PLACEHOLDER).join(opts.pillar ?? '');
   content = content.split(IDEA_PLACEHOLDER).join(opts.idea?.trim() ?? '');
+  if (opts.guidance && opts.guidance.trim() !== '') {
+    content = `${content}\n\n${opts.guidance}`;
+  }
   return [{ role: 'user', content }];
 }
 
