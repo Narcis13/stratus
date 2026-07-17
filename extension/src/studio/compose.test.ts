@@ -6,10 +6,14 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  type Layer,
   type MeasureFn,
+  type RenderSpec,
   contrastOn,
   hexToRgb,
   layoutText,
+  mulberry32,
+  patternCoords,
   shade,
   sparklineCoords,
   withAlpha,
@@ -183,5 +187,98 @@ describe('sparklineCoords', () => {
   test('a flat series sits on the baseline instead of dividing by zero', () => {
     const out = sparklineCoords([7, 7], box);
     expect(out.map((p) => p.y)).toEqual([70, 70]);
+  });
+});
+
+describe('mulberry32', () => {
+  test('the same seed yields the same sequence', () => {
+    const a = mulberry32(42);
+    const b = mulberry32(42);
+    expect([a(), a(), a(), a()]).toEqual([b(), b(), b(), b()]);
+  });
+
+  test('seed+1 yields a different sequence', () => {
+    const a = mulberry32(1);
+    const b = mulberry32(2);
+    expect(a()).not.toBe(b());
+  });
+
+  test('outputs stay in [0, 1)', () => {
+    const rand = mulberry32(7);
+    for (let i = 0; i < 100; i += 1) {
+      const v = rand();
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThan(1);
+    }
+  });
+});
+
+describe('patternCoords', () => {
+  test('dots lay out a top-left-first lattice — count and corners', () => {
+    // Marks at 12.5, 37.5, 62.5, 87.5 on each axis → 4×4 = 16.
+    const out = patternCoords('dots', 100, 100, 25, 1);
+    expect(out.length).toBe(16);
+    expect(out[0]).toEqual({ x: 12.5, y: 12.5 });
+    expect(out[out.length - 1]).toEqual({ x: 87.5, y: 87.5 });
+  });
+
+  test('larger spacing means fewer points', () => {
+    const tight = patternCoords('dots', 100, 100, 20, 1);
+    const loose = patternCoords('dots', 100, 100, 50, 1);
+    expect(tight.length).toBeGreaterThan(loose.length);
+  });
+
+  test('grid / diagonal / plus share the dots lattice', () => {
+    const dots = patternCoords('dots', 120, 80, 20, 1);
+    expect(patternCoords('grid', 120, 80, 20, 1)).toEqual(dots);
+    expect(patternCoords('diagonal', 120, 80, 20, 1)).toEqual(dots);
+    expect(patternCoords('plus', 120, 80, 20, 1)).toEqual(dots);
+  });
+
+  test('lattice marks carry no radius', () => {
+    const dots = patternCoords('dots', 100, 100, 25, 1);
+    expect(dots.every((p) => p.r === undefined)).toBe(true);
+  });
+
+  test('blobs are deterministic for a fixed seed and carry a radius', () => {
+    const a = patternCoords('blobs', 200, 200, 40, 9);
+    const b = patternCoords('blobs', 200, 200, 40, 9);
+    expect(a).toEqual(b);
+    expect(a.length).toBe(25); // floor(200/40)² = 25
+    expect(a.every((p) => typeof p.r === 'number' && (p.r as number) > 0)).toBe(true);
+  });
+
+  test('blobs differ for a different seed', () => {
+    const a = patternCoords('blobs', 200, 200, 40, 9);
+    const b = patternCoords('blobs', 200, 200, 40, 10);
+    expect(a).not.toEqual(b);
+  });
+});
+
+describe('new layer kinds', () => {
+  // Compile-time proof (via `bun run typecheck`) that path/panel/pattern are
+  // assignable into a RenderSpec; the runtime assertions keep the test honest.
+  test('path/panel/pattern build a valid RenderSpec', () => {
+    const layers: Layer[] = [
+      { kind: 'pattern', pattern: 'dots', color: '#ffffff', spacing: 20 },
+      {
+        kind: 'pattern',
+        pattern: 'blobs',
+        color: '#1d9bf0',
+        seed: 3,
+        box: { x: 0, y: 0, w: 50, h: 50 },
+      },
+      {
+        kind: 'panel',
+        box: { x: 0, y: 0, w: 40, h: 20 },
+        radius: 6,
+        fill: '#0f1419',
+        stroke: '#1d9bf0',
+        shadow: { blur: 8, color: 'rgba(0,0,0,0.3)', dy: 4 },
+      },
+      { kind: 'path', d: 'M0 0 L100 100 Z', box: { x: 10, y: 10, w: 80, h: 80 }, fill: '#123456' },
+    ];
+    const spec: RenderSpec = { w: 100, h: 100, layers };
+    expect(spec.layers.map((l) => l.kind)).toEqual(['pattern', 'pattern', 'panel', 'path']);
   });
 });

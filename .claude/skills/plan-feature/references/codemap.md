@@ -1,6 +1,6 @@
 # stratus code map
 
-> **Stamped:** 2026-07-16 at commit `2a7693e`.
+> **Stamped:** 2026-07-18 at commit `95b9fff`.
 > This file exists so `/plan-feature` never re-scans the repo. It is the single
 > pre-computed answer to "where does X live and how is it wired".
 > **Maintenance rule:** any commit that adds/moves/deletes a file, route, table,
@@ -203,7 +203,7 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 | `src/sidepanel/api.ts` | Typed client — every call routes through background ApiRequest. |
 | `src/sidepanel/App.tsx` | Tabs: today, people, channels, calendar, composer, studio, harvest, voice, replies, ideas, playbook, settings. Cross-tab handoffs: `onOpenPerson`, `openStudio`, remix→composer. |
 | Tab components | `Today.tsx` (hosts: Conversations, DoNext, Fans, LaunchRoom, Digest, PinnedWatchCard, quests/streak, Radar, Targets, TodayPlan), `People.tsx` (+dossier, Icebreakers), `Channels.tsx`+`ChannelTags.tsx` (shared chip picker, 60s cache), `Calendar.tsx`, `Composer.tsx`+`composerLogic.ts` (best-time suggest, thread mode, jittered minutes), `Studio.tsx`, `Harvest.tsx`+`harvestClient.ts`, `Voice.tsx`+`Pillars.tsx` subtab, `Replies.tsx`, `Ideas.tsx`, `Playbook.tsx`, `Settings.tsx` (passiveCapture, applyPillarsToReplies, harvest cursors). |
-| `src/studio/` | S3: `compose.ts` (layer model → canvas → PNG; layoutText wrap/shrink/ellipsize), `templates.ts` (quote/stat/banner/pfp + S4 background+scrim under text), `brandKit.ts`, `fonts.ts` (bundled Inter WOFF2s). |
+| `src/studio/` | S3: `compose.ts` (layer model → canvas → PNG; layoutText wrap/shrink/ellipsize; S5.1 added `path`/`panel`/`pattern` layer kinds + exported `mulberry32` seeded PRNG + pure `patternCoords` — never `Math.random`), `templates.ts` (quote/stat/banner/pfp + S4 background+scrim under text), `brandKit.ts`, `fonts.ts` (bundled Inter WOFF2s). |
 | Storage keys | `chrome.storage.local`: brand kit, settings toggles, harvest cursors, `replyMaster:idea(+Id)`. `chrome.storage.session`: `radar:sightings`, `radar:dismissed`, `launch:active`, `launch:replies`. |
 
 ## 6. MCP + integrations
@@ -291,3 +291,4 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 
 - 2026-07-16 `2a7693e` — initial map (post-C9, post-S4, post grok-imagine migration).
 - 2026-07-17 — §2: added `plans/` + masterplan skill rows (planning only; no src/extension changes — stamp sha unchanged).
+- 2026-07-18 `95b9fff` — §5: `compose.ts` gained `path`/`panel`/`pattern` layer kinds + `mulberry32`/`patternCoords` pure exports (ST.1 / S5.1).

@@ -31,6 +31,7 @@ import { playbook } from './routes/playbook.ts';
 import { createPostsRouter } from './routes/posts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
+import { settingsRouter } from './routes/settings.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
 import { DAILY_METRICS_HEARTBEAT, startDailyMetrics } from './workers/dailyMetrics.ts';
@@ -76,6 +77,11 @@ export function mountX(app: Hono): void {
   // bearer), so it sits OUTSIDE the /x/* auth middleware.
   app.route('/x', data);
   app.route('/', explorer);
+  // UI.1: the settings platform — app_settings overrides + typed registry.
+  // Static paths only (/settings, /settings/values, /settings/reset), so it's
+  // §7.20-safe anywhere; always mounted, $0. Lands INERT — no consumer reads the
+  // store yet (UI.2+ wire brief/quests/people/… through it).
+  app.route('/x', settingsRouter);
   // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
   // 'followups'/'fans' are valid usernames, so GET /people/:handle would
   // otherwise swallow these static paths as dossier lookups.

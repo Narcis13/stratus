@@ -4,9 +4,9 @@
 > Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 
-- **last-commit:** f033142 (pre-masterplan baseline)
+- **last-commit:** 95b9fff (ST.1) · reconciled: 94663f0 was scaffolding only (masterplan skill + plans + codemap), no ledger task
 - **current wave:** 0
-- **next-up:** Lane A → UI.1 · Lane B → UI.8 · Lane C → ST.1 or ST.2
+- **next-up:** Lane A → UI.1 · Lane B → UI.8 · Lane C → ST.2 (ST.1 done)
 
 ## Ledger
 
@@ -17,7 +17,7 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 - [ ] UI.8 Design tokens dark refactor (high)
 - [ ] UI.9 Light theme + Appearance (high)
 - [ ] UI.10 UI primitives + grouped rail (xhigh)
-- [ ] ST.1 Engine layers + PRNG (high)
+- [x] ST.1 Engine layers + PRNG (high) — 95b9fff 2026-07-18
 - [ ] ST.2 Studio shell refactor (high)
 - [ ] ST.3 Cloud mascot (high)
 - [ ] ST.4 Patterns + presets (high)
@@ -177,7 +177,10 @@ Append D11+ as work reveals divergences from plan text.
 ## Gotchas log
 
 Things the next implementer must know that aren't obvious from the code. Append-only,
-one line each, newest last. (empty — nothing implemented yet)
+one line each, newest last.
+
+- **`bun run lint` has 114 pre-existing errors at baseline (94663f0)**, across ~unrelated files — NOT caused by masterplan work. The repo-wide lint is red before this masterplan started; the per-task gate is "the changed files lint clean" (verify with `bunx biome check <files>`), not "whole-repo lint green". Don't try to zero the 114.
+- **ST.1 / compose.ts pattern engine:** `patternCoords(pattern,w,h,spacing,seed)` returns box-local coords; `dots|grid|diagonal|plus` share one top-left-first lattice (marks at `spacing/2 + k·spacing`, `< w/h`), `blobs` returns seeded-random `{x,y,r}` (count = `floor(w/spacing)·floor(h/spacing)`, 3 PRNG draws/blob in x,y,r order). `mulberry32` is the only sanctioned RNG in the Studio — Math.random is banned (determinism = the preview-IS-artifact contract). `path` layers author SVG in a 100×100 viewbox scaled into `box`; strokes divide lineWidth by mean scale. Downstream S5 tasks (ST.3 mascot, ST.4 patterns) build on these.
 
 ## Planning-error log
 

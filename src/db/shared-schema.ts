@@ -1,6 +1,21 @@
 import { sql } from 'drizzle-orm';
 import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
+// Platform-agnostic settings overrides (UI.1). Only OVERRIDDEN keys get a row —
+// a missing key means "use the registry default", so the table stays tiny and a
+// fresh DB needs no seed. `value` is JSON so one column holds numbers, booleans,
+// strings, and number arrays uniformly. The typed catalog + validation lives in
+// the per-platform registry (src/x/settings/registry.ts); the store here
+// (src/settings/store.ts) reads/writes this table and is handed the registry so
+// this shared layer never imports src/x/*.
+export const appSettings = sqliteTable('app_settings', {
+  key: text('key').primaryKey(),
+  value: text('value', { mode: 'json' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
 export const costEvents = sqliteTable(
   'cost_events',
   {
