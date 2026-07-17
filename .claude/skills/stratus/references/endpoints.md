@@ -1,6 +1,8 @@
-# Stratus endpoint reference
+# Stratus endpoint reference (core)
 
-Full request/response shapes for every route. Use this when crafting a non-trivial body or interpreting a response. All paths are relative to `$STRATUS_BASE_URL`. All bodies are JSON. Every endpoint except `GET /healthz` requires `Authorization: Bearer $STRATUS_API_TOKEN`.
+Full request/response shapes for the core routes. All paths are relative to `$STRATUS_BASE_URL`. All bodies are JSON. Every endpoint except `GET /healthz` and `GET /explorer` requires `Authorization: Bearer $STRATUS_API_TOKEN`.
+
+**Companion references:** [circles.md](circles.md) — people CRM, dossier, followups, fans, conversations, launch, icebreakers. [insight.md](insight.md) — brief, playbook, digest, best-times deltas, images, assets, data explorer/SQL, MCP tools, cost shapes. [coach.md](coach.md) — how to read the numbers. [roadmap.md](roadmap.md) — planned-not-live surfaces.
 
 ## Table of contents
 
@@ -10,6 +12,7 @@ Full request/response shapes for every route. Use this when crafting a non-trivi
 - [Scheduled posts (calendar)](#scheduled-posts-calendar)
 - [Threads](#threads)
 - [Post drafter (Grok)](#post-drafter-grok)
+- [Content pillars](#content-pillars-86)
 - [Published posts (reconcile)](#published-posts-reconcile)
 - [Metrics (own tweets)](#metrics-own-tweets)
 - [Metrics — aggregates & insight](#metrics--aggregates--insight)
@@ -21,7 +24,11 @@ Full request/response shapes for every route. Use this when crafting a non-trivi
 - [Harvest ingestion](#harvest-ingestion)
 - [Mentions inbox](#mentions-inbox)
 - [Replies — generate](#replies--generate)
+- [Replies — generate-batch (Radar)](#replies--generate-batch-radar)
 - [Replies — CRUD](#replies--crud)
+- [Radar drafts](#radar-drafts)
+- [Ideas (Idea Inbox)](#ideas-idea-inbox)
+- [Channels (topic rooms)](#channels-topic-rooms)
 - [Grok ask](#grok-ask)
 - [Error shapes](#error-shapes)
 - [Cost cheatsheet for the operator](#cost-cheatsheet-for-the-operator)
@@ -84,7 +91,7 @@ Response:
 }
 ```
 
-Platforms with a registered soft daily budget (X: `X_DAILY_BUDGET_USD`, default $0.15) also carry `"dailyBudgetUsd"` and `"overBudget"` on their entry. Crossing the budget logs a `BUDGET WATCHDOG` error server-side; it never blocks calls.
+Platforms with a registered daily budget also carry `"dailyBudgetUsd"` and `"overBudget"` on their entry. Three platforms today: `x` (soft $0.15/day — crossing it only logs a `BUDGET WATCHDOG` error, never blocks), `grok` (text tokens, unbudgeted), `xai` (AI images — the **hard** $0.50/day budget that 429s `/x/images/generate` before spending).
 
 ### GET /cost/daily
 
@@ -98,7 +105,7 @@ Query params:
 {
   "from": "2026-05-12T00:00:00.000Z",
   "days": 30,
-  "budgets": { "x": 0.15 },
+  "budgets": { "x": 0.15, "xai": 0.5 },
   "daily": [
     { "day": "2026-05-12", "totalUsd": 0.034, "totalCalls": 12,
       "byPlatform": [ { "platform": "x", "costUsd": 0.034, "calls": 12 } ] }
@@ -112,54 +119,14 @@ Query params:
 
 ### GET /x/brief
 
-The growth-coach payload behind the extension's Today tab (OVERHAUL-PLAN §6.4): follower trend, yesterday's numbers, today's schedule + empty slots, reply quota, the week's 70/30 ratio, and today's spend in one $0 JSON (pure SQL, no X API reads).
+The growth-coach payload behind the extension's Today tab — follower trend + conversion, pinned-post watch, yesterday's numbers, today's schedule with best-times-annotated gaps, reply quota, quests + streak, the week's 70/30 ratio, and today's spend, in one $0 JSON. **Full response shape documented in [insight.md](insight.md)** — read that before parsing.
 
-Query params:
+Key operator facts:
 
-- `tzOffsetMin` (optional, default `0`) — JS `Date.getTimezoneOffset()` of the viewer, i.e. UTC − local in minutes (`-180` for UTC+3). Sets the local-day boundaries for `yesterday`/`today`/`replyQuota`. Spend ignores it and stays on the UTC billing day, matching `/cost/today`. Invalid values → `400 {"error":"invalid_tz_offset_min"}`.
-
-Response (shapes elided where they repeat other endpoints):
-
-```json
-{
-  "generatedAt": "2026-06-10T09:28:59.178Z",
-  "tzOffsetMin": -180,
-  "account": {
-    "followers": 199,
-    "measuredAt": "2026-06-10T08:20:35.077Z",
-    "delta7d": 13,
-    "sparkline": [ { "snapshotAt": "...", "followers": 186 } ]
-  },
-  "yesterday": {
-    "from": "...", "to": "...",
-    "posts":   [ { "tweetId": "...", "text": "...", "postedAt": "...", "isReply": false,
-                   "measuredAt": "...", "metrics": { "views": 43, "likes": 1, "replies": 1,
-                   "retweets": 0, "quotes": 0, "bookmarks": 0, "profileVisits": 0 } } ],
-    "replies": [ "same shape, isReply: true" ],
-    "profileClickLeaders": [ "same shape — top 3 by profileVisits over the trailing 7 days" ]
-  },
-  "today": {
-    "from": "...", "to": "...",
-    "scheduled": [ { "id": "uuid", "text": "...", "scheduledFor": "...", "status": "pending" } ],
-    "anchors": [ 8, 12, 16, 20 ],
-    "gaps": [ 16 ]
-  },
-  "replyQuota": { "postedToday": 12, "target": { "min": 10, "max": 20 } },
-  "week": { "from": "...", "to": "...", "posts": 30, "replies": 120, "replyPct": 80, "targetReplyPct": 70 },
-  "spend": {
-    "from": "...", "to": "...",
-    "xUsd": 0.081, "grokUsd": 0.012, "totalUsd": 0.093,
-    "byPlatform": [ { "platform": "x", "costUsd": 0.081, "calls": 10 } ]
-  }
-}
-```
-
-Notes for the operator:
-
-- `delta7d` diffs the latest `account_snapshots` row against the newest one ≥7 days old (oldest available when history is shorter; `null` with <2 snapshots). `sparkline` is the last 14 days.
-- `anchors` are the cadence ladder hours (local): 3/day → `[9,13,18]`, 4/day → `[8,12,16,20]`, picked by how many pending/posted slots today already has. `gaps` are anchor hours no scheduled post sits nearest to — "you have no post slotted for 16:00".
-- `replyQuota.postedToday` counts `reply_drafts` flipped to `posted` today (paste time); replies posted outside Reply Master only appear after the next 03:00 UTC discovery pass.
-- `metrics` on yesterday's rows is `null` until the 03:00 UTC pass snapshots them — same once-only data as `/x/metrics/*`.
+- `tzOffsetMin` = JS `getTimezoneOffset()` (UTC − local; `-180` for UTC+3) sets local-day boundaries for everything except `spend`, which stays on the UTC billing day. Invalid → `400 invalid_tz_offset_min`.
+- `today.gaps` is now an array of annotated objects (`{hour, n, avgViewsPerDay, score, sufficient}`), highest-value hole first — not bare hours.
+- Every read idempotently upserts today's `streaks` row (the C9 diary) — reading the brief IS how the day gets counted.
+- `metrics` on yesterday's rows is `null` until the 03:00 UTC pass — "not measured yet", never "0 views".
 
 ---
 
@@ -179,8 +146,10 @@ Body fields:
 - `scheduledFor` (string|null, optional) — ISO 8601 UTC, e.g. `"2026-05-15T13:30:00Z"`. Required when status is `pending`.
 - `mediaIds` (string[]|null, optional) — currently a no-op at publish time (media upload not supported), but the field is accepted for forward compat.
 - `status` (`"draft"`|`"pending"`, optional) — if omitted: derived (`pending` if `scheduledFor` set, else `draft`). Cannot create with `publishing`/`posted`/`failed`/`cancelled`.
+- `pillar` (string, optional) — validated against the **live active pillar slugs** (`GET /x/pillars?active=true`); invalid → `400 invalid_pillar`. Stored null when omitted.
+- `mediaNote` (string, optional, ≤280 after trim) — the S3 "visual made" marker ("post manually with its visual"); `null`/empty clears; bad → `400 invalid_media_note`. The publisher ignores it (v1) — it's a human reminder, not a gate.
 
-`201` returns the inserted row. `400 invalid_*` on bad shapes; `400 url_in_text` when creating a `pending` row whose text contains a URL.
+`201` returns the inserted row (now incl. `pillar`, `mediaNote`, `register`). `400 invalid_*` on bad shapes; `400 url_in_text` when creating a `pending` row whose text contains a URL.
 
 Example:
 
@@ -220,7 +189,7 @@ Order: `scheduledFor asc nulls last, createdAt desc`. Returns an array.
 
 ### GET /x/posts/scheduled/:id
 
-Single row (`404 not_found` if unknown). A thread member additionally carries `thread: [...]` — all sibling rows ordered by `threadPosition`, so an editor can render the whole chain in one call.
+Single row (`404 not_found` if unknown). A thread member additionally carries `thread: [...]` — all sibling rows ordered by `threadPosition`. Also carries `seededBy` — the Idea-Inbox provenance (`{id, text, status}` of the idea whose consume backlinked this row, or null) — and the `register` column (plain/spicy/reflective, stamped by the drafter; null on hand-written rows).
 
 ### PATCH /x/posts/scheduled/:id
 
@@ -229,6 +198,7 @@ Body fields (all optional, any subset):
 - `text` (string)
 - `scheduledFor` (string|null)
 - `mediaIds` (string[]|null)
+- `mediaNote` (string|null, ≤280) — same rules as POST; `null` clears the visual marker.
 - `status` (`draft|pending|failed|cancelled`) — `posted`/`publishing` are worker-owned (`400 status_not_settable_via_patch`).
 
 Constraints:
@@ -274,13 +244,16 @@ Body (all optional):
 - `pillar` — a slug from the active pillar set (`GET /x/pillars`) or `1|2|3` by sort order (`400 invalid_pillar`). Pillars are editable (§8.6); the seed set is `ai-craft|builder-51|unsexy-problems`. Omit to let Grok pick per draft.
 - `idea` (string, ≤2000 chars) — human steer; Romanian in, English out.
 - `voiceTweetId` (digits) — remix: lifts the saved tweet's extracted structure (hook/skeleton/line breaks/length/device) into the prompt (`404 voice_tweet_not_found`). Falls back to the raw text if the tweet was never extracted.
+- `ideaId` (uuid, optional) — consume an Idea-Inbox idea: on success it flips to `consumed` backlinked to the **first** inserted draft row (`consumeIdeaSafe` — a Grok failure leaves the idea open). Invalid → `400 invalid_idea_id`.
 - `model`, `reasoningEffort` (`none|low|medium|high`, default `low`).
+
+Each inserted row stamps its `register` (plain/spicy/reflective — feeds the Playbook's pillar × register scorecard), and when the Playbook's post guidance clears its n≥20 gate the measured "structures that work" line is appended server-side at the prompt tail.
 
 Returns `201 { drafts: [rows + register], winnersUsed, model, costUsd, requestId }`. Errors: `502 grok_upstream_error` / `502 grok_parse_error` / `429`.
 
 ### POST /x/posts/reup
 
-Same pipeline steered toward a **self-quote re-up**. Body: `{ tweetId (required, must be MY published tweet — 404 not_own_tweet otherwise), idea?, pillar?, model?, reasoningEffort? }`. Drafts carry `quoteTweetId`; the publisher re-verifies ownership at post time and posts with a verified self-quote (Feb 2026 policy — non-self quotes are refused).
+Same pipeline steered toward a **self-quote re-up**. Body: `{ tweetId (required, must be MY published tweet — 404 not_own_tweet otherwise), idea?, ideaId?, pillar?, model?, reasoningEffort? }`. Drafts carry `quoteTweetId`; the publisher re-verifies ownership at post time and posts with a verified self-quote (Feb 2026 policy — non-self quotes are refused).
 
 ---
 
@@ -470,7 +443,13 @@ Rows: `tweetId`, `authorHandle`, `authorDisplayName` (joined), `text`, `scrapedH
 
 ### PATCH /x/voice/tweets/:tweetId
 
-Soft archive toggle. `tweetId` must be digits (`400 invalid_tweet_id`). Body exactly `{ "retired": <bool> }` (`400 invalid_retired`). `404 not_found` if unknown. Returns the updated row.
+Archive toggle + channel tags. `tweetId` must be digits (`400 invalid_tweet_id`). Body (≥1 field, else `400 empty_patch`):
+
+- `retired` (bool) — soft archive (`400 invalid_retired`).
+- `tags` (string[]|null) — replace the tag set; ≤25 × ≤40 chars, lowercased/deduped; null clears (`400 invalid_tags`).
+- `addTags` (string[]) — **additive server-side merge**, race-safe (`400 invalid_add_tags`). Sending both `tags` and `addTags` → `400 tags_or_add_tags_not_both`.
+
+`404 not_found` if unknown. Returns the updated row. (No `tags` filter exists on `GET /x/voice/tweets` — query tagged tweets through a channel room instead.)
 
 ### DELETE /x/voice/tweets/:tweetId
 
@@ -576,10 +555,14 @@ Body:
   ```
   `signals` is optional — the band verdict + classifier inputs the extension stamps at capture time (`src/shared/replyBand.ts`), persisted in `contextSnapshot` so the draft is a labeled row for `GET /x/replies/outcomes`. `band` ∈ {hot, warm, skip, null}. `parent` is optional — rendered as a "MY POST (the tweet below is a reply to it)" block for mention replies.
 - `idea` (string, optional, ≤2000 chars) — the human steer, substituted into the prompt's `<idea>` tag. Romanian is fine; the reply comes out in English. Persisted on the row.
+- `ideaId` (uuid, optional) — consume an Idea-Inbox idea on success (backlinked `reply_drafts` provenance; band-gate refusal or Grok failure leaves it open). Invalid → `400 invalid_idea_id`.
+- `applyPillars` (boolean, optional, default false) — append a "Content pillars to honor" section (the active pillar set) at the prompt tail. Non-boolean → `400 invalid_apply_pillars`.
 - `override` (boolean, optional) — skip the band gate (below). Non-boolean → `400 invalid_override`.
-- `systemPromptOverride` (string, optional) — replaces the default REPLY-MASTER system prompt for this call. Persisted on the row.
+- `systemPromptOverride` (string, optional) — replaces the default REPLY-MASTER system prompt for this call. Persisted on the row. (`GET /x/replies/default-prompt` returns the default it replaces — $0.)
 - `model` (string, optional) — default `grok-4.3`. Aliases `grok-4.3-latest`/`grok-latest` priced.
 - `reasoningEffort` (`none|low|medium|high`, optional) — default `low`.
+
+**Server-stamped context (never sent by you):** the server enriches `context` before the insert with `signals` (its own band verdict when you sent none), `relationship` (the C3 block — stage, exchange counts, angle preference for this person), and `guidance` (the C4 measured top-angles line when gated). `parseContext` ignores these fields on input — don't bother sending them. They persist in `contextSnapshot` so every draft records exactly what the model saw.
 
 **Band gate (§7.3):** the server recomputes the reply band from the context *before* the Grok call (capture-stamped signal inputs preferred; otherwise derived from metrics + postedAt + the shared text-only bait check) and refuses `null`/`skip` targets with `422 { error: "band_gate", band, signals }` — no Grok spend, no reply slot burned on a dead post. `override: true` is the explicit escape hatch; always use it for mention replies (their metrics are zeros).
 
@@ -615,6 +598,25 @@ Response is the full draft row from `reply_drafts`:
 
 Errors: `400 invalid_context_*` / `400 invalid_idea` / `400 invalid_override` on validation; `422 band_gate` (dead target, no spend — resend with `override: true`); `502 grok_upstream_error` (with `status,type,code,message,requestId`) on xAI failure; `502 grok_parse_error` if the structured output can't be parsed even after the retry; `429` if xAI rate-limits.
 
+## Replies — generate-batch (Radar)
+
+### POST /x/replies/generate-batch
+
+One Grok call drafts a reply for a whole queue of hot/warm tweets (the Radar's "Draft replies"). **Deliberately lightweight: no `reply_drafts` rows, no band gate** (the Radar already filtered). Every returned reply also persists to `radar_drafts` so a browser restart doesn't lose paid-for output (a persist failure never fails the response — the Grok money is already spent).
+
+Body:
+
+- `tweets` (required, 1–25, deduped by `tweetId`) — each `{ tweetId (digits), handle (1–15 chars, @ stripped), text (non-empty), author?, url?, band? ('hot'|'warm'), signals? }`. `band`/`signals` are stored on the radar draft, never sent to Grok. Per-index errors: `400 invalid_tweet_<i>` / `invalid_tweet_id_<i>` / `invalid_tweet_handle_<i>` / `invalid_tweet_text_<i>` / `invalid_tweet_band_<i>` / `invalid_tweet_signals_<i>`; batch-level `400 invalid_tweets|empty_tweets|too_many_tweets`.
+- `idea` (≤2000), `systemPromptOverride`, `model`, `reasoningEffort`, `applyPillars` — as on `/generate`.
+
+Server-side: a 2-line relationship brief per distinct handle + the gated guidance line ride at the prompt tail. `maxOutputTokens` scales with batch size.
+
+Response: `{ replies: [{tweetId, text, angle}], count, requested, costUsd, model, requestId }` — only requested ids kept, first occurrence per id wins. Cost ~$0.01–0.05 for a 10–25 batch. Errors mirror `/generate` (`429` / `502 grok_upstream_error` / `502 grok_parse_error`).
+
+### GET /x/replies/default-prompt
+
+`{ prompt: <the REPLY-MASTER system prompt> }` — what `systemPromptOverride` replaces. $0.
+
 ## Replies — CRUD
 
 ### GET /x/replies
@@ -645,6 +647,68 @@ Body (any subset):
 ### DELETE /x/replies/:id
 
 `204` on success; `404 not_found` otherwise. Unlike scheduled posts, replies are deletable in any status (it's just a draft, not a publish record).
+
+---
+
+## Radar drafts
+
+Persisted copies of batch-drafted replies (C0), so verdicts + drafts survive the browser. Status ratchet `ready → clicked → expired`, lazy 48h expiry (a status flip on read, never a delete). All $0.
+
+### GET /x/radar/drafts
+
+Query: `status` (`ready|clicked|expired`, default `ready`; else `400 invalid_status`), `limit` (default 100, max 200). Before selecting, any `ready` row older than 48h flips to `expired`. Returns `{ count, drafts: [{id, tweetId, url, handle, author, snippet, band, signals, replyText, angle, status, tags, draftedAt}] }`, newest first. `ready` rows are pre-paid Grok output waiting to be pasted — surface them at the start of any reply session.
+
+### PATCH /x/radar/drafts
+
+Bulk status advance. Body: `{ tweetIds: string[] (≤200, digits each), status: 'clicked'|'expired' }`. `clicked` only advances `ready` rows; `expired` advances anything not already expired (dismiss also closes `clicked`). Nothing moves backwards. Returns `{ updated }`. Errors: `400 invalid_status|invalid_tweet_ids|too_many_tweet_ids`.
+
+### PATCH /x/radar/drafts/:tweetId/tags
+
+Channel tags on **all** draft rows of a tweet. Body `{ tags: string[]|null }` (≤25, each ≤40 chars, lowercased/deduped; null clears; else `400 invalid_tags`). `404 not_found` when no rows match. Returns `{ updated, tags }`.
+
+---
+
+## Ideas (Idea Inbox)
+
+C6: ideas survive their first use — capture anywhere, consume in a draft, keep the provenance. All $0.
+
+### GET /x/ideas
+
+Query: `status` (`open|consumed|discarded|all`, default **`open`**), `q` (substring), `limit` (default 100, max 500). Returns `{ count, ideas: [{id, text, sourceUrl, tags, status, consumedByTable, consumedById, createdAt, updatedAt}] }`, newest first.
+
+### POST /x/ideas
+
+Body: `{ text (required, ≤2000), sourceUrl? (≤1000), tags? (≤25 × ≤40 chars) }` → `201` row. Errors `400 invalid_text|invalid_source_url|invalid_tags`.
+
+### PATCH /x/ideas/:id
+
+Lifecycle + edits (`400 invalid_id` if not a uuid; `400 empty_patch` if no fields). Rules: `status:'open'` clears provenance (reopen = one call); `status:'consumed'` may carry `consumedByTable` (`reply_drafts|scheduled_posts`) + `consumedById` together (`400 invalid_consumed_by`); provenance without `status:'consumed'` → `400 consumed_by_requires_status_consumed`.
+
+**Prefer implicit consumption**: pass `ideaId` to `/x/posts/draft`, `/x/posts/reup`, or `/x/replies/generate` — the server consumes after its insert and a failed/refused call leaves the idea open. Only PATCH manually for hand-written posts.
+
+### DELETE /x/ideas/:id
+
+`204` / `404 not_found`.
+
+---
+
+## Channels (topic rooms)
+
+C8: a channel = tags + a saved view (slug PK, optional pillar link, keyword list for auto-suggest). All $0.
+
+### GET /x/channels — `?active=true|false`; ordered sortOrder, slug.
+
+### POST /x/channels
+
+Body: `{ slug (kebab, ≤40, immutable), label (≤60), color?, pillar? (NOT FK-validated — a stale link degrades to zero posts), keywords? (≤50 × ≤60), sortOrder?, active? }` → `201`. `409 slug_exists`; `400 invalid_slug|invalid_label|invalid_color|invalid_pillar|invalid_keywords|invalid_sort_order|invalid_active`.
+
+### GET /x/channels/:slug — THE ROOM
+
+One screen per topic: `{ channel, people (≤50, tagged + stages), voiceTweets (≤50), ideas (≤50, open), radarDrafts (≤20), posts }`. `posts` is null when no pillar is mapped; otherwise own posted tweets in that pillar with measured outcomes + `medianViews`/`medianProfileVisits`. This is the "what's my position in this topic" read — people, swipe file, ideas, and own performance together.
+
+### PATCH /x/channels/:slug — partial (same validators; slug immutable). `400 empty_patch`.
+
+### DELETE /x/channels/:slug — `{ deleted: slug }`; tags on rows stay behind as harmless orphans (nothing cascades).
 
 ---
 
@@ -712,7 +776,13 @@ Upstream X / Grok: `502 { error, status, type?, code?, message?, requestId? }`.
 | Voice template extract             | ~$0.005/tweet, one-time (Grok, not X API)  | extract routes          |
 | `POST /x/harvest/*`                | $0 (DOM only, no X API)                    | harvest ingest          |
 | `POST /x/replies/generate`         | ~$0.002–0.004 (2× on auto-retry)           | Grok Responses          |
+| `POST /x/replies/generate-batch`   | ~$0.01–0.05 per 10–25 tweets               | Grok Responses          |
 | `GET /x/replies/outcomes`          | $0 (DB read)                               | outcomes join           |
-| `GET /x/brief` / `/x/metrics/*` aggregates | $0 (DB read)                       | pure SQL                |
+| `GET /x/brief` / `/x/metrics/*` / `/x/playbook` / conversations / people / followups / fans / radar / ideas / channels / data | $0 (DB read) | pure SQL |
+| `GET /x/digest` (first open per week) | ~$0.01 narration (facts $0; `factsOnly=true` always $0) | Grok Responses |
+| `POST /x/people/:handle/icebreakers` | ~$0.005 (404/422 refusals are $0)        | Grok Responses          |
+| `POST /x/playbook/extract-winners` | ~$0.005/tweet, ≤20/call                    | Grok Responses          |
+| `POST /x/pillars/draft`            | ~$0.003 (proposal only)                    | Grok Responses          |
+| `POST /x/images/generate`          | ~$0.02/image, HARD $0.50/day budget (429)  | xAI Grok Imagine        |
 | `POST /grok/ask`                   | token-based                                | Grok Responses          |
 | `GET /cost/today` / `/cost/daily`  | $0                                         | shared cost_events read |

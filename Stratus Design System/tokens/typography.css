@@ -1,0 +1,32 @@
+/* Stratus typography — Inter across the board (bundled woff2), with the native
+   system stack as the fallback the extension actually ships in body{}. Dense,
+   compact, information-first: the base size is 13px, not the web-default 16px. */
+:root {
+  --strat-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --strat-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* Weights present in the bundle */
+  --strat-weight-regular: 400;
+  --strat-weight-bold: 700;
+  --strat-weight-extrabold: 800;
+  /* 600 (semibold) is used widely; Inter has no 600 file shipped, so it
+     synthesizes from 400/700 — kept as a token for fidelity to source. */
+  --strat-weight-semibold: 600;
+
+  /* Type scale (px) — every size seen in the sidepanel */
+  --strat-text-kpi: 26px;    /* the follower hero number */
+  --strat-text-lg: 15px;     /* dossier name / section lead */
+  --strat-text-h2: 14px;     /* panel titles */
+  --strat-text-body: 13px;   /* base body, inputs, textareas */
+  --strat-text-sm: 12px;     /* buttons, tabs, most labels */
+  --strat-text-xs: 11px;     /* meta, timestamps, counters */
+  --strat-text-2xs: 10px;    /* badges, kind chips */
+  --strat-text-3xs: 9px;     /* "ready" micro-labels */
+
+  --strat-leading-body: 1.45;
+  --strat-leading-tight: 1.1;
+  --strat-leading-snug: 1.3;
+
+  /* Uppercase eyebrow tracking (section h3, badges) */
+  --strat-tracking-eyebrow: 0.04em;
+}

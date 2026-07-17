@@ -13,6 +13,21 @@ The headline workflow: queue 3–4 posts/day for the next 7 days, with safety ch
 2. `curl -fsS "$STRATUS_BASE_URL/healthz"` — must return `{"ok":true}`.
 3. Confirm the user's local timezone — the API only accepts UTC, so you must convert.
 
+## Slotting by measured value (best-times)
+
+Before picking anchors blindly, ask the data which hours earn views:
+
+```bash
+bash .claude/skills/stratus/scripts/api.sh GET '/x/metrics/best-times?tzOffsetMin=-180' \
+  | jq '{measuredPosts, top}'
+```
+
+`top` is gated at **n≥3 posts per cell** — below that it's "no data", not advice.
+Use the scored cells to decide *which* anchor gets the strongest draft, and check
+`GET /x/brief`'s `today.gaps` (each empty anchor annotated with its best-times
+score) to fill the highest-value hole first. With no gated data, fall back to the
+ladder below, earliest first.
+
 ## Default cadences (anchored on hours, jittered minutes)
 
 Pick an *hour anchor* per slot, then jitter the minute per day to keep the cadence from looking like a cron job at `:00`.

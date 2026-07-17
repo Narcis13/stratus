@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<!-- @template name="Stratus Panel Screen" description="A canonical stratus side-panel tab: elevated Panel, KPI hero, status list, quota bar, and actions — built from the design system." -->
+<helmet>
+<script src="./ds-base.js"></script>
+<style>
+  body{margin:0;background:var(--strat-bg);color:var(--strat-text);font-family:var(--strat-font-sans);font-size:13px}
+  .stg{min-height:100vh;display:flex;justify-content:center;padding:20px}
+  .col{width:360px;max-width:100%}
+  .sec-h{margin:0;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--strat-muted)}
+  .plan{list-style:none;margin:0;padding:0;border:1px solid var(--strat-border);border-radius:6px;background:var(--strat-bg)}
+  .plan li{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--strat-border);font-size:12px}
+  .plan li:last-child{border-bottom:none}
+  .t{color:var(--strat-muted);font-variant-numeric:tabular-nums;min-width:44px;font-size:11px}
+  .txt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+  .sec{display:flex;flex-direction:column;gap:6px}
+  .acts{display:flex;gap:8px}
+</style>
+</helmet>
+<div class="stg">
+  <div class="col">
+    <x-import component-from-global-scope="StratusDesignSystem_4635dc.Panel" title="Today" hint-size="360px,520px">
+      <x-import component-from-global-scope="StratusDesignSystem_4635dc.KpiCard" value="1,284" label="followers" delta="{{ delta }}" delta-suffix=" / 7d" dc-props="{{ kpiProps }}" hint-size="100%,68px"></x-import>
+
+      <div class="sec">
+        <h3 class="sec-h">Today's plan</h3>
+        <ul class="plan">
+          <li><span class="t">09:14</span><x-import component-from-global-scope="StratusDesignSystem_4635dc.Badge" tone="posted" hint-size="52px,16px">posted</x-import><span class="txt">the accounts that grow fastest reply more than they post</span></li>
+          <li><span class="t">13:40</span><x-import component-from-global-scope="StratusDesignSystem_4635dc.Badge" tone="pending" hint-size="52px,16px">pending</x-import><span class="txt">thread: a week of posts in 20 minutes</span></li>
+          <li><span class="t">18:20</span><x-import component-from-global-scope="StratusDesignSystem_4635dc.Badge" tone="draft" hint-size="52px,16px">draft</x-import><span class="txt">your pinned tweet is your homepage</span></li>
+        </ul>
+      </div>
+
+      <div class="sec">
+        <h3 class="sec-h">Replies</h3>
+        <x-import component-from-global-scope="StratusDesignSystem_4635dc.QuotaBar" value="{{ replies }}" max="5" label="{{ quotaLabel }}" hint-size="100%,20px"></x-import>
+      </div>
+
+      <div class="acts">
+        <x-import component-from-global-scope="StratusDesignSystem_4635dc.Button" variant="primary" hint-size="80px,28px">Compose</x-import>
+        <x-import component-from-global-scope="StratusDesignSystem_4635dc.Button" hint-size="80px,28px">Refresh</x-import>
+      </div>
+    </x-import>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:400,&quot;height&quot;:560},&quot;delta&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:37,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Metrics&quot;},&quot;replies&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:3,&quot;min&quot;:0,&quot;max&quot;:10,&quot;step&quot;:1,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Metrics&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const replies = this.props.replies ?? 3;
+    return {
+      delta: this.props.delta ?? 37,
+      replies,
+      quotaLabel: `${replies} / 5–10 today`,
+      kpiProps: { spark: [820, 860, 905, 1010, 1150, 1284] },
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -110,6 +110,23 @@ curl -s "$STRATUS_BASE_URL/x/voice/authors?retired=true" \
 
 Each row carries the profile fields plus `tweetCount` (left-joined). Ordered by handle.
 
+### Tags & channels (C8)
+
+Saved tweets carry a `tags` JSON array that connects them to **channels** (topic
+rooms — `GET /x/channels`, see [circles.md](circles.md)). Two write modes on
+`PATCH /x/voice/tweets/:tweetId`:
+
+```bash
+# Replace the whole tag set (null clears)
+bash .claude/skills/stratus/scripts/api.sh PATCH /x/voice/tweets/$TWEET_ID '{"tags":["ai-tools","build-in-public"]}'
+
+# Additive merge — safe under concurrent clicks; what the extension chips use
+bash .claude/skills/stratus/scripts/api.sh PATCH /x/voice/tweets/$TWEET_ID '{"addTags":["ai-tools"]}'
+```
+
+Sending both `tags` and `addTags` in one call is a `400`. A channel's room
+(`GET /x/channels/:slug`) aggregates the voice tweets tagged with its slug.
+
 ### Archive / unarchive (soft)
 
 ```bash

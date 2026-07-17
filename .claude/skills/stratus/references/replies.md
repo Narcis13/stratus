@@ -53,10 +53,13 @@ Notes:
 - `topComments` may be `[]`. Up to the first 10 are passed to Grok (the renderer slices it).
 - `tweetId` is digits only (snowflake).
 - Optional context extras: `signals` (the capture-time band verdict + classifier inputs from the extension — when absent the server derives and stamps its own, so the draft is still a labeled outcomes row) and `parent: { text }` (my post the target tweet replies to — rendered as thread context; used for mention replies).
+- **Server-stamped, never sent by you:** `relationship` (the C3 block — stage, prior exchanges, per-person angle preference at ≥3 measured, notes) and `guidance` (the C4 measured top-angles line when its n≥20 gate clears) are looked up and appended server-side after the band gate; `parseContext` ignores them on input. They persist in `contextSnapshot`, so a draft to a `mutual`-stage person is automatically relationship-aware — nothing for you to do except keep `postedTweetId` linkage clean so the history exists.
 
 ## Optional knobs
 
 - `idea` — string ≤2000 chars, the human steer substituted into the prompt's `<idea>` tag. Romanian in, English reply out. Persisted on the row.
+- `ideaId` — uuid of an open Idea-Inbox idea (`GET /x/ideas`); consumed with provenance after a successful insert (a band-gate refusal or Grok failure leaves it open). Prefer this over pasting the idea text — the backlink is free archaeology.
+- `applyPillars` — boolean, default false; appends the active content pillars at the prompt tail so replies honor them too.
 - `override` — boolean; skips the band gate. Required for mention replies (their metrics are zeros, so the band is always `null`). Non-boolean → `400 invalid_override`.
 - `systemPromptOverride` — full string to replace the default system prompt for this single call. Persisted on the row, so you can audit which prompt produced which draft. The default is the REPLY-MASTER prompt embedded in `src/x/replies/prompt.ts` (kept byte-identical with `reply prompt.md`).
 - `model` — defaults to `grok-4.3`. Override only if the user asks.
@@ -140,6 +143,49 @@ Each outcome row carries the capture-time `signals` (band verdict), `sourceMetri
 ## Cost
 
 Grok charges by tokens; each `/replies/generate` call writes a `cost_events` row tagged `platform='grok'`. The denormalized `costUsd` on the draft row is for UI display — don't sum it across the table for a billing total; use `GET /cost/today` (which reads `cost_events`) instead.
+
+## Batch drafting & the Radar (generate-batch)
+
+For a queue of live tweets (the Radar's hot/warm sightings, or any list you and
+the user assemble), `POST /x/replies/generate-batch` drafts one reply per tweet
+in a single Grok call (~$0.01–0.05 for 10–25 tweets):
+
+```bash
+bash .claude/skills/stratus/scripts/api.sh POST /x/replies/generate-batch '{
+  "tweets": [
+    {"tweetId":"179…1","handle":"somebuilder","text":"…full tweet text…","url":"https://x.com/…"},
+    {"tweetId":"179…2","handle":"otherdev","text":"…"}
+  ]
+}' | jq '{count, requested, costUsd, replies}'
+```
+
+Differences from `/generate`: **no band gate** (pre-filter the list yourself),
+**no `reply_drafts` rows** — each reply persists to `radar_drafts` instead
+(status `ready`, 48h lazy expiry). Relationship briefs and gated guidance still
+ride server-side per handle. Full shapes in [endpoints.md](endpoints.md).
+
+Working the radar queue afterwards:
+
+```bash
+# What's drafted and waiting (pre-paid — always surface these first)
+bash .claude/skills/stratus/scripts/api.sh GET '/x/radar/drafts?status=ready' | jq '.count, .drafts[0]'
+
+# User opened/pasted some → advance the ratchet (clicked only advances ready)
+bash .claude/skills/stratus/scripts/api.sh PATCH /x/radar/drafts '{"tweetIds":["179…1"],"status":"clicked"}'
+```
+
+Radar drafts are fire-and-forget: no outcome tracking unless the pasted reply
+gets discovered by the daily pass / harvest reconcile. For replies you want
+measured (targets, mentions, anyone in the CRM), prefer single `/generate` +
+the `posted`+`postedTweetId` PATCH.
+
+## Mention & conversation replies
+
+For mentions/open loops (see [circles.md](circles.md)): always `override: true`
+(mention metrics are zeros → band `null`) and pass `context.parent` = my post
+being replied to. After pasting on X:
+`PATCH /x/mentions/:tweetId {"status":"answered","draftId":"<uuid>"}` — the
+conversation loop settles instantly, before daily discovery sees the reply.
 
 ## When to use `/grok/ask` instead
 
