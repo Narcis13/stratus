@@ -4,9 +4,9 @@
 > Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 
-- **last-commit:** 95b9fff (ST.1) · reconciled: 94663f0 was scaffolding only (masterplan skill + plans + codemap), no ledger task
+- **last-commit:** 40c718e (UI.8) · NB: ST.1+UI.8+UI.1 *code* all landed in ONE commit `61a04e7` under ST.1's message (a concurrent lane's broad `git add`); this UI.8 commit carries only biome.json + docs. See D12.
 - **current wave:** 0
-- **next-up:** Lane A → UI.1 · Lane B → UI.8 · Lane C → ST.2 (ST.1 done)
+- **next-up:** Lane A → UI.1 (settings.*/registry.* still uncommitted in-tree) · Lane B → UI.9 (UI.8 done ✓) or UI.10 · Lane C → ST.2 (ST.1 done)
 
 ## Ledger
 
@@ -14,7 +14,7 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 
 ### Wave 0 — Foundations
 - [ ] UI.1 Settings platform (xhigh)
-- [ ] UI.8 Design tokens dark refactor (high)
+- [x] UI.8 Design tokens dark refactor (high) — 61a04e7 (styles.css) + 40c718e (biome/docs) 2026-07-18
 - [ ] UI.9 Light theme + Appearance (high)
 - [ ] UI.10 UI primitives + grouped rail (xhigh)
 - [x] ST.1 Engine layers + PRNG (high) — 95b9fff 2026-07-18
@@ -173,13 +173,17 @@ Append D11+ as work reveals divergences from plan text.
 - **D8** (binds UI.11): prune the "coming soon" manifest to features still unbuilt at that time.
 - **D9** (standing): content.ts task order is fixed: AX.3 → AX.5 → RU.7 → RU.8 → NT.5 → HV.2 → A3.3.
 - **D10** (standing): registry knob groups (UI.2–5) run in Wave 5 so they catalog the final constant set, including RU/HV/GR/A3 constants.
+- **D11** (UI.8, standing): `biome.json` `files.ignore` now includes `Stratus Design System` — the DS reference folder (Decision 9, plan out-of-scope) was ~112 of the baseline lint errors. Not in UI.8's plan edit-list but a correct, universal fix; whole-repo lint dropped 119→7. The remaining 7 are pre-existing and NOT in any changed file: 2 a11y in `extension/src/sidepanel/Replies.tsx` (UI.15 territory) + 5 biome-format on generated `src/db/migrations/meta/*.json` (a future infra task could ignore `src/db/migrations/meta`).
+- **D12** (UI.8, historical): UI.8's `styles.css` and UI.1's whole settings platform were absorbed into ST.1's commit `61a04e7` (15 files, 3894 ins) by a concurrent lane's broad `git add` before either owner committed. Not reverted — `61a04e7` is shared HEAD and other lanes built on it; rewriting shared history mid-run is more dangerous than the mislabel. UI.8's `styles.css` content is correct there (0 literals outside `:root`, build green). **Process lesson: parallel masterplan lanes in ONE worktree must stage explicit paths (`git add <files>`), never `git add -A`/`commit -am`.**
 
 ## Gotchas log
 
 Things the next implementer must know that aren't obvious from the code. Append-only,
 one line each, newest last.
 
-- **`bun run lint` has 114 pre-existing errors at baseline (94663f0)**, across ~unrelated files — NOT caused by masterplan work. The repo-wide lint is red before this masterplan started; the per-task gate is "the changed files lint clean" (verify with `bunx biome check <files>`), not "whole-repo lint green". Don't try to zero the 114.
+- **`bun run lint` was 114–119 pre-existing errors at baseline** — mostly the `Stratus Design System/` reference folder. **UI.8 (D11) added that folder to biome ignore → whole-repo now 7 errors**, all pre-existing and outside any changed file (2 a11y `Replies.tsx`, 5 format on generated `migrations/meta/*.json`). Per-task gate stays "the changed files lint clean" (`bunx biome check <files>`), not "whole-repo green"; don't chase the remaining 7 unless your task owns those files.
+- **`bun test` has 2 pre-existing failures** in `src/x/routes/brief.test.ts` ("brief quests (C9)") — full suite 624 pass / 2 fail, identical before and after UI.8. Unrelated to CSS/settings; a Wave-1 or brief-owning task should investigate. Don't read "2 fail" as a regression.
+- **UI.8 design-token conventions:** `styles.css` `:root` = `--strat-*` set + legacy short aliases (`--bg`,`--accent`,`--status-*`…, all mapping to `--strat-*`) — the 2.4k-line sheet still resolves through the aliases; don't rip them out until a full migration pass. Alpha fills use `color-mix(in srgb, var(--strat-*) N%, transparent)` (exact-equal to the old rgba, tracks the base for UI.9's light theme) — a pre-existing `color-mix` at ~line 2051 already used the pattern, so it's sanctioned. `#fff`→`white` keyword. Fonts load from absolute `/fonts/Inter-*.woff2` (public/ → dist root; same files Studio uses) — no `sidepanel.html` change needed. `color-scheme: dark` stays until UI.9 adds `:root[data-theme='light']`.
 - **ST.1 / compose.ts pattern engine:** `patternCoords(pattern,w,h,spacing,seed)` returns box-local coords; `dots|grid|diagonal|plus` share one top-left-first lattice (marks at `spacing/2 + k·spacing`, `< w/h`), `blobs` returns seeded-random `{x,y,r}` (count = `floor(w/spacing)·floor(h/spacing)`, 3 PRNG draws/blob in x,y,r order). `mulberry32` is the only sanctioned RNG in the Studio — Math.random is banned (determinism = the preview-IS-artifact contract). `path` layers author SVG in a 100×100 viewbox scaled into `box`; strokes divide lineWidth by mean scale. Downstream S5 tasks (ST.3 mascot, ST.4 patterns) build on these.
 
 ## Planning-error log

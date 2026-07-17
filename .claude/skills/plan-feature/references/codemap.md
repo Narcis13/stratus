@@ -1,6 +1,6 @@
 # stratus code map
 
-> **Stamped:** 2026-07-18 at commit `95b9fff`.
+> **Stamped:** 2026-07-18 at commit `40c718e` (UI.8).
 > This file exists so `/plan-feature` never re-scans the repo. It is the single
 > pre-computed answer to "where does X live and how is it wired".
 > **Maintenance rule:** any commit that adds/moves/deletes a file, route, table,
@@ -43,7 +43,8 @@ Runtime: **Bun ≥1.1 + Hono** server on Hetzner (`https://stratus-narcis.duckdn
 | `scrape.js`, `humantype.py`, `hammerspoon-init.lua` | Standalone helpers (console harvester origin; typing/paste automation). Not part of the server. |
 | `engagement post prompt.md`, `engagement-calendar-14d.md`, `src/my_niche.md` | Content-strategy notes consumed by prompts/planning, not code. |
 | `drizzle.config.ts` | Points drizzle-kit at `src/x/db/schema.ts` + `src/db/shared-schema.ts` → `src/db/migrations/`. |
-| `biome.json`, `tsconfig.json` | Lint/format; TS strict, `noEmit`, `allowImportingTsExtensions`; tsconfig `include` covers `scripts/**` + `drizzle.config.ts`. |
+| `biome.json`, `tsconfig.json` | Lint/format; TS strict, `noEmit`, `allowImportingTsExtensions`; tsconfig `include` covers `scripts/**` + `drizzle.config.ts`. **biome `files.ignore` skips `dist`, `node_modules`, `scrape.js`, `Stratus Design System` (UI.8 — the DS folder is reference-only, not built), and `src/db/migrations` (UI.1 — drizzle-generated SQL + snapshot JSON; never hand-linted).** |
+| `Stratus Design System/` | Reference-only design-system spec (Decision 9 — never imported/shipped). `tokens/{colors,typography,spacing,radii}.css` are the **source of the `--strat-*` tokens** UI.8 lifted into `styles.css`; `.jsx` components are specs the extension re-implements in TS. biome-ignored. |
 | `.env.example` | Every env key, documented. Notables: `API_TOKEN` (one bearer for API+extension+MCP), `SELF_X_USER_ID`, `XAI_API_KEY`, `SQLITE_PATH` (`:memory:` in tests), `X_DAILY_BUDGET_USD` (soft), `XAI_IMAGE_DAILY_BUDGET_USD` (hard 429), `DAILY_METRICS_ENABLED`, `WINNER_REREAD_MIN_VIEWS`, `STRATUS_DEPLOY_HOST`, `MENTION_API_REPLIES` (unread; verify-then-enable carve-out). |
 | `.claude/` | `commands/ship.md`; skills: `stratus` (drive the HTTP API), `skill-explainer`, `plan-feature` (this skill), `masterplan` (executes `plans/MASTERPLAN.md` one task/session; state in its `STATE.md`; updates THIS codemap after every task). |
 | `plans/` | 12 feature plans + `MASTERPLAN.md` (unified execution order, reasoning levels, waves, adaptations D1–D10). Execution state: `.claude/skills/masterplan/STATE.md`. |
@@ -204,6 +205,8 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 | `src/sidepanel/App.tsx` | Tabs: today, people, channels, calendar, composer, studio, harvest, voice, replies, ideas, playbook, settings. Cross-tab handoffs: `onOpenPerson`, `openStudio`, remix→composer. |
 | Tab components | `Today.tsx` (hosts: Conversations, DoNext, Fans, LaunchRoom, Digest, PinnedWatchCard, quests/streak, Radar, Targets, TodayPlan), `People.tsx` (+dossier, Icebreakers), `Channels.tsx`+`ChannelTags.tsx` (shared chip picker, 60s cache), `Calendar.tsx`, `Composer.tsx`+`composerLogic.ts` (best-time suggest, thread mode, jittered minutes), `Studio.tsx`, `Harvest.tsx`+`harvestClient.ts`, `Voice.tsx`+`Pillars.tsx` subtab, `Replies.tsx`, `Ideas.tsx`, `Playbook.tsx`, `Settings.tsx` (passiveCapture, applyPillarsToReplies, harvest cursors). |
 | `src/studio/` | S3: `compose.ts` (layer model → canvas → PNG; layoutText wrap/shrink/ellipsize; S5.1 added `path`/`panel`/`pattern` layer kinds + exported `mulberry32` seeded PRNG + pure `patternCoords` — never `Math.random`), `templates.ts` (quote/stat/banner/pfp + S4 background+scrim under text), `brandKit.ts`, `fonts.ts` (bundled Inter WOFF2s). |
+| `src/sidepanel/styles.css` | The panel stylesheet (~2.4k lines). **UI.8:** `:root` holds the full `--strat-*` design-token set (verbatim from `Stratus Design System/tokens/*.css`) + `--x-*` companion tokens + **legacy short aliases** (`--bg: var(--strat-bg)` …) the sheet still resolves through. **Zero color literals outside `:root`** — tinted fills use exact fill tokens (`--strat-{accent,danger,warn}-fill`, `--strat-pillar-bg`, `--strat-scrim`) or `color-mix(in srgb, var(--strat-*) N%, transparent)` (exact-equivalent, and tracks the base so Task-9 light theme flows through). Dark-only (`color-scheme: dark`) until UI.9. Inter is `@font-face`d from `/fonts/` and set on `body` via `--strat-font-sans`; metric classes get `tabular-nums`. |
+| `public/fonts/` | Bundled Inter WOFF2s (Regular/Bold/ExtraBold) — served at `/fonts/`, loaded by both the Studio (`studio/fonts.ts`, FontFace) and the panel sheet (`@font-face`, UI.8). |
 | Storage keys | `chrome.storage.local`: brand kit, settings toggles, harvest cursors, `replyMaster:idea(+Id)`. `chrome.storage.session`: `radar:sightings`, `radar:dismissed`, `launch:active`, `launch:replies`. |
 
 ## 6. MCP + integrations
@@ -252,6 +255,7 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 26. **Content script is an IIFE**: no module imports at runtime; shared code gets inlined — heavy deps stay out.
 27. **Shims for shared server modules** (replyBand, channelSuggest) — never fork logic between server and page.
 28. **Posting is always manual paste** — OAuth 1.0a media wall + reply policy; nothing auto-posts to others, MCP can only create `draft` rows.
+- **Design tokens (UI.8)**: the panel's `styles.css` `:root` carries the `--strat-*` token set (from `Stratus Design System/tokens/*.css`) + `--x-*` companion tokens + legacy short aliases. New UI references `--strat-*` directly; tinted fills use the exact fill tokens or `color-mix(in srgb, var(--strat-*) N%, transparent)`; **no color literal lives outside `:root`**. Dark-only (`color-scheme: dark`) until UI.9 adds `:root[data-theme='light']`. (Unnumbered — the numbered `§7.N` refs are load-bearing across CLAUDE.md/plans; don't renumber.)
 
 **Process**
 29. **Docs sync in the same commit**: CLAUDE.md phase entry, the relevant plan doc (PLAN/CIRCLES/SURFACES), the matching `docs/<tab>.md`, and THIS codemap.
@@ -292,3 +296,4 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 - 2026-07-16 `2a7693e` — initial map (post-C9, post-S4, post grok-imagine migration).
 - 2026-07-17 — §2: added `plans/` + masterplan skill rows (planning only; no src/extension changes — stamp sha unchanged).
 - 2026-07-18 `95b9fff` — §5: `compose.ts` gained `path`/`panel`/`pattern` layer kinds + `mulberry32`/`patternCoords` pure exports (ST.1 / S5.1).
+- 2026-07-18 `40c718e` (styles.css in `61a04e7`, D12) — **UI.8**: `styles.css` adopts the `--strat-*` design tokens (legacy aliases retained), bundles Inter for the panel, 44 color literals → tokens/`color-mix`; §2 DS-folder + biome-ignore rows, §5 `styles.css`/`public/fonts` rows, §7 design-token pattern.
