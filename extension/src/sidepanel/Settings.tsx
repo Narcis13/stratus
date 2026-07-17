@@ -1,5 +1,16 @@
 import { type FormEvent, type JSX, useEffect, useState } from 'react';
-import { type Settings, getSettings, patchSettings, saveSettings } from './storage.ts';
+import {
+  DEFAULT_DENSITY,
+  DEFAULT_THEME,
+  DEFAULT_UI_SCALE,
+  type Density,
+  type Settings,
+  type ThemePref,
+  type UiScale,
+  getSettings,
+  patchSettings,
+  saveSettings,
+} from './storage.ts';
 
 // C0: surface the per-handle 'since-last' harvest cursors (shared/harvest.ts
 // harvestCursorKey) so a wrong cursor is visible and resettable instead of a
@@ -32,6 +43,9 @@ export function SettingsPanel(): JSX.Element {
   const [applyPillarsToReplies, setApplyPillarsToReplies] = useState(false);
   const [autoTypeReplyDraft, setAutoTypeReplyDraft] = useState(false);
   const [passiveCapture, setPassiveCapture] = useState(true);
+  const [theme, setTheme] = useState<ThemePref>(DEFAULT_THEME);
+  const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
+  const [uiScale, setUiScale] = useState<UiScale>(DEFAULT_UI_SCALE);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [cursors, setCursors] = useState<HarvestCursor[]>([]);
@@ -43,6 +57,9 @@ export function SettingsPanel(): JSX.Element {
       setApplyPillarsToReplies(s.applyPillarsToReplies);
       setAutoTypeReplyDraft(s.autoTypeReplyDraft);
       setPassiveCapture(s.passiveCapture);
+      setTheme(s.theme);
+      setDensity(s.density);
+      setUiScale(s.uiScale);
     });
     void loadHarvestCursors().then(setCursors);
   }, []);
@@ -62,6 +79,9 @@ export function SettingsPanel(): JSX.Element {
       applyPillarsToReplies,
       autoTypeReplyDraft,
       passiveCapture,
+      theme,
+      density,
+      uiScale,
     };
     await saveSettings(next);
     setSaving(false);
@@ -145,6 +165,56 @@ export function SettingsPanel(): JSX.Element {
         </button>
         {saved && <span className="ok">Saved</span>}
       </div>
+
+      <h3 style={{ marginTop: 20 }}>Appearance</h3>
+      <p className="muted">Panel look only — applies instantly, no Save needed.</p>
+
+      <label className="field">
+        <span>Theme</span>
+        <select
+          value={theme}
+          onChange={(e) => {
+            const v = e.target.value as ThemePref;
+            setTheme(v);
+            void patchSettings({ theme: v });
+          }}
+        >
+          <option value="system">System</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </label>
+
+      <label className="field">
+        <span>Density</span>
+        <select
+          value={density}
+          onChange={(e) => {
+            const v = e.target.value as Density;
+            setDensity(v);
+            void patchSettings({ density: v });
+          }}
+        >
+          <option value="cozy">Cozy</option>
+          <option value="compact">Compact</option>
+        </select>
+      </label>
+
+      <label className="field">
+        <span>Text size</span>
+        <select
+          value={String(uiScale)}
+          onChange={(e) => {
+            const v = Number(e.target.value) as UiScale;
+            setUiScale(v);
+            void patchSettings({ uiScale: v });
+          }}
+        >
+          <option value="12">Small</option>
+          <option value="13">Default</option>
+          <option value="14">Large</option>
+        </select>
+      </label>
 
       <h3 style={{ marginTop: 20 }}>Harvest cursors</h3>
       <p className="muted">

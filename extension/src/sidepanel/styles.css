@@ -102,6 +102,13 @@
   --strat-rail-width: 104px;
   --strat-panel-width: 360px;
 
+  /* ---- Appearance knobs (UI.9) — density + scale semantic vars the panel
+     rules consume; [data-density]/[data-scale] on <html> override them. ---- */
+  --ui-panel-pad: 14px;
+  --ui-section-gap: 12px;
+  --ui-row-gap: 8px;
+  --ui-root-size: 13px;
+
   /* ---- Radii, borders, elevation, motion (flat: hairlines, not shadows) ---- */
   --strat-radius-xs: 3px;
   --strat-radius-sm: 4px;
@@ -146,6 +153,72 @@
   --status-cancelled: var(--strat-status-cancelled);
 }
 
+/* ============================================================================
+   Light theme (UI.9) — `data-theme='light'` stamped on <html> by main.tsx.
+   Only the base --strat-* tokens are redefined; every legacy/semantic alias is
+   a var() reference and resolves lazily, so the whole 2.5k-line sheet re-tints
+   for free. Palette is an opening guess (AA over the tinted fills is the QA
+   bar — see plan risk note). Every tinted fill keeps a *dark* text companion
+   (never light-alpha text on white). Content-script overlays and the Studio
+   canvas are NOT themed here — they follow X / the user's brand kit. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --strat-bg: #f5f7fa;
+  --strat-bg-elev: #ffffff;
+  --strat-bg-hover: #eceff4;
+  --strat-border: #d9dfe9;
+
+  --strat-text: #18212f;
+  --strat-muted: #5f6b80;
+
+  --strat-accent: #2f6ce0;
+  --strat-accent-hover: #1f5ccc;
+
+  /* Semantic ink darkened so each reads as text on light AND tints cleanly as a
+     color-mix fill base (both usages share the token). */
+  --strat-danger: #c23a54;
+  --strat-warn: #9a6a10;
+  --strat-ok: #1f9d66;
+
+  --strat-status-draft: #5f6b80;
+  --strat-status-pending: #2f6ce0;
+  --strat-status-publishing: #b26f00;
+  --strat-status-posted: #1f9d66;
+  --strat-status-failed: #c23a54;
+  --strat-status-cancelled: #6b7280;
+
+  --strat-band-hot: rgb(0, 150, 100);
+  --strat-band-warm: rgb(200, 140, 0);
+  --strat-band-warm-text: #8a6100;
+
+  --strat-pillar: #6d4fd0;
+  --strat-pillar-bg: rgba(124, 92, 255, 0.12);
+
+  /* Direct-use tinted fills re-authored for a light base (10–14% alpha). */
+  --strat-accent-fill: rgba(47, 108, 224, 0.12);
+  --strat-danger-fill: rgba(194, 58, 84, 0.1);
+  --strat-warn-fill: rgba(154, 106, 16, 0.12);
+  --strat-ok-fill: rgba(31, 157, 102, 0.12);
+  --strat-scrim: rgba(15, 23, 42, 0.4);
+}
+
+/* Density — [data-density='compact'] tightens the ~3 layout rhythm vars every
+   .panel/.row consumes. Cozy is the base (:root defaults), so a no-op. */
+:root[data-density="compact"] {
+  --ui-panel-pad: 10px;
+  --ui-section-gap: 8px;
+  --ui-row-gap: 6px;
+}
+
+/* Scale — base is 13px on :root; these shift the panel's inherited root size. */
+:root[data-scale="12"] {
+  --ui-root-size: 12px;
+}
+:root[data-scale="14"] {
+  --ui-root-size: 14px;
+}
+
 /* Inter — bundled at extension/public/fonts (served from /fonts). Three weights
    ship: 400, 700, 800; 600 (semibold) is synthesized by the browser. */
 @font-face {
@@ -183,7 +256,7 @@ body,
 body {
   margin: 0;
   font-family: var(--strat-font-sans);
-  font-size: 13px;
+  font-size: var(--ui-root-size, 13px);
   line-height: 1.45;
   color: var(--text);
   background: var(--bg);
@@ -261,10 +334,10 @@ body {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px;
+  padding: var(--ui-panel-pad);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--ui-section-gap);
 }
 
 .panel-header {
@@ -372,7 +445,7 @@ button.danger:hover:not(:disabled) {
 
 .row {
   display: flex;
-  gap: 8px;
+  gap: var(--ui-row-gap);
   align-items: center;
 }
 
