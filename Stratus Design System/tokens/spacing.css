@@ -1,0 +1,25 @@
+/* Stratus spacing — a tight 2px-based rhythm. This is a compact panel UI, so
+   the working range is small: gaps of 2–12px do almost all the layout work. */
+:root {
+  --strat-space-0: 0;
+  --strat-space-1: 2px;
+  --strat-space-2: 4px;
+  --strat-space-3: 6px;
+  --strat-space-4: 8px;
+  --strat-space-5: 10px;
+  --strat-space-6: 12px;
+  --strat-space-7: 14px;
+  --strat-space-8: 16px;
+  --strat-space-10: 20px;
+
+  /* Common composite paddings */
+  --strat-pad-panel: 14px;       /* .panel */
+  --strat-pad-btn: 6px 12px;     /* button */
+  --strat-pad-input: 8px 10px;   /* input / textarea / select */
+  --strat-pad-chip: 1px 8px;     /* pills & chips */
+  --strat-pad-badge: 1px 6px;    /* status badges */
+
+  /* Structural */
+  --strat-rail-width: 104px;     /* the vertical tab rail */
+  --strat-panel-width: 360px;    /* typical Chrome side-panel width */
+}

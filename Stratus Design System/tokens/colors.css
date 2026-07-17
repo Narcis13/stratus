@@ -1,0 +1,70 @@
+/* Stratus color tokens — lifted verbatim from the extension's sidepanel :root.
+   Stratus is a dark-first companion UI that docks beside the X timeline, so the
+   palette is a deep near-black canvas with a single confident blue accent and a
+   small, meaningful set of status hues. */
+:root {
+  color-scheme: dark;
+
+  /* ---- Surfaces (deep → elevated) ---- */
+  --strat-bg: #0e1014;          /* app canvas — near black, faint blue cast */
+  --strat-bg-elev: #161a21;     /* panels, cards, the tab rail */
+  --strat-bg-hover: #1d222b;    /* hover fill, default button, code chips */
+  --strat-border: #262c36;      /* every hairline divider & card edge */
+
+  /* ---- Text ---- */
+  --strat-text: #e8ebf0;        /* primary copy */
+  --strat-muted: #8b95a7;       /* labels, meta, secondary copy */
+
+  /* ---- Brand accent ---- */
+  --strat-accent: #4f8cff;      /* the one brand blue — links, primary, focus */
+  --strat-accent-hover: #6ba0ff;
+
+  /* ---- Semantic ---- */
+  --strat-danger: #e0556d;      /* destructive, over-limit, failure */
+  --strat-warn: #ffb454;        /* warnings, neglected, media pending */
+  --strat-ok: #5ad19a;          /* success, posted, quota met */
+
+  /* ---- Post lifecycle status ---- */
+  --strat-status-draft: #8b95a7;
+  --strat-status-pending: #4f8cff;
+  --strat-status-publishing: #f0b446;
+  --strat-status-posted: #5ad19a;
+  --strat-status-failed: #e0556d;
+  --strat-status-cancelled: #6e6e6e;
+
+  /* ---- Reply-band signal (mirrors the on-page content-script badge) ---- */
+  --strat-band-hot: rgb(0, 186, 124);
+  --strat-band-warm: rgb(255, 179, 0);
+  --strat-band-warm-text: rgb(214, 150, 0);
+
+  /* ---- Content-pillar purple (drafts, thread pillars) ---- */
+  --strat-pillar: #9b86ff;
+  --strat-pillar-bg: rgba(124, 92, 255, 0.15);
+
+  /* ---- Tinted fills (12–18% alpha over dark) used by badges & messages ---- */
+  --strat-accent-fill: rgba(79, 140, 255, 0.18);
+  --strat-danger-fill: rgba(224, 85, 109, 0.12);
+  --strat-warn-fill: rgba(255, 180, 84, 0.1);
+  --strat-ok-fill: rgba(90, 209, 154, 0.12);
+  --strat-scrim: rgba(0, 0, 0, 0.55);   /* modal backdrop */
+
+  /* ---- X-companion reference tokens ----
+     The panel sits next to x.com; these are X's own values, used only when a
+     surface must visually blend into the live X timeline (see readme). */
+  --x-blue: #1d9bf0;
+  --x-dim-bg: #15202b;
+  --x-dark-bg: #000000;
+  --x-border: #2f3336;
+  --x-muted: #71767b;
+  --x-red: #f4212e;
+
+  /* ---- Semantic aliases (prefer these in new work) ---- */
+  --surface-app: var(--strat-bg);
+  --surface-card: var(--strat-bg-elev);
+  --surface-hover: var(--strat-bg-hover);
+  --border-hairline: var(--strat-border);
+  --text-body: var(--strat-text);
+  --text-muted: var(--strat-muted);
+  --accent: var(--strat-accent);
+  --accent-hover: var(--strat-accent-hover);
+}

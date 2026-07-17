@@ -4,18 +4,16 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>STRATUS · Operator Manual</title>
-<meta name="description" content="An operator's manual for the stratus service — schedule, listen, remember." />
+<meta name="description" content="Operator's manual for the stratus skill — Claude as X growth coach, editorialist, analyst, and CRM operator over one HTTP API." />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Geist:wght@100..900&family=JetBrains+Mono:wght@400..700&display=swap" rel="stylesheet">
 <style>
   /* ─────────────────────────────────────────────────────────────
-     STRATUS · OPERATOR MANUAL · stylesheet
-     Design system: aerospace mission-control × editorial tech.
+     DESIGN SYSTEM — aerospace mission-control × editorial tech
      ───────────────────────────────────────────────────────────── */
 
   :root {
-    /* Voids — dark backgrounds, blue undertone */
     --void:        #05080F;
     --deep:        #0A1020;
     --panel:       #0F1830;
@@ -24,31 +22,26 @@
     --hairline:    rgba(140, 175, 230, 0.10);
     --hairline-strong: rgba(140, 175, 230, 0.22);
 
-    /* Mists — text */
     --mist-100:    #DCE5F2;
     --mist-200:    #A1B2D0;
     --mist-300:    #6E81A4;
     --mist-400:    #44557A;
     --mist-500:    #2A3552;
 
-    /* Blues — accents */
     --cobalt:      #4A8FE7;
     --cyan:        #6EE0FF;
     --azure:       #2D5BD5;
     --frost:       #B8E5FF;
 
-    /* Signals */
     --mint:        #7DD3A0;
     --ember:       #FFB55A;
     --coral:       #FF7A7A;
     --gold:        #E8C572;
 
-    /* Type */
     --serif: 'Fraunces', 'Times New Roman', serif;
     --sans:  'Geist', system-ui, sans-serif;
     --mono:  'JetBrains Mono', ui-monospace, monospace;
 
-    /* Radii */
     --r-xs: 2px;
     --r-sm: 4px;
     --r:    8px;
@@ -58,9 +51,7 @@
   }
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
   html { scroll-behavior: smooth; }
-
   html, body {
     background: var(--void);
     color: var(--mist-100);
@@ -74,13 +65,10 @@
     font-feature-settings: "ss01", "ss02", "cv11";
     overflow-x: hidden;
   }
-
   ::selection { background: rgba(110, 224, 255, 0.28); color: var(--frost); }
-
   a { color: inherit; text-decoration: none; }
 
   /* ── Atmospheric backdrop ───────────────────────────────── */
-
   .bg-grid {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
     background-image:
@@ -104,7 +92,6 @@
   }
 
   /* ── Top bar ─────────────────────────────────────────────── */
-
   .topbar {
     position: sticky; top: 0; z-index: 50;
     display: grid; grid-template-columns: auto 1fr auto;
@@ -122,16 +109,12 @@
   .monogram svg { width: 22px; height: 22px; }
   .monogram .div { color: var(--mist-400); }
   .monogram b { color: var(--mist-100); font-weight: 500; letter-spacing: 0.22em; }
-
   .topbar-meta {
     display: flex; gap: 22px; align-items: center; justify-content: flex-end;
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em;
     color: var(--mist-300); text-transform: uppercase;
   }
-  .conn {
-    display: inline-flex; align-items: center; gap: 8px;
-    color: var(--mist-100);
-  }
+  .conn { display: inline-flex; align-items: center; gap: 8px; color: var(--mist-100); }
   .conn .pulse {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--mint);
@@ -146,7 +129,6 @@
   #utc-clock { color: var(--frost); }
 
   /* ── Section rail ────────────────────────────────────────── */
-
   .rail {
     position: fixed; top: 50%; left: 18px; transform: translateY(-50%);
     z-index: 40;
@@ -173,9 +155,7 @@
   @media (max-width: 1180px) { .rail { display: none; } }
 
   /* ── Layout primitives ───────────────────────────────────── */
-
   main { position: relative; z-index: 1; }
-
   section {
     position: relative;
     padding: 110px var(--gutter);
@@ -203,17 +183,14 @@
     margin-bottom: 18px;
   }
   h2 em { font-style: italic; color: var(--frost); font-weight: 300; }
-  h3 {
-    font-family: var(--serif); font-size: 22px; line-height: 1.25;
-    color: var(--mist-100);
-  }
+  h3 { font-family: var(--serif); font-size: 22px; line-height: 1.25; color: var(--mist-100); }
   p.lede {
     font-family: var(--serif); font-style: italic;
     font-size: clamp(18px, 1.6vw, 22px); line-height: 1.5;
     color: var(--mist-200); max-width: 56ch;
   }
 
-  /* Corner brackets — reused across panels */
+  /* Corner brackets */
   .bracket { position: relative; }
   .bracket::before, .bracket::after,
   .bracket > .br-bl, .bracket > .br-br {
@@ -225,34 +202,20 @@
   .bracket > .br-bl { bottom: -1px; left: -1px; border-right: 0; border-top: 0; }
   .bracket > .br-br { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 00 · HERO
-     ───────────────────────────────────────────────────────── */
-
+  /* ── HERO ─────────────────────────────────────────────────── */
   .hero {
     padding-top: 80px;
-    display: grid;
-    grid-template-columns: 1.05fr 0.95fr;
+    display: grid; grid-template-columns: 1.05fr 0.95fr;
     gap: 64px; align-items: center;
   }
   @media (max-width: 980px) { .hero { grid-template-columns: 1fr; gap: 40px; } }
-
   .hero h1 {
-    font-family: var(--serif);
-    font-size: clamp(72px, 11vw, 168px);
-    line-height: 0.88;
-    letter-spacing: -0.05em;
-    font-weight: 300;
+    font-family: var(--serif); font-size: clamp(72px, 11vw, 168px);
+    line-height: 0.88; letter-spacing: -0.05em; font-weight: 300;
     color: var(--mist-100);
   }
-  .hero h1 em {
-    font-style: italic; color: var(--frost);
-    font-weight: 300; opacity: 0.92;
-  }
-  .hero h1 .dot {
-    color: var(--cyan); font-style: normal;
-    font-feature-settings: "ss03";
-  }
+  .hero h1 em { font-style: italic; color: var(--frost); font-weight: 300; opacity: 0.92; }
+  .hero h1 .dot { color: var(--cyan); font-style: normal; font-feature-settings: "ss03"; }
   .hero .lede { margin-top: 28px; }
   .hero .meta {
     margin-top: 36px;
@@ -261,11 +224,9 @@
     color: var(--mist-300); text-transform: uppercase;
   }
   .hero .meta span b { color: var(--mist-100); font-weight: 500; }
-
   .hero-figure {
     position: relative; aspect-ratio: 1 / 1.05;
-    background:
-      radial-gradient(60% 50% at 50% 50%, rgba(74,143,231,0.08), transparent 70%);
+    background: radial-gradient(60% 50% at 50% 50%, rgba(74,143,231,0.08), transparent 70%);
     padding: 24px;
   }
   .hero-figure svg { width: 100%; height: 100%; display: block; }
@@ -282,23 +243,17 @@
   .kpis {
     margin-top: 72px;
     display: grid; grid-template-columns: repeat(4, 1fr);
-    gap: 1px; background: var(--hairline);
-    border: 1px solid var(--hairline);
+    gap: 1px; background: var(--hairline); border: 1px solid var(--hairline);
   }
   @media (max-width: 880px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
-  .kpi {
-    padding: 28px 24px;
-    background: var(--deep);
-    display: flex; flex-direction: column; gap: 8px;
-  }
+  .kpi { padding: 28px 24px; background: var(--deep); display: flex; flex-direction: column; gap: 8px; }
   .kpi .label {
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.22em;
     color: var(--mist-300); text-transform: uppercase;
   }
   .kpi .value {
     font-family: var(--serif); font-size: 44px; line-height: 1;
-    font-weight: 300; letter-spacing: -0.03em;
-    color: var(--mist-100);
+    font-weight: 300; letter-spacing: -0.03em; color: var(--mist-100);
   }
   .kpi .value em { color: var(--cyan); font-style: italic; font-weight: 400; }
   .kpi .value .u {
@@ -307,16 +262,9 @@
   }
   .kpi .note { font-size: 12px; color: var(--mist-300); margin-top: 6px; }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 01 · BRIEF
-     ───────────────────────────────────────────────────────── */
-
-  .brief-grid {
-    display: grid; grid-template-columns: 1fr 1.1fr;
-    gap: 56px; align-items: start;
-  }
+  /* ── BRIEF ────────────────────────────────────────────────── */
+  .brief-grid { display: grid; grid-template-columns: 1fr 1.1fr; gap: 56px; align-items: start; }
   @media (max-width: 980px) { .brief-grid { grid-template-columns: 1fr; } }
-
   dl.facts { display: grid; gap: 18px; }
   dl.facts > div {
     display: grid; grid-template-columns: 140px 1fr; gap: 18px;
@@ -336,13 +284,12 @@
   }
   dl.facts dd .muted { color: var(--mist-300); }
 
-  /* Code blocks — terminal */
+  /* Terminal code blocks */
   .terminal {
     background: linear-gradient(to bottom, #08101F, #06090F);
     border: 1px solid var(--hairline-strong);
     border-radius: var(--r);
-    overflow: hidden;
-    position: relative;
+    overflow: hidden; position: relative;
   }
   .terminal .head {
     padding: 12px 16px;
@@ -352,13 +299,8 @@
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.18em;
     color: var(--mist-300); text-transform: uppercase;
   }
-  .terminal .head .lights {
-    display: inline-flex; gap: 5px;
-  }
-  .terminal .head .lights i {
-    width: 7px; height: 7px; border-radius: 50%;
-    display: block; background: var(--mist-500);
-  }
+  .terminal .head .lights { display: inline-flex; gap: 5px; }
+  .terminal .head .lights i { width: 7px; height: 7px; border-radius: 50%; display: block; background: var(--mist-500); }
   .terminal .head .lights i:nth-child(1) { background: rgba(255, 122, 122, 0.4); }
   .terminal .head .lights i:nth-child(2) { background: rgba(255, 181, 90, 0.4); }
   .terminal .head .lights i:nth-child(3) { background: rgba(125, 211, 160, 0.4); }
@@ -387,15 +329,10 @@
   .preflight .step .n {
     width: 28px; height: 28px;
     display: grid; place-items: center;
-    font-family: var(--mono); font-size: 12px;
-    color: var(--cyan);
-    border: 1px solid rgba(110, 224, 255, 0.3);
-    border-radius: 50%;
+    font-family: var(--mono); font-size: 12px; color: var(--cyan);
+    border: 1px solid rgba(110, 224, 255, 0.3); border-radius: 50%;
   }
-  .preflight .step h4 {
-    font-family: var(--sans); font-size: 14px; font-weight: 500;
-    color: var(--mist-100); margin-bottom: 4px;
-  }
+  .preflight .step h4 { font-family: var(--sans); font-size: 14px; font-weight: 500; color: var(--mist-100); margin-bottom: 4px; }
   .preflight .step p { font-size: 13px; color: var(--mist-200); }
   .preflight .step code {
     font-family: var(--mono); font-size: 12px;
@@ -403,17 +340,39 @@
     padding: 1px 5px; border-radius: var(--r-xs);
   }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 02 · SURFACE (endpoints)
-     ───────────────────────────────────────────────────────── */
+  /* Role table */
+  .roles {
+    margin-top: 44px;
+    border: 1px solid var(--hairline-strong);
+    background: rgba(10, 16, 32, 0.4);
+    border-radius: var(--r); overflow: hidden;
+  }
+  .role-row {
+    display: grid;
+    grid-template-columns: 170px 1fr 1fr;
+    gap: 18px; align-items: baseline;
+    padding: 14px 20px;
+    border-top: 1px solid var(--hairline);
+  }
+  .role-row:first-child { border-top: 0; }
+  .role-row.head {
+    background: rgba(15, 24, 48, 0.7);
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
+    color: var(--mist-300); text-transform: uppercase;
+    padding: 12px 20px;
+  }
+  .role-row .role { font-family: var(--serif); font-style: italic; font-size: 17px; color: var(--frost); }
+  .role-row .trigger { font-size: 13px; color: var(--mist-200); }
+  .role-row .play { font-family: var(--mono); font-size: 11.5px; color: var(--mist-300); }
+  .role-row .play b { color: var(--cyan); font-weight: 500; }
 
+  /* ── SURFACE (endpoints) ──────────────────────────────────── */
   .surface-intro {
     display: grid; grid-template-columns: 1fr 1fr; gap: 56px;
     align-items: end; margin-bottom: 44px;
   }
   @media (max-width: 880px) { .surface-intro { grid-template-columns: 1fr; } }
   .surface-intro p { color: var(--mist-200); max-width: 50ch; }
-
   .endpoint-block { display: grid; gap: 36px; }
   .endpoint-group h4 {
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
@@ -421,73 +380,61 @@
     margin-bottom: 12px; padding-left: 4px;
     display: flex; align-items: center; gap: 14px;
   }
-  .endpoint-group h4::after {
-    content: ""; flex: 1; height: 1px; background: var(--hairline);
-  }
+  .endpoint-group h4::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
   .endpoint-table {
     border: 1px solid var(--hairline-strong);
     background: rgba(10, 16, 32, 0.4);
-    border-radius: var(--r);
-    overflow: hidden;
+    border-radius: var(--r); overflow: hidden;
   }
   .endpoint-row {
     display: grid;
-    grid-template-columns: 90px minmax(220px, 1fr) 1.4fr 60px;
+    grid-template-columns: 110px minmax(220px, 1.1fr) 1.3fr 84px;
     align-items: center;
-    padding: 14px 18px;
-    gap: 18px;
+    padding: 13px 18px; gap: 18px;
     border-top: 1px solid var(--hairline);
     transition: background 200ms ease;
-    cursor: default;
   }
   .endpoint-row:first-child { border-top: 0; }
   .endpoint-row:hover { background: rgba(74, 143, 231, 0.04); }
   .endpoint-row:hover .path { color: var(--frost); }
-
   .verb {
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.12em;
-    font-weight: 500;
-    padding: 4px 8px; border-radius: var(--r-xs);
+    font-weight: 500; padding: 4px 8px; border-radius: var(--r-xs);
     border: 1px solid currentColor; width: max-content;
   }
-  .verb.get    { color: var(--cyan);  background: rgba(110, 224, 255, 0.07); }
-  .verb.post   { color: var(--mint);  background: rgba(125, 211, 160, 0.08); }
-  .verb.patch  { color: var(--ember); background: rgba(255, 181, 90, 0.08); }
-  .verb.delete { color: var(--coral); background: rgba(255, 122, 122, 0.08); }
-
-  .path {
-    font-family: var(--mono); font-size: 13px;
-    color: var(--mist-100);
-    transition: color 200ms ease;
-  }
+  .verb.get    { color: var(--cyan);   background: rgba(110, 224, 255, 0.07); }
+  .verb.post   { color: var(--mint);   background: rgba(125, 211, 160, 0.08); }
+  .verb.patch  { color: var(--ember);  background: rgba(255, 181, 90, 0.08); }
+  .verb.delete { color: var(--coral);  background: rgba(255, 122, 122, 0.08); }
+  .verb.run    { color: var(--cobalt); background: rgba(74, 143, 231, 0.08); }
+  .path { font-family: var(--mono); font-size: 12.5px; color: var(--mist-100); transition: color 200ms ease; }
   .path .seg-id { color: var(--ember); }
   .path .qs { color: var(--mist-400); }
-
   .purpose { font-size: 13px; color: var(--mist-200); }
-
   .cost-pip {
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.05em;
-    color: var(--mist-300);
-    text-align: right;
+    color: var(--mist-300); text-align: right;
   }
   .cost-pip.warn { color: var(--ember); }
   .cost-pip.zero { color: var(--mist-400); }
+  .surface-note {
+    margin-top: 28px; font-size: 13px; color: var(--mist-300); max-width: 78ch;
+  }
+  .surface-note code {
+    font-family: var(--mono); font-size: 12px; color: var(--cyan);
+    background: var(--raised); padding: 1px 5px; border-radius: var(--r-xs);
+  }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 03 · TELEMETRY (canvas sim)
-     ───────────────────────────────────────────────────────── */
-
+  /* ── TELEMETRY (canvas) ───────────────────────────────────── */
   .telemetry-frame {
     margin-top: 44px;
     background: linear-gradient(to bottom, var(--deep), #07101F);
     border: 1px solid var(--hairline-strong);
     border-radius: var(--r-lg);
-    overflow: hidden;
-    position: relative;
+    overflow: hidden; position: relative;
   }
   .telemetry-frame .telemetry-head {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
+    display: grid; grid-template-columns: auto 1fr auto;
     align-items: center; gap: 24px;
     padding: 18px 24px;
     border-bottom: 1px solid var(--hairline);
@@ -501,83 +448,44 @@
   .telemetry-frame .label b { color: var(--cyan); font-weight: 500; }
   .telemetry-frame .label .dot {
     width: 8px; height: 8px; border-radius: 50%; background: var(--cyan);
-    box-shadow: 0 0 12px var(--cyan);
-    animation: pulse-c 1.6s infinite;
+    box-shadow: 0 0 12px var(--cyan); animation: pulse-c 1.6s infinite;
   }
-  @keyframes pulse-c {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
+  @keyframes pulse-c { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .telemetry-frame .ctrl { display: flex; gap: 8px; align-items: center; }
   .telemetry-frame button {
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
     color: var(--mist-200); text-transform: uppercase;
-    padding: 6px 12px;
-    background: transparent;
-    border: 1px solid var(--hairline-strong);
-    border-radius: var(--r-xs);
-    cursor: pointer;
-    transition: all 180ms ease;
+    padding: 6px 12px; background: transparent;
+    border: 1px solid var(--hairline-strong); border-radius: var(--r-xs);
+    cursor: pointer; transition: all 180ms ease;
   }
   .telemetry-frame button:hover { color: var(--cyan); border-color: var(--cobalt); }
   .telemetry-frame button.is-active { color: var(--cyan); border-color: var(--cyan); background: rgba(110, 224, 255, 0.06); }
-
-  #publisher-canvas {
-    display: block;
-    width: 100%;
-    height: 360px;
-  }
-
+  #sig-canvas { display: block; width: 100%; height: 360px; }
   .telemetry-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 1px;
-    background: var(--hairline);
-    border-top: 1px solid var(--hairline);
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--hairline); border-top: 1px solid var(--hairline);
   }
-  .telemetry-stats .cell {
-    padding: 20px 24px;
-    background: var(--deep);
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .telemetry-stats .l {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
-    color: var(--mist-300); text-transform: uppercase;
-  }
-  .telemetry-stats .v {
-    font-family: var(--mono); font-size: 22px; font-weight: 500;
-    color: var(--mist-100);
-  }
-  .telemetry-stats .v.pending { color: var(--frost); }
-  .telemetry-stats .v.posted  { color: var(--mint); }
-  .telemetry-stats .v.failed  { color: var(--coral); }
-  .telemetry-stats .v.time    { color: var(--cyan); }
-
-  .telemetry-caption {
-    margin-top: 22px; font-size: 13px; color: var(--mist-300);
-    max-width: 78ch;
-  }
+  .telemetry-stats .cell { padding: 20px 24px; background: var(--deep); display: flex; flex-direction: column; gap: 4px; }
+  .telemetry-stats .l { font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--mist-300); text-transform: uppercase; }
+  .telemetry-stats .v { font-family: var(--mono); font-size: 22px; font-weight: 500; color: var(--mist-100); }
+  .telemetry-stats .v.a { color: var(--frost); }
+  .telemetry-stats .v.b { color: var(--mint); }
+  .telemetry-stats .v.c { color: var(--coral); }
+  .telemetry-stats .v.t { color: var(--cyan); }
+  .telemetry-caption { margin-top: 22px; font-size: 13px; color: var(--mist-300); max-width: 78ch; }
   .telemetry-caption b { color: var(--mist-100); font-weight: 500; }
   .telemetry-caption .ref { color: var(--coral); font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em; }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 04 · HAZARD (5 safety rules)
-     ───────────────────────────────────────────────────────── */
-
-  .hazard-intro {
-    max-width: 60ch; margin-bottom: 56px;
-  }
+  /* ── HAZARD ───────────────────────────────────────────────── */
+  .hazard-intro { max-width: 60ch; margin-bottom: 56px; }
   .hazard-intro p { color: var(--mist-200); font-size: 16px; }
-
   .hazard-grid {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr 1fr;
-    grid-template-rows: auto auto;
-    gap: 18px;
+    display: grid; grid-template-columns: 1.4fr 1fr 1fr;
+    grid-template-rows: auto auto; gap: 18px;
   }
   @media (max-width: 980px) { .hazard-grid { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 700px) { .hazard-grid { grid-template-columns: 1fr; } }
-
   .hazard-card {
     background:
       linear-gradient(to bottom right, rgba(255, 122, 122, 0.04), transparent 60%),
@@ -586,8 +494,7 @@
     border-radius: var(--r);
     padding: 26px;
     display: grid; gap: 18px; grid-template-rows: auto 1fr auto;
-    position: relative;
-    overflow: hidden;
+    position: relative; overflow: hidden;
   }
   .hazard-card.featured {
     grid-column: span 1; grid-row: span 2;
@@ -607,19 +514,13 @@
     border-right: 5px solid transparent;
     border-bottom: 8px solid var(--coral);
   }
-  .hazard-card h3 {
-    font-family: var(--serif); font-size: 22px; line-height: 1.2;
-    color: var(--mist-100);
-  }
+  .hazard-card h3 { font-family: var(--serif); font-size: 22px; line-height: 1.2; color: var(--mist-100); }
+  .hazard-card h3 em { font-style: italic; color: var(--frost); }
   .hazard-card.featured h3 { font-size: 28px; }
-  .hazard-card .ill {
-    width: 100%; height: 120px;
-    display: grid; place-items: center;
-    margin-top: -4px;
-  }
+  .hazard-card .ill { width: 100%; height: 120px; display: grid; place-items: center; margin-top: 10px; }
   .hazard-card.featured .ill { height: 220px; }
   .hazard-card .ill svg { max-width: 100%; max-height: 100%; }
-  .hazard-card p { font-size: 13.5px; color: var(--mist-200); line-height: 1.55; }
+  .hazard-card p { font-size: 13.5px; color: var(--mist-200); line-height: 1.55; margin-top: 10px; }
   .hazard-card p code {
     font-family: var(--mono); font-size: 12px;
     color: var(--ember); background: rgba(255, 181, 90, 0.06);
@@ -634,24 +535,18 @@
   }
   .hazard-card .ref b { color: var(--mist-200); font-weight: 500; }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 05 · OPS (workflows)
-     ───────────────────────────────────────────────────────── */
-
+  /* ── OPS (workflows) ──────────────────────────────────────── */
   .workflow {
-    display: grid;
-    grid-template-columns: 1fr 1.3fr;
+    display: grid; grid-template-columns: 1fr 1.3fr;
     gap: 56px; align-items: start;
     padding: 64px 0;
     border-top: 1px dashed var(--hairline);
   }
-  .workflow:first-of-type { border-top: 0; padding-top: 0; }
+  .workflow:first-of-type { border-top: 0; padding-top: 24px; }
   @media (max-width: 980px) { .workflow { grid-template-columns: 1fr; gap: 32px; } }
-
   .workflow .head .tag {
     font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
-    color: var(--mist-300); text-transform: uppercase;
-    margin-bottom: 14px;
+    color: var(--mist-300); text-transform: uppercase; margin-bottom: 14px;
   }
   .workflow .head .tag b { color: var(--cyan); }
   .workflow .head h3 {
@@ -661,13 +556,8 @@
   }
   .workflow .head h3 em { font-style: italic; color: var(--frost); }
   .workflow .head p { font-size: 14px; color: var(--mist-200); }
-  .workflow .head ul {
-    margin-top: 18px; list-style: none; display: grid; gap: 8px;
-  }
-  .workflow .head ul li {
-    font-size: 13px; color: var(--mist-200);
-    padding-left: 22px; position: relative;
-  }
+  .workflow .head ul { margin-top: 18px; list-style: none; display: grid; gap: 8px; }
+  .workflow .head ul li { font-size: 13px; color: var(--mist-200); padding-left: 22px; position: relative; }
   .workflow .head ul li::before {
     content: ""; position: absolute; left: 0; top: 9px;
     width: 12px; height: 1px; background: var(--cobalt);
@@ -676,33 +566,17 @@
     font-family: var(--mono); font-size: 12px; color: var(--cyan);
     background: var(--raised); padding: 1px 5px; border-radius: var(--r-xs);
   }
-
-  .cadence-svg {
-    margin-top: 24px;
-    padding: 18px 0;
-    border-top: 1px solid var(--hairline);
-  }
+  .cadence-svg { margin-top: 24px; padding: 18px 0; border-top: 1px solid var(--hairline); }
   .cadence-svg .legend {
     display: flex; gap: 14px; flex-wrap: wrap;
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em;
-    color: var(--mist-300); text-transform: uppercase;
-    margin-top: 10px;
+    color: var(--mist-300); text-transform: uppercase; margin-top: 10px;
   }
-  .cadence-svg .legend i {
-    display: inline-block; width: 8px; height: 8px; margin-right: 6px;
-    vertical-align: middle;
-  }
+  .cadence-svg .legend i { display: inline-block; width: 8px; height: 8px; margin-right: 6px; vertical-align: middle; }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 06 · LEDGER (cost)
-     ───────────────────────────────────────────────────────── */
-
-  .ledger-grid {
-    display: grid; grid-template-columns: 1.3fr 1fr; gap: 56px;
-    margin-top: 40px;
-  }
+  /* ── LEDGER (cost) ────────────────────────────────────────── */
+  .ledger-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 56px; margin-top: 40px; }
   @media (max-width: 980px) { .ledger-grid { grid-template-columns: 1fr; } }
-
   .price-table {
     border: 1px solid var(--hairline-strong);
     border-radius: var(--r);
@@ -710,106 +584,68 @@
     overflow: hidden;
   }
   .price-row {
-    display: grid;
-    grid-template-columns: 1fr 100px 1fr;
-    align-items: center;
-    gap: 18px; padding: 14px 20px;
-    border-top: 1px solid var(--hairline);
-    font-size: 13px;
+    display: grid; grid-template-columns: 1fr 110px 1fr;
+    align-items: center; gap: 18px; padding: 14px 20px;
+    border-top: 1px solid var(--hairline); font-size: 13px;
   }
   .price-row.head {
-    background: rgba(15, 24, 48, 0.7);
-    border-top: 0;
+    background: rgba(15, 24, 48, 0.7); border-top: 0;
     font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
     color: var(--mist-300); text-transform: uppercase;
     padding: 12px 20px;
   }
+  .price-row.spiked { background: rgba(255,122,122,0.04); }
   .price-row .surface { color: var(--mist-100); }
-  .price-row .price {
-    font-family: var(--mono); font-size: 13px; color: var(--mist-100);
-    text-align: right; font-weight: 500;
-  }
+  .price-row .surface small { display: block; font-size: 11px; color: var(--mist-400); margin-top: 2px; }
+  .price-row .price { font-family: var(--mono); font-size: 13px; color: var(--mist-100); text-align: right; font-weight: 500; }
   .price-row .price.cheap { color: var(--mint); }
   .price-row .price.mid   { color: var(--cyan); }
   .price-row .price.high  { color: var(--ember); }
   .price-row .price.spike { color: var(--coral); }
-  .price-row .bar {
-    height: 6px; background: var(--raised); border-radius: 999px;
-    overflow: hidden; position: relative;
-  }
+  .price-row .bar { height: 6px; background: var(--raised); border-radius: 999px; overflow: hidden; position: relative; }
   .price-row .bar i {
     position: absolute; left: 0; top: 0; bottom: 0;
     background: linear-gradient(to right, var(--cobalt), var(--cyan));
     border-radius: 999px;
   }
-  .price-row .bar.spike i {
-    background: linear-gradient(to right, var(--ember), var(--coral));
-  }
-  .price-row .note {
-    font-family: var(--mono); font-size: 10px; color: var(--mist-400);
-    grid-column: 1 / -1; padding-top: 4px;
-  }
-
+  .price-row .bar.spike i { background: linear-gradient(to right, var(--ember), var(--coral)); }
   .budget-card {
     background: var(--panel);
     border: 1px solid var(--hairline-strong);
     border-radius: var(--r);
-    padding: 24px;
-    display: grid; gap: 18px;
+    padding: 24px; display: grid; gap: 18px;
   }
-  .budget-card h4 {
-    font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em;
-    color: var(--mist-300); text-transform: uppercase; font-weight: 400;
-  }
+  .budget-card h4 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.22em; color: var(--mist-300); text-transform: uppercase; font-weight: 400; }
   .budget-card .row {
     display: grid; grid-template-columns: 1fr auto;
     align-items: baseline; gap: 16px;
-    padding-bottom: 14px;
-    border-bottom: 1px dashed var(--hairline);
+    padding-bottom: 14px; border-bottom: 1px dashed var(--hairline);
   }
-  .budget-card .row:last-child { border-bottom: 0; }
-  .budget-card .row .name {
-    font-family: var(--serif); font-size: 18px; font-style: italic;
-    color: var(--mist-100);
-  }
+  .budget-card .row:last-child { border-bottom: 0; padding-bottom: 0; }
+  .budget-card .row .name { font-family: var(--serif); font-size: 18px; font-style: italic; color: var(--mist-100); }
   .budget-card .row .name small {
     display: block; font-family: var(--sans); font-style: normal;
-    font-size: 12px; color: var(--mist-300); margin-top: 4px;
-    letter-spacing: 0.04em;
+    font-size: 12px; color: var(--mist-300); margin-top: 4px; letter-spacing: 0.04em;
   }
-  .budget-card .row .figure {
-    font-family: var(--mono); font-size: 22px; color: var(--cyan);
-    font-weight: 500;
-  }
+  .budget-card .row .figure { font-family: var(--mono); font-size: 22px; color: var(--cyan); font-weight: 500; }
+  .budget-card .row .figure.hard { color: var(--coral); }
   .budget-card .row .figure small {
     display: block; font-size: 10px; color: var(--mist-300);
     letter-spacing: 0.14em; text-align: right; margin-top: 4px;
   }
 
-  /* ─────────────────────────────────────────────────────────
-     SECTION 07 · CONDUCT
-     ───────────────────────────────────────────────────────── */
-
-  .conduct-grid {
-    display: grid; grid-template-columns: repeat(2, 1fr);
-    gap: 18px; margin-top: 40px;
-  }
+  /* ── CONDUCT ──────────────────────────────────────────────── */
+  .conduct-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; margin-top: 40px; }
   @media (max-width: 700px) { .conduct-grid { grid-template-columns: 1fr; } }
   .conduct-card {
-    padding: 24px;
-    border: 1px solid var(--hairline);
+    padding: 24px; border: 1px solid var(--hairline);
     border-radius: var(--r);
     background: rgba(10, 16, 32, 0.4);
     display: grid; gap: 12px;
   }
-  .conduct-card .n {
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em;
-    color: var(--cyan); text-transform: uppercase;
-  }
-  .conduct-card h4 {
-    font-family: var(--serif); font-size: 18px; font-weight: 400;
-    line-height: 1.3; color: var(--mist-100);
-  }
+  .conduct-card .n { font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--cyan); text-transform: uppercase; }
+  .conduct-card h4 { font-family: var(--serif); font-size: 18px; font-weight: 400; line-height: 1.3; color: var(--mist-100); }
+  .conduct-card h4 em { font-style: italic; color: var(--frost); }
   .conduct-card p { font-size: 13px; color: var(--mist-200); }
   .conduct-card code {
     font-family: var(--mono); font-size: 12px;
@@ -818,7 +654,6 @@
   }
 
   /* ── Footer ──────────────────────────────────────────────── */
-
   footer {
     max-width: 1400px; margin: 0 auto;
     padding: 80px var(--gutter) 60px;
@@ -837,17 +672,15 @@
   footer .right b { color: var(--cyan); font-weight: 500; }
 
   /* ── Reveal on scroll ────────────────────────────────────── */
-
   .reveal { opacity: 0; transform: translateY(18px); transition: opacity 800ms cubic-bezier(.2,.7,.2,1), transform 800ms cubic-bezier(.2,.7,.2,1); }
   .reveal.in { opacity: 1; transform: translateY(0); }
   .reveal-delay-1 { transition-delay: 100ms; }
   .reveal-delay-2 { transition-delay: 200ms; }
   .reveal-delay-3 { transition-delay: 320ms; }
   .reveal-delay-4 { transition-delay: 440ms; }
-
   @media (prefers-reduced-motion: reduce) {
     .reveal { opacity: 1; transform: none; transition: none; }
-    .pulse, .conn .pulse, .telemetry-frame .label .dot { animation: none; }
+    .conn .pulse, .telemetry-frame .label .dot { animation: none; }
   }
 </style>
 </head>
@@ -869,11 +702,11 @@
     <span class="div">/</span>
     <span>OPERATOR&nbsp;MANUAL</span>
     <span class="div">·</span>
-    <span>v1.0</span>
+    <span>v2.0</span>
   </div>
   <div></div>
   <div class="topbar-meta">
-    <span class="conn"><span class="pulse"></span>CONNECTED · HETZNER</span>
+    <span class="conn"><span class="pulse"></span>CONNECTED · HETZNER · ALWAYS-ON</span>
     <span id="utc-clock">— : — : — UTC</span>
   </div>
 </header>
@@ -900,44 +733,43 @@
     <div class="eyebrow">
       <span class="num">00</span>
       <span class="ln"></span>
-      <span>Skill dossier · A single-user service for X</span>
+      <span>Skill dossier · X growth operations</span>
     </div>
 
-    <h1>
-      Stratus<em class="dot">.</em>
-    </h1>
+    <h1>stratus<em class="dot">.</em></h1>
 
     <p class="lede">
-      An operator's manual for the X API service that schedules,
-      listens, and remembers — quietly, on a sixty-second heartbeat.
+      A single-user X growth machine — calendar and publisher, once-only metrics
+      snapshots, a $0 DOM-scraped voice library, and a people layer — all fronted
+      by one HTTP API. This skill makes Claude its operator: coach, editorialist,
+      reply operator, analyst, and CRM in one seat.
     </p>
 
     <div class="meta">
-      <span>Audience · <b>operator</b></span>
-      <span>Tenancy · <b>single user</b></span>
-      <span>Heart · <b>60 s tick</b></span>
-      <span>Tongue · <b>HTTP / JSON</b></span>
+      <span>OPERATOR · <b>CLAUDE</b></span>
+      <span>TRANSPORT · <b>HTTPS + MCP</b></span>
+      <span>STATE · <b>SQLITE</b></span>
+      <span>POSTING · <b>HUMAN PASTES</b></span>
     </div>
   </div>
 
   <figure class="hero-figure bracket reveal reveal-delay-1">
     <span class="br-bl"></span><span class="br-br"></span>
     <div class="stamp">FIG · <b>SCHEMATIC</b> · 00.A</div>
-
-    <svg viewBox="0 0 480 520" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 480 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Stratus schematic: core service ringed by cadence strata, connected to the X API, Grok, SQLite, the Chrome extension, and MCP clients.">
       <defs>
         <radialGradient id="coreGlow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%"  stop-color="#6EE0FF" stop-opacity="0.55"/>
-          <stop offset="60%" stop-color="#4A8FE7" stop-opacity="0.10"/>
-          <stop offset="100%" stop-color="#0A1020" stop-opacity="0"/>
+          <stop offset="0%" stop-color="#6EE0FF" stop-opacity="0.16"/>
+          <stop offset="60%" stop-color="#4A8FE7" stop-opacity="0.05"/>
+          <stop offset="100%" stop-color="#4A8FE7" stop-opacity="0"/>
         </radialGradient>
-        <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#6EE0FF" stop-opacity="0.5"/>
-          <stop offset="100%" stop-color="#4A8FE7" stop-opacity="0.1"/>
+        <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#4A8FE7" stop-opacity="0.6"/>
+          <stop offset="100%" stop-color="#6EE0FF" stop-opacity="0.25"/>
         </linearGradient>
       </defs>
 
-      <!-- 7 dotted rings = 7 days -->
+      <!-- Dotted strata -->
       <g stroke="#A1B2D0" stroke-opacity="0.15" fill="none" stroke-dasharray="2 4">
         <circle cx="240" cy="260" r="80"/>
         <circle cx="240" cy="260" r="110"/>
@@ -947,7 +779,7 @@
         <circle cx="240" cy="260" r="225"/>
       </g>
 
-      <!-- Outer ring with 4 daily anchor ticks (8, 12, 16, 20) -->
+      <!-- Outer ring + cardinal ticks -->
       <circle cx="240" cy="260" r="225" stroke="url(#ring)" stroke-width="1" fill="none"/>
       <g stroke="#6EE0FF" stroke-width="1.4">
         <line x1="240" y1="35"  x2="240" y2="55"/>
@@ -955,101 +787,96 @@
         <line x1="240" y1="485" x2="240" y2="465"/>
         <line x1="15"  y1="260" x2="35"  y2="260"/>
       </g>
-      <g font-family="JetBrains Mono" font-size="9" fill="#6E81A4" letter-spacing="2">
-        <text x="240" y="25"  text-anchor="middle">08</text>
-        <text x="475" y="263" text-anchor="middle">12</text>
-        <text x="240" y="503" text-anchor="middle">16</text>
-        <text x="5"   y="263" text-anchor="middle">20</text>
+      <g font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">
+        <text x="240" y="28" text-anchor="middle">03:00 UTC</text>
+        <text x="240" y="502" text-anchor="middle">60 S TICK</text>
       </g>
 
-      <!-- Core glow -->
+      <!-- Core -->
       <circle cx="240" cy="260" r="140" fill="url(#coreGlow)"/>
-
-      <!-- Concentric core octagon -->
       <g transform="translate(240 260)" fill="none" stroke="#6EE0FF">
         <polygon points="-32,-32 32,-32 32,32 -32,32" stroke-opacity="0.5" transform="rotate(45)"/>
         <polygon points="-22,-22 22,-22 22,22 -22,22" stroke-opacity="0.8" transform="rotate(45)"/>
         <circle r="9" fill="#6EE0FF"/>
-        <circle r="14" stroke-opacity="0.4"/>
       </g>
-      <text x="240" y="263" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#05080F" font-weight="700" letter-spacing="1.5">S</text>
+      <text x="240" y="263" text-anchor="middle"
+            font-family="JetBrains Mono" font-size="8" fill="#05080F"
+            font-weight="700" letter-spacing="1.5">S</text>
 
-      <!-- Heartbeat / tick line below core -->
-      <g transform="translate(176 320)">
+      <!-- Heartbeat -->
+      <g transform="translate(176 330)">
         <path d="M0 8 L14 8 L18 0 L22 16 L26 8 L34 8 L38 4 L42 12 L46 8 L128 8"
-              stroke="#7DD3A0" stroke-width="1.4" fill="none" stroke-linecap="round" opacity="0.85"/>
-        <text x="64" y="28" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#7DD3A0" letter-spacing="2">PUBLISHER · 60s</text>
+              stroke="#7DD3A0" stroke-width="1.4" fill="none"
+              stroke-linecap="round" opacity="0.85"/>
+        <text x="64" y="28" text-anchor="middle"
+              font-family="JetBrains Mono" font-size="8"
+              fill="#7DD3A0" letter-spacing="2">PUBLISHER · DAILY PASS</text>
       </g>
 
       <!-- Outbound nodes -->
-      <g font-family="JetBrains Mono" font-size="9" letter-spacing="2" fill="#A1B2D0">
-        <!-- X API top-right -->
-        <line x1="305" y1="180" x2="395" y2="100" stroke="#4A8FE7" stroke-opacity="0.5"/>
-        <rect x="375" y="78" width="86" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
-        <text x="418" y="96" text-anchor="middle" fill="#DCE5F2">X · API v2</text>
+      <g font-family="JetBrains Mono" font-size="9" letter-spacing="2">
+        <line x1="308" y1="176" x2="382" y2="98" stroke="#4A8FE7" stroke-opacity="0.5"/>
+        <rect x="352" y="76" width="86" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
+        <text x="395" y="94" text-anchor="middle" fill="#DCE5F2">X&#160;API&#160;V2</text>
 
-        <!-- Grok right -->
-        <line x1="320" y1="280" x2="420" y2="280" stroke="#4A8FE7" stroke-opacity="0.5"/>
-        <rect x="410" y="266" width="62" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
-        <text x="441" y="284" text-anchor="middle" fill="#DCE5F2">GROK</text>
+        <line x1="352" y1="300" x2="410" y2="360" stroke="#4A8FE7" stroke-opacity="0.5"/>
+        <rect x="366" y="360" width="96" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
+        <text x="414" y="378" text-anchor="middle" fill="#DCE5F2">GROK&#160;·&#160;XAI</text>
 
-        <!-- Neon bottom-right -->
-        <line x1="305" y1="340" x2="395" y2="420" stroke="#4A8FE7" stroke-opacity="0.5"/>
-        <rect x="375" y="412" width="86" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
-        <text x="418" y="430" text-anchor="middle" fill="#DCE5F2">NEON · PG</text>
+        <line x1="168" y1="180" x2="98" y2="112" stroke="#4A8FE7" stroke-opacity="0.5"/>
+        <rect x="42" y="90" width="92" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
+        <text x="88" y="108" text-anchor="middle" fill="#DCE5F2">EXTENSION</text>
 
-        <!-- Hetzner bottom-left -->
-        <line x1="175" y1="340" x2="80" y2="420" stroke="#4A8FE7" stroke-opacity="0.5"/>
-        <rect x="20" y="412" width="86" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
-        <text x="63" y="430" text-anchor="middle" fill="#DCE5F2">HETZNER</text>
+        <line x1="140" y1="300" x2="80" y2="366" stroke="#4A8FE7" stroke-opacity="0.5"/>
+        <rect x="30" y="366" width="80" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
+        <text x="70" y="384" text-anchor="middle" fill="#DCE5F2">SQLITE</text>
 
-        <!-- Chrome ext top-left -->
-        <line x1="175" y1="180" x2="80" y2="100" stroke="#4A8FE7" stroke-opacity="0.5"/>
-        <rect x="20" y="78" width="86" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
-        <text x="63" y="96" text-anchor="middle" fill="#DCE5F2">SIDE PANEL</text>
+        <line x1="240" y1="416" x2="240" y2="446" stroke="#4A8FE7" stroke-opacity="0.5"/>
+        <rect x="196" y="446" width="88" height="28" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.55"/>
+        <text x="240" y="464" text-anchor="middle" fill="#DCE5F2">MCP&#160;/&#160;16+</text>
       </g>
 
-      <!-- Constellation dots, scheduled tweets across the week -->
+      <!-- Constellation dots -->
       <g fill="#6EE0FF">
-        <circle cx="280" cy="55"  r="2"/>
-        <circle cx="135" cy="105" r="1.6" opacity="0.7"/>
-        <circle cx="395" cy="155" r="2.2"/>
-        <circle cx="455" cy="220" r="1.6" opacity="0.7"/>
-        <circle cx="430" cy="335" r="2"/>
-        <circle cx="350" cy="430" r="1.8" opacity="0.8"/>
-        <circle cx="180" cy="455" r="2.2"/>
-        <circle cx="80"  cy="380" r="1.6" opacity="0.7"/>
-        <circle cx="40"  cy="290" r="2"/>
-        <circle cx="65"  cy="190" r="1.8" opacity="0.8"/>
-        <circle cx="155" cy="55"  r="1.6" opacity="0.7"/>
-        <circle cx="380" cy="35"  r="2"/>
+        <circle cx="280" cy="55" r="2" opacity="0.9"/>
+        <circle cx="122" cy="150" r="1.6" opacity="0.7"/>
+        <circle cx="392" cy="200" r="1.8" opacity="0.8"/>
+        <circle cx="88"  cy="300" r="1.6" opacity="0.7"/>
+        <circle cx="336" cy="430" r="2"   opacity="0.85"/>
+        <circle cx="180" cy="70"  r="1.6" opacity="0.65"/>
+        <circle cx="428" cy="316" r="1.7" opacity="0.7"/>
+        <circle cx="60"  cy="216" r="1.8" opacity="0.75"/>
+        <circle cx="300" cy="480" r="1.6" opacity="0.6"/>
+        <circle cx="410" cy="140" r="1.6" opacity="0.7"/>
+        <circle cx="150" cy="450" r="1.7" opacity="0.7"/>
+        <circle cx="255" cy="120" r="1.6" opacity="0.6"/>
       </g>
     </svg>
   </figure>
 </section>
 
-<!-- KPI strip lives inside intro section -->
+<!-- KPI strip -->
 <section style="padding-top: 0; max-width: 1400px;" class="reveal reveal-delay-2">
   <div class="kpis">
     <div class="kpi">
-      <span class="label">Cadence</span>
-      <span class="value"><em>21</em>&ndash;28<span class="u">posts / week</span></span>
-      <span class="note">3 or 4 per day, anchors at 08·12·16·20 local</span>
+      <span class="label">Operator roles</span>
+      <span class="value"><em>5</em></span>
+      <span class="note">Coach, editorialist, reply operator, analyst, CRM operator — the ask picks the playbook.</span>
     </div>
     <div class="kpi">
-      <span class="label">Heartbeat</span>
-      <span class="value">60<span class="u">seconds</span></span>
-      <span class="note">publisher worker scans pending rows every tick</span>
+      <span class="label">Surface</span>
+      <span class="value"><em>70</em><span class="u">+ routes</span></span>
+      <span class="note">Seven endpoint families over one Hono service, one bearer token.</span>
     </div>
     <div class="kpi">
-      <span class="label">URL surcharge</span>
-      <span class="value" style="color:var(--coral)">×13<span class="u" style="color:var(--coral)">$0.20 vs $0.015</span></span>
-      <span class="note">guarded in createPost; fails silently if missed</span>
+      <span class="label">Cost of most reads</span>
+      <span class="value"><em>$0</em></span>
+      <span class="note">Brief, playbook, people, voice, conversations, SQL — pure SQL over already-billed data.</span>
     </div>
     <div class="kpi">
-      <span class="label">Endpoints</span>
-      <span class="value">21<span class="u">paths</span></span>
-      <span class="note">+ 1 unauthenticated /healthz probe</span>
+      <span class="label">MCP tools</span>
+      <span class="value"><em>16</em><span class="u">+</span></span>
+      <span class="note">Read-mostly by design; only writes are ideas, person notes, and draft-status calendar rows.</span>
     </div>
   </div>
 </section>
@@ -1058,105 +885,61 @@
      01 · BRIEF
      ═══════════════════════════════════════════════════════════ -->
 <section id="s-brief">
-  <div class="eyebrow reveal">
-    <span class="num">01</span><span class="ln"></span><span>Connection brief & preflight</span>
-  </div>
-
-  <h2 class="reveal">The service is <em>always on</em>.<br/>You bring the bearer.</h2>
-  <p class="lede reveal reveal-delay-1" style="margin-top: 22px;">
-    Every call goes to the Hono service behind <code style="font-family:var(--mono);color:var(--cyan);">$STRATUS_BASE_URL</code>,
-    signed with a bearer pulled from the project's <code style="font-family:var(--mono);color:var(--cyan);">.env</code>.
-    Sanity-check the wire before you do anything else.
+  <div class="eyebrow reveal"><span class="num">01</span><span class="ln"></span><span>Connection brief &amp; preflight</span></div>
+  <h2 class="reveal">One base URL, one bearer, <em>zero excuses.</em></h2>
+  <p class="lede reveal reveal-delay-1" style="margin-top:22px;">
+    Everything except the health check and the explorer shell rides behind a
+    single Authorization header. The helper script kills the curl boilerplate;
+    MCP tools, when connected, kill even that.
   </p>
 
-  <div class="brief-grid reveal reveal-delay-2" style="margin-top: 52px;">
+  <div class="brief-grid reveal reveal-delay-2" style="margin-top:52px;">
     <div>
       <dl class="facts">
-        <div>
-          <dt>Base URL</dt>
-          <dd>
-            <code>$STRATUS_BASE_URL</code>
-            <div class="muted" style="margin-top:6px;font-size:12px;">
-              defaults to <code style="color:var(--mist-200);background:transparent;border:none;padding:0">https://stratus-narcis.duckdns.org</code> (Hetzner).
-              Falls back to <code style="color:var(--mist-200);background:transparent;border:none;padding:0">http://127.0.0.1:3000</code> for local dev only.
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Auth header</dt>
-          <dd>
-            <code>Authorization: Bearer $STRATUS_API_TOKEN</code>
-            <div class="muted" style="margin-top:6px;font-size:12px;">
-              Required on every endpoint except <code style="color:var(--mist-200);background:transparent;border:none;padding:0">/healthz</code>. Token lives in <code style="color:var(--mist-200);background:transparent;border:none;padding:0">.env</code> as <code style="color:var(--mist-200);background:transparent;border:none;padding:0">API_TOKEN</code>. Never echo it.
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Content type</dt>
-          <dd><code>application/json</code> on every POST/PATCH.</dd>
-        </div>
-        <div>
-          <dt>Local boot</dt>
-          <dd>
-            <code>bun run start</code>
-            <div class="muted" style="margin-top:6px;font-size:12px;">
-              Only needed if <code style="color:var(--mist-200);background:transparent;border:none;padding:0">$STRATUS_BASE_URL</code> points at localhost.
-            </div>
-          </dd>
-        </div>
-        <div>
-          <dt>Auth failure</dt>
-          <dd>
-            On <code style="color:var(--coral);">401 {"error":"unauthorized"}</code> — bearer is wrong. Don't retry; stop and ask.
-          </dd>
-        </div>
+        <div><dt>Base URL</dt><dd><code>$STRATUS_BASE_URL</code> <span class="muted">— defaults to the always-on Hetzner instance; export <code>http://127.0.0.1:3000</code> only for local dev against</span> <code>bun run start</code></dd></div>
+        <div><dt>Auth</dt><dd><code>Authorization: Bearer $STRATUS_API_TOKEN</code> <span class="muted">— the token is <code>.env</code>'s <code>API_TOKEN</code>. Never echo it.</span></dd></div>
+        <div><dt>Exempt</dt><dd><code>GET /healthz</code> <span class="muted">and</span> <code>GET /explorer</code> <span class="muted">— the only unauthenticated paths.</span></dd></div>
+        <div><dt>Helper</dt><dd><code>scripts/api.sh METHOD PATH [BODY|@file]</code> <span class="muted">— sources <code>.env</code> itself if the env vars aren't exported; prints body to stdout, status to stderr.</span></dd></div>
+        <div><dt>MCP</dt><dd><span class="muted">If the session has</span> <code>x_brief</code>, <code>x_playbook</code>, <code>x_person</code>, <code>x_query</code>… <span class="muted">connected, prefer them over curl — same data, less plumbing.</span></dd></div>
+        <div><dt>Grok routes</dt><dd><span class="muted">Need the server's</span> <code>XAI_API_KEY</code> <span class="muted">— some refuse to mount (404), others return</span> <code>503 grok_not_configured</code>.</dd></div>
       </dl>
-    </div>
 
+      <div class="roles">
+        <div class="role-row head"><span>Role</span><span>Trigger</span><span>Playbook</span></div>
+        <div class="role-row"><span class="role">Coach</span><span class="trigger">"what should I do today?"</span><span class="play"><b>coach.md</b> · morning coach</span></div>
+        <div class="role-row"><span class="role">Editorialist</span><span class="trigger">"plan my week"</span><span class="play"><b>coach.md</b> · editorial planning</span></div>
+        <div class="role-row"><span class="role">Reply operator</span><span class="trigger">"let's do replies"</span><span class="play"><b>coach.md</b> · reply shift</span></div>
+        <div class="role-row"><span class="role">Analyst</span><span class="trigger">"why did X work?"</span><span class="play"><b>coach.md</b> · weekly review</span></div>
+        <div class="role-row"><span class="role">CRM operator</span><span class="trigger">"who is @x?"</span><span class="play"><b>circles.md</b> · the dossier</span></div>
+      </div>
+    </div>
     <div>
       <div class="terminal bracket">
         <span class="br-bl"></span><span class="br-br"></span>
         <div class="head">
           <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · preflight.sh</span>
+          <span class="path">preflight · every session starts here</span>
           <span>BASH</span>
         </div>
-<pre><span class="cm"># 1 · source secrets from project .env</span>
-<span class="prompt">$</span> <span class="k">set</span> -a; <span class="k">source</span> .env; <span class="k">set</span> +a
-<span class="prompt">$</span> <span class="k">export</span> STRATUS_API_TOKEN=<span class="s">"$API_TOKEN"</span>
-
-<span class="cm"># 2 · probe the service (no auth)</span>
+<pre><span class="cm"># 1 · machine sanity — no auth needed</span>
 <span class="prompt">$</span> curl -fsS <span class="s">"$STRATUS_BASE_URL/healthz"</span>
-{<span class="s">"ok"</span>:<span class="var">true</span>,<span class="s">"db"</span>:<span class="s">"ok"</span>}
+<span class="cm"># 503 → stop and surface it. staleWorkers means the publisher</span>
+<span class="cm"># or daily-metrics worker died — the queue may silently stall.</span>
 
-<span class="cm"># 3 · sanity-check the bearer with a cheap GET</span>
-<span class="prompt">$</span> curl -fsS <span class="s">"$STRATUS_BASE_URL/cost/today"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> | jq .totalUsd
-<span class="n">0.142</span></pre>
+<span class="cm"># 2 · the helper wraps everything else</span>
+<span class="prompt">$</span> bash .claude/skills/stratus/scripts/api.sh <span class="k">GET</span> /x/brief
+<span class="prompt">$</span> bash .claude/skills/stratus/scripts/api.sh <span class="k">POST</span> /x/ideas \
+    <span class="s">'{"text":"thread idea: the 13x URL surcharge"}'</span>
+
+<span class="cm"># 3 · MCP, when wired into the session</span>
+<span class="prompt">$</span> claude mcp add --transport http stratus <span class="var">https://&lt;host&gt;/mcp</span> \
+    --header <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span></pre>
       </div>
 
       <div class="preflight">
-        <div class="step">
-          <span class="n">1</span>
-          <div>
-            <h4>Source the secrets</h4>
-            <p>Pull <code>STRATUS_BASE_URL</code> and <code>STRATUS_API_TOKEN</code> from <code>.env</code> if unset. <code>API_TOKEN</code> in <code>.env</code> becomes the operator-side <code>STRATUS_API_TOKEN</code> — same secret, different name.</p>
-          </div>
-        </div>
-        <div class="step">
-          <span class="n">2</span>
-          <div>
-            <h4>Probe <code>/healthz</code></h4>
-            <p>If it returns <code>503</code> or refuses: hosted instance → surface to the user (deploy is broken). Localhost → tell them to <code>bun run start</code>.</p>
-          </div>
-        </div>
-        <div class="step">
-          <span class="n">3</span>
-          <div>
-            <h4>Treat <code>401</code> as terminal</h4>
-            <p>Don't loop on bad bearers. One unauthorized response stops the run.</p>
-          </div>
-        </div>
+        <div class="step"><span class="n">1</span><div><h4>Health first</h4><p><code>GET /healthz</code> must return 200. On 503, surface <code>staleWorkers</code> to the user and stop — scheduled posts and metrics may silently not happen.</p></div></div>
+        <div class="step"><span class="n">2</span><div><h4>401 means wrong bearer</h4><p>Do not retry an <code>unauthorized</code> response with the same token. Fix the env, then continue.</p></div></div>
+        <div class="step"><span class="n">3</span><div><h4>Probe Grok-backed routes</h4><p>Drafting, extraction, images and icebreakers need the server-side <code>XAI_API_KEY</code>. A 404 can mean "not mounted", a 503 means "mounted, key missing".</p></div></div>
       </div>
     </div>
   </div>
@@ -1166,214 +949,138 @@
      02 · SURFACE
      ═══════════════════════════════════════════════════════════ -->
 <section id="s-surface">
-  <div class="eyebrow reveal">
-    <span class="num">02</span><span class="ln"></span><span>HTTP surface · 21 endpoints across 6 domains</span>
-  </div>
+  <div class="eyebrow reveal"><span class="num">02</span><span class="ln"></span><span>Endpoint map · seven families</span></div>
 
   <div class="surface-intro">
-    <h2 class="reveal">Twenty-one paths, <em>colour-coded by verb.</em></h2>
-    <p class="reveal reveal-delay-1">Read top-to-bottom for the operator's mental map. <b style="color:var(--mist-100);font-weight:500;">Full request and response shapes</b> live in <code style="color:var(--cyan);font-family:var(--mono);">references/endpoints.md</code> — open that before crafting any non-trivial body.</p>
+    <h2 class="reveal">The surface, <em>family by family.</em></h2>
+    <p class="reveal reveal-delay-1">
+      Full request and response shapes live in <code style="font-family:var(--mono);font-size:12px;color:var(--cyan);background:var(--raised);padding:1px 5px;border-radius:2px;">references/endpoints.md</code>,
+      <code style="font-family:var(--mono);font-size:12px;color:var(--cyan);background:var(--raised);padding:1px 5px;border-radius:2px;">circles.md</code> and
+      <code style="font-family:var(--mono);font-size:12px;color:var(--cyan);background:var(--raised);padding:1px 5px;border-radius:2px;">insight.md</code> —
+      read the relevant one before crafting any non-trivial body. Cost pips mark what a call
+      actually bills.
+    </p>
   </div>
 
   <div class="endpoint-block reveal reveal-delay-2">
 
-    <!-- HEALTH + COST -->
     <div class="endpoint-group">
-      <h4>System</h4>
+      <h4>Infra &amp; money</h4>
       <div class="endpoint-table">
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/healthz</span>
-          <span class="purpose">DB round-trip check · no auth required</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/cost/today</span>
-          <span class="purpose">Per-platform / per-endpoint UTC-day spend</span>
-          <span class="cost-pip zero">free</span>
-        </div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/healthz</span><span class="purpose">DB + worker heartbeats (no auth)</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/cost/today <span class="qs">· /cost/daily?days=</span></span><span class="purpose">Spend by platform (x / grok / xai), budget flags</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/grok/ask</span><span class="purpose">Raw Grok passthrough, no DB row</span><span class="cost-pip">tokens</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/mcp</span><span class="purpose">MCP server — JSON-RPC, 16+ tools</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/explorer</span><span class="purpose">Data-explorer UI shell (token pasted client-side)</span><span class="cost-pip zero">free</span></div>
       </div>
     </div>
 
-    <!-- SCHEDULED POSTS -->
     <div class="endpoint-group">
-      <h4>Calendar · scheduled posts</h4>
+      <h4>Calendar &amp; authoring</h4>
       <div class="endpoint-table">
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/x/posts/scheduled</span>
-          <span class="purpose">Create a draft or scheduled post</span>
-          <span class="cost-pip">$0.015 at fire</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/posts/scheduled<span class="qs">?from=&amp;to=&amp;status=</span></span>
-          <span class="purpose">List scheduled posts in a window</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb patch">PATCH</span>
-          <span class="path">/x/posts/scheduled/<span class="seg-id">:id</span></span>
-          <span class="purpose">Edit text / scheduledFor / mediaIds / status</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb delete">DELETE</span>
-          <span class="path">/x/posts/scheduled/<span class="seg-id">:id</span></span>
-          <span class="purpose">Hard-delete a non-posted row (409 if posted)</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/x/posts/reconcile</span>
-          <span class="purpose">Force the own-reconcile worker to run</span>
-          <span class="cost-pip">~$0.001 / tweet</span>
-        </div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/posts/scheduled</span><span class="purpose">Create a calendar row (draft or pending)</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/posts/scheduled <span class="qs">?from=&amp;to=&amp;status=</span></span><span class="purpose">List the queue, windowed</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb patch">PATCH</span><span class="path">/x/posts/scheduled/<span class="seg-id">:id</span></span><span class="purpose">Edit text / time / status / pillar / mediaNote</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb delete">DEL</span><span class="path">/x/posts/scheduled/<span class="seg-id">:id</span></span><span class="purpose">Hard delete; 409 on posted / publishing rows</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/posts/threads</span><span class="purpose">Thread as one unit, 2–25 segments; URL in tails only</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/posts/draft</span><span class="purpose">Grok: 3 register-distinct drafts, land as status=draft</span><span class="cost-pip warn">~$0.006</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/posts/reup</span><span class="purpose">Grok: self-quote re-up drafts of an OWN tweet</span><span class="cost-pip warn">~$0.006</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/posts/reconcile</span><span class="purpose">One-shot daily-metrics pass; discovers app-posted tweets</span><span class="cost-pip warn">$0.001/tw</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/pillars <span class="qs">· POST / PATCH / DELETE</span></span><span class="purpose">Editable content pillars (last-active guarded)</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/pillars/draft</span><span class="purpose">Grok pillar proposal — never auto-saved</span><span class="cost-pip warn">~$0.003</span></div>
       </div>
     </div>
 
-    <!-- METRICS -->
     <div class="endpoint-group">
-      <h4>Metrics</h4>
+      <h4>Metrics &amp; insight — $0 reads</h4>
       <div class="endpoint-table">
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/metrics/<span class="seg-id">:tweetId</span></span>
-          <span class="purpose">Snapshot history for one of MY posts</span>
-          <span class="cost-pip zero">free</span>
-        </div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/brief <span class="qs">?tzOffsetMin=</span></span><span class="purpose">The coach payload: KPI, yesterday, plan + scored gaps, quota, quests, streak, spend</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/metrics/<span class="seg-id">:tweetId</span> <span class="qs">· /posts · /replies</span></span><span class="purpose">Once-only snapshots per tweet / latest per list</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/metrics/account</span><span class="purpose">Follower series with per-day activity attribution</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/metrics/best-times <span class="qs">?tzOffsetMin=</span></span><span class="purpose">Weekday×hour cells, age-normalized, top gated n≥3</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/metrics/pillars</span><span class="purpose">Performance by content pillar</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/playbook <span class="qs">?minN=</span></span><span class="purpose">All measured feedback — angles, latency, media, roster, idea payoff (gated n≥20)</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/playbook/extract-winners</span><span class="purpose">Grok structure-extraction of top own posts, ≤20/call</span><span class="cost-pip warn">≤$0.10</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/digest <span class="qs">?week=&amp;refresh=&amp;factsOnly=</span></span><span class="purpose">Sunday digest — cached per week, one Grok narration</span><span class="cost-pip">~$0.01</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/data/tables <span class="qs">· /x/data/:table</span></span><span class="purpose">Read-only table browser, whitelist from schema</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/data/query</span><span class="purpose">SELECT-only SQL, 500-row cap, tokens invisible</span><span class="cost-pip zero">free</span></div>
       </div>
     </div>
 
-    <!-- VOICE -->
     <div class="endpoint-group">
-      <h4>Voice library · tracked authors</h4>
+      <h4>Replies &amp; radar — Grok-gated</h4>
       <div class="endpoint-table">
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/x/voice/track</span>
-          <span class="purpose">Enroll an author (one user-lookup)</span>
-          <span class="cost-pip warn">$0.010</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/voice/authors</span>
-          <span class="purpose">List tracked authors + tweet counts</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb patch">PATCH</span>
-          <span class="path">/x/voice/authors/<span class="seg-id">:username</span></span>
-          <span class="purpose">Flip pullEnabled / metricsPollingEnabled / etc.</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb delete">DELETE</span>
-          <span class="path">/x/voice/track/<span class="seg-id">:username</span></span>
-          <span class="purpose">Soft-disable an author (keeps history)</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/x/voice/pull/<span class="seg-id">:username</span></span>
-          <span class="purpose">On-demand pull of recent tweets (clamp <code style="color:var(--ember);font-family:var(--mono);background:rgba(255,181,90,0.06);padding:1px 4px;border-radius:2px;font-size:11px;">maxResults</code>)</span>
-          <span class="cost-pip warn">$0.005 / result</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/x/voice/scrape</span>
-          <span class="purpose">Ingest DOM-scraped tweets from the extension</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/voice/tweets<span class="qs">?author=&amp;q=&amp;minLikes=&amp;limit=</span></span>
-          <span class="purpose">Query the stash</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/voice/metrics/<span class="seg-id">:tweetId</span></span>
-          <span class="purpose">Snapshot history for a voice tweet</span>
-          <span class="cost-pip zero">free</span>
-        </div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/replies/generate</span><span class="purpose">Band-gated draft, 2 variants; override for mentions; ideaId, applyPillars</span><span class="cost-pip warn">~$0.003</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/replies/generate-batch</span><span class="purpose">≤25 tweets, one reply each; persists radar drafts</span><span class="cost-pip warn">$0.01–.05</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/replies <span class="qs">· /outcomes · /:id</span></span><span class="purpose">Drafts CRUD + measured-outcomes join</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb patch">PATCH</span><span class="path">/x/replies/<span class="seg-id">:id</span></span><span class="purpose">Edit text; ratchet status; set postedTweetId</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/replies/default-prompt</span><span class="purpose">The active REPLY-MASTER prompt</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/radar/drafts <span class="qs">?status= · PATCH</span></span><span class="purpose">Persisted batch drafts — ready → clicked → expired, 48 h expiry</span><span class="cost-pip zero">free</span></div>
       </div>
     </div>
 
-    <!-- REPLIES -->
     <div class="endpoint-group">
-      <h4>Replies · Grok-drafted</h4>
+      <h4>Inbox &amp; people — Circles, all $0</h4>
       <div class="endpoint-table">
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/x/replies/generate</span>
-          <span class="purpose">Draft a reply with Grok (never publishes)</span>
-          <span class="cost-pip">Grok call</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/replies<span class="qs">?status=&amp;sourceAuthor=&amp;limit=</span></span>
-          <span class="purpose">List drafts</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb get">GET</span>
-          <span class="path">/x/replies/<span class="seg-id">:id</span></span>
-          <span class="purpose">Get one draft</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb patch">PATCH</span>
-          <span class="path">/x/replies/<span class="seg-id">:id</span></span>
-          <span class="purpose">Edit / status-transition a draft</span>
-          <span class="cost-pip zero">free</span>
-        </div>
-        <div class="endpoint-row">
-          <span class="verb delete">DELETE</span>
-          <span class="path">/x/replies/<span class="seg-id">:id</span></span>
-          <span class="purpose">Delete a draft</span>
-          <span class="cost-pip zero">free</span>
-        </div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/mentions <span class="qs">· PATCH /:tweetId</span></span><span class="purpose">The mention inbox; answered / dismissed settle loops</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/mentions/refresh</span><span class="purpose">On-demand pull — capped 6/day server-side</span><span class="cost-pip">$0.001/res</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/conversations <span class="qs">· PATCH /:id</span></span><span class="purpose">Threaded open loops, chain flags; read / snooze / mute</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/people <span class="qs">· /rankmap · /:handle</span></span><span class="purpose">Roster, tier map, THE DOSSIER</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb patch">PATCH</span><span class="path">/x/people/<span class="seg-id">:handle</span></span><span class="purpose">Notes, tags, stage override (the one demote path), retire</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/people/<span class="seg-id">:handle</span>/events</span><span class="purpose">Manual note / DM log — also the manual-add path</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/people/<span class="seg-id">:handle</span>/icebreakers</span><span class="purpose">Grok openers — grounded or refused (404/422 before spend)</span><span class="cost-pip warn">~$0.005</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/people/followups <span class="qs">· PATCH (snooze)</span></span><span class="purpose">Do-next queue: chain &gt; dm &gt; neglected &gt; reup &gt; momentum</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/people/fans <span class="qs">?days=</span></span><span class="purpose">Top inbound fans + unacknowledged flags</span><span class="cost-pip zero">free</span></div>
       </div>
     </div>
 
-    <!-- GROK -->
     <div class="endpoint-group">
-      <h4>Grok · raw</h4>
+      <h4>Voice, ideas, channels, harvest — $0</h4>
       <div class="endpoint-table">
-        <div class="endpoint-row">
-          <span class="verb post">POST</span>
-          <span class="path">/grok/ask</span>
-          <span class="purpose">Raw Grok ask, no DB persistence</span>
-          <span class="cost-pip">Grok call</span>
-        </div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/voice/scrape <span class="qs">· PUT /authors/:handle</span></span><span class="purpose">DOM-scrape ingest — the extension feeds these</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/voice/tweets <span class="qs">?q=&amp;hook=&amp;extracted=</span></span><span class="purpose">Query the swipe file; tags / addTags via PATCH</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/voice/targets</span><span class="purpose">The 2–10× reply-target roster, momentum-ranked</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/voice/tweets/<span class="seg-id">:id</span>/extract <span class="qs">· /extract-batch</span></span><span class="purpose">Grok template extraction — structure only, never content</span><span class="cost-pip warn">$0.005/tw</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/ideas <span class="qs">· POST · PATCH · DELETE</span></span><span class="purpose">Idea Inbox — open → consumed with provenance backlink</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb get">GET</span><span class="path">/x/channels <span class="qs">· /:slug (THE ROOM)</span></span><span class="purpose">Topic rooms — people + swipe + ideas + own outcomes on one screen</span><span class="cost-pip zero">free</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/harvest/runs <span class="qs">· /rows</span></span><span class="purpose">DOM harvest ingest — reconciles reply drafts, backfills postedTweetId</span><span class="cost-pip zero">free</span></div>
+      </div>
+    </div>
+
+    <div class="endpoint-group">
+      <h4>Studio images — xAI</h4>
+      <div class="endpoint-table">
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/images/generate</span><span class="purpose">Grok Imagine background — HARD $0.50/day budget → 429</span><span class="cost-pip warn">~$0.02/img</span></div>
+        <div class="endpoint-row"><span class="verb post">POST</span><span class="path">/x/assets <span class="qs">· GET · GET /:id/png · DELETE</span></span><span class="purpose">PNG asset library, ≤2 MB; list is metadata-only</span><span class="cost-pip zero">free</span></div>
       </div>
     </div>
 
   </div>
+
+  <p class="surface-note reveal reveal-delay-3">
+    Planned but not live — Me profile, Niche, reply lists, LLM settings, goals/monitor,
+    passive harvest, engagements. <code>references/roadmap.md</code> lists them; probe with a
+    single request before use (a 404 means "not deployed yet", fall back and say so).
+  </p>
 </section>
 
 <!-- ═══════════════════════════════════════════════════════════
-     03 · TELEMETRY (canvas sim)
+     03 · TELEMETRY — publisher timeline sweep
      ═══════════════════════════════════════════════════════════ -->
 <section id="s-telemetry">
-  <div class="eyebrow reveal">
-    <span class="num">03</span><span class="ln"></span><span>Telemetry · publisher worker, live simulation</span>
-  </div>
-
-  <h2 class="reveal">A day of posts, <em>compressed.</em></h2>
+  <div class="eyebrow reveal"><span class="num">03</span><span class="ln"></span><span>Telemetry · one simulated day of the publisher</span></div>
+  <h2 class="reveal">The machine posts. <em>You watch it happen.</em></h2>
   <p class="lede reveal reveal-delay-1" style="margin-top:18px;">
-    Every sixty seconds the publisher worker scans for pending rows whose
-    <code style="font-family:var(--mono);color:var(--cyan);">scheduledFor &le; now()</code> and creates them on X.
-    Watch a day pass: drafts queue, the heartbeat sweeps, posts fire.
+    A 24-hour queue compressed to seconds: pending rows sit on jittered minutes
+    around their cadence anchors, the 60-second worker sweeps forward, and each
+    slot fires — or fails and waits for a human retry.
   </p>
 
   <div class="telemetry-frame reveal reveal-delay-2 bracket">
     <span class="br-bl"></span><span class="br-br"></span>
 
     <div class="telemetry-head">
-      <span class="label"><span class="dot"></span>SIM · <b>PUBLISHER&nbsp;WORKER</b></span>
+      <span class="label"><span class="dot"></span>SIM · <b>PUBLISHER&nbsp;SWEEP</b></span>
       <span></span>
       <span class="ctrl">
         <button id="sim-play" class="is-active">PAUSE</button>
@@ -1383,19 +1090,23 @@
       </span>
     </div>
 
-    <canvas id="publisher-canvas" aria-label="Publisher worker simulation"></canvas>
+    <canvas id="sig-canvas" aria-label="Animated timeline: scheduled posts on a 24-hour track firing as a sweep line representing the publisher worker passes them."></canvas>
 
     <div class="telemetry-stats">
-      <div class="cell"><span class="l">SIM TIME</span><span class="v time" id="stat-time">00:00 UTC</span></div>
-      <div class="cell"><span class="l">PENDING</span><span class="v pending" id="stat-pending">0</span></div>
-      <div class="cell"><span class="l">POSTED</span><span class="v posted" id="stat-posted">0</span></div>
-      <div class="cell"><span class="l">FAILED</span><span class="v failed" id="stat-failed">0</span></div>
+      <div class="cell"><span class="l">SIM TIME</span><span class="v t" id="stat-time">—</span></div>
+      <div class="cell"><span class="l">PENDING</span><span class="v a" id="stat-a">0</span></div>
+      <div class="cell"><span class="l">POSTED</span><span class="v b" id="stat-b">0</span></div>
+      <div class="cell"><span class="l">FAILED</span><span class="v c" id="stat-c">0</span></div>
     </div>
   </div>
 
   <p class="telemetry-caption reveal reveal-delay-3">
-    Posts land on <b>jittered minutes</b> inside each anchor hour (08, 12, 16, 20) — never at <code style="font-family:var(--mono);color:var(--mist-100);background:var(--raised);padding:1px 4px;border-radius:2px;">:00</code> or <code style="font-family:var(--mono);color:var(--mist-100);background:var(--raised);padding:1px 4px;border-radius:2px;">:30</code>, which would smell bot-like.
-    Posts in coral contain a <code style="font-family:var(--mono);color:var(--coral);background:rgba(255,122,122,0.06);padding:1px 4px;border-radius:2px;">https://</code> in their text and fail silently at the tick — see <span class="ref">HAZARD · 01</span>.
+    The real worker drains <b>status='pending'</b> rows whose time has come every 60 s,
+    claiming each row (<b>pending → publishing</b>) <b>before</b> calling X — so a crash can
+    never double-post. The frost tick at 03:00 marks the daily metrics pass: every
+    unretired tweet read once, retired, and never billed again. A definite X 4xx flips a
+    row to failed; an ambiguous 5xx leaves it in publishing for the reconcile to resolve —
+    see <span class="ref">HAZARD · 05</span>.
   </p>
 </section>
 
@@ -1406,578 +1117,473 @@
   <div class="eyebrow reveal" style="color:var(--coral);">
     <span class="num" style="color:var(--coral);border-color:rgba(255,122,122,0.35);background:rgba(255,122,122,0.06);">04</span>
     <span class="ln"></span>
-    <span>Hazard · five non-negotiable rules</span>
+    <span>Non-negotiable safety rules</span>
   </div>
-
   <h2 class="reveal">These were learned <em>the expensive way.</em></h2>
-  <div class="hazard-intro reveal reveal-delay-1" style="margin-top: 20px;">
-    <p>Violating them costs real money or fails silently at publish time. Memorize before changing the code.</p>
+  <div class="hazard-intro reveal reveal-delay-1" style="margin-top:20px;">
+    <p>Ten rules guard the wallet, the platform policy, and the data every measurement
+    stands on. The five below are the ones an operator trips over first; SKILL.md holds
+    the full list.</p>
   </div>
 
   <div class="hazard-grid">
 
-    <!-- 01 · URL surcharge — FEATURED -->
     <article class="hazard-card featured reveal reveal-delay-2 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
       <div class="index"><span class="tri"></span>HAZARD · 01 · URL surcharge</div>
       <div>
-        <h3>A link in the text turns <em style="font-style:italic;color:var(--coral);">$0.015</em> into <em style="font-style:italic;color:var(--coral);">$0.20</em>.</h3>
+        <h3>A link in a standalone post bills <em>thirteen times more.</em></h3>
         <div class="ill">
-          <svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg">
-            <defs>
-              <linearGradient id="hzMint" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#7DD3A0"/><stop offset="100%" stop-color="#6EE0FF"/>
-              </linearGradient>
-              <linearGradient id="hzCoral" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#FFB55A"/><stop offset="100%" stop-color="#FF7A7A"/>
-              </linearGradient>
-            </defs>
+          <svg viewBox="0 0 320 220" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A plain-text post at $0.015 versus a URL-bearing post at $0.20 — a 13x multiplier.">
+            <rect x="30" y="14" width="180" height="52" rx="4" fill="#0A1020" stroke="#7DD3A0" stroke-opacity="0.7"/>
+            <line x1="46" y1="32" x2="180" y2="32" stroke="#44557A" stroke-width="3" stroke-linecap="round"/>
+            <line x1="46" y1="44" x2="150" y2="44" stroke="#44557A" stroke-width="3" stroke-linecap="round"/>
+            <text x="222" y="45" font-family="JetBrains Mono" font-size="11" fill="#7DD3A0">$0.015</text>
 
-            <!-- LEFT — clean post, $0.015 -->
-            <g transform="translate(20 30)">
-              <rect width="120" height="80" rx="6" fill="#0F1830" stroke="#7DD3A0" stroke-opacity="0.5"/>
-              <rect x="12" y="14" width="80" height="3" fill="#7DD3A0" opacity="0.5"/>
-              <rect x="12" y="24" width="96" height="3" fill="#A1B2D0" opacity="0.4"/>
-              <rect x="12" y="34" width="58" height="3" fill="#A1B2D0" opacity="0.4"/>
-              <rect x="12" y="54" width="40" height="14" rx="2" fill="url(#hzMint)" opacity="0.18" stroke="#7DD3A0" stroke-opacity="0.5"/>
-              <text x="32" y="64" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#7DD3A0" letter-spacing="1">$0.015</text>
-            </g>
+            <rect x="30" y="96" width="180" height="52" rx="4" fill="#0A1020" stroke="#FF7A7A" stroke-opacity="0.8"/>
+            <line x1="46" y1="114" x2="120" y2="114" stroke="#44557A" stroke-width="3" stroke-linecap="round"/>
+            <text x="46" y="136" font-family="JetBrains Mono" font-size="9" fill="#FF7A7A">https://…</text>
+            <text x="222" y="126" font-family="JetBrains Mono" font-size="11" fill="#FF7A7A">$0.200</text>
 
-            <!-- ARROW -->
-            <g transform="translate(150 65)">
-              <line x1="0" y1="5" x2="20" y2="5" stroke="#6E81A4" stroke-width="1"/>
-              <polygon points="20,0 26,5 20,10" fill="#6E81A4"/>
-            </g>
-
-            <!-- RIGHT — post with link, $0.20 -->
-            <g transform="translate(180 30)">
-              <rect width="120" height="80" rx="6" fill="#0F1830" stroke="#FF7A7A" stroke-opacity="0.6"/>
-              <rect x="12" y="14" width="60" height="3" fill="#A1B2D0" opacity="0.4"/>
-              <!-- the link, highlighted -->
-              <rect x="12" y="24" width="96" height="6" fill="#FF7A7A" opacity="0.15"/>
-              <text x="12" y="29" font-family="JetBrains Mono" font-size="6" fill="#FF7A7A" letter-spacing="0.5">https://example.com/</text>
-              <rect x="12" y="38" width="48" height="3" fill="#A1B2D0" opacity="0.4"/>
-              <rect x="12" y="54" width="48" height="14" rx="2" fill="url(#hzCoral)" opacity="0.22" stroke="#FF7A7A" stroke-opacity="0.7"/>
-              <text x="36" y="64" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#FF7A7A" letter-spacing="1" font-weight="700">$0.20</text>
-            </g>
-
-            <!-- "×13" multiplier -->
-            <g transform="translate(160 150)">
+            <g transform="translate(120 190)">
               <circle r="22" fill="#0A1020" stroke="#FF7A7A" stroke-width="1.4"/>
-              <text x="0" y="5" text-anchor="middle" font-family="Fraunces" font-size="22" font-style="italic" fill="#FF7A7A">×13</text>
+              <text x="0" y="6" text-anchor="middle" font-family="Fraunces" font-size="19" font-style="italic" fill="#FF7A7A">×13</text>
             </g>
-
-            <text x="160" y="190" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">REGEX · (^|\s)https?://</text>
+            <text x="200" y="194" font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">400 URL_IN_TEXT</text>
           </svg>
         </div>
-        <p>The publisher worker does <b style="color:var(--mist-100);font-weight:500;">not</b> pass <code>allowUrlSurcharge: true</code>. So a scheduled tweet whose text matches <code>/(^|\s)https?:\/\//i</code> flips to <code style="color:var(--coral);background:rgba(255,122,122,0.06);">status='failed'</code> at the next 60-second tick — silently, from the user's POV.</p>
-        <p style="margin-top:10px;">Refuse such a batch before scheduling. There is no API escape hatch.</p>
+        <p>$0.20 instead of $0.015. The API rejects pending rows whose text matches a URL
+        (<code>400 url_in_text</code>) and the publisher's <code>createPost</code> refuses the
+        surcharge as the backstop — never look for a bypass. The cheap pattern is a
+        <b>thread</b> with the link in a tail segment: link-in-first-reply ships the same
+        content for $0.030 total.</p>
       </div>
-      <div class="ref">REF · <b>createPost</b> · src/x/endpoints.ts</div>
+      <div class="ref">REF · <b>SKILL.md · rule 1 · scheduling.md</b></div>
     </article>
 
-    <!-- 02 · Reply policy -->
     <article class="hazard-card reveal reveal-delay-2 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
-      <div class="index"><span class="tri"></span>HAZARD · 02 · Reply policy</div>
-      <h3>Replies to <em style="font-style:italic;color:var(--coral);">others</em> are policy-blocked.</h3>
-      <div class="ill">
-        <svg viewBox="0 0 240 110" xmlns="http://www.w3.org/2000/svg">
-          <!-- self-reply OK -->
-          <g transform="translate(10 10)">
-            <rect width="92" height="60" rx="6" fill="#0F1830" stroke="#7DD3A0" stroke-opacity="0.5"/>
-            <text x="46" y="22" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#7DD3A0" letter-spacing="1.5">@me → @me</text>
-            <path d="M28 36 Q46 28 64 36 Q70 40 64 44 L60 41 M64 44 L67 39"
-                  stroke="#7DD3A0" fill="none" stroke-width="1.2" stroke-linecap="round"/>
-            <text x="46" y="56" text-anchor="middle" font-family="Fraunces" font-style="italic" font-size="11" fill="#7DD3A0">allowed</text>
-          </g>
-          <!-- other reply BLOCKED -->
-          <g transform="translate(138 10)">
-            <rect width="92" height="60" rx="6" fill="#0F1830" stroke="#FF7A7A" stroke-opacity="0.6"/>
-            <text x="46" y="22" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#FF7A7A" letter-spacing="1.5">@me → @other</text>
-            <g transform="translate(46 40)">
-              <line x1="-10" y1="-7" x2="10" y2="7" stroke="#FF7A7A" stroke-width="1.5" stroke-linecap="round"/>
-              <line x1="10"  y1="-7" x2="-10" y2="7" stroke="#FF7A7A" stroke-width="1.5" stroke-linecap="round"/>
+      <div class="index"><span class="tri"></span>HAZARD · 02 · Policy wall</div>
+      <div>
+        <h3>Nothing auto-posts <em>to other people.</em></h3>
+        <div class="ill">
+          <svg viewBox="0 0 300 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Self-posting allowed; automated replies to others blocked.">
+            <rect x="8" y="14" width="130" height="76" rx="4" fill="#0A1020" stroke="#7DD3A0" stroke-opacity="0.6"/>
+            <path d="M36 52 Q60 40 84 52 Q92 57 84 62 L79 58 M84 62 L88 56" stroke="#7DD3A0" fill="none" stroke-width="1.2" stroke-linecap="round"/>
+            <text x="73" y="82" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#7DD3A0" letter-spacing="1.5">SELF · WORKER</text>
+            <rect x="162" y="14" width="130" height="76" rx="4" fill="#0A1020" stroke="#FF7A7A" stroke-opacity="0.6"/>
+            <g transform="translate(227 48)">
+              <line x1="-13" y1="-10" x2="13" y2="10" stroke="#FF7A7A" stroke-width="1.6" stroke-linecap="round"/>
+              <line x1="13" y1="-10" x2="-13" y2="10" stroke="#FF7A7A" stroke-width="1.6" stroke-linecap="round"/>
             </g>
-          </g>
-          <text x="120" y="95" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">SELF-SERVE · FEB 2026</text>
-        </svg>
+            <text x="227" y="82" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#FF7A7A" letter-spacing="1.5">REPLY-TO-OTHERS</text>
+            <text x="150" y="112" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">DRAFT → HUMAN PASTE → PATCH</text>
+          </svg>
+        </div>
+        <p>Replies to non-self tweets are policy-blocked on self-serve (Feb 2026). Every reply
+        flow <b>drafts</b>; the human pastes on X, then PATCHes the draft
+        <code>posted</code> with its <code>postedTweetId</code> — the join key everything
+        downstream measures through. MCP writes can only create <code>status='draft'</code> rows.</p>
       </div>
-      <p><code>/x/replies/generate</code> only <b style="color:var(--mist-100);font-weight:500;">drafts</b>. You copy/paste the draft into X, then PATCH the row to <code style="color:var(--mint);background:rgba(125,211,160,0.06);">status='posted'</code>.</p>
-      <div class="ref">REF · <b>X policy</b> · Feb 2026</div>
+      <div class="ref">REF · <b>SKILL.md · rules 2 &amp; 10</b></div>
     </article>
 
-    <!-- 03 · UTC ISO 8601 -->
     <article class="hazard-card reveal reveal-delay-3 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
-      <div class="index"><span class="tri"></span>HAZARD · 03 · Time</div>
-      <h3><em>scheduledFor</em> is UTC ISO 8601.</h3>
-      <div class="ill">
-        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg">
-          <g transform="translate(120 60)">
-            <circle r="42" fill="#0A1020" stroke="#4A8FE7" stroke-opacity="0.55"/>
-            <g stroke="#4A8FE7" stroke-opacity="0.25" stroke-dasharray="2 3">
-              <line x1="-42" y1="0" x2="42" y2="0"/>
-              <line x1="0" y1="-42" x2="0" y2="42"/>
-              <line x1="-30" y1="-30" x2="30" y2="30"/>
-              <line x1="30" y1="-30" x2="-30" y2="30"/>
+      <div class="index"><span class="tri"></span>HAZARD · 03 · Refusals are features</div>
+      <div>
+        <h3>The gate that says no <em>is saving money.</em></h3>
+        <div class="ill">
+          <svg viewBox="0 0 300 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A locked request card — refused before any spend.">
+            <rect x="70" y="16" width="160" height="76" rx="4" fill="#0A1020" stroke="#1F2A48"/>
+            <line x1="88" y1="36" x2="212" y2="36" stroke="#44557A" stroke-width="3" stroke-linecap="round"/>
+            <line x1="88" y1="50" x2="188" y2="50" stroke="#44557A" stroke-width="3" stroke-linecap="round"/>
+            <line x1="88" y1="64" x2="164" y2="64" stroke="#2A3552" stroke-width="3" stroke-linecap="round"/>
+            <g transform="translate(218 70)">
+              <rect x="-12" y="0" width="24" height="20" rx="3" fill="#FFB55A" opacity="0.92"/>
+              <path d="M-7 0 v-6 a7 7 0 0 1 14 0 v6" fill="none" stroke="#FFB55A" stroke-width="2"/>
+              <circle r="1.5" cy="10" fill="#0A1020"/>
             </g>
-            <circle r="3" fill="#6EE0FF"/>
-            <text x="0" y="-50" text-anchor="middle" font-family="JetBrains Mono" font-size="7" fill="#6E81A4">UTC+02 BUC</text>
-            <text x="50" y="3" text-anchor="middle" font-family="JetBrains Mono" font-size="7" fill="#6E81A4">UTC+09</text>
-            <text x="0" y="58" text-anchor="middle" font-family="JetBrains Mono" font-size="7" fill="#6E81A4">UTC-05 NYC</text>
-            <text x="-50" y="3" text-anchor="middle" font-family="JetBrains Mono" font-size="7" fill="#6E81A4">UTC-08</text>
-          </g>
-          <text x="120" y="115" text-anchor="middle" font-family="Fraunces" font-style="italic" font-size="13" fill="#6EE0FF">2026-05-15T13:30:00Z</text>
-        </svg>
+            <text x="150" y="112" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#FF7A7A" letter-spacing="2">422 BAND_GATE · $0 SPENT</text>
+          </svg>
+        </div>
+        <p>The band gate (<code>422 band_gate</code>) saves a Grok call on dead posts —
+        <code>override: true</code> only when the user insists (always for mentions, whose
+        metrics are zeros). Icebreakers 404/422 before spending; images 429 at the daily
+        budget. Don't "fix" a refusal by hammering it.</p>
       </div>
-      <p>Send Zulu. When the user says "Tuesday at 9 AM" without a zone — ask which one and convert. The publisher's predicate is <code>scheduledFor &le; now()</code> server-side.</p>
-      <div class="ref">REF · <b>publisher.ts</b></div>
+      <div class="ref">REF · <b>SKILL.md · rule 3 · replies.md</b></div>
     </article>
 
-    <!-- 04 · Voice cost -->
     <article class="hazard-card reveal reveal-delay-3 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
-      <div class="index"><span class="tri"></span>HAZARD · 04 · Voice spend</div>
-      <h3>Other-user reads cost <em>five×</em>.</h3>
-      <div class="ill">
-        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg">
-          <!-- 3 horizontal bars in increasing cost -->
-          <g font-family="JetBrains Mono" font-size="8" fill="#A1B2D0" letter-spacing="1">
-            <text x="6" y="18">own</text>
-            <rect x="60" y="10" width="10" height="10" fill="#7DD3A0"/>
-            <text x="180" y="18" text-anchor="end" fill="#7DD3A0">$0.001</text>
-
-            <text x="6" y="55">other</text>
-            <rect x="60" y="47" width="50" height="10" fill="#FFB55A"/>
-            <text x="180" y="55" text-anchor="end" fill="#FFB55A">$0.005</text>
-
-            <text x="6" y="92">lookup</text>
-            <rect x="60" y="84" width="100" height="10" fill="#FF7A7A"/>
-            <text x="200" y="92" text-anchor="end" fill="#FF7A7A">$0.010</text>
-          </g>
-          <text x="120" y="112" text-anchor="middle" font-family="JetBrains Mono" font-size="7" fill="#6E81A4" letter-spacing="2">PER READ · APR 2026</text>
-        </svg>
+      <div class="index"><span class="tri"></span>HAZARD · 04 · Time discipline</div>
+      <div>
+        <h3>UTC in, jittered minutes out — <em>never :00.</em></h3>
+        <div class="ill">
+          <svg viewBox="0 0 300 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A quartered globe with UTC at the center; the canonical timestamp format beneath.">
+            <circle cx="150" cy="52" r="40" stroke="#4A8FE7" stroke-opacity="0.6" fill="none"/>
+            <line x1="122" y1="24" x2="178" y2="80" stroke="#4A8FE7" stroke-opacity="0.4"/>
+            <line x1="178" y1="24" x2="122" y2="80" stroke="#4A8FE7" stroke-opacity="0.4"/>
+            <circle cx="150" cy="52" r="3" fill="#6EE0FF"/>
+            <text x="150" y="10" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">UTC</text>
+            <text x="228" y="56" font-family="JetBrains Mono" font-size="8" fill="#44557A" letter-spacing="1">LOCAL</text>
+            <text x="34" y="56" font-family="JetBrains Mono" font-size="8" fill="#44557A" letter-spacing="1">IANA</text>
+            <text x="150" y="112" text-anchor="middle" font-family="JetBrains Mono" font-size="9" fill="#6EE0FF" letter-spacing="1">2026-05-15T13:27:00Z</text>
+          </svg>
+        </div>
+        <p><code>scheduledFor</code> is UTC ISO 8601 — convert from the user's local timezone
+        and ask when ambiguous. Jitter minutes in <code>[5,35]</code>, distinct per slot per
+        day, so the cadence never reads as a cron job firing at the top of the hour.</p>
       </div>
-      <p>Always clamp <code>maxResults</code> when calling <code>/x/voice/pull/:user</code> on a busy author. <code>voiceMetricsPoll</code> is opt-in via env — no API switch.</p>
-      <div class="ref">REF · <b>VOICE_METRICS_POLL_ENABLED</b></div>
+      <div class="ref">REF · <b>SKILL.md · rule 5 · scheduling.md</b></div>
     </article>
 
-    <!-- 05 · Posted rows locked -->
     <article class="hazard-card reveal reveal-delay-4 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
-      <div class="index"><span class="tri"></span>HAZARD · 05 · Locked rows</div>
-      <h3>Posted rows are <em>write-locked.</em></h3>
-      <div class="ill">
-        <svg viewBox="0 0 240 120" xmlns="http://www.w3.org/2000/svg">
-          <rect x="50" y="22" width="140" height="68" rx="6" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.4"/>
-          <rect x="64" y="36" width="80" height="3" fill="#A1B2D0" opacity="0.5"/>
-          <rect x="64" y="46" width="100" height="3" fill="#A1B2D0" opacity="0.4"/>
-          <rect x="64" y="56" width="60" height="3" fill="#A1B2D0" opacity="0.4"/>
-          <text x="64" y="78" font-family="JetBrains Mono" font-size="8" fill="#7DD3A0" letter-spacing="1">status=posted</text>
-          <!-- lock -->
-          <g transform="translate(170 60)">
-            <rect x="-12" y="0" width="24" height="20" rx="3" fill="#FFB55A" opacity="0.92"/>
-            <path d="M-7 0 v-6 a7 7 0 0 1 14 0 v6" fill="none" stroke="#FFB55A" stroke-width="2"/>
-            <circle r="1.5" cy="10" fill="#0A1020"/>
-          </g>
-          <text x="120" y="112" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#FF7A7A" letter-spacing="2">PATCH / DELETE → 409</text>
-        </svg>
+      <div class="index"><span class="tri"></span>HAZARD · 05 · Ratchets</div>
+      <div>
+        <h3>Statuses only move forward; <em>ids are sacred.</em></h3>
+        <div class="ill">
+          <svg viewBox="0 0 300 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A three-state ratchet with the backward path severed.">
+            <g font-family="JetBrains Mono" font-size="7.5" letter-spacing="1">
+              <circle cx="52" cy="48" r="17" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.7"/>
+              <text x="52" y="80" text-anchor="middle" fill="#A1B2D0">GENERATED</text>
+              <circle cx="150" cy="48" r="17" fill="#0F1830" stroke="#4A8FE7" stroke-opacity="0.7"/>
+              <text x="150" y="80" text-anchor="middle" fill="#A1B2D0">COPIED</text>
+              <circle cx="248" cy="48" r="17" fill="#0F1830" stroke="#7DD3A0" stroke-opacity="0.9"/>
+              <text x="248" y="80" text-anchor="middle" fill="#7DD3A0">POSTED</text>
+            </g>
+            <g stroke="#6E81A4" stroke-width="1">
+              <line x1="71" y1="48" x2="127" y2="48"/><polygon points="127,44 133,48 127,52" fill="#6E81A4"/>
+              <line x1="169" y1="48" x2="225" y2="48"/><polygon points="225,44 231,48 225,52" fill="#6E81A4"/>
+            </g>
+            <path d="M240 24 Q150 -6 62 24" stroke="#FF7A7A" stroke-opacity="0.55" fill="none" stroke-dasharray="3 4"/>
+            <g transform="translate(150 10)">
+              <line x1="-8" y1="-6" x2="8" y2="6" stroke="#FF7A7A" stroke-width="1.4" stroke-linecap="round"/>
+              <line x1="8" y1="-6" x2="-8" y2="6" stroke="#FF7A7A" stroke-width="1.4" stroke-linecap="round"/>
+            </g>
+            <text x="150" y="112" text-anchor="middle" font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="2">409 INVALID_STATUS_TRANSITION</text>
+          </svg>
+        </div>
+        <p>Reply drafts ratchet <code>generated→copied→posted→discarded</code>; radar drafts
+        <code>ready→clicked→expired</code>; person stages only auto-promote. Worker-owned
+        <code>posted</code>/<code>publishing</code> calendar rows 409 on edits — a row stuck in
+        publishing means the X outcome is unknown; the reconcile resolves it. And never invent
+        tweet ids into mentions paths: the max stored id IS the since_id checkpoint.</p>
       </div>
-      <p>There is no <em style="font-style:italic;color:var(--mist-100);">unpublish</em>. If they want to retry the copy, ask them to delete the tweet on X first, then recreate the row.</p>
-      <div class="ref">REF · <b>409</b> on status='posted'</div>
+      <div class="ref">REF · <b>SKILL.md · rules 7 &amp; 8</b></div>
     </article>
 
   </div>
 </section>
 
 <!-- ═══════════════════════════════════════════════════════════
-     05 · OPS (workflows)
+     05 · OPS
      ═══════════════════════════════════════════════════════════ -->
 <section id="s-ops">
-  <div class="eyebrow reveal">
-    <span class="num">05</span><span class="ln"></span><span>Operations · six workflows, end to end</span>
-  </div>
+  <div class="eyebrow reveal"><span class="num">05</span><span class="ln"></span><span>Operating procedures · the everyday moves</span></div>
+  <h2 class="reveal">Five sessions, <em>rehearsed to muscle memory.</em></h2>
 
-  <h2 class="reveal">The work, <em>in shape.</em></h2>
-
-  <!-- A · Schedule a week -->
   <div class="workflow">
     <div class="head reveal">
-      <div class="tag"><b>OP · A</b> · The headline use case</div>
-      <h3>Schedule a <em>week</em> of posts</h3>
-      <p>Twenty-one to twenty-eight posts spread across seven days with a recognizable rhythm. Two scripts cooperate: one converts a markdown blockquote file into JSON; the other validates and POSTs.</p>
+      <div class="tag"><b>OP · A</b> · THE HEADLINE FLOW</div>
+      <h3>Schedule <em>a week</em> of posts</h3>
+      <p>From a markdown file of blockquote tweets to a fully-jittered 7-day queue,
+      with URL and length guards enforced before a single byte hits the API.
+      Preview, get approval, submit, verify.</p>
       <ul>
-        <li>Default cadence (3/day): anchors at <code>09</code>, <code>13</code>, <code>18</code> local</li>
-        <li>Default cadence (4/day): anchors at <code>08</code>, <code>12</code>, <code>16</code>, <code>20</code> local</li>
-        <li>Jitter every slot's minutes in <code>[5, 35]</code>, seconds = <code>00</code></li>
-        <li>URL audit, length audit, dry-run preview <em>before</em> submit</li>
-        <li>Verify with <code>GET /x/posts/scheduled</code> against the same window</li>
+        <li>Anchors: 3/day <code>[9,13,18]</code> · 4/day <code>[8,12,16,20]</code> local</li>
+        <li>Minutes jittered in <code>[5,35]</code>, distinct per slot column — never <code>:00</code></li>
+        <li>Tweet count must equal <code>slots × 7</code>; URLs and &gt;280 chars refuse</li>
+        <li>Rank open anchors with <code>GET /x/metrics/best-times</code> first (n≥3 gate)</li>
+        <li>Always show the dry-run table and get approval before submitting</li>
       </ul>
-
       <div class="cadence-svg">
-        <svg viewBox="0 0 460 140" xmlns="http://www.w3.org/2000/svg">
-          <!-- 7 day columns -->
+        <svg viewBox="0 0 460 140" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="A week grid: four anchor rows by seven days, each cell a slightly jittered scheduled post.">
           <g font-family="JetBrains Mono" font-size="8" fill="#6E81A4" letter-spacing="1">
-            <text x="0" y="14">MON</text><text x="65" y="14">TUE</text><text x="130" y="14">WED</text>
-            <text x="195" y="14">THU</text><text x="260" y="14">FRI</text><text x="325" y="14">SAT</text>
-            <text x="390" y="14">SUN</text>
+            <text x="66"  y="12" text-anchor="middle">MON</text>
+            <text x="122" y="12" text-anchor="middle">TUE</text>
+            <text x="178" y="12" text-anchor="middle">WED</text>
+            <text x="234" y="12" text-anchor="middle">THU</text>
+            <text x="290" y="12" text-anchor="middle">FRI</text>
+            <text x="346" y="12" text-anchor="middle">SAT</text>
+            <text x="402" y="12" text-anchor="middle">SUN</text>
+            <text x="30" y="37"  text-anchor="end">08</text>
+            <text x="30" y="65"  text-anchor="end">12</text>
+            <text x="30" y="93"  text-anchor="end">16</text>
+            <text x="30" y="121" text-anchor="end">20</text>
           </g>
-          <g stroke="#1F2A48">
-            <line x1="0" y1="24" x2="460" y2="24"/>
-            <line x1="0" y1="120" x2="460" y2="120"/>
+          <g stroke="#A1B2D0" stroke-opacity="0.12" stroke-dasharray="2 4">
+            <line x1="40" y1="34" x2="430" y2="34"/>
+            <line x1="40" y1="62" x2="430" y2="62"/>
+            <line x1="40" y1="90" x2="430" y2="90"/>
+            <line x1="40" y1="118" x2="430" y2="118"/>
           </g>
-          <!-- 4 anchor rows: 8, 12, 16, 20 -->
-          <g font-family="JetBrains Mono" font-size="7" fill="#44557A" letter-spacing="1">
-            <text x="450" y="44" text-anchor="end">08</text>
-            <text x="450" y="68" text-anchor="end">12</text>
-            <text x="450" y="92" text-anchor="end">16</text>
-            <text x="450" y="116" text-anchor="end">20</text>
-          </g>
-          <g stroke="#1F2A48" stroke-dasharray="2 4">
-            <line x1="0" y1="40" x2="460" y2="40"/>
-            <line x1="0" y1="64" x2="460" y2="64"/>
-            <line x1="0" y1="88" x2="460" y2="88"/>
-            <line x1="0" y1="112" x2="460" y2="112"/>
-          </g>
-          <!-- jittered post markers -->
           <g fill="#6EE0FF">
-            <rect x="8"   y="37" width="18" height="6" rx="1"/>
-            <rect x="74"  y="38" width="18" height="6" rx="1"/>
-            <rect x="142" y="36" width="18" height="6" rx="1"/>
-            <rect x="201" y="39" width="18" height="6" rx="1"/>
-            <rect x="270" y="37" width="18" height="6" rx="1"/>
-            <rect x="335" y="38" width="18" height="6" rx="1"/>
-            <rect x="396" y="36" width="18" height="6" rx="1"/>
-
-            <rect x="13"  y="61" width="18" height="6" rx="1"/>
-            <rect x="80"  y="62" width="18" height="6" rx="1"/>
-            <rect x="139" y="63" width="18" height="6" rx="1"/>
-            <rect x="206" y="61" width="18" height="6" rx="1"/>
-            <rect x="275" y="62" width="18" height="6" rx="1"/>
-            <rect x="332" y="61" width="18" height="6" rx="1"/>
-            <rect x="403" y="63" width="18" height="6" rx="1"/>
-
-            <rect x="11"  y="86" width="18" height="6" rx="1"/>
-            <rect x="76"  y="85" width="18" height="6" rx="1"/>
-            <rect x="144" y="87" width="18" height="6" rx="1"/>
-            <rect x="208" y="84" width="18" height="6" rx="1"/>
-            <rect x="265" y="86" width="18" height="6" rx="1"/>
-            <rect x="337" y="85" width="18" height="6" rx="1"/>
-            <rect x="394" y="87" width="18" height="6" rx="1"/>
-
-            <rect x="14"  y="109" width="18" height="6" rx="1"/>
-            <rect x="71"  y="110" width="18" height="6" rx="1"/>
-            <rect x="146" y="108" width="18" height="6" rx="1"/>
-            <rect x="204" y="111" width="18" height="6" rx="1"/>
-            <rect x="269" y="109" width="18" height="6" rx="1"/>
-            <rect x="334" y="110" width="18" height="6" rx="1"/>
-            <rect x="397" y="108" width="18" height="6" rx="1"/>
+            <rect x="62"  y="30" width="9" height="8" rx="2"/><rect x="120" y="29" width="9" height="8" rx="2"/><rect x="173" y="31" width="9" height="8" rx="2"/><rect x="233" y="30" width="9" height="8" rx="2"/><rect x="287" y="29" width="9" height="8" rx="2"/><rect x="344" y="31" width="9" height="8" rx="2"/><rect x="399" y="30" width="9" height="8" rx="2"/>
+            <rect x="64"  y="58" width="9" height="8" rx="2"/><rect x="118" y="57" width="9" height="8" rx="2"/><rect x="176" y="59" width="9" height="8" rx="2"/><rect x="230" y="58" width="9" height="8" rx="2"/><rect x="290" y="57" width="9" height="8" rx="2"/><rect x="341" y="59" width="9" height="8" rx="2"/><rect x="402" y="58" width="9" height="8" rx="2"/>
+            <rect x="63"  y="86" width="9" height="8" rx="2"/><rect x="122" y="85" width="9" height="8" rx="2"/><rect x="174" y="87" width="9" height="8" rx="2"/><rect x="235" y="86" width="9" height="8" rx="2"/><rect x="286" y="85" width="9" height="8" rx="2"/><rect x="346" y="87" width="9" height="8" rx="2"/><rect x="400" y="86" width="9" height="8" rx="2"/>
+            <rect x="65"  y="114" width="9" height="8" rx="2"/><rect x="119" y="113" width="9" height="8" rx="2"/><rect x="177" y="115" width="9" height="8" rx="2"/><rect x="232" y="114" width="9" height="8" rx="2"/><rect x="289" y="113" width="9" height="8" rx="2"/><rect x="343" y="115" width="9" height="8" rx="2"/><rect x="401" y="114" width="9" height="8" rx="2"/>
           </g>
         </svg>
-        <div class="legend">
-          <span><i style="background:#6EE0FF"></i>scheduled · 28 posts · 4 / day</span>
-        </div>
+        <div class="legend"><span><i style="background:#6EE0FF"></i>SCHEDULED · 28 POSTS · 4/DAY · JITTERED MINUTES</span></div>
       </div>
     </div>
-
     <div class="reveal reveal-delay-1">
       <div class="terminal bracket">
         <span class="br-bl"></span><span class="br-br"></span>
-        <div class="head">
-          <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · md_to_schedule + schedule_week</span>
-          <span>BASH</span>
-        </div>
-<pre><span class="cm"># convert a week.md of `&gt; ...` blockquote tweets to JSON</span>
+        <div class="head"><span class="lights"><i></i><i></i><i></i></span><span class="path">scripts · md_to_schedule.ts → schedule_week.sh</span><span>BASH</span></div>
+<pre><span class="cm"># 1 · parse + validate + jitter + convert to UTC (DST-safe)</span>
 <span class="prompt">$</span> bun run .claude/skills/stratus/scripts/md_to_schedule.ts \
-       week.md Europe/Bucharest <span class="n">2026-05-14</span> <span class="n">4</span> \
-       <span class="k">&gt;</span> /tmp/week.json
+    week.md <span class="var">Europe/Bucharest</span> <span class="n">2026-07-20</span> <span class="n">4</span> &gt; /tmp/week.json
 
-<span class="cm"># show the user the preview FIRST — minute jitter, all 28 lines</span>
-<span class="prompt">$</span> jq -r <span class="s">'.[] | "\(.scheduledFor)  \(.text[:60])"'</span> /tmp/week.json
-2026-05-14T05:12:00Z  the slow part of shipping is the conversation about ...
-2026-05-14T09:23:00Z  field note: the doc you wished you'd written, write ...
-2026-05-14T13:07:00Z  ...
-<span class="cm">                                                       (28 lines)</span>
+<span class="cm"># 2 · preview — the version you show is the version you submit</span>
+<span class="prompt">$</span> jq -r <span class="s">'.[] | "\(.scheduledFor)  \(.text[0:60])"'</span> /tmp/week.json
 
-<span class="cm"># on user confirmation, submit sequentially — 401 stops the run</span>
+<span class="cm"># 3 · bulk submit — halts on first non-2xx, prints per-row OK/FAIL</span>
 <span class="prompt">$</span> bash .claude/skills/stratus/scripts/schedule_week.sh /tmp/week.json
-<span class="var">Submitted 28, OK 28, failed 0</span>
+<span class="cm">#   OK 8e3e…  2026-07-20T05:14:00Z</span>
+<span class="cm">#   Submitted 28, OK 28, failed 0</span>
 
-<span class="cm"># verify against the same 7-day window</span>
-<span class="prompt">$</span> curl -s <span class="s">"$STRATUS_BASE_URL/x/posts/scheduled?status=pending&amp;from=$S&amp;to=$E"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> | jq <span class="s">'.posts | length'</span>
-<span class="n">28</span></pre>
+<span class="cm"># 4 · verify the queue back, grouped by day</span>
+<span class="prompt">$</span> bash .claude/skills/stratus/scripts/api.sh <span class="k">GET</span> \
+    <span class="s">'/x/posts/scheduled?status=pending&amp;from=…&amp;to=…'</span> | jq <span class="s">'length'</span></pre>
       </div>
     </div>
   </div>
 
-  <!-- B · Audit / edit the calendar -->
   <div class="workflow">
     <div class="head reveal">
-      <div class="tag"><b>OP · B</b></div>
-      <h3>Audit &amp; edit <em>the calendar</em></h3>
-      <p>List the queue, edit a row, retry a failed one, cancel softly, hard-delete only if not yet posted.</p>
+      <div class="tag"><b>OP · B</b> · COACH SESSION</div>
+      <h3>The morning <em>check-in</em></h3>
+      <p>Six $0 reads in a fixed order — each call informs how you read the next.
+      Then a coach's brief: 3–5 sentences of narrative, a numbered do-next list of at
+      most five actions, streak status last.</p>
       <ul>
-        <li><code>GET /x/posts/scheduled</code> with <code>?from=&amp;to=&amp;status=</code></li>
-        <li>Soft cancel — PATCH <code>status='cancelled'</code></li>
-        <li>Retry — PATCH new <code>scheduledFor</code> + <code>status='pending'</code></li>
-        <li>Hard delete — DELETE on non-posted rows only (else <code>409</code>)</li>
+        <li>Order: healthz → brief → followups → conversations → mentions → cost</li>
+        <li>Chain replies before scheduling; scheduling gaps before nice-to-haves</li>
+        <li>Fill the highest-value gap first — each gap carries its best-times score</li>
+        <li>Praise kept streaks; a broken one gets one neutral sentence, never guilt</li>
       </ul>
     </div>
     <div class="reveal reveal-delay-1">
       <div class="terminal bracket">
         <span class="br-bl"></span><span class="br-br"></span>
-        <div class="head">
-          <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · calendar.ops</span>
-          <span>BASH</span>
-        </div>
-<pre><span class="cm"># everything queued in the next 7 days</span>
-<span class="prompt">$</span> START=$(date -u +%Y-%m-%dT00:00:00Z)
-<span class="prompt">$</span> END=$(date -u -v+7d +%Y-%m-%dT00:00:00Z)
-<span class="prompt">$</span> curl -s <span class="s">"$STRATUS_BASE_URL/x/posts/scheduled?from=$START&amp;to=$END&amp;status=pending"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> | jq
+        <div class="head"><span class="lights"><i></i><i></i><i></i></span><span class="path">coach.md · morning coach — all $0</span><span>BASH</span></div>
+<pre><span class="prompt">$</span> curl -fsS <span class="s">"$STRATUS_BASE_URL/healthz"</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> <span class="s">'/x/brief?tzOffsetMin=-180'</span>       <span class="cm"># the backbone</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> /x/people/followups              <span class="cm"># do-next queue</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> /x/conversations                 <span class="cm"># open loops, chains on top</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> <span class="s">'/x/mentions?status=unanswered'</span>  <span class="cm"># anything missed</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> /cost/today                       <span class="cm"># one line on spend</span>
 
-<span class="cm"># edit time on one row</span>
-<span class="prompt">$</span> curl -sX PATCH <span class="s">"$STRATUS_BASE_URL/x/posts/scheduled/$ID"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> -H <span class="s">'Content-Type: application/json'</span> \
-       -d <span class="s">'{"scheduledFor":"2026-05-16T13:30:00Z"}'</span>
-
-<span class="cm"># retry a failed row: PATCH text/time then flip back to pending</span>
-<span class="prompt">$</span> curl -sX PATCH <span class="s">"$STRATUS_BASE_URL/x/posts/scheduled/$ID"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> -H <span class="s">'Content-Type: application/json'</span> \
-       -d <span class="s">'{"status":"pending","scheduledFor":"2026-05-15T14:00:00Z"}'</span>
-
-<span class="cm"># cancel (soft)</span>
-<span class="prompt">$</span> curl -sX PATCH <span class="s">"$STRATUS_BASE_URL/x/posts/scheduled/$ID"</span> \
-       -d <span class="s">'{"status":"cancelled"}'</span>
-
-<span class="cm"># delete (hard, only if not posted)</span>
-<span class="prompt">$</span> curl -sX DELETE <span class="s">"$STRATUS_BASE_URL/x/posts/scheduled/$ID"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span></pre>
+<span class="cm"># deliver: narrative (≤5 sentences) + numbered do-next (≤5)</span>
+<span class="cm"># hardest-deadline first · close with the streak</span></pre>
       </div>
     </div>
   </div>
 
-  <!-- C · Metrics -->
   <div class="workflow">
     <div class="head reveal">
-      <div class="tag"><b>OP · C</b></div>
-      <h3>Read <em>tweet metrics</em></h3>
-      <p>Snapshots only exist for tweets in <code>posts_published</code>. If a tweet was posted manually from the X app, reconcile first — it's <code>$0.001/tweet</code>, capped at 500/pass.</p>
+      <div class="tag"><b>OP · C</b> · REPLY SHIFT</div>
+      <h3>Draft, paste, <em>close the loop</em></h3>
+      <p>Single replies go through the band gate; a queue of hot/warm tweets goes
+      through one batch call. Either way the human pastes on X and the PATCH with
+      <code style="font-family:var(--mono);font-size:12px;color:var(--cyan);background:var(--raised);padding:1px 5px;border-radius:2px;">postedTweetId</code> closes the measurement loop.</p>
       <ul>
-        <li>Snapshot cadence ≈ 113 polls / 30 days → ≈ <code>$0.113/tweet</code></li>
-        <li>After 30 days, row sets <code>retired=true</code> and polling stops</li>
-        <li><code>non_public_metrics</code> / <code>organic_metrics</code> null after 30d</li>
+        <li>Surface <code>radar/drafts?status=ready</code> first — pre-paid Grok output</li>
+        <li>Mentions: always <code>override: true</code> + <code>context.parent</code></li>
+        <li>Respect <code>422 band_gate</code> — it's saving a wasted slot</li>
+        <li>Stop at the top of the 10–20 quota; quality over count</li>
       </ul>
     </div>
     <div class="reveal reveal-delay-1">
       <div class="terminal bracket">
         <span class="br-bl"></span><span class="br-br"></span>
-        <div class="head">
-          <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · metrics.read</span>
-          <span>BASH</span>
-        </div>
-<pre><span class="cm"># reconcile first if the tweet was posted manually</span>
-<span class="prompt">$</span> curl -sX POST <span class="s">"$STRATUS_BASE_URL/x/posts/reconcile"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span>
+        <div class="head"><span class="lights"><i></i><i></i><i></i></span><span class="path">replies.md · generate → paste → patch</span><span>BASH</span></div>
+<pre><span class="cm"># draft (2 variants: extends / contrarian / debate)</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/replies/generate <span class="s">@/tmp/ctx.json</span>
+<span class="cm">#   context: tweetId · handle · author · text · url</span>
+<span class="cm">#            postedAt · metrics · topComments</span>
 
-<span class="cm"># then read snapshot history</span>
-<span class="prompt">$</span> curl -s <span class="s">"$STRATUS_BASE_URL/x/metrics/$TWEET_ID"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> | jq</pre>
+<span class="cm"># dead target? 422 band_gate → $0 spent. only if user insists:</span>
+<span class="prompt">$</span> jq <span class="s">'. + {override: true}'</span> /tmp/ctx.json | api.sh <span class="k">POST</span> \
+    /x/replies/generate <span class="s">@-</span>
+
+<span class="cm"># after the human pastes it on X — the join key, always:</span>
+<span class="prompt">$</span> api.sh <span class="k">PATCH</span> /x/replies/<span class="var">$ID</span> \
+    <span class="s">'{"status":"posted","postedTweetId":"1791…"}'</span>
+
+<span class="cm"># a whole radar queue in one Grok call (≤25 tweets)</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/replies/generate-batch <span class="s">@/tmp/queue.json</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> <span class="s">'/x/radar/drafts?status=ready'</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> <span class="s">'/x/replies/outcomes?limit=200'</span>   <span class="cm"># did they work?</span></pre>
       </div>
     </div>
   </div>
 
-  <!-- D · Voice -->
   <div class="workflow">
     <div class="head reveal">
-      <div class="tag"><b>OP · D</b></div>
-      <h3>Manage the <em>voice library</em></h3>
-      <p>Stash tweets from authors you want to learn from. Track, pull, query, soft-disable. Detailed flows in <code>references/voice.md</code>.</p>
+      <div class="tag"><b>OP · D</b> · EDITORIAL DESK</div>
+      <h3>Draft ahead, <em>promote deliberately</em></h3>
+      <p>Grok drafts three register-distinct takes per call — plain, spicy,
+      reflective — landing as <code style="font-family:var(--mono);font-size:12px;color:var(--cyan);background:var(--raised);padding:1px 5px;border-radius:2px;">status='draft'</code> calendar rows. Nothing posts
+      until a human promotes a keeper to pending with a real slot.</p>
       <ul>
-        <li>Track costs one <code>$0.010</code> lookup; <em>flag</em> before bulk-tracking a list</li>
-        <li>Pull other-user tweets at <code>$0.005/result</code> — clamp <code>maxResults</code></li>
-        <li>Soft-disable keeps history; no hard delete on the author</li>
+        <li>Steer with <code>idea</code> (Romanian in, English out) or consume <code>ideaId</code></li>
+        <li><code>voiceTweetId</code> remixes a saved tweet's structure — never its content</li>
+        <li>Threads for anything with a link; re-ups for 14–60d-old winners</li>
+        <li>Balance pillars across the week before submitting</li>
       </ul>
     </div>
     <div class="reveal reveal-delay-1">
       <div class="terminal bracket">
         <span class="br-bl"></span><span class="br-br"></span>
-        <div class="head">
-          <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · voice.ops</span>
-          <span>BASH</span>
-        </div>
-<pre><span class="cm"># track an author</span>
-<span class="prompt">$</span> curl -sX POST <span class="s">"$STRATUS_BASE_URL/x/voice/track"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> -H <span class="s">'Content-Type: application/json'</span> \
-       -d <span class="s">'{"username":"naval","maxPolledTweets":20}'</span>
+        <div class="head"><span class="lights"><i></i><i></i><i></i></span><span class="path">drafter · reup · threads</span><span>BASH</span></div>
+<pre><span class="cm"># three drafts, one pillar, one consumed idea (~$0.006)</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/posts/draft \
+    <span class="s">'{"pillar":"ai-craft","ideaId":"&lt;uuid&gt;"}'</span>
 
-<span class="cm"># pull recent on demand — always clamp maxResults</span>
-<span class="prompt">$</span> curl -sX POST <span class="s">"$STRATUS_BASE_URL/x/voice/pull/naval"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> -H <span class="s">'Content-Type: application/json'</span> \
-       -d <span class="s">'{"maxResults":20}'</span>
+<span class="cm"># promote the keeper — review with the user first</span>
+<span class="prompt">$</span> api.sh <span class="k">PATCH</span> /x/posts/scheduled/<span class="var">$ID</span> \
+    <span class="s">'{"status":"pending","scheduledFor":"2026-07-21T06:17:00Z"}'</span>
 
-<span class="cm"># query the stash</span>
-<span class="prompt">$</span> curl -s <span class="s">"$STRATUS_BASE_URL/x/voice/tweets?author=naval&amp;minLikes=500&amp;limit=20"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> | jq
+<span class="cm"># self-quote re-up of a proven winner (must be MY tweet)</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/posts/reup <span class="s">'{"tweetId":"1791…"}'</span>
 
-<span class="cm"># soft-disable (keeps historical rows)</span>
-<span class="prompt">$</span> curl -sX DELETE <span class="s">"$STRATUS_BASE_URL/x/voice/track/naval"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span></pre>
+<span class="cm"># link post the cheap way: URL in a tail segment ($0.030)</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/posts/threads <span class="s">'{
+    "segments":["the hook — no URL here","context …","link: https://…"],
+    "scheduledFor":"2026-07-22T15:22:00Z","status":"pending"}'</span></pre>
       </div>
     </div>
   </div>
 
-  <!-- E · Replies -->
   <div class="workflow">
     <div class="head reveal">
-      <div class="tag"><b>OP · E</b></div>
-      <h3>Draft a <em>reply</em>, Grok-backed</h3>
-      <p>The endpoint <b style="color:var(--mist-100);font-weight:500;">only drafts</b> — never publishes. You copy/paste into X, then PATCH the draft to <code style="color:var(--mint);background:rgba(125,211,160,0.06);">status='posted'</code> to record it.</p>
+      <div class="tag"><b>OP · E</b> · CRM &amp; ANALYST</div>
+      <h3>Who is @x — <em>and why is X happening?</em></h3>
+      <p>The dossier is the one-call answer to "who is this person to me". For
+      questions no curated endpoint answers, the read-only SQL core opens the whole
+      database — SELECT-only, 500 rows, tokens invisible.</p>
       <ul>
-        <li>Full context payload shape in <code>references/replies.md</code></li>
-        <li>Optionally pass <code>postedTweetId</code> on PATCH for later reconciliation</li>
+        <li>Unknown handle → offer to start their file with a manual note event</li>
+        <li>Log <code>manual_dm_logged</code> whenever the user says they DMed someone</li>
+        <li>Timestamps are epoch-ms; metrics live in JSON columns</li>
+        <li>Always state sample sizes; never quote an insufficient cell as advice</li>
       </ul>
     </div>
     <div class="reveal reveal-delay-1">
       <div class="terminal bracket">
         <span class="br-bl"></span><span class="br-br"></span>
-        <div class="head">
-          <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · replies.generate</span>
-          <span>BASH</span>
-        </div>
-<pre><span class="cm"># generate a draft from a context payload (see references/replies.md)</span>
-<span class="prompt">$</span> curl -sX POST <span class="s">"$STRATUS_BASE_URL/x/replies/generate"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> \
-       -H <span class="s">'Content-Type: application/json'</span> \
-       -d @context.json
+        <div class="head"><span class="lights"><i></i><i></i><i></i></span><span class="path">circles.md · the dossier + S1 data core</span><span>BASH</span></div>
+<pre><span class="cm"># the dossier: stage, timeline, measured replies, angle crosstab</span>
+<span class="prompt">$</span> api.sh <span class="k">GET</span> /x/people/somebuilder
 
-<span class="cm"># later, after you posted the draft manually on X</span>
-<span class="prompt">$</span> curl -sX PATCH <span class="s">"$STRATUS_BASE_URL/x/replies/$DRAFT_ID"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> \
-       -H <span class="s">'Content-Type: application/json'</span> \
-       -d <span class="s">'{"status":"posted","postedTweetId":"19...…"}'</span></pre>
-      </div>
-    </div>
-  </div>
+<span class="cm"># start a file for an unknown handle</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/people/somebuilder/events \
+    <span class="s">'{"type":"note","summary":"met in the AI-tools thread"}'</span>
 
-  <!-- F · Cost -->
-  <div class="workflow">
-    <div class="head reveal">
-      <div class="tag"><b>OP · F</b></div>
-      <h3>Glance at the <em>cost dashboard</em></h3>
-      <p>UTC day spend, per platform and per endpoint. Useful as a sanity check right before a voice-pull run.</p>
-    </div>
-    <div class="reveal reveal-delay-1">
-      <div class="terminal bracket">
-        <span class="br-bl"></span><span class="br-br"></span>
-        <div class="head">
-          <span class="lights"><i></i><i></i><i></i></span>
-          <span class="path">~/stratus · cost.today</span>
-          <span>BASH</span>
-        </div>
-<pre><span class="prompt">$</span> curl -s <span class="s">"$STRATUS_BASE_URL/cost/today"</span> \
-       -H <span class="s">"Authorization: Bearer $STRATUS_API_TOKEN"</span> | jq
-{
-  <span class="s">"from"</span>: <span class="s">"2026-05-22T00:00:00Z"</span>,
-  <span class="s">"to"</span>:   <span class="s">"2026-05-23T00:00:00Z"</span>,
-  <span class="s">"totalUsd"</span>: <span class="n">0.142</span>,
-  <span class="s">"totalCalls"</span>: <span class="n">87</span>,
-  <span class="s">"byPlatform"</span>: [
-    { <span class="s">"platform"</span>: <span class="s">"x"</span>, <span class="s">"costUsd"</span>: <span class="n">0.142</span>, <span class="s">"calls"</span>: <span class="n">87</span>,
-      <span class="s">"byEndpoint"</span>: [...] }
-  ]
-}</pre>
+<span class="cm"># grounded openers — refuses $0 before any spend on thin dossiers</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/people/somebuilder/icebreakers <span class="s">'{}'</span>
+
+<span class="cm"># ad-hoc analysis over the whole DB — SELECT-only, 500-row cap</span>
+<span class="prompt">$</span> api.sh <span class="k">POST</span> /x/data/query <span class="s">'{"sql":
+    "SELECT json_extract(public_metrics,'"'"'$.impression_count'"'"') views,
+            datetime(snapshot_at/1000,'"'"'unixepoch'"'"') at
+     FROM metrics_snapshots ORDER BY snapshot_at DESC LIMIT 20"}'</span></pre>
       </div>
     </div>
   </div>
 </section>
 
 <!-- ═══════════════════════════════════════════════════════════
-     06 · LEDGER (cost cheat sheet)
+     06 · LEDGER
      ═══════════════════════════════════════════════════════════ -->
 <section id="s-ledger">
-  <div class="eyebrow reveal">
-    <span class="num">06</span><span class="ln"></span><span>Ledger · Apr 2026 USD pricing</span>
-  </div>
-
-  <h2 class="reveal">Every read and write, <em>at its price.</em></h2>
+  <div class="eyebrow reveal"><span class="num">06</span><span class="ln"></span><span>The ledger · what every move bills</span></div>
+  <h2 class="reveal">Most of it is free. <em>The exceptions are loud.</em></h2>
   <p class="lede reveal reveal-delay-1" style="margin-top:18px;">
-    The bar widths are proportional; the 13× jump from a plain post to a URL post
-    is what stays with you.
+    Reads over already-billed data cost nothing. Grok drafting costs fractions of a
+    cent. The X API bills per result — and one careless URL post costs more than a
+    week of everything else combined.
   </p>
 
   <div class="ledger-grid">
     <div class="price-table reveal reveal-delay-2 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
       <div class="price-row head"><span>Surface</span><span style="text-align:right;">Price</span><span>Relative</span></div>
-
       <div class="price-row">
-        <span class="surface">Own post / mention / like / followers / mute / block read</span>
-        <span class="price cheap">$0.001</span>
+        <span class="surface">Brief · playbook · people · voice · SQL<small>pure SQL over already-billed data</small></span>
+        <span class="price cheap">$0</span>
+        <span class="bar"><i style="width:0%;"></i></span>
+      </div>
+      <div class="price-row">
+        <span class="surface">Own-tweet snapshot · account KPI · mention result<small>owned reads, once-only</small></span>
+        <span class="price mid">$0.001</span>
         <span class="bar"><i style="width:0.5%;"></i></span>
-        <div class="note">24h UTC dedup</div>
       </div>
       <div class="price-row">
-        <span class="surface">Bookmarks read</span>
-        <span class="price mid">$0.005</span>
-        <span class="bar"><i style="width:2.5%;"></i></span>
-        <div class="note">billing bug — should be $0.001; defer bookmark sync</div>
+        <span class="surface">One reply draft<small>2 variants, band-gated first</small></span>
+        <span class="price mid">~$0.003</span>
+        <span class="bar"><i style="width:1.5%;"></i></span>
       </div>
       <div class="price-row">
-        <span class="surface">Other-user post read, search results</span>
-        <span class="price mid">$0.005</span>
+        <span class="surface">Icebreakers · template extraction<small>per person / per tweet, one-time</small></span>
+        <span class="price mid">~$0.005</span>
         <span class="bar"><i style="width:2.5%;"></i></span>
       </div>
       <div class="price-row">
-        <span class="surface">Third-party user lookup</span>
-        <span class="price high">$0.010</span>
-        <span class="bar"><i style="width:5%;"></i></span>
+        <span class="surface">Post drafter · re-up<small>3 register-distinct drafts per call</small></span>
+        <span class="price mid">~$0.006</span>
+        <span class="bar"><i style="width:3%;"></i></span>
       </div>
       <div class="price-row">
-        <span class="surface">Post create (no URL)</span>
+        <span class="surface">Digest narration · batch replies<small>weekly, cached · ~$0.01–0.05 per 10–25 tweets</small></span>
+        <span class="price high">~$0.01+</span>
+        <span class="bar"><i style="width:8%;"></i></span>
+      </div>
+      <div class="price-row">
+        <span class="surface">Publish one post / thread segment<small>$0.015 each — a 4-segment thread is $0.060</small></span>
         <span class="price high">$0.015</span>
         <span class="bar"><i style="width:7.5%;"></i></span>
       </div>
-      <div class="price-row" style="background:rgba(255,122,122,0.04);">
-        <span class="surface" style="color:var(--coral);font-weight:500;">Post create (URL in text)</span>
+      <div class="price-row">
+        <span class="surface">One Studio image<small>Grok Imagine, hard-budgeted</small></span>
+        <span class="price high">~$0.02</span>
+        <span class="bar"><i style="width:10%;"></i></span>
+      </div>
+      <div class="price-row spiked">
+        <span class="surface">URL in a standalone post<small>the 13× surcharge — blocked by two guards</small></span>
         <span class="price spike">$0.20</span>
         <span class="bar spike"><i style="width:100%;"></i></span>
-        <div class="note" style="color:var(--coral);">guard in createPost — see HAZARD · 01</div>
-      </div>
-      <div class="price-row">
-        <span class="surface">Like / Repost / Bookmark write</span>
-        <span class="price high">$0.015</span>
-        <span class="bar"><i style="width:7.5%;"></i></span>
-      </div>
-      <div class="price-row">
-        <span class="surface">Delete</span>
-        <span class="price high">$0.010</span>
-        <span class="bar"><i style="width:5%;"></i></span>
       </div>
     </div>
 
     <div class="reveal reveal-delay-2">
       <div class="budget-card bracket">
         <span class="br-bl"></span><span class="br-br"></span>
-        <h4>Cadence-derived budgets</h4>
+        <h4>Standing budgets &amp; caps</h4>
         <div class="row">
-          <div class="name">Own posts<small>113 polls × $0.001 over 30 days, then retired</small></div>
-          <div class="figure">$0.113<small>per tweet</small></div>
+          <div class="name">X platform — soft<small>watchdog logs on cross, never blocks</small></div>
+          <div class="figure">$0.15<small>/ UTC DAY</small></div>
         </div>
         <div class="row">
-          <div class="name">Voice tweets<small>18 polls × $0.005 over 7 days, then retired</small></div>
-          <div class="figure">$0.09<small>per tweet</small></div>
+          <div class="name">xAI images — hard<small>429 image_budget_exceeded before the paid call</small></div>
+          <div class="figure hard">$0.50<small>/ UTC DAY</small></div>
         </div>
         <div class="row">
-          <div class="name">Per-author cap<small>guardrail on voice metrics polling</small></div>
-          <div class="figure">20<small>tweets polled</small></div>
+          <div class="name">Mention refresh<small>server-side cap; daily pass covers the rest</small></div>
+          <div class="figure">6<small>/ DAY</small></div>
+        </div>
+        <div class="row">
+          <div class="name">Extract-batch worst case<small>≤50 tweets × ~$0.005 — mention cost before bulk runs</small></div>
+          <div class="figure">$0.25<small>/ CALL</small></div>
+        </div>
+        <div class="row">
+          <div class="name">Link post, done right<small>thread head + link tail vs the $0.20 spike</small></div>
+          <div class="figure">$0.030<small>TOTAL</small></div>
         </div>
       </div>
     </div>
@@ -1988,36 +1594,40 @@
      07 · CONDUCT
      ═══════════════════════════════════════════════════════════ -->
 <section id="s-conduct">
-  <div class="eyebrow reveal">
-    <span class="num">07</span><span class="ln"></span><span>Conduct · output etiquette</span>
-  </div>
-
+  <div class="eyebrow reveal"><span class="num">07</span><span class="ln"></span><span>Output etiquette · how the operator speaks</span></div>
   <h2 class="reveal">Speak to the operator, <em>not the wire.</em></h2>
 
   <div class="conduct-grid">
     <div class="conduct-card reveal reveal-delay-1 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
       <span class="n">A</span>
-      <h4>Summarize the calendar as a table grouped by day — not raw JSON.</h4>
-      <p>The operator wants to scan; <code>jq -r</code> through a template, render the table.</p>
+      <h4>Tables by day, <em>never raw JSON.</em></h4>
+      <p>Calendars and queues render as tables grouped by day; dossiers and briefs as
+      short narrative plus bullet actions. The user reads decisions, not payloads.</p>
     </div>
     <div class="conduct-card reveal reveal-delay-1 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
       <span class="n">B</span>
-      <h4>For failures, surface <code>errorClass</code> and the first line of <code>errorDetail</code>.</h4>
-      <p>Don't dump the whole row. The signal is the class and one line of cause.</p>
+      <h4>Failures get a name, <em>not a dump.</em></h4>
+      <p>Surface <code>errorClass</code> and the first line of <code>errorDetail</code> —
+      never whole rows. After bulk writes: one-line totals
+      (<code>Submitted 21, OK 21, failed 0</code>) plus an offer to verify.</p>
     </div>
     <div class="conduct-card reveal reveal-delay-2 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
       <span class="n">C</span>
-      <h4>After a bulk schedule, print one-line totals like <em style="font-style:italic;color:var(--mint);">Submitted 21, OK 21, failed 0</em>.</h4>
-      <p>Then offer to GET-list back for verification, with the same window.</p>
+      <h4>Gates out loud, <em>never noise as advice.</em></h4>
+      <p>"Too early to say which angle wins (n=11/20)" — an insufficient cell is
+      "not enough data", never a number you quote. A null metric means "not measured
+      yet", never "0 views". Numbers always come with context.</p>
     </div>
     <div class="conduct-card reveal reveal-delay-2 bracket">
       <span class="br-bl"></span><span class="br-br"></span>
       <span class="n">D</span>
-      <h4>Never print the bearer token.</h4>
-      <p>In curl snippets, always use the placeholder <code>$STRATUS_API_TOKEN</code> — never resolve it.</p>
+      <h4>Praise consistency; <em>guard the token.</em></h4>
+      <p>Streaks and quota before outcomes — outcomes lag behavior. Mention spend when
+      notable, stay silent when normal. And the bearer never appears in output:
+      shown commands always use <code>$STRATUS_API_TOKEN</code>.</p>
     </div>
   </div>
 </section>
@@ -2026,8 +1636,8 @@
 
 <footer>
   <div>
-    <h5>One file, one source of truth.</h5>
-    <span>STRATUS · OPERATOR MANUAL · last orbit 2026-05-22</span>
+    <h5>The machine schedules, measures, and remembers. The human posts.</h5>
+    <span>STRATUS · OPERATOR MANUAL · last orbit 2026-07-17</span>
   </div>
   <div class="right">
     <span><b>SKILL.md</b> is canonical. This page is a visual companion.</span>
@@ -2040,6 +1650,7 @@
      ───────────────────────────────────────────────────────── */
   (function clock() {
     const el = document.getElementById('utc-clock');
+    if (!el) return;
     function tick() {
       const d = new Date();
       const hh = String(d.getUTCHours()).padStart(2, '0');
@@ -2057,10 +1668,7 @@
     const els = document.querySelectorAll('.reveal');
     const io = new IntersectionObserver((entries) => {
       for (const e of entries) {
-        if (e.isIntersecting) {
-          e.target.classList.add('in');
-          io.unobserve(e.target);
-        }
+        if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
       }
     }, { rootMargin: '-8% 0px -10% 0px', threshold: 0.05 });
     els.forEach(el => io.observe(el));
@@ -2070,9 +1678,11 @@
      Rail active state
      ───────────────────────────────────────────────────────── */
   (function rail() {
-    const sections = ['s-intro','s-brief','s-surface','s-telemetry','s-hazard','s-ops','s-ledger','s-conduct']
-      .map(id => document.getElementById(id)).filter(Boolean);
     const links = Array.from(document.querySelectorAll('.rail a'));
+    const sections = links
+      .map(a => document.querySelector(a.getAttribute('href')))
+      .filter(Boolean);
+    if (!sections.length) return;
     const io = new IntersectionObserver((entries) => {
       for (const e of entries) {
         if (e.isIntersecting) {
@@ -2085,371 +1695,239 @@
   })();
 
   /* ─────────────────────────────────────────────────────────
-     PUBLISHER · canvas simulation
-     A day of jittered scheduled posts firing on the 60s heartbeat.
+     SIGNATURE CANVAS · Pattern A — publisher timeline sweep
+     One simulated day (24h) compressed to ~36s at 1×.
      ───────────────────────────────────────────────────────── */
   (function publisherSim() {
-    const canvas  = document.getElementById('publisher-canvas');
-    const ctx     = canvas.getContext('2d');
-    const playBtn = document.getElementById('sim-play');
-    const speedBtns = Array.from(document.querySelectorAll('[data-speed]'));
-    const stTime  = document.getElementById('stat-time');
-    const stPend  = document.getElementById('stat-pending');
-    const stPost  = document.getElementById('stat-posted');
-    const stFail  = document.getElementById('stat-failed');
+    const canvas = document.getElementById('sig-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const PAL = {
+      void:    '#05080F',
+      panel:   '#0F1830',
+      edge:    '#1F2A48',
+      mist300: '#6E81A4',
+      mist400: '#44557A',
+      cobalt:  '#4A8FE7',
+      cyan:    '#6EE0FF',
+      frost:   '#B8E5FF',
+      mint:    '#7DD3A0',
+      ember:   '#FFB55A',
+      coral:   '#FF7A7A',
+    };
+
+    const DAY_MS = 36000;            // one sim day at 1×
+    const ANCHORS = [8, 12, 16, 20]; // the 4/day cadence ladder
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     let W = 0, H = 0, DPR = 1;
-    let running = true;
-    let speed = 1;
-    let dayProgress = 0;          // 0..1 sim time across one day
-    const DAY_DURATION_MS = 36000; // one sim day = 36s at 1x
-    let posts = [];
-    let particles = [];
-    let lastT = performance.now();
-    let lastTickT = 0;
+    let speed = 1, playing = !reduced;
+    let simT = 0;                    // 0..1 across the day
+    let items = [], particles = [];
+    let posted = 0, failed = 0;
+    let lastFrame = performance.now();
 
     function resize() {
-      const rect = canvas.getBoundingClientRect();
       DPR = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width  = rect.width  * DPR;
-      canvas.height = rect.height * DPR;
-      W = rect.width; H = rect.height;
+      W = canvas.clientWidth; H = canvas.clientHeight;
+      canvas.width = W * DPR; canvas.height = H * DPR;
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     }
-    window.addEventListener('resize', resize);
-    resize();
+    window.addEventListener('resize', () => { resize(); if (reduced) drawStatic(); });
 
-    function generateSchedule() {
-      // 4 anchors × jittered minute in [5, 35]
-      const anchors = [8, 12, 16, 20];
-      const out = [];
-      for (let i = 0; i < anchors.length; i++) {
-        const h = anchors[i];
-        const m = 5 + Math.floor(Math.random() * 31);
-        const t = (h * 60 + m) / (24 * 60);
-        const hasUrl = (i === 2 && Math.random() < 0.65) || (Math.random() < 0.12);
-        out.push({
-          t, h, m, hasUrl,
-          status: 'pending',
-          pulse: 0, fireAt: 0, particles: false,
-          id: i
-        });
+    function genSchedule() {
+      items = []; particles = [];
+      posted = 0; failed = 0;
+      for (const anchor of ANCHORS) {
+        // one original per anchor, jittered minute in [5,35]
+        const min = 5 + Math.floor(Math.random() * 31);
+        items.push({ t: (anchor + min / 60) / 24, kind: 'post', state: 'pending', pulse: 0 });
       }
-      return out.sort((a, b) => a.t - b.t);
-    }
-
-    posts = generateSchedule();
-
-    /* — drawing helpers — */
-    const LEFT_PAD = 110;
-    const RIGHT_PAD = 24;
-    const TRACK_Y = 180;
-    const TRACK_H = 6;
-
-    function trackX(t) { return LEFT_PAD + t * (W - LEFT_PAD - RIGHT_PAD); }
-
-    function drawBackground() {
-      ctx.clearRect(0, 0, W, H);
-
-      const g = ctx.createRadialGradient(W / 2, TRACK_Y, 40, W / 2, TRACK_Y, W * 0.6);
-      g.addColorStop(0, 'rgba(74, 143, 231, 0.07)');
-      g.addColorStop(1, 'rgba(74, 143, 231, 0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-
-      ctx.strokeStyle = 'rgba(140, 175, 230, 0.06)';
-      ctx.lineWidth = 1;
-      for (let x = 0; x <= 24; x++) {
-        const xx = trackX(x / 24);
-        ctx.beginPath();
-        ctx.moveTo(xx, TRACK_Y - 40);
-        ctx.lineTo(xx, TRACK_Y + 80);
-        ctx.stroke();
+      // a 3-segment thread on one random anchor, self-replies ~ close together
+      const th = ANCHORS[Math.floor(Math.random() * ANCHORS.length)];
+      const thMin = 5 + Math.floor(Math.random() * 31);
+      for (let s = 0; s < 3; s++) {
+        items.push({ t: (th + (thMin + s * 0.25) / 60) / 24 + 0.0015, kind: 'segment', state: 'pending', pulse: 0 });
       }
+      items.sort((a, b) => a.t - b.t);
     }
 
-    function drawPublisherWorker(now) {
-      const cx = 50, cy = TRACK_Y;
-      const tickPhase = (lastTickT % 1000) / 1000;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 22 + tickPhase * 14, 0, Math.PI * 2);
-      ctx.strokeStyle = `rgba(110, 224, 255, ${0.32 * (1 - tickPhase)})`;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
+    const TRACK_L = 64, TRACK_R = 36;
+    const trackY = () => H * 0.56;
+    const xFor = t => TRACK_L + (W - TRACK_L - TRACK_R) * t;
 
-      ctx.beginPath();
-      ctx.arc(cx, cy, 16, 0, Math.PI * 2);
-      ctx.fillStyle = '#0F1830';
-      ctx.fill();
-      ctx.strokeStyle = '#4A8FE7';
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-
-      const s = 10 + Math.sin(now * 0.012) * 1.4;
-      ctx.fillStyle = '#6EE0FF';
-      ctx.fillRect(cx - s / 2, cy - s / 2, s, s);
-
-      ctx.fillStyle = '#6E81A4';
-      ctx.font = '500 9px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('PUBLISHER', cx, cy - 30);
-      ctx.fillStyle = '#DCE5F2';
-      ctx.fillText('60 s', cx, cy + 36);
-
-      ctx.strokeStyle = 'rgba(110, 224, 255, 0.3)';
-      ctx.beginPath();
-      ctx.moveTo(cx + 22, cy);
-      ctx.lineTo(LEFT_PAD - 8, cy);
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(110, 224, 255, 0.45)';
-      ctx.beginPath();
-      ctx.moveTo(LEFT_PAD - 8, cy);
-      ctx.lineTo(LEFT_PAD - 14, cy - 3);
-      ctx.lineTo(LEFT_PAD - 14, cy + 3);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    function drawTrack() {
-      ctx.fillStyle = 'rgba(140, 175, 230, 0.08)';
-      ctx.fillRect(trackX(0), TRACK_Y + 30, trackX(1) - trackX(0), 1);
-
-      ctx.strokeStyle = 'rgba(140, 175, 230, 0.18)';
-      ctx.fillStyle = '#44557A';
-      ctx.font = '500 9px "JetBrains Mono", monospace';
-      ctx.textAlign = 'center';
-      for (let h = 0; h <= 24; h += 1) {
-        const x = trackX(h / 24);
-        const major = h % 6 === 0;
-        const len = major ? 10 : (h % 3 === 0 ? 6 : 3);
-        ctx.beginPath();
-        ctx.moveTo(x, TRACK_Y + 30);
-        ctx.lineTo(x, TRACK_Y + 30 + len);
-        ctx.stroke();
-        if (major) {
-          ctx.fillStyle = '#6E81A4';
-          ctx.fillText(String(h).padStart(2, '0'), x, TRACK_Y + 56);
-        }
-      }
-
-      ctx.fillStyle = 'rgba(110, 224, 255, 0.08)';
-      [8, 12, 16, 20].forEach(h => {
-        const x1 = trackX((h) / 24);
-        const x2 = trackX((h + 1) / 24);
-        ctx.fillRect(x1, TRACK_Y - 24, x2 - x1, 18);
-      });
-      ctx.font = '500 8px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#6EE0FF';
-      [8, 12, 16, 20].forEach(h => {
-        const x = trackX((h + 0.5) / 24);
-        ctx.fillText('ANCHOR ' + String(h).padStart(2, '0'), x, TRACK_Y - 12);
-      });
-    }
-
-    function drawPosts(now) {
-      ctx.textAlign = 'center';
-      for (const p of posts) {
-        const x = trackX(p.t);
-        const y = TRACK_Y + 1;
-        let color = '#6EE0FF', glow = 'rgba(110,224,255,0.5)';
-        if (p.status === 'posted') { color = '#7DD3A0'; glow = 'rgba(125,211,160,0.6)'; }
-        if (p.status === 'failed') { color = '#FF7A7A'; glow = 'rgba(255,122,122,0.6)'; }
-        if (p.hasUrl && p.status === 'pending') { color = '#FFB55A'; glow = 'rgba(255,181,90,0.55)'; }
-
-        if (p.pulse > 0) {
-          const r = 14 + (1 - p.pulse) * 36;
-          ctx.beginPath();
-          ctx.arc(x, y, r, 0, Math.PI * 2);
-          ctx.strokeStyle = `${glow.replace(/[\d.]+\)$/, p.pulse * 0.85 + ')')}`;
-          ctx.lineWidth = 1.4;
-          ctx.stroke();
-          p.pulse = Math.max(0, p.pulse - 0.018 * (speed));
-        }
-
-        const w = 18, h = 22;
-        ctx.save();
-        ctx.shadowColor = glow;
-        ctx.shadowBlur = (p.status === 'pending') ? 6 : 14;
-        ctx.fillStyle = '#0F1830';
-        roundRect(ctx, x - w / 2, y - h, w, h, 3);
-        ctx.fill();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.1;
-        ctx.stroke();
-        ctx.restore();
-
-        ctx.fillStyle = color;
-        ctx.globalAlpha = (p.status === 'pending') ? 0.55 : 0.9;
-        ctx.fillRect(x - 6, y - h + 5, 12, 1.5);
-        ctx.fillRect(x - 6, y - h + 9, 9, 1.5);
-        ctx.fillRect(x - 6, y - h + 13, 11, 1.5);
-        ctx.globalAlpha = 1;
-
-        if (p.hasUrl && p.status === 'pending') {
-          ctx.fillStyle = '#FFB55A';
-          ctx.beginPath();
-          ctx.arc(x + w / 2, y - h + 2, 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-
-        if (p.status === 'pending' || p.pulse > 0.6) {
-          ctx.font = '500 8px "JetBrains Mono", monospace';
-          ctx.fillStyle = '#6E81A4';
-          ctx.fillText(
-            String(p.h).padStart(2, '0') + ':' + String(p.m).padStart(2, '0'),
-            x, y + 18
-          );
-        }
-      }
-    }
-
-    function drawParticles() {
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const pt = particles[i];
-        pt.life -= 0.02 * speed;
-        pt.x += pt.vx;
-        pt.y += pt.vy;
-        pt.vy += 0.02;
-        if (pt.life <= 0) { particles.splice(i, 1); continue; }
-        ctx.fillStyle = `rgba(${pt.col}, ${pt.life})`;
-        ctx.fillRect(pt.x, pt.y, 1.6, 1.6);
-      }
-    }
-
-    function spawnParticles(x, y, col) {
-      for (let i = 0; i < 12; i++) {
+    function fire(it) {
+      const fail = Math.random() < 0.08;
+      it.state = fail ? 'failed' : 'posted';
+      it.pulse = 1;
+      if (fail) failed++; else posted++;
+      const n = fail ? 5 : 9;
+      for (let i = 0; i < n; i++) {
         particles.push({
-          x, y,
-          vx: (Math.random() - 0.5) * 2.4,
-          vy: (Math.random() - 0.8) * 1.8,
+          x: xFor(it.t), y: trackY(),
+          vx: (Math.random() - 0.5) * 1.6,
+          vy: -0.6 - Math.random() * 1.4,
           life: 1,
-          col,
+          color: fail ? PAL.coral : PAL.mint,
         });
       }
     }
 
-    function drawNowLine() {
-      const x = trackX(dayProgress);
-      const g = ctx.createLinearGradient(x - 12, 0, x + 12, 0);
-      g.addColorStop(0, 'rgba(110, 224, 255, 0)');
-      g.addColorStop(0.5, 'rgba(110, 224, 255, 0.18)');
-      g.addColorStop(1, 'rgba(110, 224, 255, 0)');
-      ctx.fillStyle = g;
-      ctx.fillRect(x - 12, TRACK_Y - 60, 24, 130);
+    function tickSim(dtMs) {
+      simT += (dtMs * speed) / DAY_MS;
+      if (simT >= 1) { simT = 0; genSchedule(); }
+      for (const it of items) {
+        if (it.state === 'pending' && it.t <= simT) fire(it);
+        if (it.pulse > 0) it.pulse = Math.max(0, it.pulse - dtMs * 0.002);
+      }
+      for (const p of particles) {
+        p.x += p.vx; p.y += p.vy; p.vy += 0.04; p.life -= dtMs * 0.0016;
+      }
+      particles = particles.filter(p => p.life > 0);
+    }
 
-      ctx.strokeStyle = '#6EE0FF';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(x, TRACK_Y - 60);
-      ctx.lineTo(x, TRACK_Y + 70);
-      ctx.stroke();
+    function draw(nowMs) {
+      ctx.clearRect(0, 0, W, H);
+      const y = trackY();
 
-      ctx.fillStyle = '#6EE0FF';
-      ctx.beginPath();
-      ctx.moveTo(x, TRACK_Y - 64);
-      ctx.lineTo(x + 5, TRACK_Y - 59);
-      ctx.lineTo(x, TRACK_Y - 54);
-      ctx.lineTo(x - 5, TRACK_Y - 59);
-      ctx.closePath();
-      ctx.fill();
+      // anchor bands
+      ctx.fillStyle = 'rgba(184, 229, 255, 0.045)';
+      for (const a of ANCHORS) {
+        const x0 = xFor(a / 24), x1 = xFor((a + 1) / 24);
+        ctx.fillRect(x0, y - 46, x1 - x0, 92);
+      }
 
-      const totalMin = Math.floor(dayProgress * 24 * 60);
-      const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
-      const mm = String(totalMin % 60).padStart(2, '0');
+      // hour ticks + labels
+      ctx.strokeStyle = 'rgba(140, 175, 230, 0.14)';
+      ctx.fillStyle = PAL.mist400;
       ctx.font = '500 9px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#B8E5FF';
       ctx.textAlign = 'center';
-      ctx.fillText('NOW · ' + hh + ':' + mm, x, TRACK_Y - 70);
-    }
-
-    function drawHeader() {
-      ctx.font = '500 10px "JetBrains Mono", monospace';
-      ctx.fillStyle = '#6E81A4';
-      ctx.textAlign = 'left';
-      ctx.fillText('TIMELINE · 24h UTC', LEFT_PAD, 28);
-      ctx.textAlign = 'right';
-      ctx.fillText('SCHEDULED · ' + posts.length + ' POSTS', W - RIGHT_PAD, 28);
-    }
-
-    function roundRect(ctx, x, y, w, h, r) {
-      ctx.beginPath();
-      ctx.moveTo(x + r, y);
-      ctx.arcTo(x + w, y, x + w, y + h, r);
-      ctx.arcTo(x + w, y + h, x, y + h, r);
-      ctx.arcTo(x, y + h, x, y, r);
-      ctx.arcTo(x, y, x + w, y, r);
-      ctx.closePath();
-    }
-
-    function updateStats() {
-      let pend = 0, post = 0, fail = 0;
-      for (const p of posts) {
-        if (p.status === 'pending') pend++;
-        else if (p.status === 'posted') post++;
-        else if (p.status === 'failed') fail++;
-      }
-      stPend.textContent = pend;
-      stPost.textContent = post;
-      stFail.textContent = fail;
-      const totalMin = Math.floor(dayProgress * 24 * 60);
-      const hh = String(Math.floor(totalMin / 60)).padStart(2, '0');
-      const mm = String(totalMin % 60).padStart(2, '0');
-      stTime.textContent = `${hh}:${mm} UTC`;
-    }
-
-    function frame(now) {
-      const dt = Math.min(100, now - lastT);
-      lastT = now;
-
-      if (running) {
-        dayProgress += (dt * speed) / DAY_DURATION_MS;
-        lastTickT += dt * speed;
+      ctx.lineWidth = 1;
+      for (let h = 0; h <= 24; h += 3) {
+        const x = xFor(h / 24);
+        ctx.beginPath(); ctx.moveTo(x, y + 34); ctx.lineTo(x, y + 42); ctx.stroke();
+        ctx.fillText(String(h).padStart(2, '0'), x, y + 56);
       }
 
-      for (const p of posts) {
-        if (p.status === 'pending' && p.t <= dayProgress) {
-          if (p.hasUrl) {
-            p.status = 'failed';
-            p.pulse = 1;
-            spawnParticles(trackX(p.t), TRACK_Y - 10, '255, 122, 122');
-          } else {
-            p.status = 'posted';
-            p.pulse = 1;
-            spawnParticles(trackX(p.t), TRACK_Y - 10, '125, 211, 160');
-          }
+      // 03:00 daily-metrics tick
+      const mx = xFor(3 / 24);
+      ctx.strokeStyle = 'rgba(184, 229, 255, 0.5)';
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath(); ctx.moveTo(mx, y - 78); ctx.lineTo(mx, y + 34); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = PAL.frost;
+      ctx.fillText('03:00 · METRICS PASS', mx + 2, y - 86);
+
+      // track
+      ctx.strokeStyle = 'rgba(140, 175, 230, 0.28)';
+      ctx.beginPath(); ctx.moveTo(TRACK_L, y); ctx.lineTo(W - TRACK_R, y); ctx.stroke();
+
+      // worker indicator (left) — gentle breathing pulse
+      const wp = 0.55 + 0.45 * Math.sin(nowMs * 0.004);
+      ctx.fillStyle = PAL.cobalt;
+      ctx.globalAlpha = 0.35 + 0.4 * wp;
+      ctx.beginPath(); ctx.arc(30, y, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = PAL.cyan;
+      ctx.beginPath(); ctx.arc(30, y, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = PAL.mist400;
+      ctx.fillText('60S', 30, y + 24);
+
+      // items
+      for (const it of items) {
+        const x = xFor(it.t);
+        const h2 = it.kind === 'segment' ? 12 : 18;
+        const w2 = it.kind === 'segment' ? 6 : 9;
+        let color = PAL.cyan;
+        if (it.state === 'posted') color = PAL.mint;
+        if (it.state === 'failed') color = PAL.coral;
+        if (it.pulse > 0) {
+          ctx.shadowColor = color; ctx.shadowBlur = 16 * it.pulse;
         }
+        ctx.fillStyle = color;
+        ctx.globalAlpha = it.state === 'pending' ? 0.9 : 0.75 + 0.25 * it.pulse;
+        roundRect(ctx, x - w2 / 2, y - h2 - 6, w2, h2, 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
       }
 
-      if (dayProgress >= 1) {
-        dayProgress = 0;
-        particles = [];
-        posts = generateSchedule();
+      // particles
+      for (const p of particles) {
+        ctx.globalAlpha = Math.max(0, p.life) * 0.9;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, 2, 2);
       }
+      ctx.globalAlpha = 1;
 
-      drawBackground();
-      drawHeader();
-      drawTrack();
-      drawPosts(now);
-      drawNowLine();
-      drawPublisherWorker(now);
-      drawParticles();
-      updateStats();
-
-      requestAnimationFrame(frame);
+      // sweep line
+      const sx = xFor(simT);
+      ctx.shadowColor = PAL.cyan; ctx.shadowBlur = 12;
+      ctx.strokeStyle = PAL.cyan; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(sx, y - 70); ctx.lineTo(sx, y + 30); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.lineWidth = 1;
+      ctx.fillStyle = PAL.cyan;
+      ctx.fillText('NOW', sx, y - 78);
+      ctx.textAlign = 'center';
     }
-    requestAnimationFrame(frame);
 
+    function roundRect(c, x, y, w, h, r) {
+      c.beginPath();
+      c.moveTo(x + r, y);
+      c.arcTo(x + w, y, x + w, y + h, r);
+      c.arcTo(x + w, y + h, x, y + h, r);
+      c.arcTo(x, y + h, x, y, r);
+      c.arcTo(x, y, x + w, y, r);
+      c.closePath();
+    }
+
+    function stats() {
+      const totMin = simT * 24 * 60;
+      const hh = String(Math.floor(totMin / 60)).padStart(2, '0');
+      const mm = String(Math.floor(totMin % 60)).padStart(2, '0');
+      const pending = items.filter(i => i.state === 'pending').length;
+      document.getElementById('stat-time').textContent = hh + ':' + mm;
+      document.getElementById('stat-a').textContent = pending;
+      document.getElementById('stat-b').textContent = posted;
+      document.getElementById('stat-c').textContent = failed;
+    }
+
+    function loop(nowMs) {
+      const dt = Math.min(nowMs - lastFrame, 100);
+      lastFrame = nowMs;
+      if (playing) tickSim(dt);
+      draw(nowMs);
+      stats();
+      requestAnimationFrame(loop);
+    }
+
+    function drawStatic() {
+      // reduced motion: a single mid-day keyframe, no animation
+      simT = 0.58;
+      for (const it of items) if (it.t <= simT) { it.state = 'posted'; posted++; }
+      draw(0); stats();
+    }
+
+    // controls
+    const playBtn = document.getElementById('sim-play');
     playBtn.addEventListener('click', () => {
-      running = !running;
-      playBtn.textContent = running ? 'PAUSE' : 'PLAY';
-      playBtn.classList.toggle('is-active', running);
+      playing = !playing;
+      playBtn.textContent = playing ? 'PAUSE' : 'PLAY';
+      playBtn.classList.toggle('is-active', playing);
     });
-    speedBtns.forEach(b => {
-      b.addEventListener('click', () => {
-        speed = parseFloat(b.dataset.speed);
-        speedBtns.forEach(x => x.classList.toggle('is-active', x === b));
+    document.querySelectorAll('[data-speed]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        speed = Number(btn.dataset.speed);
+        document.querySelectorAll('[data-speed]').forEach(b => b.classList.toggle('is-active', b === btn));
       });
     });
+
+    resize();
+    genSchedule();
+    if (reduced) { drawStatic(); }
+    else requestAnimationFrame(loop);
   })();
 </script>
 

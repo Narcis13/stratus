@@ -1,0 +1,26 @@
+/* Stratus radii, borders, elevation & motion. The UI is flat: it leans on
+   1px hairline borders and elevated surfaces rather than drop shadows. */
+:root {
+  /* Corner radii */
+  --strat-radius-xs: 3px;    /* inline <code> */
+  --strat-radius-sm: 4px;    /* nested/inner blocks */
+  --strat-radius-md: 6px;    /* THE default — buttons, inputs, cards, chips */
+  --strat-radius-lg: 8px;    /* panels, modals, draft cards */
+  --strat-radius-badge: 10px;/* status badges */
+  --strat-radius-pill: 999px;/* segmented tabs, quota bar, band chips */
+
+  /* Borders */
+  --strat-border-width: 1px;
+  --strat-border-hairline: 1px solid var(--strat-border);
+  --strat-border-focus: 1px solid var(--strat-accent);
+
+  /* Elevation — deliberately minimal. Depth comes from bg-elev + border.
+     The only real shadow in the system is the modal scrim + card lift. */
+  --strat-shadow-none: none;
+  --strat-shadow-modal: 0 12px 32px rgba(0, 0, 0, 0.5);
+
+  /* Motion — the extension uses instant, no-nonsense state changes; hover is
+     a background swap, not an animated transition. Keep transitions subtle. */
+  --strat-transition-fast: 120ms ease; /* @kind other */
+  --strat-transition: 160ms ease; /* @kind other */
+}
