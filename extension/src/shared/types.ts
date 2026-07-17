@@ -1273,3 +1273,51 @@ export class ApiError extends Error {
     this.name = 'ApiError';
   }
 }
+
+// ---------------------------------------------------------------------------
+// Settings platform (UI.1 server registry → UI.10 primitives). The panel renders
+// entirely from GET /x/settings and never imports the server registry — these
+// types mirror that JSON contract (SettingDef + resolved value + isDefault).
+// ---------------------------------------------------------------------------
+
+export type SettingType = 'number' | 'boolean' | 'string' | 'enum' | 'numberArray';
+
+/** One knob from GET /x/settings: the registry def plus its resolved value and
+ *  whether that value is still the registry default. */
+export interface SettingEntry {
+  key: string;
+  group: string;
+  label: string;
+  description: string;
+  type: SettingType;
+  default: unknown;
+  value: unknown;
+  isDefault: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  unit?: string;
+  appliesOn?: 'immediate' | 'restart';
+  minItems?: number;
+  maxItems?: number;
+  sortedUnique?: boolean;
+}
+
+export interface SettingsGroup {
+  id: string;
+  label: string;
+  settings: SettingEntry[];
+}
+
+export interface SettingsResponse {
+  groups: SettingsGroup[];
+}
+
+export interface SettingsPatchResult {
+  updated: Array<{ key: string; value: unknown }>;
+}
+
+export interface SettingsResetResult {
+  reset: string[];
+}

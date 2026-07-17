@@ -4,9 +4,9 @@
 > Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 
-- **last-commit:** 8c89950 (UI.9). **Sha reconciliation (see D14):** history was rewritten after UI.1's STATE write — the shas `7e07dd5`/`40c718e`/`95b9fff` no longer exist. Actual Wave-0 commits: **UI.1 = `226368c`, UI.8 = `1299e43`, ST.1 = `61a04e7`** (the D12 collision commit that also carries UI.8's styles.css + UI.1's settings code). Verified all three tasks' work is present in the tree; only the recorded shas were stale, no status drift.
-- **current wave:** 0 → 1 (Wave 0: UI.1, UI.8, ST.1, UI.9 done; only UI.10 remains)
-- **next-up:** Lane A → Wave 1 server (RU.1 / N.1 / AI.1) · Lane B → UI.10 (primitives + grouped rail) · Lane C → ST.2 (Studio shell)
+- **last-commit:** 50948c9 (UI.10). **Sha reconciliation (see D14a):** UI.9's recorded `8c89950` was an amend-orphan (the sha-stamp trap) — the real UI.9 commit is **`f9ff346`**; corrected in the ledger + codemap §11. Earlier: the shas `7e07dd5`/`40c718e`/`95b9fff` were rewritten away; actual Wave-0 commits **UI.1 = `226368c`, UI.8 = `1299e43`, ST.1 = `61a04e7`** (D12 collision commit). All ticked work verified present; only recorded shas were ever stale, no status drift.
+- **current wave:** Wave 0 foundations COMPLETE (UI.1, UI.8, UI.9, UI.10, ST.1 done). Wave 1 open (Lane A). Lane C (Studio ST.2–ST.9) continues in parallel.
+- **next-up:** Lane A → Wave 1 server (RU.1 / N.1 / AI.1 — all dep-free) · Lane C → ST.2 (Studio shell). **UI lane** next is UI.11 (Wave 5) but blocked on UI.6; no eligible UI task until the Wave-1 settings-mirror chain lands.
 
 ## Ledger
 
@@ -15,8 +15,8 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 ### Wave 0 — Foundations
 - [x] UI.1 Settings platform (xhigh) — 226368c (code+format+state+codemap; D12 absorbed into 61a04e7) 2026-07-18
 - [x] UI.8 Design tokens dark refactor (high) — 1299e43 (styles.css in 61a04e7 per D12) 2026-07-18
-- [x] UI.9 Light theme + Appearance (high) — 8c89950 2026-07-18
-- [ ] UI.10 UI primitives + grouped rail (xhigh)
+- [x] UI.9 Light theme + Appearance (high) — f9ff346 2026-07-18 (sha corrected from orphaned 8c89950)
+- [x] UI.10 UI primitives + grouped rail (xhigh) — 50948c9 2026-07-18
 - [x] ST.1 Engine layers + PRNG (high) — 61a04e7 2026-07-18
 - [ ] ST.2 Studio shell refactor (high)
 - [ ] ST.3 Cloud mascot (high)
@@ -192,6 +192,12 @@ one line each, newest last.
 - **UI.9 light theme is an OPENING-GUESS palette, unverified in a browser.** Automated gates pass (632 pass / 0 fail incl. 6 new storage tests, typecheck + build + changed-file lint green) but the 12-tabs × {dark,light} × {cozy,compact} visual QA matrix is explicitly manual and deferred to the Wave-5 polish passes (UI.12–16 done-whens). Known trap (plan risk note): AA contrast on warn/ok/band **text over tinted fills** in light — the fill tokens and semantic ink were re-authored dark-enough to double as text (`--strat-warn: #9a6a10`, band-hot `rgb(0,150,100)`, band-warm-text `#8a6100`), but spot-check before trusting. Adjust `:root[data-theme='light']` values, not the consuming rules.
 - **UI.9 `uiScale` only affects inherited/`em` sizes, not px tokens.** The sheet is px-heavy (no rem), so scale is implemented as `body { font-size: var(--ui-root-size) }` — it shifts base body text and anything relative, but the many explicit-px component font-sizes don't scale. True global scaling would need a rem migration (out of scope; QA-adjust if the effect feels too weak). Theme resolution + normalizers are pure exports in `storage.ts` (`resolveTheme(pref, prefersLight)`, `normalizeTheme/Density/Scale`) — reuse them; `main.tsx` owns the `<html>` stamping (sync matchMedia best-guess to avoid flash, then storage-corrected, + storage.onChanged + matchMedia-change listeners).
 - **`bun test` ran 626 pass / 0 fail at UI.1 finish** (HEAD `1299e43` + UI.1). The 2 `brief.test.ts` failures the UI.8 gotcha flags are shared-in-memory-DB **order-dependent flakiness** (§9), not a hard failure — they did not manifest here. Still worth a brief-owning task's attention, but "2 fail" ≠ regression.
+- **UI.10 rail is now GROUPED.** App.tsx uses `TAB_GROUPS` (Operate/Author/Library/Learn/System eyebrow clusters), not the old flat `TABS` — a later task adding a tab adds it to a group. The vertical 104px rail's layout rules live at styles.css `.app`/`.topbar`/`.brand`/`.tab-group` **~L265+** (the plan's "rail/topbar ~L44-100" pointer is STALE — L44-100 is the UI.8 token block). `.topbar` is still the class name despite being a sidebar.
+- **UI.10 primitives are INERT except `EmptyState`** (wired into App.tsx's not-configured branch — the "used by the shell" done-when). `Section`/`SubTabs`/`SettingRow`/`Slider`/`GearPopover` + `settingsClient.{loadSettingGroups,flattenSettings,patchSetting,resetGroup,resetKeys}` + `api.settings.{get,patch,reset}` are exported but UNWIRED — first real consumers are UI.11 (Settings rebuild) + the Wave-5 inline gears (UI.12–15). Per D7 this is foundational, not dead code; don't delete on an "unused" pass.
+- **UI.10 brandmark reuses `/icons/icon128.png`** (byte-identical to DS `assets/logo.png`, md5 `d06f9c20…`) — no separate logo asset added; the plan's "copy logo.png → public/icons" was a no-op since icon128 already sits there and serves from dist root.
+- **Settings types are extension-local mirrors** — `SettingEntry`/`SettingsGroup`/`SettingsResponse`/`SettingsPatchResult`/`SettingsResetResult` in `extension/src/shared/types.ts` (re-exported via api.ts), mirroring the `GET /x/settings` JSON. The extension MUST NOT import `src/x/settings/registry.ts` (§5 build-isolation). **Binds UI.2/UI.11:** if the server `SettingDef` shape gains a field the editor needs, hand-sync it into `SettingEntry`.
+- **`exactOptionalPropertyTypes` pass-through pattern (UI.10):** primitives forwarding a maybe-undefined optional (`Slider.unit`, `SettingRow.onReset`, `GearPopover.onReset`/`label`) type the prop as `T | undefined` explicitly — else TS rejects `prop={maybeUndefined}`. Reuse this for new primitives that relay optionals.
+- **UI.10 rail regrouping is UNVERIFIED IN A BROWSER** (like UI.9's palette). Extension typecheck + Vite build + changed-file lint are green and the CSS compiles, but the visual QA (grouped rail spacing, brandmark, EmptyState, popover) rides the Wave-5 polish passes (UI.12–16 done-whens), per D7/D14.
 
 ## Planning-error log
 

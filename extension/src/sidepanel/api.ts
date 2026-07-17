@@ -92,6 +92,11 @@ import {
   type ScheduledPost,
   type ScheduledPostWithThread,
   type ScrapeBody,
+  type SettingEntry,
+  type SettingsGroup,
+  type SettingsPatchResult,
+  type SettingsResetResult,
+  type SettingsResponse,
   type TopComment,
   type UpdateBody,
   type VoiceAuthor,
@@ -190,6 +195,11 @@ export type {
   ScheduledPost,
   ScheduledPostWithThread,
   ScrapeBody,
+  SettingEntry,
+  SettingsGroup,
+  SettingsPatchResult,
+  SettingsResetResult,
+  SettingsResponse,
   TopComment,
   UpdateBody,
   VoiceAuthor,
@@ -356,6 +366,23 @@ export const api = {
     // Grok proposal (not persisted) — review/edit, then create/update to save.
     draft(s: Settings, body: PillarDraftBody): Promise<PillarDraftResult> {
       return request<PillarDraftResult>(s, '/x/pillars/draft', { method: 'POST', body });
+    },
+  },
+
+  // UI.1/UI.10 — the server settings registry. The panel renders from GET
+  // /x/settings (never the registry itself); PATCH validates per-key against the
+  // registry floors/ceilings, all-or-nothing.
+  settings: {
+    get(s: Settings): Promise<SettingsResponse> {
+      return request<SettingsResponse>(s, '/x/settings');
+    },
+
+    patch(s: Settings, patch: Record<string, unknown>): Promise<SettingsPatchResult> {
+      return request<SettingsPatchResult>(s, '/x/settings', { method: 'PATCH', body: patch });
+    },
+
+    reset(s: Settings, opts: { keys?: string[]; group?: string }): Promise<SettingsResetResult> {
+      return request<SettingsResetResult>(s, '/x/settings/reset', { method: 'POST', body: opts });
     },
   },
 

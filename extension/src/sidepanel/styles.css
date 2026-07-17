@@ -281,12 +281,23 @@ body {
 }
 
 .brand {
-  padding: 12px 12px 8px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  font-size: 11px;
-  color: var(--muted);
-  text-transform: uppercase;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 12px 10px;
+}
+.brand-mark {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--strat-radius-sm);
+}
+.brand-word {
+  font-size: 13px;
+  font-weight: var(--strat-weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--strat-text);
 }
 
 .tabs {
@@ -294,6 +305,25 @@ body {
   flex-direction: column;
   gap: 2px;
   padding: 0 6px 8px;
+}
+
+/* rail groups — eyebrow-divided clusters (OPERATE / AUTHOR / …) */
+.tab-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tab-group + .tab-group {
+  margin-top: 10px;
+}
+.tab-group-eyebrow {
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: var(--strat-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--strat-muted);
+  opacity: 0.75;
 }
 
 .tab {
@@ -2661,4 +2691,221 @@ button.danger:hover:not(:disabled) {
 
 .studio-asset-del:hover {
   color: var(--x-red);
+}
+
+/* ============================================================================
+   UI primitives (UI.10) — Section / EmptyState / SubTabs / SettingRow / Slider /
+   GearPopover. Thin, token-only; every NEW surface from Wave 1 on builds on
+   these (D7). No color literals — `--strat-*` tokens only.
+   ============================================================================ */
+
+/* Section — eyebrow-headed content block */
+.ui-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-5);
+}
+.ui-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--strat-space-4);
+}
+.ui-section-eyebrow {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  font-weight: var(--strat-weight-semibold);
+  letter-spacing: var(--strat-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--strat-muted);
+}
+.ui-section-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-3);
+}
+
+/* EmptyState — a warmer replacement for bare muted paragraphs */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-3);
+  padding: var(--strat-space-6) 0;
+}
+.ui-empty-line {
+  margin: 0;
+  font-size: var(--strat-text-body);
+  color: var(--strat-text);
+}
+.ui-empty-hint {
+  margin: 0;
+  font-size: var(--strat-text-sm);
+  color: var(--strat-muted);
+}
+.ui-empty-action {
+  margin-top: var(--strat-space-2);
+}
+
+/* SubTabs — segmented pill control */
+.ui-subtabs {
+  display: inline-flex;
+  gap: var(--strat-space-1);
+  padding: var(--strat-space-1);
+  background: var(--strat-bg);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-md);
+}
+.ui-subtab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--strat-muted);
+  padding: 4px 10px;
+  font-size: var(--strat-text-sm);
+  border-radius: var(--strat-radius-sm);
+}
+.ui-subtab:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+}
+.ui-subtab-active {
+  background: var(--strat-bg-elev);
+  color: var(--strat-text);
+  border-color: var(--strat-border);
+}
+
+/* SettingRow — label + description + typed control + reset dot */
+.ui-setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--strat-space-6);
+  padding: var(--strat-space-4) 0;
+  border-top: 1px solid var(--strat-border);
+}
+.ui-setting-row:first-child {
+  border-top: none;
+}
+.ui-setting-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ui-setting-label {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-3);
+  font-size: var(--strat-text-sm);
+  color: var(--strat-text);
+}
+.ui-setting-desc {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-muted);
+  line-height: 1.4;
+}
+.ui-setting-restart {
+  font-size: var(--strat-text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--strat-tracking-eyebrow);
+  color: var(--strat-warn);
+  border: 1px solid color-mix(in srgb, var(--strat-warn) 40%, transparent);
+  border-radius: var(--strat-radius-badge);
+  padding: 0 5px;
+}
+.ui-setting-reset {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: var(--strat-radius-pill);
+  border: none;
+  background: var(--strat-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ui-setting-reset:hover {
+  background: var(--strat-accent-hover);
+}
+.ui-setting-control {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-3);
+  flex-shrink: 0;
+}
+.ui-setting-control input[type="number"],
+.ui-setting-control input[type="text"],
+.ui-setting-control select {
+  background: var(--strat-bg);
+  color: var(--strat-text);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-md);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: var(--strat-text-sm);
+}
+.ui-setting-control input[type="number"] {
+  width: 68px;
+}
+.ui-numberarray {
+  width: 120px;
+}
+
+/* Slider — bounded range with a tabular readout */
+.ui-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-4);
+}
+.ui-slider-range {
+  accent-color: var(--strat-accent);
+  width: 110px;
+}
+.ui-slider-value {
+  font-size: var(--strat-text-sm);
+  color: var(--strat-text);
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* GearPopover — inline-config affordance */
+.ui-gear {
+  position: relative;
+  display: inline-flex;
+}
+.ui-gear-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--strat-muted);
+  padding: 2px 6px;
+  font-size: var(--strat-text-body);
+  line-height: 1;
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.ui-gear-btn:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+}
+.ui-gear-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 240px;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--strat-bg-elev);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-lg);
+  box-shadow: var(--strat-shadow-modal);
+  padding: var(--strat-space-4) var(--strat-space-6);
+}
+.ui-gear-pop .ui-setting-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--strat-space-3);
+}
+.ui-gear-pop .ui-setting-control {
+  justify-content: flex-start;
 }

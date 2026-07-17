@@ -12,6 +12,7 @@ import { StudioPanel, type StudioSeed } from './Studio.tsx';
 import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
 
 type Tab =
   | 'today'
@@ -27,19 +28,43 @@ type Tab =
   | 'playbook'
   | 'settings';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: 'people', label: 'People' },
-  { id: 'channels', label: 'Channels' },
-  { id: 'calendar', label: 'Calendar' },
-  { id: 'composer', label: 'Composer' },
-  { id: 'studio', label: 'Studio' },
-  { id: 'harvest', label: 'Harvest' },
-  { id: 'voice', label: 'Voice' },
-  { id: 'replies', label: 'Replies' },
-  { id: 'ideas', label: 'Ideas' },
-  { id: 'playbook', label: 'Playbook' },
-  { id: 'settings', label: 'Settings' },
+// The rail is grouped by intent (eyebrow dividers). OPERATE = the daily loop,
+// AUTHOR = making things, LIBRARY = stored inputs, LEARN = measurement, SYSTEM
+// = config. Groups render top-to-bottom in this order.
+const TAB_GROUPS: { label: string; tabs: { id: Tab; label: string }[] }[] = [
+  {
+    label: 'Operate',
+    tabs: [
+      { id: 'today', label: 'Today' },
+      { id: 'people', label: 'People' },
+      { id: 'channels', label: 'Channels' },
+    ],
+  },
+  {
+    label: 'Author',
+    tabs: [
+      { id: 'composer', label: 'Composer' },
+      { id: 'calendar', label: 'Calendar' },
+      { id: 'studio', label: 'Studio' },
+      { id: 'ideas', label: 'Ideas' },
+    ],
+  },
+  {
+    label: 'Library',
+    tabs: [
+      { id: 'voice', label: 'Voice' },
+      { id: 'replies', label: 'Replies' },
+      { id: 'harvest', label: 'Harvest' },
+    ],
+  },
+  {
+    label: 'Learn',
+    tabs: [{ id: 'playbook', label: 'Playbook' }],
+  },
+  {
+    label: 'System',
+    tabs: [{ id: 'settings', label: 'Settings' }],
+  },
 ];
 
 export function App(): JSX.Element {
@@ -82,21 +107,29 @@ export function App(): JSX.Element {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">stratus</div>
+        <div className="brand">
+          <img className="brand-mark" src="/icons/icon128.png" alt="" width={22} height={22} />
+          <span className="brand-word">stratus</span>
+        </div>
         <nav className="tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`tab${activeTab === t.id ? ' tab-active' : ''}`}
-              onClick={() => {
-                if (t.id === 'composer') clearEdit();
-                setTab(t.id);
-              }}
-              disabled={!configured && t.id !== 'settings'}
-            >
-              {t.label}
-            </button>
+          {TAB_GROUPS.map((g) => (
+            <div key={g.label} className="tab-group">
+              <div className="tab-group-eyebrow">{g.label}</div>
+              {g.tabs.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`tab${activeTab === t.id ? ' tab-active' : ''}`}
+                  onClick={() => {
+                    if (t.id === 'composer') clearEdit();
+                    setTab(t.id);
+                  }}
+                  disabled={!configured && t.id !== 'settings'}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
       </header>
@@ -106,7 +139,10 @@ export function App(): JSX.Element {
           <div className="panel muted">Loading…</div>
         ) : !configured && activeTab !== 'settings' ? (
           <div className="panel">
-            <p className="muted">Configure API URL and bearer token first.</p>
+            <EmptyState
+              line="Connect stratus to get started."
+              hint="Open Settings and paste your server URL and bearer token."
+            />
           </div>
         ) : activeTab === 'today' ? (
           <TodayPanel
