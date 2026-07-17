@@ -1,6 +1,6 @@
 # stratus code map
 
-> **Stamped:** 2026-07-18 at commit `40c718e` (UI.8).
+> **Stamped:** 2026-07-18 at commit `7e07dd5` (UI.1).
 > This file exists so `/plan-feature` never re-scans the repo. It is the single
 > pre-computed answer to "where does X live and how is it wired".
 > **Maintenance rule:** any commit that adds/moves/deletes a file, route, table,
@@ -60,8 +60,9 @@ Runtime: **Bun ≥1.1 + Hono** server on Hetzner (`https://stratus-narcis.duckdn
 | `src/middleware/cors.ts` | `chrome-extension://*` always allowed + `ALLOWED_ORIGINS`. |
 | `src/middleware/costTracker.ts` | `makeOnCost(platform, {dailyBudgetUsd})` → writes `cost_events`, platform-tagged; soft budget watchdog logs `BUDGET WATCHDOG`. Platform-agnostic — never hardcode X here. |
 | `src/db/client.ts` | The one `bun:sqlite` Database (WAL, `foreign_keys=ON`, boot auto-migrate). **Synchronous driver** — see §7 constraints. |
-| `src/db/shared-schema.ts` | `cost_events` (platform `'x' \| 'grok' \| 'xai'`). |
-| `src/db/migrations/` | `0000`–`0012` + meta. `0000` carries the `content_pillars` seed `INSERT OR IGNORE` — drizzle-kit generate drops seed INSERTs; re-check after every generate. |
+| `src/db/shared-schema.ts` | `cost_events` (platform `'x' \| 'grok' \| 'xai'`) + `app_settings` (UI.1 — `key`/JSON `value`/`updatedAt` override rows; a missing row = the registry default). |
+| `src/settings/store.ts` | UI.1 **platform-agnostic** settings store: sync read-through over `app_settings` (module-level `Map` cache + invalidate-on-write), `getSetting`/`resolveSetting`/`getAllValues(scope?)`/`setSettings`(validate-all → one-txn upsert)/`resetSettings`. Takes a `SettingsRegistry` (never imports `src/x/*`, like `costTracker` takes `platform`). |
+| `src/db/migrations/` | `0000`–`0013` + meta (`0013` = `app_settings`, UI.1). `0000` carries the `content_pillars` seed `INSERT OR IGNORE` — drizzle-kit generate drops seed INSERTs; re-check after every generate. biome-ignored (UI.1). |
 | `src/routes/cost.ts` | `GET /cost/today` (per-platform spend + budget flags), `GET /cost/daily?days=` (zero-filled UTC series). |
 | `src/routes/healthz.ts` | Public. 503 with `staleWorkers` when a heartbeat goes stale; reports `gitSha` from `.git-sha`; DB errors masked as `db_unreachable`. |
 | `src/heartbeats.ts` | Worker heartbeat registry (`beat()` per tick; publisher stale >5min, dailyMetrics >25h). |
@@ -94,6 +95,7 @@ Runtime: **Bun ≥1.1 + Hono** server on Hetzner (`https://stratus-narcis.duckdn
 | `fields.ts` / `errors.ts` / `pagination.ts` | Field defaults (`attachments` already included — rides free), `XApiError`+classify, `paginate` async iterator (`perPageSleepMs` for search/all). |
 | `pricing.ts` | X price table keyed off endpoint substrings; call sites pass `costHint` when the path can't tell. |
 | `db/schema.ts` | All 26 X tables (§5). |
+| `settings/registry.ts` | UI.1 typed settings catalog: `SettingDef`, `SETTINGS_REGISTRY` (doctrine group seeded), `validateSettingValue` (number/bool/string/enum/numberArray + sorted-unique), `settingsByGroup`. Implements the store's `SettingsRegistry` adapter + exports the **bound** `getSetting`/`resolveSetting`/`getAllValues`/`setSettings`/`resetSettings` — consumers import these, never the store. |
 | `playground.ts` | `bun run play` scratch calls. |
 
 **Domain modules (pure logic, bun-tested)**
@@ -155,12 +157,13 @@ Runtime: **Bun ≥1.1 + Hono** server on Hetzner (`https://stratus-narcis.duckdn
 | `images.ts` | `POST /images/generate` (n≤2; HARD daily budget 429 before spend; returns data: URLs). |
 | `assets.ts` | `POST /assets` (≤2MB), `GET /assets` (metadata only), `GET /assets/:id/png` (bytes), `DELETE /assets/:id`. |
 | `data.ts` | `GET /data/tables`, `GET /data/:table`, `POST /data/query` — S1 read-only; plus `explorer` router: `GET /explorer` at root, **outside bearer** (data-free shell). |
+| `settings.ts` | UI.1 (mounted next to `data`): `GET /settings` (groups + value + isDefault), `GET /settings/values?scope=mirrored` (flat mirror payload), `PATCH /settings` (per-key validated, all-or-nothing → 400 `unknown_setting`/`invalid_setting_value`), `POST /settings/reset` (`{keys?,group?}`). Always mounted, $0; **landed inert — no store consumer yet** (UI.2–7 wire them). |
 
 Shared/other: `GET /healthz` (public), `GET/cost/today`, `GET /cost/daily`, `POST /grok/ask`, `POST /mcp` (JSON-RPC; GET/DELETE→405).
 
-## 4. Database — 27 tables
+## 4. Database — 28 tables
 
-`src/db/shared-schema.ts`: **cost_events** (platform-tagged spend ledger).
+`src/db/shared-schema.ts`: **cost_events** (platform-tagged spend ledger) · **app_settings** (UI.1 — settings overrides; key PK, JSON value, `updatedAt`; only overridden keys get a row).
 
 `src/x/db/schema.ts` (schema line numbers as of stamp):
 
@@ -187,7 +190,7 @@ Shared/other: `GET /healthz` (public), `GET/cost/today`, `GET /cost/daily`, `POS
 | `conversationMeta` (L568) | C2 snooze/read/mute per conversation_id. |
 | `harvestRuns` (L582) / `harvestRows` (L595) | DOM harvest; repeated captures on purpose (longitudinal series); content-shape columns. |
 
-Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0011` media_note, `0012` media_assets). Workflow: edit schema → `bun run db:generate` → **inspect the SQL** (drizzle drops seed INSERTs; keep them idempotent) → boot/`deploy.sh` migrates.
+Migrations `0000`–`0013` (latest: `0009` has_media, `0010` pinned_tweet_id, `0011` media_note, `0012` media_assets, `0013` app_settings). Workflow: edit schema → `bun run db:generate` → **inspect the SQL** (drizzle drops seed INSERTs; keep them idempotent) → boot/`deploy.sh` migrates. (biome now ignores `src/db/migrations` — UI.1, D11/D13.)
 
 ## 5. Extension — `extension/` (own package.json, Vite + React, MV3)
 
@@ -256,6 +259,7 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 27. **Shims for shared server modules** (replyBand, channelSuggest) — never fork logic between server and page.
 28. **Posting is always manual paste** — OAuth 1.0a media wall + reply policy; nothing auto-posts to others, MCP can only create `draft` rows.
 - **Design tokens (UI.8)**: the panel's `styles.css` `:root` carries the `--strat-*` token set (from `Stratus Design System/tokens/*.css`) + `--x-*` companion tokens + legacy short aliases. New UI references `--strat-*` directly; tinted fills use the exact fill tokens or `color-mix(in srgb, var(--strat-*) N%, transparent)`; **no color literal lives outside `:root`**. Dark-only (`color-scheme: dark`) until UI.9 adds `:root[data-theme='light']`. (Unnumbered — the numbered `§7.N` refs are load-bearing across CLAUDE.md/plans; don't renumber.)
+- **Settings platform (UI.1)**: server-side tunable knobs live in `app_settings` (override rows) + the typed `src/x/settings/registry.ts` catalog. Discipline: **only routes/workers read the store** via the bound `getSetting`; **pure modules stay pure** and take an opts object defaulted to today's constant (`computeQuests(rows, opts = QUEST_DEFAULTS)`) — so every existing pure test stays valid and the store is mockable. Registry floors/ceilings are the money/policy guard (an MCP agent editing via `x_update_setting` hits the same wall). The shared store (`src/settings/store.ts`) never imports `src/x/*` — the registry is passed in. (Unnumbered — see the `don't renumber` note above.)
 
 **Process**
 29. **Docs sync in the same commit**: CLAUDE.md phase entry, the relevant plan doc (PLAN/CIRCLES/SURFACES), the matching `docs/<tab>.md`, and THIS codemap.
@@ -297,3 +301,4 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 - 2026-07-17 — §2: added `plans/` + masterplan skill rows (planning only; no src/extension changes — stamp sha unchanged).
 - 2026-07-18 `95b9fff` — §5: `compose.ts` gained `path`/`panel`/`pattern` layer kinds + `mulberry32`/`patternCoords` pure exports (ST.1 / S5.1).
 - 2026-07-18 `40c718e` (styles.css in `61a04e7`, D12) — **UI.8**: `styles.css` adopts the `--strat-*` design tokens (legacy aliases retained), bundles Inter for the panel, 44 color literals → tokens/`color-mix`; §2 DS-folder + biome-ignore rows, §5 `styles.css`/`public/fonts` rows, §7 design-token pattern.
+- 2026-07-18 `7e07dd5` (code in `61a04e7`, D12/D13) — **UI.1**: `app_settings` (table #28, migration `0013`) + platform-agnostic `src/settings/store.ts` + typed `src/x/settings/registry.ts` (doctrine group) + `src/x/routes/settings.ts` (GET/values/PATCH/reset, mounted inert next to `data`); biome ignores `src/db/migrations`. §3.1 store, §3.3 registry, §3.4 settings routes, §4 count 27→28 + migrations →0013, §7 settings-platform pattern.

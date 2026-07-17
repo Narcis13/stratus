@@ -4,8 +4,8 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
-  type SettingDef,
   SETTINGS_REGISTRY,
+  type SettingDef,
   settingsByGroup,
   settingsRegistry,
   validateSettingValue,

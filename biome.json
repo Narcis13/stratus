@@ -1,7 +1,9 @@
 {
   "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
-  "files": { "ignore": ["dist", "node_modules", "scrape.js", "Stratus Design System"] },
+  "files": {
+    "ignore": ["dist", "node_modules", "scrape.js", "Stratus Design System", "src/db/migrations"]
+  },
   "formatter": {
     "enabled": true,
     "indentStyle": "space",

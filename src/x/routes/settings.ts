@@ -57,7 +57,10 @@ settingsRouter.patch('/settings', async (c) => {
     return c.json({ updated });
   } catch (err) {
     if (err instanceof SettingsError) {
-      return c.json({ error: err.code, key: err.key, ...(err.reason ? { reason: err.reason } : {}) }, 400);
+      return c.json(
+        { error: err.code, key: err.key, ...(err.reason ? { reason: err.reason } : {}) },
+        400,
+      );
     }
     throw err;
   }

@@ -117,7 +117,8 @@ const DOCTRINE: SettingDef[] = [
     key: 'x.doctrine.ladderSwitchAt',
     group: 'doctrine',
     label: 'Ladder switch-at',
-    description: 'Filled-slot count at which the cadence picks the 4/day ladder over the 3/day one.',
+    description:
+      'Filled-slot count at which the cadence picks the 4/day ladder over the 3/day one.',
     type: 'number',
     default: 4,
     min: 2,
@@ -230,7 +231,8 @@ export const resolveSetting = (key: string): store.ResolvedSetting =>
   store.resolveSetting(settingsRegistry, key);
 export const getAllValues = (scope?: SettingScope): Record<string, unknown> =>
   store.getAllValues(settingsRegistry, scope);
-export const setSettings = (patch: Record<string, unknown>): Array<{ key: string; value: unknown }> =>
-  store.setSettings(settingsRegistry, patch);
+export const setSettings = (
+  patch: Record<string, unknown>,
+): Array<{ key: string; value: unknown }> => store.setSettings(settingsRegistry, patch);
 export const resetSettings = (opts: { keys?: string[]; group?: string }): { reset: string[] } =>
   store.resetSettings(settingsRegistry, opts);

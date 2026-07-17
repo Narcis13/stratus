@@ -4,16 +4,16 @@
 > Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 
-- **last-commit:** 40c718e (UI.8) · NB: ST.1+UI.8+UI.1 *code* all landed in ONE commit `61a04e7` under ST.1's message (a concurrent lane's broad `git add`); this UI.8 commit carries only biome.json + docs. See D12.
-- **current wave:** 0
-- **next-up:** Lane A → UI.1 (settings.*/registry.* still uncommitted in-tree) · Lane B → UI.9 (UI.8 done ✓) or UI.10 · Lane C → ST.2 (ST.1 done)
+- **last-commit:** 7e07dd5 (UI.1 finish) · UI.1's *code* is in `61a04e7` (the D12 collision commit); this follow-up carries the settings format fixes + biome migrations-ignore + STATE/codemap. Prior: 40c718e (UI.8) → 1299e43 (its amend), 61a04e7, 95b9fff (ST.1).
+- **current wave:** 0 → 1 (Wave 0 complete: UI.1, UI.8, ST.1 all done)
+- **next-up:** Lane A → Wave 1 server (RU.1 / N.1 / AI.1) · Lane B → UI.9 (light theme) / UI.10 (primitives) · Lane C → ST.2 (Studio shell)
 
 ## Ledger
 
 Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date) · `[s]` skipped (reason in deviations).
 
 ### Wave 0 — Foundations
-- [ ] UI.1 Settings platform (xhigh)
+- [x] UI.1 Settings platform (xhigh) — 61a04e7 (code, per D12) + 7e07dd5 (format/state/codemap) 2026-07-18
 - [x] UI.8 Design tokens dark refactor (high) — 61a04e7 (styles.css) + 40c718e (biome/docs) 2026-07-18
 - [ ] UI.9 Light theme + Appearance (high)
 - [ ] UI.10 UI primitives + grouped rail (xhigh)
@@ -175,6 +175,7 @@ Append D11+ as work reveals divergences from plan text.
 - **D10** (standing): registry knob groups (UI.2–5) run in Wave 5 so they catalog the final constant set, including RU/HV/GR/A3 constants.
 - **D11** (UI.8, standing): `biome.json` `files.ignore` now includes `Stratus Design System` — the DS reference folder (Decision 9, plan out-of-scope) was ~112 of the baseline lint errors. Not in UI.8's plan edit-list but a correct, universal fix; whole-repo lint dropped 119→7. The remaining 7 are pre-existing and NOT in any changed file: 2 a11y in `extension/src/sidepanel/Replies.tsx` (UI.15 territory) + 5 biome-format on generated `src/db/migrations/meta/*.json` (a future infra task could ignore `src/db/migrations/meta`).
 - **D12** (UI.8, historical): UI.8's `styles.css` and UI.1's whole settings platform were absorbed into ST.1's commit `61a04e7` (15 files, 3894 ins) by a concurrent lane's broad `git add` before either owner committed. Not reverted — `61a04e7` is shared HEAD and other lanes built on it; rewriting shared history mid-run is more dangerous than the mislabel. UI.8's `styles.css` content is correct there (0 literals outside `:root`, build green). **Process lesson: parallel masterplan lanes in ONE worktree must stage explicit paths (`git add <files>`), never `git add -A`/`commit -am`.**
+- **D13** (UI.1, binds UI.2): the **doctrine group is seeded in full by UI.1** — the 6 keys `x.doctrine.{replyTargetMin,replyTargetMax,weekReplyTargetPct,anchors3,anchors4,ladderSwitchAt}`, with the anchors' sorted-unique+range numberArray validation already in place (Task 2's plan attributed that hook to itself; landed early because UI.1 seeds the anchors so it must validate them). **UI.2 must NOT re-declare these doctrine keys** — it only adds the `quests`+`display` groups and wires the consumers (brief quota/ratio/gaps, composer ladder). Store layering (also binds AI.2/D1): `src/settings/store.ts` is platform-agnostic and never imports `src/x/*`; the X registry `src/x/settings/registry.ts` implements the store's `SettingsRegistry` interface and exposes the bound `getSetting`/`resolveSetting`/`getAllValues`/`setSettings`/`resetSettings` — **UI.2+ consumers import those from `../settings/registry.ts`, never the store directly**. biome.json now also ignores `src/db/migrations` (fulfils D11's anticipated infra ignore; the 5 generated-JSON lint errors are gone → whole-repo lint = 2, both pre-existing `Replies.tsx` a11y).
 
 ## Gotchas log
 
@@ -185,6 +186,8 @@ one line each, newest last.
 - **`bun test` has 2 pre-existing failures** in `src/x/routes/brief.test.ts` ("brief quests (C9)") — full suite 624 pass / 2 fail, identical before and after UI.8. Unrelated to CSS/settings; a Wave-1 or brief-owning task should investigate. Don't read "2 fail" as a regression.
 - **UI.8 design-token conventions:** `styles.css` `:root` = `--strat-*` set + legacy short aliases (`--bg`,`--accent`,`--status-*`…, all mapping to `--strat-*`) — the 2.4k-line sheet still resolves through the aliases; don't rip them out until a full migration pass. Alpha fills use `color-mix(in srgb, var(--strat-*) N%, transparent)` (exact-equal to the old rgba, tracks the base for UI.9's light theme) — a pre-existing `color-mix` at ~line 2051 already used the pattern, so it's sanctioned. `#fff`→`white` keyword. Fonts load from absolute `/fonts/Inter-*.woff2` (public/ → dist root; same files Studio uses) — no `sidepanel.html` change needed. `color-scheme: dark` stays until UI.9 adds `:root[data-theme='light']`.
 - **ST.1 / compose.ts pattern engine:** `patternCoords(pattern,w,h,spacing,seed)` returns box-local coords; `dots|grid|diagonal|plus` share one top-left-first lattice (marks at `spacing/2 + k·spacing`, `< w/h`), `blobs` returns seeded-random `{x,y,r}` (count = `floor(w/spacing)·floor(h/spacing)`, 3 PRNG draws/blob in x,y,r order). `mulberry32` is the only sanctioned RNG in the Studio — Math.random is banned (determinism = the preview-IS-artifact contract). `path` layers author SVG in a 100×100 viewbox scaled into `box`; strokes divide lineWidth by mean scale. Downstream S5 tasks (ST.3 mascot, ST.4 patterns) build on these.
+- **UI.1 settings platform landed INERT.** The routes (`GET /x/settings`, `GET /x/settings/values?scope=`, `PATCH /x/settings`, `POST /x/settings/reset`) are always-mounted (`settingsRouter` next to `data`/`explorer` in `mountX`) and fully working, but **no consumer reads the store yet** — pure modules stay pure and take params (Decision 6); UI.2–UI.7 wire brief/quests/people/gates/band/budgets through `getSetting`. Only the `doctrine` group is seeded (D13). Store cache is a module-level `Map` invalidated on every write; PATCH validates ALL keys before a one-txn upsert (all-or-nothing). Value column is JSON (`text {mode:'json'}`) so numbers/booleans/strings/arrays round-trip uniformly. `app_settings` = DB table #28; migration `0013_silent_nova.sql` (no seed INSERT — defaults live in the registry).
+- **`bun test` ran 626 pass / 0 fail at UI.1 finish** (HEAD `1299e43` + UI.1). The 2 `brief.test.ts` failures the UI.8 gotcha flags are shared-in-memory-DB **order-dependent flakiness** (§9), not a hard failure — they did not manifest here. Still worth a brief-owning task's attention, but "2 fail" ≠ regression.
 
 ## Planning-error log
 

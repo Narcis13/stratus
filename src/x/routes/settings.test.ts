@@ -144,9 +144,9 @@ describe('PATCH /x/settings', () => {
   });
 
   test('invalid numberArray (unsorted / OOB / too many) → 400', async () => {
-    expect(
-      (await send('/x/settings', 'PATCH', { 'x.doctrine.anchors3': [18, 9] })).status,
-    ).toBe(400);
+    expect((await send('/x/settings', 'PATCH', { 'x.doctrine.anchors3': [18, 9] })).status).toBe(
+      400,
+    );
     expect((await send('/x/settings', 'PATCH', { 'x.doctrine.anchors3': [25] })).status).toBe(400);
     expect(
       (await send('/x/settings', 'PATCH', { 'x.doctrine.anchors3': [1, 2, 3, 4, 5, 6, 7, 8, 9] }))
