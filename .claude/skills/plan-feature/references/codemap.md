@@ -45,7 +45,8 @@ Runtime: **Bun ≥1.1 + Hono** server on Hetzner (`https://stratus-narcis.duckdn
 | `drizzle.config.ts` | Points drizzle-kit at `src/x/db/schema.ts` + `src/db/shared-schema.ts` → `src/db/migrations/`. |
 | `biome.json`, `tsconfig.json` | Lint/format; TS strict, `noEmit`, `allowImportingTsExtensions`; tsconfig `include` covers `scripts/**` + `drizzle.config.ts`. |
 | `.env.example` | Every env key, documented. Notables: `API_TOKEN` (one bearer for API+extension+MCP), `SELF_X_USER_ID`, `XAI_API_KEY`, `SQLITE_PATH` (`:memory:` in tests), `X_DAILY_BUDGET_USD` (soft), `XAI_IMAGE_DAILY_BUDGET_USD` (hard 429), `DAILY_METRICS_ENABLED`, `WINNER_REREAD_MIN_VIEWS`, `STRATUS_DEPLOY_HOST`, `MENTION_API_REPLIES` (unread; verify-then-enable carve-out). |
-| `.claude/` | `commands/ship.md`; skills: `stratus` (drive the HTTP API), `skill-explainer`, `plan-feature` (this skill). |
+| `.claude/` | `commands/ship.md`; skills: `stratus` (drive the HTTP API), `skill-explainer`, `plan-feature` (this skill), `masterplan` (executes `plans/MASTERPLAN.md` one task/session; state in its `STATE.md`; updates THIS codemap after every task). |
+| `plans/` | 12 feature plans + `MASTERPLAN.md` (unified execution order, reasoning levels, waves, adaptations D1–D10). Execution state: `.claude/skills/masterplan/STATE.md`. |
 
 ## 3. Server — `src/`
 
@@ -289,3 +290,4 @@ Migrations `0000`–`0012` (latest: `0009` has_media, `0010` pinned_tweet_id, `0
 ## 11. Update log
 
 - 2026-07-16 `2a7693e` — initial map (post-C9, post-S4, post grok-imagine migration).
+- 2026-07-17 — §2: added `plans/` + masterplan skill rows (planning only; no src/extension changes — stamp sha unchanged).
