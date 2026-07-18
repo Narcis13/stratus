@@ -61,8 +61,8 @@ export function DigestSection({ settings }: { settings: Settings }): JSX.Element
             </div>
           ) : (
             <div className="muted">
-              {data.narrativeError === 'grok_not_configured'
-                ? 'Facts only — Grok is not configured on the server.'
+              {data.narrativeError === 'llm_not_configured'
+                ? 'Facts only — no LLM provider is configured on the server.'
                 : 'The coach lost their voice this time — the numbers below still stand.'}
             </div>
           )}

@@ -379,10 +379,15 @@ describe('playbook route', () => {
     expect(post.endsWith(line)).toBe(true);
   });
 
-  test('extract-winners without XAI_API_KEY is 503', async () => {
+  test('extract-winners with no LLM provider is 503', async () => {
     const prev = process.env.XAI_API_KEY;
+    const prevOr = process.env.OPENROUTER_API_KEY;
+    // AI.6: the gate is llmConfigured() now — both keys must be off, else the
+    // pre-flight passes and the route would reach askLLM.
     // biome-ignore lint/performance/noDelete: assigning undefined leaves the env var set
     delete process.env.XAI_API_KEY;
+    // biome-ignore lint/performance/noDelete: assigning undefined leaves the env var set
+    delete process.env.OPENROUTER_API_KEY;
     try {
       const res = await app.request('/x/playbook/extract-winners', {
         method: 'POST',
@@ -392,6 +397,7 @@ describe('playbook route', () => {
       expect(res.status).toBe(503);
     } finally {
       if (prev !== undefined) process.env.XAI_API_KEY = prev;
+      if (prevOr !== undefined) process.env.OPENROUTER_API_KEY = prevOr;
     }
   });
 });

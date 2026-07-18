@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  ICEBREAKER_PROMPT_TEMPLATE,
   buildIcebreakerInput,
   parseIcebreakers,
   renderIcebreakerGrounding,
@@ -81,6 +82,20 @@ describe('buildIcebreakerInput', () => {
       content.indexOf('Reference ONLY what is in it'),
     );
     expect(content.trimEnd().endsWith('GROUND-MARKER')).toBe(true);
+  });
+
+  test('AI.6: registry template renders byte-identical to the pre-registry shape', () => {
+    // The {{GROUNDING}} token sits at the exact tail that reproduces the old
+    // `${prefix}\n\nGROUNDING:\n${grounding}` concatenation.
+    expect(ICEBREAKER_PROMPT_TEMPLATE.endsWith('\n\nGROUNDING:\n{{GROUNDING}}')).toBe(true);
+    const [msg] = buildIcebreakerInput('GROUND-MARKER');
+    expect(msg?.content).not.toContain('{{GROUNDING}}');
+    expect(msg?.content).toBe(
+      `${ICEBREAKER_PROMPT_TEMPLATE.slice(0, -'{{GROUNDING}}'.length)}GROUND-MARKER`,
+    );
+    // A custom override's {{GROUNDING}} substitutes too; a token-less one appends.
+    expect(buildIcebreakerInput('X', 'HEAD {{GROUNDING}} TAIL')[0]?.content).toBe('HEAD X TAIL');
+    expect(buildIcebreakerInput('X', 'no token')[0]?.content).toBe('no token\n\nGROUNDING:\nX');
   });
 });
 

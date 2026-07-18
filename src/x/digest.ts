@@ -194,10 +194,10 @@ export const DIGEST_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-// Static instruction prefix — the FACTS block rides at the variable tail so
-// the prefix stays prompt-cacheable (same pattern as every other Grok prompt
-// in this repo).
-const DIGEST_INSTRUCTIONS = `You are my growth coach for X (Twitter). I'm a solopreneur building an audience by replying well, posting daily, and taking care of the people who reply back. Once a week you write me a short Sunday note about the week that just ended.
+// Registry default (key `digest`, AI.6) — the static instruction prefix; the
+// FACTS block substitutes at the {{FACTS}} tail so the prefix stays
+// prompt-cacheable (same pattern as every other LLM prompt in this repo).
+export const DIGEST_PROMPT_TEMPLATE = `You are my growth coach for X (Twitter). I'm a solopreneur building an audience by replying well, posting daily, and taking care of the people who reply back. Once a week you write me a short Sunday note about the week that just ended.
 
 Write the digest in second person ("you"), 150-220 words, 2-4 short paragraphs, plain text (no markdown, no headings, no bullet lists, no emoji).
 
@@ -206,15 +206,26 @@ HARD RULES:
 - Shape: what worked this week → who moved closer (the people) → ONE specific thing to change next week (pick it from the facts: a neglected person, a quest that kept missing, a guidance line).
 - Tone: warm, direct, concrete. A coach who watched the week, not a report. No guilt, no scolding, no hype words, no exclamation marks.
 
-Return JSON {"narrative": "..."} — nothing else.`;
+Return JSON {"narrative": "..."} — nothing else.
 
-export function buildDigestInput(facts: DigestFacts): GrokMessage[] {
-  return [
-    {
-      role: 'user',
-      content: `${DIGEST_INSTRUCTIONS}\n\nFACTS:\n${JSON.stringify(facts, null, 1)}`,
-    },
-  ];
+FACTS:
+{{FACTS}}`;
+
+const FACTS_PLACEHOLDER = '{{FACTS}}';
+
+// AI.6: `template` is the registry-loaded body (DB override or the default
+// above). The facts JSON substitutes at {{FACTS}} — byte-identical to the old
+// `${prefix}\n\nFACTS:\n${json}` concatenation when the default template runs.
+// A custom override that dropped the token still gets the facts appended.
+export function buildDigestInput(
+  facts: DigestFacts,
+  template: string = DIGEST_PROMPT_TEMPLATE,
+): GrokMessage[] {
+  const factsJson = JSON.stringify(facts, null, 1);
+  const content = template.includes(FACTS_PLACEHOLDER)
+    ? template.split(FACTS_PLACEHOLDER).join(factsJson)
+    : `${template}\n\nFACTS:\n${factsJson}`;
+  return [{ role: 'user', content }];
 }
 
 /** Strict structured outputs guarantee the shape; degrade odd output to null

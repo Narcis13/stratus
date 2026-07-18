@@ -13,7 +13,7 @@
 import { type SQL, and, asc, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { type AskLlmResult, askLLM, llmConfigured, llmErrorPayload } from '../../llm/index.ts';
 import {
   channels,
   mentions,
@@ -51,6 +51,7 @@ import {
   stageRank,
 } from '../people/stage.ts';
 import { normalizePersonHandle, recomputePerson, upsertPerson } from '../people/store.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
 import { buildReplyOutcomes } from './replies.ts';
 import { loadTargetHandles } from './voice.ts';
@@ -580,30 +581,29 @@ peopleRouter.post('/people/:handle/icebreakers', async (c) => {
   );
   if (grounding === null) return c.json({ error: 'no_shared_context' }, 422);
 
-  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+  // §7.4 order: 404/422 above already refused for free. This is the cheap
+  // any-provider gate; askLLM enforces the resolved provider's key (503).
+  if (!llmConfigured()) return c.json({ error: 'grok_not_configured' }, 503);
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  // Registry prompt (AI.6): DB override else the shipped default; the grounding
+  // substitutes at {{GROUNDING}} inside buildIcebreakerInput.
+  const prompt = loadPromptSafe('icebreaker');
+
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      messages: buildIcebreakerInput(grounding),
-      reasoningEffort: 'low',
-      maxOutputTokens: 400,
-      temperature: 0.7,
-      jsonSchema: { name: 'icebreakers', schema: ICEBREAKER_SCHEMA },
-      promptCacheKey: 'stratus-icebreaker',
-    });
+    // AI.6: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+    // house floor below — the opener's low-effort defaults).
+    result = await askLLM(
+      {
+        messages: buildIcebreakerInput(grounding, prompt.body),
+        jsonSchema: { name: 'icebreakers', schema: ICEBREAKER_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      { defaults: { reasoningEffort: 'low', maxOutputTokens: 400, temperature: 0.7 } },
+    );
   } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          message: err.message,
-          requestId: err.requestId,
-        },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/people/:handle/icebreakers failed:', detail);
     return c.json({ error: 'icebreakers_failed', detail }, 502);

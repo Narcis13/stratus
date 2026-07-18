@@ -4,6 +4,7 @@
 
 import type { Hono } from 'hono';
 import { registerHeartbeat, unregisterHeartbeat } from '../heartbeats.ts';
+import { llmConfigured } from '../llm/index.ts';
 // S2: the X platform's MCP tools. Re-exported so the platform-agnostic MCP
 // bridge (src/mcp.ts) reaches them through this public surface, not a deep
 // import — same discipline as mountX/startXWorkers.
@@ -75,8 +76,8 @@ export function mountX(app: Hono): void {
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
-  // C0: radar draft reads/status flips are $0 and mount without the Grok key;
-  // only the insert path (generate-batch, below) needs XAI_API_KEY.
+  // C0: radar draft reads/status flips are $0 and mount without an LLM key;
+  // only the insert path (generate-batch, below) needs a configured provider.
   app.route('/x', radar);
   // C6: Idea Inbox — pure SQL, always mounted; consumption happens inside the
   // Grok-gated draft routes, but capture/list/reopen must work without the key.
@@ -107,24 +108,26 @@ export function mountX(app: Hono): void {
   app.route('/x', launch);
   // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.
   app.route('/x', conversations);
-  // C9: Sunday Digest — facts are $0 SQL; the one weekly narration checks
-  // XAI_API_KEY at runtime and degrades to facts-only without it.
+  // C9: Sunday Digest — facts are $0 SQL; the one weekly narration checks for
+  // an LLM provider at runtime (AI.6) and degrades to facts-only without one.
   app.route('/x', digest);
   // C4: the Playbook — pure SQL over measured outcomes, $0; only its
-  // extract-winners POST needs Grok and it checks XAI_API_KEY at runtime.
+  // extract-winners POST needs an LLM and it checks llmConfigured() at runtime.
   app.route('/x', playbook);
   app.route('/x', createMentionsRouter(cfg));
   // S4: image generation is always mounted; POST /x/images/generate checks the
-  // XAI key at runtime (503 without it), same as /pillars/draft and the digest.
+  // XAI key at runtime (503 without it) — images stay xAI-only (Decision 6).
   app.route('/x', images);
-  // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
-  if (process.env.XAI_API_KEY) {
+  // LLM-backed (AI.6): mount when EITHER provider is configured (Grok or
+  // OpenRouter); refuse to mount when neither is — askLLM enforces the resolved
+  // provider's key per request.
+  if (llmConfigured()) {
     app.route('/x', replies);
     app.route('/x', drafter);
     app.route('/x', voiceExtract);
   } else {
     console.log(
-      'x/replies: XAI_API_KEY not set — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
+      'x/replies: no LLM provider configured (set XAI_API_KEY or OPENROUTER_API_KEY) — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
     );
   }
 }

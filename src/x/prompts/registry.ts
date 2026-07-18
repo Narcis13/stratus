@@ -22,6 +22,8 @@
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { promptOverrides } from '../db/schema.ts';
+import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
+import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
 import { REPLY_BATCH_PROMPT_TEMPLATE, REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
@@ -33,6 +35,8 @@ export const PROMPT_KEYS = [
   'post',
   'voice-extract',
   'pillar-draft',
+  'digest',
+  'icebreaker',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -90,6 +94,22 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: PILLAR_DRAFT_TEMPLATE,
     required: ['{{EXISTING_PILLARS}}', '{{JOB}}'],
     optional: ['{{PERSONA}}'],
+  },
+  digest: {
+    name: 'Sunday digest',
+    description:
+      'The weekly coach narration behind GET /x/digest — narrates the FACTS block in the coach voice, never inventing beyond it.',
+    defaultBody: DIGEST_PROMPT_TEMPLATE,
+    required: ['{{FACTS}}'],
+    optional: [],
+  },
+  icebreaker: {
+    name: 'Icebreakers',
+    description:
+      'The opener prompt behind POST /x/people/:handle/icebreakers — two conversation starters grounded strictly on real shared context.',
+    defaultBody: ICEBREAKER_PROMPT_TEMPLATE,
+    required: ['{{GROUNDING}}'],
+    optional: [],
   },
 };
 

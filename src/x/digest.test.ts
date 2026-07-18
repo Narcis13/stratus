@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { buildDigestFacts, buildDigestInput, parseDigestNarrative, weekBounds } from './digest.ts';
+import {
+  DIGEST_PROMPT_TEMPLATE,
+  buildDigestFacts,
+  buildDigestInput,
+  parseDigestNarrative,
+  weekBounds,
+} from './digest.ts';
 import { buildMediaEffectiveness, buildRosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -174,6 +180,26 @@ describe('buildDigestInput', () => {
     expect(content).toContain('Never invent');
     expect(content.indexOf('FACTS:')).toBeGreaterThan(content.indexOf('Never invent'));
     expect(content.slice(content.indexOf('FACTS:'))).toContain('digest_fan_x');
+  });
+
+  test('AI.6: registry template renders byte-identical to the pre-registry shape', () => {
+    const facts = buildDigestFacts(BASE_INPUTS);
+    // The {{FACTS}} token sits at the exact tail that reproduces the old
+    // `${prefix}\n\nFACTS:\n${json}` concatenation.
+    expect(DIGEST_PROMPT_TEMPLATE.endsWith('\n\nFACTS:\n{{FACTS}}')).toBe(true);
+    const factsJson = JSON.stringify(facts, null, 1);
+    const [msg] = buildDigestInput(facts);
+    expect(msg?.content).not.toContain('{{FACTS}}');
+    expect(msg?.content).toBe(
+      `${DIGEST_PROMPT_TEMPLATE.slice(0, -'{{FACTS}}'.length)}${factsJson}`,
+    );
+    // A custom override's {{FACTS}} substitutes too; a token-less one appends.
+    expect(buildDigestInput(facts, 'HEAD {{FACTS}} TAIL')[0]?.content).toBe(
+      `HEAD ${factsJson} TAIL`,
+    );
+    expect(buildDigestInput(facts, 'no token')[0]?.content).toBe(
+      `no token\n\nFACTS:\n${factsJson}`,
+    );
   });
 });
 

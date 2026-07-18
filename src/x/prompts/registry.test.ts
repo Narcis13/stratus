@@ -6,6 +6,8 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { db } from '../../db/client.ts';
 import { promptOverrides } from '../db/schema.ts';
+import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
+import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE, buildPostDraftInput } from '../posts/prompt.ts';
 import {
@@ -46,15 +48,27 @@ const ctx: PostContext = {
 
 describe('prompt registry (AI.3)', () => {
   test('keys + specs: defaults are the byte-synced templates, required present', () => {
-    expect(PROMPT_KEYS).toEqual(['reply', 'reply-batch', 'post', 'voice-extract', 'pillar-draft']);
+    expect(PROMPT_KEYS).toEqual([
+      'reply',
+      'reply-batch',
+      'post',
+      'voice-extract',
+      'pillar-draft',
+      'digest',
+      'icebreaker',
+    ]);
     expect(isPromptKey('reply')).toBe(true);
     expect(isPromptKey('reply-batch')).toBe(true);
+    expect(isPromptKey('digest')).toBe(true);
+    expect(isPromptKey('icebreaker')).toBe(true);
     expect(isPromptKey('thread')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['reply-batch'].defaultBody).toBe(REPLY_BATCH_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['voice-extract'].defaultBody).toBe(EXTRACT_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['pillar-draft'].defaultBody).toBe(PILLAR_DRAFT_TEMPLATE);
+    expect(PROMPT_SPECS.digest.defaultBody).toBe(DIGEST_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS.icebreaker.defaultBody).toBe(ICEBREAKER_PROMPT_TEMPLATE);
     // Every spec's own default must validate clean — required present, no
     // unknown tokens (the optional niche placeholders are known).
     for (const key of PROMPT_KEYS) {

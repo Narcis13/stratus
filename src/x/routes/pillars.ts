@@ -13,7 +13,13 @@
 import { type SQL, and, asc, eq, isNull, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { type AskLlmResult, type LlmProvider, askLLM, llmErrorPayload } from '../../llm/index.ts';
+import {
+  type AskLlmResult,
+  type LlmProvider,
+  askLLM,
+  llmConfigured,
+  llmErrorPayload,
+} from '../../llm/index.ts';
 import { contentPillars } from '../db/schema.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
@@ -181,7 +187,9 @@ pillars.delete('/pillars/:slug', async (c) => {
 });
 
 pillars.post('/pillars/draft', async (c) => {
-  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+  // AI.6: any-provider gate (Grok or OpenRouter); askLLM enforces the resolved
+  // provider's key per request. String kept stable for the extension matcher.
+  if (!llmConfigured()) return c.json({ error: 'grok_not_configured' }, 503);
 
   const raw = await c.req.json().catch(() => null);
   if (!raw || typeof raw !== 'object' || Array.isArray(raw))

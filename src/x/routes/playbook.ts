@@ -21,6 +21,7 @@ import {
   LlmNotConfiguredError,
   type LlmProvider,
   askLLM,
+  llmConfigured,
 } from '../../llm/index.ts';
 import { OpenRouterApiError } from '../../openrouter/index.ts';
 import {
@@ -539,7 +540,9 @@ playbook.get('/playbook', async (c) => {
 // Bounded ≤20/call; already-extracted winners are skipped, so re-running only
 // picks up newly measured posts — rerunnable without re-spending.
 playbook.post('/playbook/extract-winners', async (c) => {
-  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+  // AI.6: any-provider gate (Grok or OpenRouter); askLLM enforces the resolved
+  // provider's key per candidate. String kept stable for the panel matcher.
+  if (!llmConfigured()) return c.json({ error: 'grok_not_configured' }, 503);
 
   const raw = await c.req.json().catch(() => ({}));
   let limit = MAX_WINNER_EXTRACT;

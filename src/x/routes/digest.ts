@@ -10,7 +10,9 @@ import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { GrokApiError } from '../../grok/index.ts';
+import { LlmNotConfiguredError, askLLM, llmConfigured } from '../../llm/index.ts';
+import { OpenRouterApiError } from '../../openrouter/index.ts';
 import {
   accountSnapshots,
   digests,
@@ -36,6 +38,7 @@ import { type MeGoal, resolveGoals } from '../me/profile.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import {
   loadMediaRows,
   loadPostGuidanceSafe,
@@ -50,7 +53,6 @@ const NEGLECTED_CAP = 5;
 const STAGE_TRANSITION_CAP = 10;
 const NEGLECTED_TARGET_DAYS = 7;
 const NEGLECTED_ALLY_DAYS = 14;
-const DIGEST_CACHE_KEY = 'stratus-digest';
 const DIGEST_MAX_OUTPUT_TOKENS = 700;
 
 export const digest = new Hono();
@@ -103,39 +105,59 @@ digest.get('/digest', async (c) => {
   if (factsOnly) {
     return c.json({ weekKey, from: start, to: end, facts, narrative: null, cached: false });
   }
-  if (!process.env.XAI_API_KEY) {
+  if (!llmConfigured()) {
     return c.json({
       weekKey,
       from: start,
       to: end,
       facts,
       narrative: null,
-      narrativeError: 'grok_not_configured',
+      narrativeError: 'llm_not_configured',
       cached: false,
     });
   }
+
+  // Registry prompt (AI.6): DB override else the shipped default; its per-body
+  // cache bucket replaces the old static key (grok-only, ignored on OpenRouter).
+  const prompt = loadPromptSafe('digest');
 
   let narrative: string | null = null;
   let narrativeError: string | undefined;
   let model: string | null = null;
   let costUsd: number | null = null;
   try {
-    const result = await askGrok({
-      messages: buildDigestInput(facts),
-      reasoningEffort: 'low',
-      maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS,
-      temperature: 0.7,
-      jsonSchema: { name: 'sunday_digest', schema: DIGEST_SCHEMA },
-      promptCacheKey: DIGEST_CACHE_KEY,
-    });
+    // AI.6: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+    // house floor below — the digest's low-effort narration defaults, which a
+    // stored global AI setting may override per Decision 4).
+    const result = await askLLM(
+      {
+        messages: buildDigestInput(facts, prompt.body),
+        jsonSchema: { name: 'sunday_digest', schema: DIGEST_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      {
+        defaults: {
+          reasoningEffort: 'low',
+          maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS,
+          temperature: 0.7,
+        },
+      },
+    );
     model = result.model;
     costUsd = result.costUsd;
     narrative = parseDigestNarrative(result.text);
-    if (narrative === null) narrativeError = 'grok_parse_error';
+    if (narrative === null) narrativeError = 'llm_parse_error';
   } catch (err) {
-    // Facts are still the page — a Grok hiccup degrades the card, never 5xxs
+    // Facts are still the page — an LLM hiccup degrades the card, never 5xxs
     // it. Nothing is cached, so the next open retries for free.
-    narrativeError = err instanceof GrokApiError ? `grok_${err.status}` : 'grok_failed';
+    narrativeError =
+      err instanceof LlmNotConfiguredError
+        ? 'llm_not_configured'
+        : err instanceof GrokApiError
+          ? `grok_${err.status}`
+          : err instanceof OpenRouterApiError
+            ? `openrouter_${err.status}`
+            : 'llm_failed';
     console.error('/x/digest narration failed:', err instanceof Error ? err.message : err);
   }
 

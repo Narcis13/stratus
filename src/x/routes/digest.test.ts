@@ -20,6 +20,7 @@ const GOAL_ID = 'd1900000-0000-4000-8000-000000000001';
 const GOAL_LABEL = 'c9 digest goal';
 
 let savedKey: string | undefined;
+let savedOrKey: string | undefined;
 
 interface DigestBody {
   weekKey: string;
@@ -37,9 +38,12 @@ async function get(path: string): Promise<{ status: number; body: DigestBody }> 
 describe('digest route', () => {
   beforeAll(async () => {
     savedKey = process.env.XAI_API_KEY;
-    // '' is falsy for the route's runtime check; assigning undefined would
-    // coerce to the string "undefined" and read as configured.
+    savedOrKey = process.env.OPENROUTER_API_KEY;
+    // AI.6: the gate is now llmConfigured() (either provider) — force BOTH off
+    // so the route degrades. '' is falsy for the check; assigning undefined
+    // would coerce to the string "undefined" and read as configured.
     process.env.XAI_API_KEY = '';
+    process.env.OPENROUTER_API_KEY = '';
     await db
       .insert(postsPublished)
       .values({
@@ -78,6 +82,7 @@ describe('digest route', () => {
 
   afterAll(async () => {
     process.env.XAI_API_KEY = savedKey ?? '';
+    process.env.OPENROUTER_API_KEY = savedOrKey ?? '';
     await db.delete(digests).where(eq(digests.weekKey, CACHED_WEEK_KEY));
     await db.delete(postsPublished).where(eq(postsPublished.tweetId, TWEET_ID));
     await db.delete(meGoals).where(eq(meGoals.id, GOAL_ID));
@@ -89,12 +94,12 @@ describe('digest route', () => {
     expect((await get('/x/digest?tzOffsetMin=5000')).status).toBe(400);
   });
 
-  test('builds the week facts and degrades gracefully without a Grok key', async () => {
+  test('builds the week facts and degrades gracefully without an LLM key', async () => {
     const { status, body } = await get(`/x/digest?week=${WEEK_KEY}&tzOffsetMin=0`);
     expect(status).toBe(200);
     expect(body.weekKey).toBe(WEEK_KEY);
     expect(body.narrative).toBeNull();
-    expect(body.narrativeError).toBe('grok_not_configured');
+    expect(body.narrativeError).toBe('llm_not_configured');
     expect(body.facts.activity.posts).toBeGreaterThanOrEqual(1);
     expect(body.facts.followers).toBeDefined();
     // §S0.7 roster coverage rides in the facts (this old week has no replies →
