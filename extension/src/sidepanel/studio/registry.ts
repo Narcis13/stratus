@@ -7,6 +7,7 @@ import type { PatternKind, RenderSpec } from '../../studio/compose.ts';
 import {
   BANNER,
   CODE_CARD,
+  LIST_CARD,
   MILESTONE_CARD,
   type MilestoneCardData,
   PFP_FRAME,
@@ -15,16 +16,29 @@ import {
   STREAK_CARD,
   type StatCardData,
   type StreakCardData,
+  THREAD_COVER,
   bannerSpec,
   codeCardSpec,
+  listCardSpec,
   milestoneCardSpec,
+  parseListItems,
   pfpFrameSpec,
   quoteCardSpec,
   statCardSpec,
   streakCardSpec,
+  threadCoverSpec,
 } from '../../studio/templates.ts';
 
-export type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp' | 'milestone' | 'streak' | 'code';
+export type TemplateId =
+  | 'quote'
+  | 'stat'
+  | 'banner'
+  | 'pfp'
+  | 'milestone'
+  | 'streak'
+  | 'code'
+  | 'thread'
+  | 'list';
 
 export interface TemplateMeta {
   id: TemplateId;
@@ -71,6 +85,18 @@ export const TEMPLATES: TemplateMeta[] = [
     label: 'Code card',
     size: { w: CODE_CARD.w, h: CODE_CARD.h },
     supportsAiBackground: false,
+  },
+  {
+    id: 'thread',
+    label: 'Thread cover',
+    size: { w: THREAD_COVER.w, h: THREAD_COVER.h },
+    supportsAiBackground: true,
+  },
+  {
+    id: 'list',
+    label: 'List card',
+    size: { w: LIST_CARD.w, h: LIST_CARD.h },
+    supportsAiBackground: true,
   },
 ];
 
@@ -125,6 +151,12 @@ export interface TemplateState {
   /** S5.6 code card — filename + raw snippet. */
   codeTitle: string;
   codeText: string;
+  /** S5.7 thread cover — the head-tweet hook + thread length. */
+  threadHook: string;
+  threadCount: number;
+  /** S5.7 list card — title + raw one-item-per-line textarea (parsed on build). */
+  listTitle: string;
+  listItems: string;
 }
 
 /** A sample snippet so the code card previews immediately (empty input → this). */
@@ -133,6 +165,17 @@ async function post(draft) {
   const slot = await bestTime();
   return schedule(draft, slot);
 }`;
+
+/** Sample content so the thread cover / list card preview immediately. */
+export const DEFAULT_THREAD_HOOK = 'The one thing nobody tells you about shipping in public';
+export const DEFAULT_LIST_TITLE = '5 lessons from building stratus';
+export const DEFAULT_LIST_ITEMS = [
+  'Ship something every day',
+  'Reply more than you post',
+  'Show the work, not just the wins',
+  'Talk to the people behind the handles',
+  'Measure what actually moved',
+];
 
 /** Behavior-neutral dispatch — identical output to the pre-refactor render ternary. */
 export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): RenderSpec {
@@ -180,5 +223,31 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
         },
         kit,
       );
+    case 'thread':
+      return threadCoverSpec(
+        {
+          hook: state.threadHook.trim() || DEFAULT_THREAD_HOOK,
+          count: state.threadCount,
+          background: state.bgBitmap,
+          ...(state.patternKind
+            ? { patternKind: state.patternKind, patternSeed: state.patternSeed }
+            : {}),
+        },
+        kit,
+      );
+    case 'list': {
+      const items = parseListItems(state.listItems);
+      return listCardSpec(
+        {
+          title: state.listTitle.trim() || DEFAULT_LIST_TITLE,
+          items: items.length > 0 ? items : DEFAULT_LIST_ITEMS,
+          background: state.bgBitmap,
+          ...(state.patternKind
+            ? { patternKind: state.patternKind, patternSeed: state.patternSeed }
+            : {}),
+        },
+        kit,
+      );
+    }
   }
 }

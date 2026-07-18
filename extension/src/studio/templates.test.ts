@@ -8,19 +8,24 @@ import { MONO_ADVANCE } from './codeTokens.ts';
 import {
   BANNER,
   CODE_CARD,
+  LIST_CARD,
   MILESTONE_CARD,
   PFP_FRAME,
   QUOTE_CARD,
   STAT_CARD,
   STREAK_CARD,
+  THREAD_COVER,
   bannerSpec,
   codeCardSpec,
   fmtCount,
+  listCardSpec,
   milestoneCardSpec,
+  parseListItems,
   pfpFrameSpec,
   quoteCardSpec,
   statCardSpec,
   streakCardSpec,
+  threadCoverSpec,
 } from './templates.ts';
 
 // mascot off by default so the S3/S4 snapshots below stay byte-identical; the
@@ -433,6 +438,149 @@ describe('codeCardSpec (S5.6)', () => {
   test('deterministic — same input renders byte-identically', () => {
     const data = { code: 'export fn main() {}', title: 'm.rs' };
     expect(codeCardSpec(data, kit)).toEqual(codeCardSpec(data, kit));
+  });
+});
+
+describe('threadCoverSpec (S5.7)', () => {
+  const withMascot: BrandKit = { ...kit, mascot: true };
+
+  test('full kit → rule, hook, "a thread · 1/N" badge, handle, watermark', () => {
+    const spec = threadCoverSpec({ hook: 'ship in public every day', count: 5 }, kit);
+    expect(spec.w).toBe(THREAD_COVER.w);
+    expect(spec.h).toBe(THREAD_COVER.h);
+    expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'badge', 'text', 'watermark']);
+    // The hook is ExtraBold and shrinks to a floor of 36 (never overflows).
+    expect(spec.layers[2]).toMatchObject({
+      kind: 'text',
+      text: 'ship in public every day',
+      font: { weight: 800, sizePx: 72 },
+      minSizePx: 36,
+      maxLines: 4,
+    });
+    expect(spec.layers[3]).toMatchObject({ kind: 'badge', texts: ['a thread', '1/5'] });
+    expect(spec.layers[4]).toMatchObject({ kind: 'text', text: '@narcis' });
+  });
+
+  test('count is rounded and floored at 1 for the badge', () => {
+    expect(
+      (threadCoverSpec({ hook: 'x', count: 3.7 }, kit).layers[3] as { texts: string[] }).texts[1],
+    ).toBe('1/4');
+    expect(
+      (threadCoverSpec({ hook: 'x', count: 0 }, kit).layers[3] as { texts: string[] }).texts[1],
+    ).toBe('1/1');
+  });
+
+  test('no handle, watermark off → rule, hook, badge only', () => {
+    const spec = threadCoverSpec({ hook: 'x', count: 3 }, { ...kit, handle: '', watermark: false });
+    expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'badge']);
+  });
+
+  test('mascot adds thinking path layers; mascot:false is byte-identical', () => {
+    const off = threadCoverSpec({ hook: 'x', count: 3 }, kit);
+    const on = threadCoverSpec({ hook: 'x', count: 3 }, withMascot);
+    expect(on.layers.some((l) => l.kind === 'path')).toBe(true);
+    expect(on.layers.filter((l) => l.kind !== 'path')).toEqual(off.layers);
+  });
+
+  test('an AI background suppresses the mascot', () => {
+    const spec = threadCoverSpec({ hook: 'x', count: 3, background: STUB_BG }, withMascot);
+    expect(spec.layers.some((l) => l.kind === 'path')).toBe(false);
+    // image cover + scrim, THEN the content.
+    expect(kinds(spec).slice(0, 2)).toEqual(['image', 'fill']);
+  });
+
+  test('a pattern threads through the base layers', () => {
+    const spec = threadCoverSpec({ hook: 'x', count: 3, patternKind: 'plus' }, kit);
+    expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'plus' });
+  });
+
+  test('deterministic — same data renders byte-identically', () => {
+    const data = { hook: 'ship', count: 4 };
+    expect(threadCoverSpec(data, withMascot)).toEqual(threadCoverSpec(data, withMascot));
+  });
+
+  // A long hook still produces a single configured text layer (shrink is a
+  // render-time behavior; the spec just declares the floor).
+  test('hook layer declares the shrink floor regardless of length', () => {
+    const long = 'word '.repeat(60);
+    const spec = threadCoverSpec({ hook: long, count: 2 }, kit);
+    expect(spec.layers[2]).toMatchObject({ minSizePx: 36, font: { sizePx: 72 } });
+  });
+});
+
+describe('listCardSpec (S5.7)', () => {
+  const textOf = (l: { kind: string }): string => (l as { text?: string }).text ?? '';
+
+  test('title + three rows: a disc + digit + item per row, then identity', () => {
+    const spec = listCardSpec({ title: 'top lessons', items: ['first', 'second', 'third'] }, kit);
+    expect(spec.w).toBe(LIST_CARD.w);
+    expect(spec.h).toBe(LIST_CARD.h);
+    // one ring (accent disc) per row
+    expect(spec.layers.filter((l) => l.kind === 'ring').length).toBe(3);
+    // the numbered digits
+    expect(spec.layers.some((l) => l.kind === 'text' && textOf(l) === '1')).toBe(true);
+    expect(spec.layers.some((l) => l.kind === 'text' && textOf(l) === '3')).toBe(true);
+    // the item bodies survive verbatim
+    for (const item of ['first', 'second', 'third']) {
+      expect(spec.layers.some((l) => l.kind === 'text' && textOf(l) === item)).toBe(true);
+    }
+    // handle + watermark close the card
+    expect(spec.layers.at(-2)).toMatchObject({ kind: 'text', text: '@narcis' });
+    expect(spec.layers.at(-1)).toMatchObject({ kind: 'watermark' });
+  });
+
+  test('the accent disc is a width=2r ring (fills the disc)', () => {
+    const spec = listCardSpec({ title: 't', items: ['a'] }, kit);
+    const ring = spec.layers.find((l) => l.kind === 'ring') as { r: number; width: number };
+    expect(ring.width).toBe(2 * ring.r);
+  });
+
+  test('empty items → a graceful placeholder instead of rows', () => {
+    const spec = listCardSpec({ title: 't', items: [] }, { ...kit, handle: '', watermark: false });
+    expect(spec.layers.filter((l) => l.kind === 'ring').length).toBe(0);
+    expect(
+      spec.layers.some((l) => l.kind === 'text' && /add one item per line/.test(textOf(l))),
+    ).toBe(true);
+  });
+
+  test('a pattern threads through the base layers', () => {
+    const spec = listCardSpec({ title: 't', items: ['a'], patternKind: 'grid' }, kit);
+    expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'grid' });
+  });
+
+  test('caps at 6 rows even if handed more', () => {
+    const spec = listCardSpec({ title: 't', items: ['1', '2', '3', '4', '5', '6', '7', '8'] }, kit);
+    expect(spec.layers.filter((l) => l.kind === 'ring').length).toBe(6);
+  });
+});
+
+describe('parseListItems (S5.7)', () => {
+  test('strips leading number/bullet markers', () => {
+    expect(parseListItems('1. first\n2) second\n- third\n* fourth\n• fifth')).toEqual([
+      'first',
+      'second',
+      'third',
+      'fourth',
+      'fifth',
+    ]);
+  });
+
+  test('drops blank and whitespace-only lines', () => {
+    expect(parseListItems('a\n\n   \nb')).toEqual(['a', 'b']);
+  });
+
+  test('whitespace-only input → []', () => {
+    expect(parseListItems('   \n  \n\t')).toEqual([]);
+  });
+
+  test('caps at 6', () => {
+    const raw = Array.from({ length: 9 }, (_, i) => `item ${i + 1}`).join('\n');
+    expect(parseListItems(raw).length).toBe(6);
+  });
+
+  test('a bare number without a marker punctuation is preserved', () => {
+    // "3 lessons" has no `.`/`)` after the digit → not a marker, kept whole.
+    expect(parseListItems('3 lessons learned')).toEqual(['3 lessons learned']);
   });
 });
 

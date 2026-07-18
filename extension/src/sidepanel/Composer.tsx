@@ -35,8 +35,13 @@ interface Props {
   onSaved: (post: ScheduledPost) => void;
   /** Open one of the just-generated drafts in the editor (no calendar trip). */
   onEdit: (id: string) => void;
-  /** S3: seed the Studio's quote card with this text (and the row to stamp). */
-  onMakeVisual: (seed: { text: string; postId?: string }) => void;
+  /** S3: seed the Studio with this text (and the row to stamp). Thread mode seeds
+   *  the thread cover with the head segment; otherwise the quote card. */
+  onMakeVisual: (seed: {
+    text: string;
+    postId?: string;
+    template?: 'quote' | 'thread';
+  }) => void;
 }
 
 const TWEET_LIMIT = 280;
@@ -738,13 +743,15 @@ export function ComposerPanel({
           0 && (
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              const isThread = threadMode || isThreadEdit;
               onMakeVisual({
-                text: (threadMode || isThreadEdit ? (threadSegments[0] ?? '') : text).trim(),
+                text: (isThread ? (threadSegments[0] ?? '') : text).trim(),
                 ...(isEditing && original ? { postId: original.id } : {}),
-              })
-            }
-            title="Open the Studio with this text as a branded quote card"
+                ...(isThread ? { template: 'thread' as const } : {}),
+              });
+            }}
+            title="Open the Studio with this text — thread mode seeds the thread cover, otherwise a quote card"
           >
             Make visual
           </button>

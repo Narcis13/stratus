@@ -23,6 +23,8 @@ export const PFP_FRAME = { w: 400, h: 400 } as const;
 export const MILESTONE_CARD = { w: 1200, h: 675 } as const;
 export const STREAK_CARD = { w: 1200, h: 675 } as const;
 export const CODE_CARD = { w: 1200, h: 675 } as const;
+export const THREAD_COVER = { w: 1200, h: 675 } as const;
+export const LIST_CARD = { w: 1200, h: 675 } as const;
 
 /** Bundled JetBrains Mono (loaded via FontFace as 'StudioMono'); the code card
  *  always renders monospace regardless of the kit's display font, and its
@@ -674,6 +676,173 @@ export function streakCardSpec(data: StreakCardData, kit: BrandKit): RenderSpec 
       box: { x: 0, y: 600, w, h: 36 },
       color: kit.accent,
       align: 'center',
+    });
+  }
+  layers.push(...watermarkLayer(kit, ink, 22, 36));
+  return { w, h, layers };
+}
+
+// ------------------------------------------------------------- thread cover / list
+
+export interface ThreadCoverData {
+  /** The head tweet (segment 1) — the hook that stops the scroll. */
+  hook: string;
+  /** Thread length, rendered as the "1/N" badge (plain text — §7.31 no emoji). */
+  count: number;
+  /** SURFACES S4 — optional AI background composited under the hook. */
+  background?: ImageBitmap | null;
+  /** SURFACES S5.4 — deterministic pattern (ignored when a background is set). */
+  patternKind?: PatternKind;
+  patternSeed?: number;
+}
+
+/** 1200×675 — the quote-card skeleton, heavier: an ExtraBold hook, an "a thread
+ *  · 1/N" badge, and the thinking cloud (a thread cover is thinking out loud). */
+export function threadCoverSpec(data: ThreadCoverData, kit: BrandKit): RenderSpec {
+  const { w, h } = THREAD_COVER;
+  const ink = contrastOn(kit.bg);
+  const n = Math.max(1, Math.round(data.count));
+  const layers: Layer[] = [
+    ...baseLayers(kit, w, h, data.background, 0.68, patternArg(data.patternKind, data.patternSeed)),
+    { kind: 'rule', box: { x: 96, y: 104, w: 96, h: 10 }, color: kit.accent },
+    {
+      kind: 'text',
+      text: data.hook,
+      font: font(kit, 800, 72),
+      box: { x: 96, y: 158, w: 1008, h: 300 },
+      color: ink,
+      align: 'left',
+      vAlign: 'middle',
+      lineHeight: 1.18,
+      minSizePx: 36,
+      maxLines: 4,
+    },
+    {
+      kind: 'badge',
+      texts: ['a thread', `1/${n}`],
+      x: 96,
+      y: 480,
+      font: font(kit, 700, 26),
+      color: kit.accent,
+      bg: withAlpha(kit.accent, 0.16),
+      borderColor: kit.accent,
+    },
+  ];
+  if (kit.handle !== '') {
+    layers.push({
+      kind: 'text',
+      text: `@${kit.handle}`,
+      font: font(kit, 700, 30),
+      box: { x: 96, y: 556, w: 700, h: 44 },
+      color: kit.accent,
+    });
+  }
+  // A thinking cloud bottom-right, sized like the quote card's. Skipped under an
+  // AI background — the art wins, exactly as the quote card does.
+  if (kit.mascot && !data.background) {
+    layers.push(...mascotLayers({ pose: 'thinking', x: 1030, y: 548, scale: 0.55, kit }));
+  }
+  layers.push(...watermarkLayer(kit, ink));
+  return { w, h, layers };
+}
+
+export interface ListCardData {
+  title: string;
+  /** Already parsed + capped to 6 by parseListItems. */
+  items: string[];
+  /** SURFACES S4 — optional AI background composited under the rows. */
+  background?: ImageBitmap | null;
+  /** SURFACES S5.4 — deterministic pattern (ignored when a background is set). */
+  patternKind?: PatternKind;
+  patternSeed?: number;
+}
+
+const LIST_ROW_START = 196;
+const LIST_ROW_H = 64;
+
+/** Split a textarea into list rows: trim, drop blanks, strip leading `1.`/`-`/`•`
+ *  markers, cap at 6 (the fields say "showing first 6"). Whitespace-only → []. */
+export function parseListItems(raw: string): string[] {
+  return raw
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    .map((l) => l.replace(/^\s*(?:\d+[.)]|[-*•])\s+/, '').trim())
+    .filter((l) => l !== '')
+    .slice(0, 6);
+}
+
+/** 1200×675 — a numbered listicle: title, then up to 6 accent-disc rows. */
+export function listCardSpec(data: ListCardData, kit: BrandKit): RenderSpec {
+  const { w, h } = LIST_CARD;
+  const ink = contrastOn(kit.bg);
+  const discInk = contrastOn(kit.accent);
+  const layers: Layer[] = [
+    ...baseLayers(kit, w, h, data.background, 0.62, patternArg(data.patternKind, data.patternSeed)),
+    { kind: 'rule', box: { x: 80, y: 64, w: 72, h: 9 }, color: kit.accent },
+    {
+      kind: 'text',
+      text: data.title,
+      font: font(kit, 800, 42),
+      box: { x: 80, y: 90, w: 1040, h: 80 },
+      color: ink,
+      align: 'left',
+      lineHeight: 1.15,
+      minSizePx: 26,
+      maxLines: 2,
+    },
+  ];
+
+  const items = data.items.slice(0, 6);
+  if (items.length === 0) {
+    layers.push({
+      kind: 'text',
+      text: 'add one item per line',
+      font: font(kit, 400, 30),
+      box: { x: 80, y: LIST_ROW_START, w: 1040, h: 60 },
+      color: withAlpha(ink, 0.6),
+    });
+  } else {
+    items.forEach((item, i) => {
+      const rowY = LIST_ROW_START + i * LIST_ROW_H;
+      layers.push(
+        // Accent disc: a ring stroke of width 2r fills a disc of radius 2r
+        // (the pfp monogram uses the same trick). r=11,width=22 → radius-22 disc.
+        { kind: 'ring', cx: 104, cy: rowY + 22, r: 11, width: 22, color: kit.accent },
+        {
+          kind: 'text',
+          text: `${i + 1}`,
+          font: font(kit, 800, 26),
+          box: { x: 82, y: rowY, w: 44, h: 44 },
+          color: discInk,
+          align: 'center',
+          vAlign: 'middle',
+          maxLines: 1,
+        },
+        {
+          kind: 'text',
+          text: item,
+          font: font(kit, 600, 28),
+          box: { x: 150, y: rowY, w: 990, h: 44 },
+          color: ink,
+          align: 'left',
+          vAlign: 'middle',
+          lineHeight: 1.15,
+          minSizePx: 18,
+          maxLines: 2,
+        },
+      );
+    });
+  }
+
+  if (kit.handle !== '') {
+    layers.push({
+      kind: 'text',
+      text: `@${kit.handle}`,
+      font: font(kit, 700, 26),
+      box: { x: 80, y: 604, w: 600, h: 36 },
+      color: kit.accent,
     });
   }
   layers.push(...watermarkLayer(kit, ink, 22, 36));

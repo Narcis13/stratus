@@ -39,11 +39,13 @@ import {
   BannerFields,
   CodeFields,
   LibraryRail,
+  ListFields,
   MilestoneFields,
   PfpFields,
   QuoteFields,
   StatFields,
   StreakFields,
+  ThreadFields,
 } from './studio/fields.tsx';
 import {
   EMPTY_STAT,
@@ -105,6 +107,9 @@ export interface StudioSeed {
   text: string;
   /** Calendar row the visual belongs to — enables the media_note stamp. */
   postId?: string;
+  /** Which template to open — Composer thread mode seeds the thread cover; the
+   *  default (or 'quote') seeds the quote card. */
+  template?: 'quote' | 'thread';
 }
 
 interface Props {
@@ -136,6 +141,11 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
 
   const [codeTitle, setCodeTitle] = useState('');
   const [codeText, setCodeText] = useState('');
+
+  const [threadHook, setThreadHook] = useState('');
+  const [threadCount, setThreadCount] = useState(5);
+  const [listTitle, setListTitle] = useState('');
+  const [listItems, setListItems] = useState('');
 
   // S5.5 celebration cards: auto-detected value + a manual override. The
   // override wins when set; blank falls back to what the account/streak reads.
@@ -175,11 +185,15 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     void loadBrandKits().then(setBundle);
   }, []);
 
-  // Seed from Composer / re-up: quote card, text prefilled, stamp target kept.
+  // Seed from Composer / re-up: route to the requested template (thread mode
+  // seeds the thread-cover hook; everything else the quote card), text
+  // prefilled, stamp target kept.
   useEffect(() => {
     if (!seed) return;
-    setTemplate('quote');
-    setQuoteText(seed.text);
+    const target: TemplateId = seed.template === 'thread' ? 'thread' : 'quote';
+    setTemplate(target);
+    if (target === 'thread') setThreadHook(seed.text);
+    else setQuoteText(seed.text);
     setSeedPostId(seed.postId ?? null);
     setStamped(false);
     onClearSeed();
@@ -474,6 +488,10 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             streakData,
             codeTitle,
             codeText,
+            threadHook,
+            threadCount,
+            listTitle,
+            listItems,
           },
           kit,
         );
@@ -511,6 +529,10 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     streakData,
     codeTitle,
     codeText,
+    threadHook,
+    threadCount,
+    listTitle,
+    listItems,
   ]);
 
   useEffect(
@@ -649,6 +671,24 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
 
       {template === 'code' && (
         <CodeFields title={codeTitle} code={codeText} onTitle={setCodeTitle} onCode={setCodeText} />
+      )}
+
+      {template === 'thread' && (
+        <ThreadFields
+          hook={threadHook}
+          count={threadCount}
+          onHook={setThreadHook}
+          onCount={setThreadCount}
+        />
+      )}
+
+      {template === 'list' && (
+        <ListFields
+          title={listTitle}
+          items={listItems}
+          onTitle={setListTitle}
+          onItems={setListItems}
+        />
       )}
 
       {template === 'milestone' && (

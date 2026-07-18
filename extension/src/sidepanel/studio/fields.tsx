@@ -156,6 +156,80 @@ export function CodeFields({
   );
 }
 
+// S5.7 thread cover: the head-tweet hook + the thread length driving the "1/N"
+// badge. The Composer's thread-mode "Make visual" seeds the hook.
+export function ThreadFields({
+  hook,
+  count,
+  onHook,
+  onCount,
+}: {
+  hook: string;
+  count: number;
+  onHook: (v: string) => void;
+  onCount: (v: number) => void;
+}): JSX.Element {
+  return (
+    <>
+      <label className="field">
+        <span>Hook (the first tweet — what stops the scroll)</span>
+        <textarea
+          value={hook}
+          onChange={(e) => onHook(e.target.value)}
+          rows={3}
+          placeholder="The one thing nobody tells you about…"
+        />
+      </label>
+      <label className="field">
+        <span>Thread length (the "1/N" badge)</span>
+        <input
+          type="number"
+          min={1}
+          value={count}
+          onChange={(e) => onCount(Math.max(1, Number(e.target.value) || 1))}
+        />
+      </label>
+    </>
+  );
+}
+
+// S5.7 list card: a title + one item per line. parseListItems strips markers,
+// drops blanks and caps at 6, so the hint says "showing first 6".
+export function ListFields({
+  title,
+  items,
+  onTitle,
+  onItems,
+}: {
+  title: string;
+  items: string;
+  onTitle: (v: string) => void;
+  onItems: (v: string) => void;
+}): JSX.Element {
+  return (
+    <>
+      <label className="field">
+        <span>Title</span>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => onTitle(e.target.value)}
+          placeholder="5 lessons from building in public"
+        />
+      </label>
+      <label className="field">
+        <span>Items (one per line · showing first 6)</span>
+        <textarea
+          value={items}
+          onChange={(e) => onItems(e.target.value)}
+          rows={7}
+          placeholder={'Ship every day\nReply more than you post\n…'}
+        />
+      </label>
+    </>
+  );
+}
+
 export function BannerFields({
   headline,
   keywords,
