@@ -160,6 +160,56 @@ export interface PillarDraftResult {
   requestId: string | null;
 }
 
+// N0 — the niche: first-class identity + strategy container. Persona/beliefs/
+// replyPersona ground the prompts; the 5 doctrine knobs are the REPLY-GUIDE
+// numbers. Exactly one active niche at a time; pillars/channels follow it.
+export interface NicheDoctrine {
+  replyTargetMin: number;
+  replyTargetMax: number;
+  weekReplyTargetPct: number;
+  targetBandMinX: number;
+  targetBandMaxX: number;
+}
+
+export interface Niche {
+  slug: string;
+  label: string;
+  description: string | null;
+  persona: string;
+  beliefs: string;
+  replyPersona: string;
+  doctrine: Partial<NicheDoctrine> | null; // null = all defaults (stored partial)
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// GET /x/niche — the active niche plus its RESOLVED doctrine (all 5 present).
+export interface NicheActive {
+  niche: Niche;
+  doctrine: NicheDoctrine;
+}
+
+export interface NicheCreateBody {
+  slug: string;
+  label: string;
+  persona: string;
+  beliefs: string;
+  replyPersona: string;
+  description?: string;
+  doctrine?: Partial<NicheDoctrine> | null;
+}
+
+export interface NichePatchBody {
+  label?: string;
+  persona?: string;
+  beliefs?: string;
+  replyPersona?: string;
+  description?: string | null;
+  doctrine?: Partial<NicheDoctrine> | null;
+  active?: boolean;
+}
+
 export interface PostDraftResponse {
   drafts: Array<ScheduledPost & { register: PostRegister | null }>;
   winnersUsed: number;

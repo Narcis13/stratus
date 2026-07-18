@@ -57,6 +57,11 @@ import {
   type MentionsRefreshResult,
   type MentionsResponse,
   type MetricsAccountResponse,
+  type Niche,
+  type NicheActive,
+  type NicheCreateBody,
+  type NicheDoctrine,
+  type NichePatchBody,
   type PeopleListOpts,
   type PeopleListResponse,
   type Person,
@@ -158,6 +163,11 @@ export type {
   ListOpts,
   Mention,
   MetricsAccountResponse,
+  Niche,
+  NicheActive,
+  NicheCreateBody,
+  NicheDoctrine,
+  NichePatchBody,
   PillarCreateBody,
   PillarDraftBody,
   PillarDraftResult,
@@ -374,6 +384,30 @@ export const api = {
     // Grok proposal (not persisted) — review/edit, then create/update to save.
     draft(s: Settings, body: PillarDraftBody): Promise<PillarDraftResult> {
       return request<PillarDraftResult>(s, '/x/pillars/draft', { method: 'POST', body });
+    },
+  },
+
+  // N0 — the niche: identity + strategy container. get() returns the active
+  // niche + resolved doctrine; activation is update(slug, { active: true }).
+  niche: {
+    get(s: Settings): Promise<NicheActive> {
+      return request<NicheActive>(s, '/x/niche');
+    },
+
+    list(s: Settings): Promise<Niche[]> {
+      return request<Niche[]>(s, '/x/niches');
+    },
+
+    create(s: Settings, body: NicheCreateBody): Promise<Niche> {
+      return request<Niche>(s, '/x/niches', { method: 'POST', body });
+    },
+
+    update(s: Settings, slug: string, body: NichePatchBody): Promise<Niche> {
+      return request<Niche>(s, `/x/niches/${encodeURIComponent(slug)}`, { method: 'PATCH', body });
+    },
+
+    remove(s: Settings, slug: string): Promise<unknown> {
+      return request<unknown>(s, `/x/niches/${encodeURIComponent(slug)}`, { method: 'DELETE' });
     },
   },
 
