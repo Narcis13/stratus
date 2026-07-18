@@ -41,6 +41,8 @@ import {
   type FollowupSnoozeBody,
   type FollowupsResponse,
   type GeneratedImageItem,
+  type GoalKind,
+  type GoalStatus,
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
@@ -50,6 +52,15 @@ import {
   type ImageGenerateBody,
   type ImageGenerateResponse,
   type ListOpts,
+  type MeContextResponse,
+  type MeEntry,
+  type MeEntryCreateBody,
+  type MeEntryPatchBody,
+  type MeGoal,
+  type MeGoalCreateBody,
+  type MeGoalPatchBody,
+  type MeKind,
+  type MeResponse,
   type MediaAsset,
   type Mention,
   type MentionPatchBody,
@@ -165,6 +176,17 @@ export type {
   IdeasResponse,
   PinnedWatch,
   ListOpts,
+  GoalKind,
+  GoalStatus,
+  MeContextResponse,
+  MeEntry,
+  MeEntryCreateBody,
+  MeEntryPatchBody,
+  MeGoal,
+  MeGoalCreateBody,
+  MeGoalPatchBody,
+  MeKind,
+  MeResponse,
   Mention,
   MetricsAccountResponse,
   Niche,
@@ -425,6 +447,53 @@ export const api = {
         method: 'POST',
         body: { description },
       });
+    },
+  },
+
+  // M1 — Me / My Profile: the dynamic personal-context layer. get() returns
+  // entries (each with a server-computed inWindow flag) + goals (each with
+  // computed progress); context() is the exact rendered block a draft would see.
+  me: {
+    get(s: Settings, opts: { kind?: MeKind; active?: boolean } = {}): Promise<MeResponse> {
+      const q = new URLSearchParams();
+      if (opts.kind) q.set('kind', opts.kind);
+      if (opts.active !== undefined) q.set('active', String(opts.active));
+      const qs = q.toString();
+      return request<MeResponse>(s, `/x/me${qs ? `?${qs}` : ''}`);
+    },
+
+    context(s: Settings, mode: 'post' | 'reply'): Promise<MeContextResponse> {
+      return request<MeContextResponse>(s, `/x/me/context?mode=${mode}`);
+    },
+
+    addEntry(s: Settings, body: MeEntryCreateBody): Promise<MeEntry> {
+      return request<MeEntry>(s, '/x/me/entries', { method: 'POST', body });
+    },
+
+    patchEntry(s: Settings, id: string, body: MeEntryPatchBody): Promise<MeEntry> {
+      return request<MeEntry>(s, `/x/me/entries/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    deleteEntry(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/me/entries/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    addGoal(s: Settings, body: MeGoalCreateBody): Promise<MeGoal> {
+      return request<MeGoal>(s, '/x/me/goals', { method: 'POST', body });
+    },
+
+    patchGoal(s: Settings, id: string, body: MeGoalPatchBody): Promise<MeGoal> {
+      return request<MeGoal>(s, `/x/me/goals/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    deleteGoal(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/me/goals/${encodeURIComponent(id)}`, { method: 'DELETE' });
     },
   },
 

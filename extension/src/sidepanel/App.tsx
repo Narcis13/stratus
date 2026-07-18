@@ -4,6 +4,7 @@ import { ChannelsPanel } from './Channels.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
 import { IdeasPanel } from './Ideas.tsx';
+import { MePanel } from './Me.tsx';
 import { PeoplePanel } from './People.tsx';
 import { PlaybookPanel } from './Playbook.tsx';
 import { RepliesPanel } from './Replies.tsx';
@@ -16,6 +17,7 @@ import { EmptyState } from './ui/EmptyState.tsx';
 
 type Tab =
   | 'today'
+  | 'me'
   | 'people'
   | 'channels'
   | 'calendar'
@@ -37,6 +39,7 @@ const TAB_GROUPS: { label: string; tabs: { id: Tab; label: string }[] }[] = [
     tabs: [
       { id: 'today', label: 'Today' },
       { id: 'people', label: 'People' },
+      { id: 'me', label: 'Me' },
       { id: 'channels', label: 'Channels' },
     ],
   },
@@ -157,6 +160,8 @@ export function App(): JSX.Element {
             openHandle={personHandle}
             onClearOpen={() => setPersonHandle(null)}
           />
+        ) : activeTab === 'me' ? (
+          <MePanel settings={settings} />
         ) : activeTab === 'channels' ? (
           <ChannelsPanel settings={settings} onOpenPerson={openPerson} />
         ) : activeTab === 'calendar' ? (

@@ -2909,3 +2909,251 @@ button.danger:hover:not(:disabled) {
 .ui-gear-pop .ui-setting-control {
   justify-content: flex-start;
 }
+
+/* ============================================================================
+   Me / My Profile (M1) — goals, quick log, entry library, AI-view preview.
+   ========================================================================= */
+
+.me-intro {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.me-section {
+  margin-top: 18px;
+}
+
+.me-section > h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.me-section h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+/* -------- goals -------- */
+
+.me-goal-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.me-goal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.me-goal-closed {
+  opacity: 0.6;
+}
+
+.me-goal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.me-goal-label {
+  font-weight: 600;
+  font-size: 13px;
+  margin-right: auto;
+}
+
+.me-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.me-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.me-goal-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.me-overdue {
+  color: var(--warn);
+}
+
+.me-goal-value {
+  max-width: 180px;
+}
+
+.me-goal-actions,
+.me-entry-actions {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.me-add-bar {
+  margin-top: 4px;
+}
+
+/* -------- quick log -------- */
+
+.me-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.me-chip {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.me-chip-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.me-log-opts {
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.me-date-field {
+  max-width: 200px;
+}
+
+.me-pin-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* -------- entries -------- */
+
+.me-entry-group {
+  margin-bottom: 10px;
+}
+
+.me-entry-group-title {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 11px !important;
+}
+
+.me-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.me-entry {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.me-entry-retired {
+  opacity: 0.55;
+}
+
+.me-entry-stale {
+  border-style: dashed;
+}
+
+.me-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.me-star {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.me-star-on {
+  color: var(--accent);
+}
+
+.me-entry-time {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.me-entry-text {
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.me-entry-edit {
+  width: 100%;
+}
+
+/* -------- AI-view preview -------- */
+
+.me-preview-toggle {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
+
+.me-preview-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.me-preview-pre {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}

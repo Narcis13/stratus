@@ -160,6 +160,92 @@ export interface PillarDraftResult {
   requestId: string | null;
 }
 
+// ------------------------------------------------------------ me / profile M1
+
+export type MeKind = 'fact' | 'event' | 'emotion' | 'note';
+export type GoalKind = 'followers' | 'mrr' | 'custom';
+export type GoalStatus = 'active' | 'achieved' | 'dropped';
+
+// Date columns serialize as ISO strings over the JSON transport. `inWindow` is
+// server-computed on GET /x/me (never re-derived client-side — §7.27).
+export interface MeEntry {
+  id: string;
+  kind: MeKind;
+  text: string;
+  happenedAt: string | null;
+  pinned: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  inWindow: boolean;
+}
+
+export interface MeGoalProgress {
+  current: number;
+  pct: number;
+  daysLeft: number | null;
+}
+
+// `progress` is server-computed on GET /x/me (followers goals read the latest
+// account_snapshot; mrr/custom use currentValue).
+export interface MeGoal {
+  id: string;
+  label: string;
+  kind: GoalKind;
+  target: number;
+  unit: string | null;
+  currentValue: number | null;
+  deadline: string | null;
+  status: GoalStatus;
+  createdAt: string;
+  updatedAt: string;
+  progress: MeGoalProgress | null;
+}
+
+export interface MeResponse {
+  entries: MeEntry[];
+  goals: MeGoal[];
+}
+
+export interface MeContextResponse {
+  mode: 'post' | 'reply';
+  block: string | null;
+}
+
+export interface MeEntryCreateBody {
+  kind: MeKind;
+  text: string;
+  happenedAt?: string | null;
+  pinned?: boolean;
+}
+
+export interface MeEntryPatchBody {
+  kind?: MeKind;
+  text?: string;
+  happenedAt?: string | null;
+  pinned?: boolean;
+  active?: boolean;
+}
+
+export interface MeGoalCreateBody {
+  label: string;
+  kind: GoalKind;
+  target: number;
+  unit?: string | null;
+  deadline?: string | null;
+  currentValue?: number | null;
+}
+
+export interface MeGoalPatchBody {
+  label?: string;
+  kind?: GoalKind;
+  target?: number;
+  unit?: string | null;
+  deadline?: string | null;
+  currentValue?: number | null;
+  status?: GoalStatus;
+}
+
 // N0 — the niche: first-class identity + strategy container. Persona/beliefs/
 // replyPersona ground the prompts; the 5 doctrine knobs are the REPLY-GUIDE
 // numbers. Exactly one active niche at a time; pillars/channels follow it.
