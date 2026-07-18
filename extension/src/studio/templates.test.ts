@@ -4,9 +4,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { BrandKit } from './brandKit.ts';
+import { type ChartCell, growthSeries, heatmapCells } from './chartData.ts';
 import { MONO_ADVANCE } from './codeTokens.ts';
 import {
   BANNER,
+  CHART_CARD,
   CODE_CARD,
   LIST_CARD,
   MILESTONE_CARD,
@@ -16,6 +18,7 @@ import {
   STREAK_CARD,
   THREAD_COVER,
   bannerSpec,
+  chartCardSpec,
   codeCardSpec,
   fmtCount,
   listCardSpec,
@@ -623,5 +626,99 @@ describe('background patterns (S5.4)', () => {
       kit,
     );
     expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'plus' });
+  });
+});
+
+describe('chartCardSpec (S5.8)', () => {
+  const growth = growthSeries([
+    { snapshotAt: '2026-06-18T03:00:00.000Z', followersCount: 1200 },
+    { snapshotAt: '2026-07-01T03:00:00.000Z', followersCount: 1240 },
+    { snapshotAt: '2026-07-18T03:00:00.000Z', followersCount: 1260 },
+  ]);
+  const growthData = {
+    mode: 'growth' as const,
+    points: growth.points,
+    firstLabel: growth.firstLabel,
+    lastLabel: growth.lastLabel,
+    delta: growth.delta,
+    cells: [] as ChartCell[],
+  };
+
+  test('growth: header, big count, delta badge, sparkline, endpoint labels', () => {
+    const spec = chartCardSpec(growthData, kit);
+    expect(spec.w).toBe(CHART_CARD.w);
+    expect(spec.h).toBe(CHART_CARD.h);
+    const ks = kinds(spec);
+    expect(ks[0]).toBe('fill');
+    expect(ks[1]).toBe('text'); // eyebrow
+    expect(ks).toContain('sparkline');
+    expect(ks).toContain('badge');
+    const badge = spec.layers.find((l) => l.kind === 'badge') as { texts: string[] };
+    expect(badge.texts).toEqual(['+60 in 3 days']);
+    const spark = spec.layers.find((l) => l.kind === 'sparkline') as { points: number[] };
+    expect(spark.points).toEqual([1200, 1240, 1260]);
+  });
+
+  test('growth: a shrinking series keeps the sign', () => {
+    const spec = chartCardSpec({ ...growthData, delta: -8 }, kit);
+    const badge = spec.layers.find((l) => l.kind === 'badge') as { texts: string[] };
+    expect(badge.texts).toEqual(['-8 in 3 days']);
+  });
+
+  test('growth: fewer than 2 points → placeholder, no sparkline/badge', () => {
+    const spec = chartCardSpec(
+      {
+        mode: 'growth',
+        points: [900],
+        firstLabel: '2026-07-18',
+        lastLabel: '2026-07-18',
+        delta: 0,
+        cells: [],
+      },
+      kit,
+    );
+    expect(spec.layers.some((l) => l.kind === 'sparkline')).toBe(false);
+    expect(spec.layers.some((l) => l.kind === 'badge')).toBe(false);
+    expect((spec.layers[2] as { text: string }).text).toMatch(/not enough follower history/);
+  });
+
+  test('heatmap: 168 cells + weekday initials + hour markers', () => {
+    const cells = heatmapCells(
+      [
+        { weekday: 1, hour: 9, posts: 5, avgViews: 100, avgViewsPerDay: 100 },
+        { weekday: 3, hour: 13, posts: 5, avgViews: 500, avgViewsPerDay: 500 },
+      ],
+      3,
+    );
+    const spec = chartCardSpec({ ...growthData, mode: 'heatmap', cells }, kit);
+    const rules = spec.layers.filter((l) => l.kind === 'rule');
+    expect(rules).toHaveLength(168);
+    // 1 eyebrow + 1 subtitle + 4 hour markers + 7 weekday initials = 13 text layers.
+    expect(spec.layers.filter((l) => l.kind === 'text')).toHaveLength(13);
+  });
+
+  test('heatmap: a measured cell colors from the accent, a below-gate cell is a muted ink wash', () => {
+    const cells = heatmapCells(
+      [
+        { weekday: 1, hour: 9, posts: 5, avgViews: 100, avgViewsPerDay: 100 }, // sufficient, min → intensity 0
+        { weekday: 3, hour: 13, posts: 5, avgViews: 500, avgViewsPerDay: 500 }, // sufficient, max → intensity 1
+        { weekday: 5, hour: 20, posts: 1, avgViews: 900, avgViewsPerDay: 900 }, // below gate
+      ],
+      3,
+    );
+    const spec = chartCardSpec({ ...growthData, mode: 'heatmap', cells }, kit);
+    const ruleAt = (weekday: number, hour: number) =>
+      spec.layers.find(
+        (l) =>
+          l.kind === 'rule' &&
+          (l as { box: { x: number; y: number } }).box.x === 128 + hour * 42 &&
+          (l as { box: { y: number } }).box.y === 214 + weekday * 45,
+      ) as { color: string } | undefined;
+    // max cell: highest accent alpha (0.15 + 0.75*1 = 0.9).
+    expect(ruleAt(3, 13)?.color).toBe('rgba(29, 155, 240, 0.9)');
+    // min cell: floor accent alpha (0.15).
+    expect(ruleAt(1, 9)?.color).toBe('rgba(29, 155, 240, 0.15)');
+    // below-gate cell: the ink wash, never the accent.
+    expect(ruleAt(5, 20)?.color).toBe('rgba(247, 249, 249, 0.06)');
   });
 });

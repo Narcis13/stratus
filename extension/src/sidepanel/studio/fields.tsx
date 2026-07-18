@@ -230,6 +230,46 @@ export function ListFields({
   );
 }
 
+// S5.8 chart card: a growth/heatmap mode toggle + a reload. Both datasets are
+// $0 reads (account series + best-times); the shell lazy-loads them on first
+// view and this only picks the mode and re-fetches.
+export function ChartFields({
+  mode,
+  loading,
+  statusLabel,
+  onMode,
+  onReload,
+}: {
+  mode: 'growth' | 'heatmap';
+  loading: boolean;
+  statusLabel: string;
+  onMode: (m: 'growth' | 'heatmap') => void;
+  onReload: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <div className="studio-templates">
+        {(['growth', 'heatmap'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={`studio-template${mode === m ? ' studio-template-active' : ''}`}
+            onClick={() => onMode(m)}
+          >
+            <span>{m === 'growth' ? 'Growth curve' : 'Best-times heatmap'}</span>
+          </button>
+        ))}
+      </div>
+      <div className="row studio-data-row">
+        <span className="muted">{loading ? 'Reading your metrics…' : statusLabel}</span>
+        <button type="button" onClick={onReload} disabled={loading}>
+          Reload
+        </button>
+      </div>
+    </>
+  );
+}
+
 export function BannerFields({
   headline,
   keywords,

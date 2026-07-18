@@ -3,9 +3,11 @@
 // row + one field section — not another ternary branch in the render loop.
 
 import type { BrandKit } from '../../studio/brandKit.ts';
+import type { ChartCell } from '../../studio/chartData.ts';
 import type { PatternKind, RenderSpec } from '../../studio/compose.ts';
 import {
   BANNER,
+  CHART_CARD,
   CODE_CARD,
   LIST_CARD,
   MILESTONE_CARD,
@@ -18,6 +20,7 @@ import {
   type StreakCardData,
   THREAD_COVER,
   bannerSpec,
+  chartCardSpec,
   codeCardSpec,
   listCardSpec,
   milestoneCardSpec,
@@ -38,7 +41,8 @@ export type TemplateId =
   | 'streak'
   | 'code'
   | 'thread'
-  | 'list';
+  | 'list'
+  | 'chart';
 
 export interface TemplateMeta {
   id: TemplateId;
@@ -97,6 +101,12 @@ export const TEMPLATES: TemplateMeta[] = [
     label: 'List card',
     size: { w: LIST_CARD.w, h: LIST_CARD.h },
     supportsAiBackground: true,
+  },
+  {
+    id: 'chart',
+    label: 'Chart card',
+    size: { w: CHART_CARD.w, h: CHART_CARD.h },
+    supportsAiBackground: false,
   },
 ];
 
@@ -157,6 +167,14 @@ export interface TemplateState {
   /** S5.7 list card — title + raw one-item-per-line textarea (parsed on build). */
   listTitle: string;
   listItems: string;
+  /** S5.8 chart card — mode toggle + the two lazily-loaded $0 datasets (growth
+   *  from /x/metrics/account, heatmap from /x/metrics/best-times). */
+  chartMode: 'growth' | 'heatmap';
+  chartPoints: number[];
+  chartFirstLabel: string;
+  chartLastLabel: string;
+  chartDelta: number;
+  chartCells: ChartCell[];
 }
 
 /** A sample snippet so the code card previews immediately (empty input → this). */
@@ -249,5 +267,17 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
         kit,
       );
     }
+    case 'chart':
+      return chartCardSpec(
+        {
+          mode: state.chartMode,
+          points: state.chartPoints,
+          firstLabel: state.chartFirstLabel,
+          lastLabel: state.chartLastLabel,
+          delta: state.chartDelta,
+          cells: state.chartCells,
+        },
+        kit,
+      );
   }
 }

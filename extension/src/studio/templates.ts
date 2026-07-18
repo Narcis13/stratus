@@ -5,6 +5,7 @@
 // the palette constraint is what makes months of cards read as one brand.
 
 import type { BrandKit } from './brandKit.ts';
+import type { ChartCell } from './chartData.ts';
 import { MONO_ADVANCE, type TokenKind, tokenizeLine } from './codeTokens.ts';
 import {
   type Layer,
@@ -25,6 +26,7 @@ export const STREAK_CARD = { w: 1200, h: 675 } as const;
 export const CODE_CARD = { w: 1200, h: 675 } as const;
 export const THREAD_COVER = { w: 1200, h: 675 } as const;
 export const LIST_CARD = { w: 1200, h: 675 } as const;
+export const CHART_CARD = { w: 1200, h: 675 } as const;
 
 /** Bundled JetBrains Mono (loaded via FontFace as 'StudioMono'); the code card
  *  always renders monospace regardless of the kit's display font, and its
@@ -990,5 +992,228 @@ export function codeCardSpec(data: CodeCardData, kit: BrandKit): RenderSpec {
     });
   }
 
+  return { w, h, layers };
+}
+
+// ------------------------------------------------------------------ chart card
+
+export interface ChartCardData {
+  mode: 'growth' | 'heatmap';
+  /** Growth: raw follower points (oldest → newest), fed to the sparkline. */
+  points: number[];
+  firstLabel: string;
+  lastLabel: string;
+  delta: number;
+  /** Heatmap: the full 7×24 grid from chartData.heatmapCells (null intensity =
+   *  below the gate → rendered muted, never a confident color). */
+  cells: ChartCell[];
+}
+
+// Heatmap grid geometry (7 weekday rows × 24 hour columns) — the weekday
+// initials sit in the left gutter, the 0h/6h/12h/18h markers above the grid.
+const HEAT_LEFT = 128;
+const HEAT_TOP = 214;
+const HEAT_CELL_W = 38;
+const HEAT_CELL_H = 40;
+const HEAT_GAP_X = 4;
+const HEAT_GAP_Y = 5;
+const WEEKDAY_INITIALS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+/** 1200×675 — the daily follower curve OR the best-times heatmap, both from $0
+ *  already-billed reads. All normalization is done in chartData.ts; this spec
+ *  only places plain arrays, so it stays pure/snapshot-testable. */
+export function chartCardSpec(data: ChartCardData, kit: BrandKit): RenderSpec {
+  const { w, h } = CHART_CARD;
+  const ink = contrastOn(kit.bg);
+  const muted = withAlpha(ink, 0.65);
+
+  if (data.mode === 'heatmap') {
+    const layers: Layer[] = [
+      background(kit),
+      {
+        kind: 'text',
+        text: 'BEST TIMES TO POST',
+        font: font(kit, 800, 26),
+        box: { x: 80, y: 64, w: 700, h: 34 },
+        color: kit.accent,
+        letterSpacingPx: 4,
+      },
+      {
+        kind: 'text',
+        text: 'brighter = more views per day · faint = too little data',
+        font: font(kit, 400, 22),
+        box: { x: 80, y: 108, w: 1040, h: 30 },
+        color: muted,
+        maxLines: 1,
+      },
+    ];
+
+    // Hour markers across the top (every 6h).
+    for (const hour of [0, 6, 12, 18]) {
+      layers.push({
+        kind: 'text',
+        text: `${hour}h`,
+        font: font(kit, 700, 20),
+        box: { x: HEAT_LEFT + hour * (HEAT_CELL_W + HEAT_GAP_X), y: HEAT_TOP - 30, w: 60, h: 24 },
+        color: muted,
+        maxLines: 1,
+      });
+    }
+    // Weekday initials down the left.
+    WEEKDAY_INITIALS.forEach((initial, weekday) => {
+      layers.push({
+        kind: 'text',
+        text: initial,
+        font: font(kit, 700, 22),
+        box: {
+          x: 80,
+          y: HEAT_TOP + weekday * (HEAT_CELL_H + HEAT_GAP_Y),
+          w: 36,
+          h: HEAT_CELL_H,
+        },
+        color: muted,
+        align: 'center',
+        vAlign: 'middle',
+        maxLines: 1,
+      });
+    });
+    // 7×24 cells: a measured cell scales the accent alpha with intensity; a
+    // below-gate cell is a barely-there ink wash (never a confident color).
+    for (const cell of data.cells) {
+      const color =
+        cell.sufficient && cell.intensity !== null
+          ? withAlpha(kit.accent, 0.15 + 0.75 * cell.intensity)
+          : withAlpha(ink, 0.06);
+      layers.push({
+        kind: 'rule',
+        box: {
+          x: HEAT_LEFT + cell.hour * (HEAT_CELL_W + HEAT_GAP_X),
+          y: HEAT_TOP + cell.weekday * (HEAT_CELL_H + HEAT_GAP_Y),
+          w: HEAT_CELL_W,
+          h: HEAT_CELL_H,
+        },
+        color,
+      });
+    }
+    layers.push(...watermarkLayer(kit, ink, 22, 36));
+    return { w, h, layers };
+  }
+
+  // Growth mode.
+  const layers: Layer[] = [
+    background(kit),
+    {
+      kind: 'text',
+      text: 'FOLLOWER GROWTH',
+      font: font(kit, 800, 26),
+      box: { x: 80, y: 64, w: 600, h: 34 },
+      color: kit.accent,
+      letterSpacingPx: 4,
+    },
+  ];
+
+  if (data.points.length < 2) {
+    layers.push({
+      kind: 'text',
+      text: 'not enough follower history yet — check back after a few daily snapshots',
+      font: font(kit, 400, 30),
+      box: { x: 80, y: 260, w: 1040, h: 140 },
+      color: muted,
+      lineHeight: 1.3,
+      maxLines: 3,
+      minSizePx: 22,
+    });
+    layers.push(...watermarkLayer(kit, ink, 22, 36));
+    return { w, h, layers };
+  }
+
+  const last = data.points[data.points.length - 1] as number;
+  const peak = Math.max(...data.points);
+  const low = Math.min(...data.points);
+
+  layers.push(
+    {
+      kind: 'text',
+      text: `${data.firstLabel} → ${data.lastLabel}`,
+      font: font(kit, 400, 24),
+      box: { x: 520, y: 66, w: 600, h: 32 },
+      color: muted,
+      align: 'right',
+      maxLines: 1,
+      minSizePx: 18,
+    },
+    {
+      kind: 'text',
+      text: fmtCount(last),
+      font: font(kit, 800, 96),
+      box: { x: 80, y: 118, w: 560, h: 108 },
+      color: ink,
+      maxLines: 1,
+      minSizePx: 56,
+    },
+    {
+      kind: 'text',
+      text: 'followers',
+      font: font(kit, 400, 28),
+      box: { x: 80, y: 232, w: 560, h: 34 },
+      color: muted,
+    },
+    {
+      kind: 'badge',
+      texts: [`${data.delta >= 0 ? '+' : ''}${data.delta} in ${data.points.length} days`],
+      x: 80,
+      y: 292,
+      font: font(kit, 700, 26),
+      color: kit.accent,
+      bg: withAlpha(kit.accent, 0.16),
+      borderColor: kit.accent,
+    },
+    // Peak / low value labels on the right, framing the chart.
+    {
+      kind: 'text',
+      text: `peak ${fmtCount(peak)}`,
+      font: font(kit, 400, 22),
+      box: { x: 820, y: 340, w: 300, h: 28 },
+      color: muted,
+      align: 'right',
+      maxLines: 1,
+    },
+    {
+      kind: 'text',
+      text: `low ${fmtCount(low)}`,
+      font: font(kit, 400, 22),
+      box: { x: 820, y: 566, w: 300, h: 28 },
+      color: muted,
+      align: 'right',
+      maxLines: 1,
+    },
+    {
+      kind: 'sparkline',
+      points: data.points,
+      box: { x: 80, y: 372, w: 1040, h: 200 },
+      color: kit.accent,
+      strokeWidth: 6,
+      fill: withAlpha(kit.accent, 0.14),
+    },
+    // Endpoint dates under the curve.
+    {
+      kind: 'text',
+      text: data.firstLabel,
+      font: font(kit, 400, 22),
+      box: { x: 80, y: 600, w: 300, h: 28 },
+      color: muted,
+      maxLines: 1,
+    },
+    {
+      kind: 'text',
+      text: data.lastLabel,
+      font: font(kit, 400, 22),
+      box: { x: 820, y: 600, w: 300, h: 28 },
+      color: muted,
+      align: 'right',
+      maxLines: 1,
+    },
+  );
+  layers.push(...watermarkLayer(kit, ink, 22, 36));
   return { w, h, layers };
 }

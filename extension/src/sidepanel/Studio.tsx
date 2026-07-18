@@ -27,6 +27,12 @@ import {
   savePresetAs,
   setActivePreset,
 } from '../studio/brandKit.ts';
+import {
+  type ChartCell,
+  type GrowthSeries,
+  growthSeries,
+  heatmapCells,
+} from '../studio/chartData.ts';
 import { type PatternKind, render } from '../studio/compose.ts';
 import { ensureStudioFonts } from '../studio/fonts.ts';
 import { latestCrossed } from '../studio/milestones.ts';
@@ -37,6 +43,7 @@ import { KitEditor } from './studio/KitEditor.tsx';
 import {
   BackgroundFields,
   BannerFields,
+  ChartFields,
   CodeFields,
   LibraryRail,
   ListFields,
@@ -146,6 +153,12 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const [threadCount, setThreadCount] = useState(5);
   const [listTitle, setListTitle] = useState('');
   const [listItems, setListItems] = useState('');
+
+  // S5.8 chart card: growth/heatmap mode + the two lazily-loaded $0 datasets.
+  const [chartMode, setChartMode] = useState<'growth' | 'heatmap'>('growth');
+  const [chartGrowth, setChartGrowth] = useState<GrowthSeries | null>(null);
+  const [chartCells, setChartCells] = useState<ChartCell[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
 
   // S5.5 celebration cards: auto-detected value + a manual override. The
   // override wins when set; blank falls back to what the account/streak reads.
@@ -285,6 +298,27 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   }, [settings]);
 
+  // Chart: both datasets are $0 reads — the account series (growth) and the
+  // best-times cells (heatmap), gated client-side via the response's minN.
+  const loadChartData = useCallback(async () => {
+    setChartLoading(true);
+    setError(null);
+    try {
+      const [account, best] = await Promise.all([
+        api.metrics.account(settings),
+        api.metrics.bestTimes(settings),
+      ]);
+      setChartGrowth(growthSeries(account.series));
+      setChartCells(heatmapCells(best.cells, best.minN));
+    } catch (e) {
+      setError(e instanceof ApiError ? `Chart data failed: ${e.message}` : 'Chart data failed');
+      setChartGrowth({ points: [], firstLabel: '', lastLabel: '', delta: 0 });
+      setChartCells([]);
+    } finally {
+      setChartLoading(false);
+    }
+  }, [settings]);
+
   useEffect(() => {
     if (template === 'stat' && statData === null && !statLoading) void loadStatData();
     if (template === 'banner' && !bannerSeeded.current) {
@@ -294,6 +328,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     if (template === 'milestone' && milestoneAuto === null && !milestoneLoading)
       void loadMilestoneData();
     if (template === 'streak' && streakAuto === null && !streakLoading) void loadStreakData();
+    if (template === 'chart' && chartGrowth === null && !chartLoading) void loadChartData();
   }, [
     template,
     statData,
@@ -306,6 +341,9 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     streakAuto,
     streakLoading,
     loadStreakData,
+    chartGrowth,
+    chartLoading,
+    loadChartData,
   ]);
 
   // Resolve the celebration-card data the render loop feeds buildSpec: override
@@ -492,6 +530,12 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             threadCount,
             listTitle,
             listItems,
+            chartMode,
+            chartPoints: chartGrowth?.points ?? [],
+            chartFirstLabel: chartGrowth?.firstLabel ?? '',
+            chartLastLabel: chartGrowth?.lastLabel ?? '',
+            chartDelta: chartGrowth?.delta ?? 0,
+            chartCells,
           },
           kit,
         );
@@ -533,6 +577,9 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     threadCount,
     listTitle,
     listItems,
+    chartMode,
+    chartGrowth,
+    chartCells,
   ]);
 
   useEffect(
@@ -688,6 +735,24 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
           items={listItems}
           onTitle={setListTitle}
           onItems={setListItems}
+        />
+      )}
+
+      {template === 'chart' && (
+        <ChartFields
+          mode={chartMode}
+          loading={chartLoading}
+          statusLabel={
+            chartGrowth
+              ? chartMode === 'growth'
+                ? chartGrowth.points.length >= 2
+                  ? `${chartGrowth.points.length} daily snapshots`
+                  : 'Not enough follower history yet'
+                : `${chartCells.filter((c) => c.sufficient).length} measured cells`
+              : 'No metrics yet'
+          }
+          onMode={setChartMode}
+          onReload={() => void loadChartData()}
         />
       )}
 
