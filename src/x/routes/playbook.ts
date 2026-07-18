@@ -28,6 +28,7 @@ import {
   scheduledPosts,
   voiceAuthors,
 } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import {
   type AngleRow,
   DEFAULT_MIN_CELL_N,
@@ -215,7 +216,12 @@ async function loadMyTargetBand(): Promise<{ min: number; max: number } | null> 
     .from(accountSnapshots)
     .orderBy(desc(accountSnapshots.snapshotAt))
     .limit(1);
-  return acct ? targetBand(acct.followersCount) : null;
+  if (!acct) return null;
+  const doctrine = loadDoctrine();
+  return targetBand(acct.followersCount, {
+    minX: doctrine.targetBandMinX,
+    maxX: doctrine.targetBandMaxX,
+  });
 }
 
 /** §S0.7 — of the posted replies pasted in [since, until), how many went to

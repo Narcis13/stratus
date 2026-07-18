@@ -30,6 +30,7 @@ import {
   voiceAuthorSnapshots,
   voiceAuthors,
 } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import {
   CHAIN_LIVE_MAX_AGE_MS,
   type ChainInbound,
@@ -134,7 +135,11 @@ followups.get('/people/followups', async (c) => {
   const authorDisplayByHandle = new Map(authors.map((a) => [a.handle, a.displayName]));
   const targetHandles = new Set<string>();
   if (myFollowers !== null) {
-    const band = targetBand(myFollowers);
+    const doctrine = loadDoctrine();
+    const band = targetBand(myFollowers, {
+      minX: doctrine.targetBandMinX,
+      maxX: doctrine.targetBandMaxX,
+    });
     for (const a of authors) {
       if (
         a.followersCount !== null &&

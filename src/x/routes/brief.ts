@@ -23,6 +23,7 @@ import {
   streaks,
   voiceAuthors,
 } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import {
   allQuestsDone,
   completedMap,
@@ -36,11 +37,6 @@ import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } 
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-// Doctrine numbers (OVERHAUL-PLAN §9): 10–20 band-gated replies/day, 70%
-// replies / 30% originals over the week.
-const REPLY_TARGET = { min: 10, max: 20 } as const;
-const WEEK_REPLY_TARGET_PCT = 70;
 
 // Cadence anchors from md_to_schedule.ts — 3/day and 4/day local hours.
 const ANCHORS_3 = [9, 13, 18];
@@ -347,6 +343,12 @@ brief.get('/brief', async (c) => {
     tzOffsetMin = n;
   }
 
+  // Doctrine numbers (OVERHAUL-PLAN §9), now owned by the active niche (N0.5):
+  // the reply band (default 10–20/day) and the week reply-ratio target (default
+  // 70%). Loaded once per request — one sync SELECT, no caching needed.
+  const doctrine = loadDoctrine();
+  const replyTarget = { min: doctrine.replyTargetMin, max: doctrine.replyTargetMax };
+
   const now = new Date();
   const todayStart = localDayStart(now, tzOffsetMin);
   const tomorrowStart = new Date(todayStart.getTime() + DAY_MS);
@@ -626,7 +628,10 @@ brief.get('/brief', async (c) => {
   const myFollowers = snaps.at(-1)?.followersCount ?? null;
   const targetHandles = new Set<string>();
   if (myFollowers !== null) {
-    const band = targetBand(myFollowers);
+    const band = targetBand(myFollowers, {
+      minX: doctrine.targetBandMinX,
+      maxX: doctrine.targetBandMaxX,
+    });
     for (const a of voiceRows) {
       if (a.followersCount !== null && a.followersCount >= band.min && a.followersCount <= band.max)
         targetHandles.add(a.handle);
@@ -662,7 +667,7 @@ brief.get('/brief', async (c) => {
 
   const questItems = computeQuests({
     repliesPostedToday: postedDraftRows.length,
-    repliesTarget: REPLY_TARGET.min,
+    repliesTarget: replyTarget.min,
     originalsPostedToday: originalsToday.length,
     neglectedTargetsAtDayStart: neglectedAtStart.size,
     neglectedTargetsTouched: targetsTouched,
@@ -726,7 +731,7 @@ brief.get('/brief', async (c) => {
     },
     replyQuota: {
       postedToday: postedDraftRows.length,
-      target: REPLY_TARGET,
+      target: replyTarget,
     },
     quests: {
       day: dayKey,
@@ -739,7 +744,7 @@ brief.get('/brief', async (c) => {
       posts: weekPosts,
       replies: weekReplies,
       replyPct: weekTotal === 0 ? null : Math.round((weekReplies / weekTotal) * 100),
-      targetReplyPct: WEEK_REPLY_TARGET_PCT,
+      targetReplyPct: doctrine.weekReplyTargetPct,
     },
     spend: {
       from: utcDayStart,

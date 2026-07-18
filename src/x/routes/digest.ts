@@ -30,6 +30,7 @@ import {
   parseDigestNarrative,
   weekBounds,
 } from '../digest.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
 import {
@@ -313,7 +314,11 @@ async function loadNeglectedTargets(asOf: Date): Promise<string[]> {
     .orderBy(desc(accountSnapshots.snapshotAt))
     .limit(1);
   if (!acct) return [];
-  const band = targetBand(acct.followersCount);
+  const doctrine = loadDoctrine();
+  const band = targetBand(acct.followersCount, {
+    minX: doctrine.targetBandMinX,
+    maxX: doctrine.targetBandMaxX,
+  });
   const authors = await db
     .select({ handle: voiceAuthors.handle, followersCount: voiceAuthors.followersCount })
     .from(voiceAuthors)

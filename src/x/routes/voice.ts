@@ -40,6 +40,7 @@ import {
   voiceAuthors,
   voiceTweets,
 } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import { safeLogPersonEvents, snippet, upsertPerson } from '../people/store.ts';
 import { parseChannelTags } from './channels.ts';
 
@@ -322,7 +323,11 @@ export function createVoiceRouter(): Hono {
       return c.json({ myFollowers: null, measuredAt: null, band: null, targets: [] });
     }
 
-    const band = targetBand(acct.followersCount);
+    const doctrine = loadDoctrine();
+    const band = targetBand(acct.followersCount, {
+      minX: doctrine.targetBandMinX,
+      maxX: doctrine.targetBandMaxX,
+    });
 
     const authors = await db
       .select({
@@ -561,9 +566,14 @@ export function createVoiceRouter(): Hono {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // REPLY GUIDE band: accounts 2–10x my size are big enough to lend reach,
-// small enough that a good reply is actually seen.
-export function targetBand(myFollowers: number): { min: number; max: number } {
-  return { min: 2 * myFollowers, max: 10 * myFollowers };
+// small enough that a good reply is actually seen. The multipliers are the
+// active niche's doctrine knobs (N0.5); the defaults keep every existing call
+// site and test green when a caller doesn't pass a band.
+export function targetBand(
+  myFollowers: number,
+  band: { minX: number; maxX: number } = { minX: 2, maxX: 10 },
+): { min: number; max: number } {
+  return { min: band.minX * myFollowers, max: band.maxX * myFollowers };
 }
 
 // The current targets roster as bare (lowercased) handles — the same 2–10x band
@@ -577,7 +587,11 @@ export async function loadTargetHandles(): Promise<string[]> {
     .orderBy(desc(accountSnapshots.snapshotAt))
     .limit(1);
   if (!acct) return [];
-  const band = targetBand(acct.followersCount);
+  const doctrine = loadDoctrine();
+  const band = targetBand(acct.followersCount, {
+    minX: doctrine.targetBandMinX,
+    maxX: doctrine.targetBandMaxX,
+  });
   const rows = await db
     .select({ handle: voiceAuthors.handle })
     .from(voiceAuthors)
