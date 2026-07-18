@@ -221,8 +221,9 @@ export function passesSpecificityGate(text: string): boolean {
 // The Radar drafts replies for a whole queue of hot/warm tweets in ONE Grok
 // call. It reuses the reply-master VOICE/persona verbatim (sliced out of
 // REPLY_PROMPT_TEMPLATE so the two can never drift) but swaps the job and the
-// output: one reply per tweet, each anchored to its tweetId, instead of three
-// variants for a single post.
+// output: three variants (one per angle) per tweet, each block anchored to its
+// tweetId — the same 3-variant shape the single-reply path returns (RU.3), so a
+// radar draft carries the full angle set the on-page chips paste from.
 
 const VOICE_BLOCK_START = '## Who I am';
 const VOICE_BLOCK_END = '## The three variants';
@@ -239,8 +240,7 @@ export interface BatchTweet {
 
 export interface BatchReply {
   tweetId: string;
-  text: string;
-  angle: ReplyAngle;
+  variants: ReplyVariant[];
 }
 
 // The persona + "How the replies sound" + forbidden lists, lifted verbatim
@@ -268,27 +268,27 @@ ${sharedVoiceBlock()}
 
 ---
 
-## The reply for each post
+## The three variants for each post
 
-Produce **exactly one reply per post**, anchored to that post's \`id\`. Pick the angle that earns the most attention for that specific post — lean spicy:
+For EACH post, produce **exactly three variants — one per angle** (extends, contrarian, and debate each appear exactly once), anchored to that post's \`id\`. Three genuinely different takes, not restatements of one. Lean spicy: a reply that splits the room earns more profile taps than one everyone nods at.
 
 - **extends** — push the post's idea further: the next step, the sharper consequence, the part the author left unsaid.
 - **contrarian** — lightly controversial. Disagree with a sharp, defensible claim and give the reason. Heat, not hate.
 - **debate** — dividing. Reframe so people in the replies have to pick a side. Tension, not aggression.
 
-**Hard rules for each reply:**
+**Hard rules for each variant:**
 
 - **ONE punchy proposition is the default.** The first line is the hook and must stand alone.
 - Length: tight — usually under ~280 chars. This is a reply, not a thread.
 - Specific beats generic, but every specific must come from that post, common knowledge, or my steer — never invented.
-- Fit the actual context of each post. Each reply stands on its own post; never bleed one post's topic into another.
+- Fit the actual context of each post. Each variant stands on its own post; never bleed one post's topic into another.
 - Ship-ready. Final reply text, nothing to polish.
 
 ---
 
 ## Output
 
-Return JSON of the shape \`{"replies": [{"id": "<post id>", "text": "…", "angle": "…"}, …]}\` — exactly one object per post, the \`id\` copied verbatim from the post it answers, \`angle\` one of \`extends\`, \`contrarian\`, \`debate\`. Each \`text\` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary. Include every post; never merge two posts into one reply.
+Return JSON of the shape \`{"replies": [{"id": "<post id>", "variants": [{"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}]}, …]}\` — exactly one object per post, the \`id\` copied verbatim from the post it answers, and exactly three variants inside it (\`angle\` one of \`extends\`, \`contrarian\`, \`debate\`, each appearing once). Each \`text\` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary. Include every post; never merge two posts into one object.
 
 **My optional steer** comes in the \`<idea>\` tag. If it has content, let it shape the angle of every reply, in English (it may be in Romanian; translate the intent). If empty, you decide each angle from the post and the rules above.`;
 }
@@ -346,11 +346,21 @@ export const BATCH_REPLY_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          id: { type: 'string', description: 'The post id this reply answers, copied verbatim' },
-          text: { type: 'string', description: 'Raw reply text exactly as it appears on X' },
-          angle: { type: 'string', enum: [...REPLY_ANGLES] },
+          id: { type: 'string', description: 'The post id these variants answer, copied verbatim' },
+          variants: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                text: { type: 'string', description: 'Raw reply text exactly as it appears on X' },
+                angle: { type: 'string', enum: [...REPLY_ANGLES] },
+              },
+              required: ['text', 'angle'],
+              additionalProperties: false,
+            },
+          },
         },
-        required: ['id', 'text', 'angle'],
+        required: ['id', 'variants'],
         additionalProperties: false,
       },
     },
@@ -361,7 +371,9 @@ export const BATCH_REPLY_SCHEMA = {
 
 // Mirrors parseReplyVariants: strict-mode guarantees the shape, but a truncated
 // body (maxOutputTokens) or a future non-strict call must degrade to null, not
-// to a malformed row. Maps the wire field `id` to `tweetId`.
+// to a malformed row. Maps the wire field `id` to `tweetId` and collects the
+// per-post variants array (≥1 required; blank-line-normalized; a bad angle
+// coerced to 'extends'). An empty replies array is a valid (if useless) batch.
 export function parseBatchReplies(raw: string): BatchReply[] | null {
   let parsed: unknown;
   try {
@@ -379,11 +391,18 @@ export function parseBatchReplies(raw: string): BatchReply[] | null {
     const v = r as Record<string, unknown>;
     const id = typeof v.id === 'string' ? v.id.trim() : '';
     if (id === '') return null;
-    if (typeof v.text !== 'string' || v.text.trim() === '') return null;
-    const angle = (REPLY_ANGLES as readonly string[]).includes(v.angle as string)
-      ? (v.angle as ReplyAngle)
-      : 'extends';
-    out.push({ tweetId: id, text: blankLineBetweenPropositions(v.text), angle });
+    if (!Array.isArray(v.variants) || v.variants.length === 0) return null;
+    const variants: ReplyVariant[] = [];
+    for (const rawVariant of v.variants) {
+      if (!rawVariant || typeof rawVariant !== 'object' || Array.isArray(rawVariant)) return null;
+      const vv = rawVariant as Record<string, unknown>;
+      if (typeof vv.text !== 'string' || vv.text.trim() === '') return null;
+      const angle = (REPLY_ANGLES as readonly string[]).includes(vv.angle as string)
+        ? (vv.angle as ReplyAngle)
+        : 'extends';
+      variants.push({ text: blankLineBetweenPropositions(vv.text), angle });
+    }
+    out.push({ tweetId: id, variants });
   }
   return out;
 }

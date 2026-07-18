@@ -497,10 +497,12 @@ describe('batch replies (Radar §7.2)', () => {
     // The persona + forbidden lists rode in via the VOICE_BLOCK slice.
     expect(content).toContain('Forbidden openers');
     expect(content).toContain('solopreneur');
-    // VOICE_BLOCK_END bounds the slice at the heading. If it desyncs from the
-    // renamed heading, sharedVoiceBlock falls back to the whole template and
-    // the single-reply variants section + its {{…}} placeholders leak in.
-    expect(content).not.toContain('## The three variants');
+    // VOICE_BLOCK_END bounds the slice at the heading. If it desyncs, the slice
+    // falls back to the whole template and the single-reply variants section +
+    // its {{…}} placeholders leak in. The batch head now legitimately contains
+    // "## The three variants for each post" (RU.3), so the leak sentinel is a
+    // single-reply-only phrase ('not three paraphrases', L91) + the placeholders.
+    expect(content).not.toContain('not three paraphrases');
     expect(content).not.toContain('{{TWEET_CONTEXT}}');
     expect(content).not.toContain('{{IDEA}}');
   });
@@ -510,27 +512,44 @@ describe('batch replies (Radar §7.2)', () => {
     expect(msg?.content.trimEnd().endsWith('<idea></idea>')).toBe(true);
   });
 
-  test('parseBatchReplies maps id→tweetId, trims, coerces unknown angles', () => {
+  test('parseBatchReplies maps id→tweetId, keeps variants, trims, coerces unknown angles', () => {
     const out = parseBatchReplies(
-      '{"replies":[{"id":"111","text":" hot take ","angle":"contrarian"},{"id":"222","text":"x","angle":"weird"}]}',
+      '{"replies":[{"id":"111","variants":[{"text":" hot take ","angle":"contrarian"},{"text":"x","angle":"weird"}]}]}',
     );
     expect(out).toEqual([
-      { tweetId: '111', text: 'hot take', angle: 'contrarian' },
-      { tweetId: '222', text: 'x', angle: 'extends' },
+      {
+        tweetId: '111',
+        variants: [
+          { text: 'hot take', angle: 'contrarian' },
+          { text: 'x', angle: 'extends' },
+        ],
+      },
     ]);
   });
 
-  test('parseBatchReplies blank-line-separates multi-line replies', () => {
+  test('parseBatchReplies blank-line-separates each variant', () => {
     expect(
-      parseBatchReplies('{"replies":[{"id":"111","text":"a\\nb\\nc","angle":"extends"}]}'),
-    ).toEqual([{ tweetId: '111', text: 'a\n\nb\n\nc', angle: 'extends' }]);
+      parseBatchReplies(
+        '{"replies":[{"id":"111","variants":[{"text":"a\\nb\\nc","angle":"extends"}]}]}',
+      ),
+    ).toEqual([{ tweetId: '111', variants: [{ text: 'a\n\nb\n\nc', angle: 'extends' }] }]);
   });
 
-  test('parseBatchReplies rejects garbage and blank text', () => {
+  test('parseBatchReplies rejects garbage, blank text, and a missing/empty variants array', () => {
     expect(parseBatchReplies('not json')).toBeNull();
-    expect(parseBatchReplies('{"replies":[{"id":"1","text":"   ","angle":"extends"}]}')).toBeNull();
-    expect(parseBatchReplies('{"replies":[{"text":"x","angle":"extends"}]}')).toBeNull();
-    // empty array is a valid (if useless) batch response, not a parse failure
+    // blank variant text
+    expect(
+      parseBatchReplies('{"replies":[{"id":"1","variants":[{"text":"   ","angle":"extends"}]}]}'),
+    ).toBeNull();
+    // missing id
+    expect(
+      parseBatchReplies('{"replies":[{"variants":[{"text":"x","angle":"extends"}]}]}'),
+    ).toBeNull();
+    // old flat shape (no variants array) → null
+    expect(parseBatchReplies('{"replies":[{"id":"1","text":"x","angle":"extends"}]}')).toBeNull();
+    // empty variants array → null (a post must carry ≥1 variant)
+    expect(parseBatchReplies('{"replies":[{"id":"1","variants":[]}]}')).toBeNull();
+    // empty replies array is a valid (if useless) batch response, not a parse failure
     expect(parseBatchReplies('{"replies":[]}')).toEqual([]);
   });
 
@@ -592,13 +611,32 @@ describe('radar drafts (C0)', () => {
     { tweetId: '222', handle: 'bob', author: 'bob', text: 'AI take' },
   ];
 
-  test('buildRadarDraftRows pairs replies with their tweets, keeps signals, threads model', () => {
+  test('buildRadarDraftRows pairs replies with their tweets, keeps signals, stores variants, threads model', () => {
     const rows = buildRadarDraftRows(
       tweets,
       [
-        { tweetId: '111', text: 'my reply', angle: 'contrarian' },
-        { tweetId: '222', text: 'other reply', angle: 'extends' },
-        { tweetId: '999', text: 'unknown id dropped', angle: 'extends' },
+        {
+          tweetId: '111',
+          text: 'my reply',
+          angle: 'contrarian',
+          variants: [
+            { text: 'my reply', angle: 'contrarian' },
+            { text: 'push it further', angle: 'extends' },
+            { text: 'pick a side', angle: 'debate' },
+          ],
+        },
+        {
+          tweetId: '222',
+          text: 'other reply',
+          angle: 'extends',
+          variants: [{ text: 'other reply', angle: 'extends' }],
+        },
+        {
+          tweetId: '999',
+          text: 'unknown id dropped',
+          angle: 'extends',
+          variants: [{ text: 'unknown id dropped', angle: 'extends' }],
+        },
       ],
       'grok-4',
     );
@@ -613,17 +651,26 @@ describe('radar drafts (C0)', () => {
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
       replyText: 'my reply',
       angle: 'contrarian',
-      variants: null,
+      variants: [
+        { text: 'my reply', angle: 'contrarian' },
+        { text: 'push it further', angle: 'extends' },
+        { text: 'pick a side', angle: 'debate' },
+      ],
       model: 'grok-4',
     });
     expect(rows[1]?.author).toBeNull();
     expect(rows[1]?.band).toBeNull();
     expect(rows[1]?.url).toBeNull();
     expect(rows[1]?.model).toBe('grok-4');
-    // Null model threads through (CLI callers with no reported model).
-    expect(
-      buildRadarDraftRows(tweets, [{ tweetId: '111', text: 'x', angle: 'debate' }], null)[0]?.model,
-    ).toBeNull();
+    // A caller supplying only the primary (no variants) → null (RU.2 "unknown"
+    // semantics); null model threads through too (CLI callers).
+    const primaryOnly = buildRadarDraftRows(
+      tweets,
+      [{ tweetId: '111', text: 'x', angle: 'debate' }],
+      null,
+    );
+    expect(primaryOnly[0]?.model).toBeNull();
+    expect(primaryOnly[0]?.variants).toBeNull();
   });
 
   test('radarDraftExpired flips at exactly 48h', () => {

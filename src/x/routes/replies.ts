@@ -390,8 +390,9 @@ replies.post('/replies/generate-batch', async (c) => {
   // Playbook guidance (C4): one gated line for the whole batch, variable tail.
   const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
   const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance);
-  // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
-  const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
+  // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
+  // single-reply path (user-accepted, RU.3). Scale with the batch, capped.
+  const maxOutputTokens = Math.min(9000, 200 + tweets.length * 420);
 
   let result: Awaited<ReturnType<typeof askGrok>>;
   try {
@@ -429,14 +430,23 @@ replies.post('/replies/generate-batch', async (c) => {
   }
 
   // Anchor: keep only replies whose id is one we asked for, first occurrence
-  // wins (a model that doubled up on an id can't shadow the right tweet).
+  // wins (a model that doubled up on an id can't shadow the right tweet). Each
+  // reply carries all 3 angle variants; text/angle stay the primary (variants[0])
+  // so an un-updated panel build still reads them (RU.3).
   const wanted = new Set(tweets.map((t) => t.tweetId));
   const seen = new Set<string>();
-  const out: { tweetId: string; text: string; angle: string }[] = [];
+  const out: { tweetId: string; text: string; angle: string; variants: ReplyVariant[] }[] = [];
   for (const r of batch) {
     if (!wanted.has(r.tweetId) || seen.has(r.tweetId)) continue;
+    const primary = r.variants[0];
+    if (!primary) continue;
     seen.add(r.tweetId);
-    out.push({ tweetId: r.tweetId, text: r.text, angle: r.angle });
+    out.push({
+      tweetId: r.tweetId,
+      text: primary.text,
+      angle: primary.angle,
+      variants: r.variants,
+    });
   }
 
   // C0: the server keeps the copy — the session ring buffer alone lost every

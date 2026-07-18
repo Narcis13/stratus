@@ -63,12 +63,24 @@ export interface RadarDraftInsert {
   model: string | null;
 }
 
+// The batch reply shape persistRadarDrafts/buildRadarDraftRows consume: the
+// primary text/angle (variants[0]) plus the full angle set. `variants` is
+// optional — the batch route always supplies all 3, but a CLI/smoke caller may
+// pass only the primary, in which case the column stays null (RU.2 "unknown"
+// semantics; the confirm endpoint reconstructs `[{text: replyText, angle}]`).
+interface BatchReplyRow {
+  tweetId: string;
+  text: string;
+  angle: string;
+  variants?: { text: string; angle: string }[];
+}
+
 // Pure — exported for unit tests. Pair each returned reply with the tweet it
 // was drafted for; replies whose id we never asked about are dropped (the
 // route already filters those, this is belt-and-suspenders).
 export function buildRadarDraftRows(
   tweets: RadarBatchTweet[],
-  replies: { tweetId: string; text: string; angle: string }[],
+  replies: BatchReplyRow[],
   model: string | null,
 ): RadarDraftInsert[] {
   const byId = new Map(tweets.map((t) => [t.tweetId, t]));
@@ -86,8 +98,9 @@ export function buildRadarDraftRows(
       signals: t.signals ?? null,
       replyText: r.text,
       angle: r.angle,
-      // Task 3 lands the 3-variant batch response; until then, null.
-      variants: null,
+      // Full 3-variant set from the batch (RU.3); replyText/angle stay the
+      // primary. Null when the caller supplied only the primary.
+      variants: r.variants && r.variants.length > 0 ? r.variants : null,
       model,
     });
   }
@@ -99,7 +112,7 @@ export function buildRadarDraftRows(
 // the session buffer still gets the replies; we just lose the restart copy.
 export async function persistRadarDrafts(
   tweets: RadarBatchTweet[],
-  replies: { tweetId: string; text: string; angle: string }[],
+  replies: BatchReplyRow[],
   model: string | null,
 ): Promise<void> {
   const rows = buildRadarDraftRows(tweets, replies, model);
