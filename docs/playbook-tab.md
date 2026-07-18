@@ -132,6 +132,17 @@ stratus can inject a short "relationship" briefing into a reply draft when you a
 
 If both sides clear the gate, a **lift** line appears (e.g. `lift: 1.4x views · 1.6x profile clicks`). Until then it's simply two cells to compare by eye.
 
+### Personal context
+
+**Question it answers:** *When my reply draft is warmed up with my own current context — this week's events, how I feel, my goals — does it convert better than a reply drafted without it?*
+
+stratus folds a short **personal-context brief** (from your Me tab) into every reply draft. This section measures whether that brief earns its place:
+
+- **with me-brief** — replies drafted with your personal context folded in.
+- **cold** — replies drafted without it.
+
+Because the brief is always on for replies (there's no toggle), the split comes from history: replies drafted before you had any profile entries, or in weeks when your profile rendered an empty block, count as **cold**. If both sides clear the gate, a **lift** line appears; until then it's two cells to compare by eye. Posts aren't measured here — the drafter always injects the block into post drafts, so there's no cold group to compare against.
+
 ### Media vs text-only
 
 **Question it answers:** *Do my posts with an image out-perform my plain-text posts?*
@@ -255,7 +266,7 @@ Read **Reply latency**. If the **early-reply lift** line shows a strong multipli
 - **Loading.** A muted `Loading…` (and `…` on the Refresh button) while the page fetches. It's one quick, free request.
 - **Brand new / mostly empty.** Right after you start using stratus, almost every section will say `insufficient data (n=…)`, `No measured replies yet`, `No published drafter posts yet`, or similar, and the guidance lines will be **silent**. This is normal — the page has nothing to lie about yet. It fills in as the daily metrics pass measures more of your tweets over the coming weeks.
 - **Gated cells.** Individual cells reading `insufficient data (n=7)` inside otherwise-populated tables. That cell needs more measured tweets; the rest of the table is fine.
-- **Lift lines silent.** Comparison sections (media, latency, relationship, idea) will show their two cells but no multiplier until *both* sides clear the gate.
+- **Lift lines silent.** Comparison sections (media, latency, relationship, personal context, idea) will show their two cells but no multiplier until *both* sides clear the gate.
 - **Error.** If the fetch fails you'll see a red error line; hit **Refresh** to retry.
 - **AI not configured.** If you press **Extract winner templates** and the server has no AI key, you get a plain message and no charge.
 
