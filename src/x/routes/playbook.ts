@@ -45,6 +45,7 @@ import {
   buildBatchVsSingle,
   buildIdeaEffectiveness,
   buildLatencyEffectiveness,
+  buildMeEffectiveness,
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
@@ -115,6 +116,7 @@ interface ReplyRow {
   angle: string | null;
   handle: string;
   hasRelationship: boolean;
+  hasMe: boolean;
   signals: PostContext['signals'] | null;
   sourceMetrics: PostContext['metrics'] | null;
   sourceText: string;
@@ -151,6 +153,7 @@ async function loadReplyRows(): Promise<ReplyRow[]> {
       angle: variants?.find((v) => v.text === d.replyText)?.angle ?? null,
       handle: d.sourceAuthorUsername.toLowerCase(),
       hasRelationship: typeof ctx?.relationship === 'string' && ctx.relationship.trim() !== '',
+      hasMe: typeof ctx?.me === 'string' && ctx.me.trim() !== '',
       signals: ctx?.signals ?? null,
       sourceMetrics: ctx?.metrics ?? null,
       sourceText: d.sourceText,
@@ -504,6 +507,10 @@ playbook.get('/playbook', async (c) => {
     bandCalibration: buildBandCalibration(scored, minN),
     relationshipLift: buildRelationshipLift(
       replyRows.map((r) => ({ hasRelationship: r.hasRelationship, outcome: r.outcome })),
+      minN,
+    ),
+    meEffectiveness: buildMeEffectiveness(
+      replyRows.map((r) => ({ hasMe: r.hasMe, outcome: r.outcome })),
       minN,
     ),
     mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),

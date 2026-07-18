@@ -933,6 +933,15 @@ export interface DigestFacts {
   neglected: { targets: string[]; allies: string[] };
   spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
   quests: { daysAllDone: number; daysTracked: number };
+  // M1 (ME.5): active Me goals with progress. Optional/nullable — digests cached
+  // before ME.5 lack the key; null when there are no active goals.
+  goals?: Array<{
+    label: string;
+    unit: string | null;
+    target: number;
+    current: number | null;
+    pct: number | null;
+  }> | null;
   guidance: { reply: string | null; post: string | null };
   // S0.7: where this week's posted replies landed vs my 2–10x target band.
   rosterCoverage: PlaybookRosterCoverage;
@@ -1297,6 +1306,16 @@ export interface Playbook {
   relationshipLift: {
     withRelationship: PlaybookCell;
     withoutRelationship: PlaybookCell;
+    viewsLift: number | null;
+    profileVisitsLift: number | null;
+  };
+  // Personal-context lift (M1/ME.5): replies that carried the Me brief vs cold
+  // ones. Replies are the only measured surface (posts always inject). Lift only
+  // when both sides clear the gate.
+  meEffectiveness: {
+    withMe: PlaybookCell;
+    withoutMe: PlaybookCell;
+    totalMeasured: number;
     viewsLift: number | null;
     profileVisitsLift: number | null;
   };

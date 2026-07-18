@@ -49,6 +49,17 @@ export interface DigestTweet {
   profileVisits: number | null;
 }
 
+/** M1 (ME.5) — one active goal with its computed progress, for the coach to
+ *  narrate. `current`/`pct` are null when the goal has no value yet (a followers
+ *  goal before the first daily snapshot). */
+export interface DigestGoal {
+  label: string;
+  unit: string | null;
+  target: number;
+  current: number | null;
+  pct: number | null;
+}
+
 export interface DigestFactInputs {
   weekKey: string;
   start: Date;
@@ -67,6 +78,8 @@ export interface DigestFactInputs {
   spendByPlatform: Array<{ platform: string; costUsd: number }>;
   /** streaks rows whose day falls inside the week. */
   streakDays: Array<{ day: string; allDone: boolean }>;
+  /** M1 (ME.5) — active Me goals with progress; null when there are none. */
+  goals: DigestGoal[] | null;
   /** The Playbook's gated guidance lines (null when the gate isn't met). */
   guidance: { reply: string | null; post: string | null };
   /** §S0.7 — where the week's posted replies went vs my 2–10x target band. */
@@ -93,6 +106,9 @@ export interface DigestFacts {
   neglected: { targets: string[]; allies: string[] };
   spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
   quests: { daysAllDone: number; daysTracked: number };
+  // M1 (ME.5): active goals with progress; null when there are none. Absent on
+  // digests cached before this landed (same contract as rosterCoverage/S4).
+  goals: DigestGoal[] | null;
   guidance: { reply: string | null; post: string | null };
   // S0.7: where this week's posted replies landed vs my 2–10x target band.
   rosterCoverage: RosterCoverage;
@@ -156,6 +172,7 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
       daysAllDone: i.streakDays.filter((d) => d.allDone).length,
       daysTracked: i.streakDays.length,
     },
+    goals: i.goals,
     guidance: i.guidance,
     rosterCoverage: i.rosterCoverage,
     imageSpendUsd: i.imageSpendUsd,

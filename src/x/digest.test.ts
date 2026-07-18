@@ -40,6 +40,7 @@ const BASE_INPUTS = {
   neglectedAllies: [],
   spendByPlatform: [],
   streakDays: [],
+  goals: null,
   guidance: { reply: null, post: null },
   rosterCoverage: buildRosterCoverage([], null),
   imageSpendUsd: 0,
@@ -54,6 +55,13 @@ describe('buildDigestFacts', () => {
     expect(f.activity).toEqual({ posts: 0, replies: 0, replyPct: null });
     expect(f.topTweets).toEqual([]);
     expect(f.spend.totalUsd).toBe(0);
+  });
+
+  test('goals pass through verbatim; null when there are none (M1/ME.5)', () => {
+    expect(buildDigestFacts(BASE_INPUTS).goals).toBeNull();
+    const goals = [{ label: '5K MRR', unit: 'MRR', target: 5000, current: 800, pct: 16 }];
+    const f = buildDigestFacts({ ...BASE_INPUTS, goals });
+    expect(f.goals).toBe(goals);
   });
 
   test('roster coverage passes through verbatim (S0.7)', () => {

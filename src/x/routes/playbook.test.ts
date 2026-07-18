@@ -43,6 +43,7 @@ async function seedReply(opts: {
   profileVisits: number;
   handle?: string;
   relationship?: string;
+  me?: string;
 }): Promise<void> {
   const replyText = `reply ${opts.id}`;
   await db
@@ -58,6 +59,7 @@ async function seedReply(opts: {
         signals: { band: 'hot', views: 5000, replies: 4, ageMin: 12, vpm: 400, bait: true },
         metrics: { views: 5000, replies: 4, reposts: 1, likes: 20 },
         ...(opts.relationship ? { relationship: opts.relationship } : {}),
+        ...(opts.me ? { me: opts.me } : {}),
       },
       replyText,
       variants: [{ text: replyText, angle: opts.angle }],
@@ -100,6 +102,7 @@ describe('playbook route', () => {
       views: 400,
       profileVisits: 6,
       relationship: '## My history with @pb_author',
+      me: 'ME: Goal: 5K MRR — at 800 (16%)',
     });
     await seedReply({
       id: 'a0000000-0000-4000-8000-000000000002',
@@ -242,6 +245,14 @@ describe('playbook route', () => {
     expect(body.relationshipLift.withoutRelationship.n).toBe(1);
     expect(body.relationshipLift.viewsLift).toBeNull(); // gated
 
+    // M1 (ME.5) personal-context lift — pb_r1 carries a me-brief, pb_r2 doesn't.
+    expect(body.meEffectiveness.withMe.n).toBe(1);
+    expect(body.meEffectiveness.withoutMe.n).toBe(1);
+    expect(body.meEffectiveness.viewsLift).toBeNull(); // gated
+    expect(body.meEffectiveness.withMe.n + body.meEffectiveness.withoutMe.n).toBe(
+      body.meEffectiveness.totalMeasured,
+    );
+
     // §S0.7 roster coverage rides along — assert the partition invariants
     // (band-value correctness is covered by the pure test, which doesn't depend
     // on whatever account snapshot other test files left as "latest").
@@ -319,6 +330,7 @@ describe('playbook route', () => {
     );
     expect(contrarian?.sufficient).toBe(true);
     expect(body.relationshipLift.viewsLift).toBe(4); // 400 / 100
+    expect(body.meEffectiveness.viewsLift).toBe(4); // 400 (with me) / 100 (cold)
     // guidance stays on the DEFAULT gate even when the page opens its own.
     expect(body.guidance.reply).toBeNull();
   });

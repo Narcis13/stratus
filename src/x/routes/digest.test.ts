@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { digests, postsPublished } from '../db/schema.ts';
+import { digests, meGoals, postsPublished } from '../db/schema.ts';
 import type { DigestFacts } from '../digest.ts';
 import { digest } from './digest.ts';
 
@@ -16,6 +16,8 @@ app.route('/x', digest);
 const WEEK_KEY = '2025-11-03'; // a Monday, far from other tests' data
 const CACHED_WEEK_KEY = '2025-11-10';
 const TWEET_ID = '98000000000000001';
+const GOAL_ID = 'd1900000-0000-4000-8000-000000000001';
+const GOAL_LABEL = 'c9 digest goal';
 
 let savedKey: string | undefined;
 
@@ -58,12 +60,27 @@ describe('digest route', () => {
         costUsd: 0.01,
       })
       .onConflictDoNothing();
+    // An active mrr goal with a manual value → deterministic 16% progress,
+    // independent of whatever account snapshot other suites left as "latest".
+    await db
+      .insert(meGoals)
+      .values({
+        id: GOAL_ID,
+        label: GOAL_LABEL,
+        kind: 'mrr',
+        target: 5000,
+        unit: 'MRR',
+        currentValue: 800,
+        status: 'active',
+      })
+      .onConflictDoNothing();
   });
 
   afterAll(async () => {
     process.env.XAI_API_KEY = savedKey ?? '';
     await db.delete(digests).where(eq(digests.weekKey, CACHED_WEEK_KEY));
     await db.delete(postsPublished).where(eq(postsPublished.tweetId, TWEET_ID));
+    await db.delete(meGoals).where(eq(meGoals.id, GOAL_ID));
   });
 
   test('rejects malformed params', async () => {
@@ -98,6 +115,19 @@ describe('digest route', () => {
     expect(status).toBe(200);
     expect(body.narrative).toBeNull();
     expect(body.narrativeError).toBeUndefined();
+  });
+
+  test('active Me goals ride in the facts with computed progress (M1/ME.5)', async () => {
+    const { body } = await get(`/x/digest?week=${WEEK_KEY}&factsOnly=true`);
+    expect(Array.isArray(body.facts.goals)).toBe(true);
+    const goal = body.facts.goals?.find((g) => g.label === GOAL_LABEL);
+    expect(goal).toMatchObject({
+      label: GOAL_LABEL,
+      unit: 'MRR',
+      target: 5000,
+      current: 800,
+      pct: 16,
+    });
   });
 
   test('a stored digest is served from cache', async () => {

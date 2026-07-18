@@ -14,6 +14,7 @@ import {
   buildBatchVsSingle,
   buildIdeaEffectiveness,
   buildLatencyEffectiveness,
+  buildMeEffectiveness,
   buildMediaEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
@@ -288,6 +289,33 @@ describe('buildRelationshipLift', () => {
     const open = buildRelationshipLift(rows, 2);
     expect(open.viewsLift).toBe(3);
     expect(open.profileVisitsLift).toBe(2.5);
+  });
+});
+
+describe('buildMeEffectiveness', () => {
+  const rows = [
+    { hasMe: true, outcome: out(200, 4) },
+    { hasMe: true, outcome: out(400, 6) },
+    { hasMe: false, outcome: out(100, 2) },
+    { hasMe: false, outcome: out(100, 2) },
+    { hasMe: false, outcome: null }, // posted, unmeasured
+  ];
+
+  test('splits on me present/absent; lift gated on both sides', () => {
+    const gated = buildMeEffectiveness(rows, 3);
+    expect(gated.withMe.n).toBe(2);
+    expect(gated.withoutMe.n).toBe(2);
+    expect(gated.viewsLift).toBeNull(); // 2 < 3 per side
+
+    const open = buildMeEffectiveness(rows, 2);
+    expect(open.viewsLift).toBe(3); // 300 / 100
+    expect(open.profileVisitsLift).toBe(2.5); // 5 / 2
+  });
+
+  test('partition invariant: every measured row lands in exactly one cell', () => {
+    const r = buildMeEffectiveness(rows, 2);
+    expect(r.withMe.n + r.withoutMe.n).toBe(r.totalMeasured);
+    expect(r.totalMeasured).toBe(4); // the null row is unmeasured
   });
 });
 

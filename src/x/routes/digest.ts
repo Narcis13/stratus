@@ -14,6 +14,7 @@ import { GrokApiError, askGrok } from '../../grok/index.ts';
 import {
   accountSnapshots,
   digests,
+  meGoals,
   metricsSnapshots,
   people,
   personEvents,
@@ -25,11 +26,13 @@ import {
 import {
   DIGEST_SCHEMA,
   type DigestFacts,
+  type DigestGoal,
   buildDigestFacts,
   buildDigestInput,
   parseDigestNarrative,
   weekBounds,
 } from '../digest.ts';
+import { type MeGoal, resolveGoals } from '../me/profile.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
@@ -250,6 +253,10 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
   // §S0.7 — where the week's posted replies landed vs my 2–10x target band.
   const rosterCoverage = await loadRosterCoverage(start, end);
 
+  // M1 (ME.5) — active goals with progress (all-time latest snapshot, like the
+  // Me tab); the narration may mention progress without inventing numbers.
+  const goals = await loadGoals(new Date());
+
   // §S4 — the week's AI image spend (isolated under platform 'xai') and the
   // all-time media-vs-text lift the studio exists to earn (gated n≥20/side).
   const imageSpendUsd =
@@ -280,11 +287,33 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
       costUsd: Math.round(Number(r.costUsd) * 1e5) / 1e5,
     })),
     streakDays: streakRows,
+    goals,
     guidance: { reply: replyGuidance, post: postGuidance },
     rosterCoverage,
     imageSpendUsd,
     mediaVsText,
   });
+}
+
+/** M1 (ME.5) — active Me goals with computed progress. followers goals read the
+ *  latest account snapshot (all-time latest, like the Me tab); mrr/custom use the
+ *  manual currentValue. null when there are none, so the narration skips it. */
+async function loadGoals(now: Date): Promise<DigestGoal[] | null> {
+  const goals = (await db.select().from(meGoals).where(eq(meGoals.status, 'active'))) as MeGoal[];
+  if (goals.length === 0) return null;
+  const [acct] = await db
+    .select({ followersCount: accountSnapshots.followersCount })
+    .from(accountSnapshots)
+    .orderBy(desc(accountSnapshots.snapshotAt))
+    .limit(1);
+  const latestFollowers = acct ? acct.followersCount : null;
+  return resolveGoals(goals, latestFollowers, now).map((g) => ({
+    label: g.label,
+    unit: g.unit,
+    target: g.target,
+    current: g.progress?.current ?? null,
+    pct: g.progress?.pct ?? null,
+  }));
 }
 
 async function loadFanCounts(

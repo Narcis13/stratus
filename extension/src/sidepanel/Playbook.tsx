@@ -211,6 +211,34 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
           </section>
 
           <section className="brief-section">
+            <h3>Personal context ({data.meEffectiveness.totalMeasured} measured)</h3>
+            <table className="pb-table">
+              <tbody>
+                <tr>
+                  <td>with me-brief</td>
+                  <td>{cellSummary(data.meEffectiveness.withMe, data.minN)}</td>
+                </tr>
+                <tr>
+                  <td>cold</td>
+                  <td>{cellSummary(data.meEffectiveness.withoutMe, data.minN)}</td>
+                </tr>
+              </tbody>
+            </table>
+            {data.meEffectiveness.viewsLift !== null ? (
+              <div className="status-line">
+                lift: {data.meEffectiveness.viewsLift}x views
+                {data.meEffectiveness.profileVisitsLift !== null &&
+                  ` · ${data.meEffectiveness.profileVisitsLift}x profile clicks`}
+              </div>
+            ) : (
+              <div className="muted pb-note">
+                lift stays silent until both sides clear n≥{data.minN} — whether the Me/profile
+                brief makes replies land better.
+              </div>
+            )}
+          </section>
+
+          <section className="brief-section">
             <h3>Media vs text-only ({data.mediaEffectiveness.totalMeasured} measured)</h3>
             <table className="pb-table">
               <tbody>
