@@ -18,6 +18,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
 import { InspectError, describeTable, listTables, runSelect } from './data/inspect.ts';
+import { ME_KINDS } from './me/profile.ts';
 
 type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -317,6 +318,17 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
     async () => route('/x/niche'),
   );
 
+  server.registerTool(
+    'x_me',
+    {
+      title: 'My profile (Me)',
+      description:
+        'The dynamic personal-context layer the drafters inject at the prompt tail: evergreen facts, dated events, current emotions, and notes (each with an `inWindow` freshness flag), plus goals with auto-computed progress. This is the same material a post/reply draft may draw on. Free, local read.',
+      inputSchema: {},
+    },
+    async () => route('/x/me'),
+  );
+
   // -------------------------------------------------------------- Write tier
   // Tiny, never X-billed. The write ceiling is a DRAFT calendar row — MCP can
   // propose, only the human promotes it to `pending`.
@@ -355,6 +367,37 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
         method: 'POST',
         body: { type: 'note', summary: text },
       }),
+  );
+
+  server.registerTool(
+    'x_add_me_entry',
+    {
+      title: 'Add a Me entry',
+      description:
+        'Journal a personal-context entry into your profile — a fact, a dated event, a current emotion, or a note. The drafters inject the fresh slice at the prompt tail so drafts sound like a person having this specific week. Free, local write (no X/Grok cost). Goals are NOT settable here — those are deliberate, low-frequency decisions made in the Me tab.',
+      inputSchema: {
+        kind: z
+          .enum(ME_KINDS)
+          .describe('One of: fact (evergreen), event (dated), emotion (7d window), note.'),
+        text: z.string().min(1).describe('The entry text (≤1000 chars, any language).'),
+        happenedAt: z
+          .string()
+          .optional()
+          .describe(
+            'Optional ISO timestamp for a dated event; omit for undated (uses created_at).',
+          ),
+        pinned: z
+          .boolean()
+          .optional()
+          .describe('Pin it to always inject, overriding the freshness windows.'),
+      },
+    },
+    async ({ kind, text, happenedAt, pinned }) => {
+      const body: Record<string, unknown> = { kind, text };
+      if (happenedAt !== undefined) body.happenedAt = happenedAt;
+      if (pinned !== undefined) body.pinned = pinned;
+      return route('/x/me/entries', { method: 'POST', body });
+    },
   );
 
   server.registerTool(

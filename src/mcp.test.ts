@@ -98,10 +98,12 @@ describe.if(authed)('MCP transport', () => {
     expect(names.has('x_query')).toBe(true);
     expect(names.has('x_brief')).toBe(true);
     expect(names.has('x_niche')).toBe(true);
+    expect(names.has('x_me')).toBe(true);
     expect(names.has('x_draft_post')).toBe(true);
     expect(names.has('x_add_idea')).toBe(true);
-    // 3 schema + 11 curated (incl. x_niche) + 3 write.
-    expect(names.size).toBe(17);
+    expect(names.has('x_add_me_entry')).toBe(true);
+    // 3 schema + 12 curated (incl. x_niche, x_me) + 4 write (incl. x_add_me_entry).
+    expect(names.size).toBe(19);
   });
 });
 
@@ -151,6 +153,46 @@ describe.if(authed)('MCP tool tiers', () => {
     const { data, isError } = toolPayload(env);
     expect(isError).toBe(false);
     expect((data as { status?: string }).status).toBe('open');
+  });
+
+  test('write tier: x_add_me_entry journals an entry readable via x_me', async () => {
+    const marker = 'mcp unit-test emotion';
+    const add = await rpc('tools/call', {
+      name: 'x_add_me_entry',
+      arguments: { kind: 'emotion', text: marker },
+    });
+    const { data, isError } = toolPayload(add.env);
+    expect(isError).toBe(false);
+    const created = data as { id?: string; kind?: string };
+    expect(created.kind).toBe('emotion');
+
+    const list = await rpc('tools/call', { name: 'x_me', arguments: {} });
+    const { data: meData, isError: meErr } = toolPayload(list.env);
+    expect(meErr).toBe(false);
+    const entries = (meData as { entries?: { text: string }[] }).entries ?? [];
+    expect(entries.some((e) => e.text === marker)).toBe(true);
+
+    // Clean up: the :memory: DB is ONE process across every test file, and
+    // me.test.ts asserts an empty profile — leave no lingering active entry.
+    if (created.id) {
+      const del = await app.request(`/x/me/entries/${created.id}`, {
+        method: 'DELETE',
+        headers: { authorization: BEARER },
+      });
+      expect(del.status).toBe(200);
+    }
+  });
+
+  test('write tier: x_add_me_entry rejects an invalid kind at the schema layer', async () => {
+    const { env } = await rpc('tools/call', {
+      name: 'x_add_me_entry',
+      arguments: { kind: 'rant', text: 'not a valid kind' },
+    });
+    // A zod-enum failure never runs the handler — it surfaces as a JSON-RPC error
+    // envelope (schema layer); a route-layer 400 would surface as an isError
+    // result. Accept either so the test is robust to the SDK's rejection path.
+    const rejected = env?.error !== undefined || toolPayload(env).isError;
+    expect(rejected).toBe(true);
   });
 });
 

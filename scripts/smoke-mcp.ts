@@ -153,8 +153,11 @@ async function callTool(
     'x_cost',
     'x_search_voice',
     'x_digest',
+    'x_niche',
+    'x_me',
     'x_add_idea',
     'x_add_person_note',
+    'x_add_me_entry',
     'x_draft_post',
   ];
   for (const name of expected) if (!names.has(name)) fail(`tools/list missing ${name}`);
@@ -261,6 +264,37 @@ async function callTool(
   );
   if (!isError) fail('x_draft_post with a bogus pillar should be an error result');
   console.log('x_draft_post invalid-pillar rejected OK');
+}
+
+// ------------------------------------------------------------- 7. Me profile tools
+
+// x_add_me_entry journals into the profile; x_me reads it back. Both $0.
+{
+  const marker = 'smoke me-entry from MCP';
+  const { parsed, isError } = toolText(
+    await callTool('x_add_me_entry', { kind: 'emotion', text: marker }),
+  );
+  if (isError) fail(`x_add_me_entry errored: ${JSON.stringify(parsed)}`);
+  const row = parsed as { id?: string; kind?: string; text?: string };
+  if (!row.id || row.kind !== 'emotion') fail(`x_add_me_entry bad row: ${JSON.stringify(row)}`);
+  console.log(`x_add_me_entry OK (id ${row.id}, kind ${row.kind})`);
+
+  const { parsed: me, isError: meErr } = toolText(await callTool('x_me', {}));
+  if (meErr) fail(`x_me errored: ${JSON.stringify(me)}`);
+  const entries = (me as { entries?: { text: string }[] }).entries ?? [];
+  if (!entries.some((e) => e.text === marker))
+    fail(`x_me did not return the journaled entry: ${JSON.stringify(me)}`);
+  console.log(`x_me OK (${entries.length} entries, journaled entry present)`);
+}
+
+// x_add_me_entry rejects an invalid kind at the SCHEMA layer (the zod enum), so
+// the handler/route never runs. That surfaces as a JSON-RPC error envelope; a
+// route-layer 400 would surface as an isError result. Accept either.
+{
+  const env = await callTool('x_add_me_entry', { kind: 'rant', text: 'nope' });
+  const rejected = !!env?.error || (env?.result as ToolCallResult | undefined)?.isError === true;
+  if (!rejected) fail('x_add_me_entry should reject an invalid kind');
+  console.log('x_add_me_entry invalid-kind rejected OK');
 }
 
 console.log('\nAll S2 MCP smoke checks passed ($0, ephemeral in-memory DB).');
