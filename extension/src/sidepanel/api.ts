@@ -59,9 +59,13 @@ import {
   type MetricsAccountResponse,
   type Niche,
   type NicheActive,
+  type NicheChannelProposal,
   type NicheCreateBody,
   type NicheDoctrine,
+  type NicheDraftResult,
   type NichePatchBody,
+  type NichePillarProposal,
+  type NicheProposal,
   type PeopleListOpts,
   type PeopleListResponse,
   type Person,
@@ -165,9 +169,13 @@ export type {
   MetricsAccountResponse,
   Niche,
   NicheActive,
+  NicheChannelProposal,
   NicheCreateBody,
   NicheDoctrine,
+  NicheDraftResult,
   NichePatchBody,
+  NichePillarProposal,
+  NicheProposal,
   PillarCreateBody,
   PillarDraftBody,
   PillarDraftResult,
@@ -408,6 +416,15 @@ export const api = {
 
     remove(s: Settings, slug: string): Promise<unknown> {
       return request<unknown>(s, `/x/niches/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    },
+
+    // N0.8 — Grok wizard: prose → a proposed niche (persona/beliefs/pillars/
+    // channels). Not persisted; review/edit then create.
+    draft(s: Settings, description: string): Promise<NicheDraftResult> {
+      return request<NicheDraftResult>(s, '/x/niche/draft', {
+        method: 'POST',
+        body: { description },
+      });
     },
   },
 

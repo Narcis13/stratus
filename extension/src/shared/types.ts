@@ -210,6 +210,39 @@ export interface NichePatchBody {
   active?: boolean;
 }
 
+// N0.8 — the wizard proposal: prose → a complete proposed niche. Never persisted
+// by the server; the panel reviews/edits then saves via niche/pillars/channels
+// create routes.
+export interface NichePillarProposal {
+  slug: string;
+  label: string;
+  body: string;
+}
+
+export interface NicheChannelProposal {
+  slug: string;
+  label: string;
+  keywords: string[];
+}
+
+export interface NicheProposal {
+  slug: string;
+  label: string;
+  description: string;
+  persona: string;
+  beliefs: string;
+  replyPersona: string;
+  pillars: NichePillarProposal[];
+  channels: NicheChannelProposal[];
+}
+
+export interface NicheDraftResult {
+  proposal: NicheProposal;
+  model: string;
+  costUsd: number;
+  requestId: string | null;
+}
+
 export interface PostDraftResponse {
   drafts: Array<ScheduledPost & { register: PostRegister | null }>;
   winnersUsed: number;

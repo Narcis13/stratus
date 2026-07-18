@@ -16,12 +16,16 @@
 import { desc, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import { GrokApiError, askGrok } from '../../grok/index.ts';
 import { niches } from '../db/schema.ts';
 import { type NicheDoctrine, isValidNicheSlug, resolveDoctrine } from '../niche/defaults.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
+import { NICHE_WIZARD_SCHEMA, buildNicheWizardInput, parseNicheProposal } from '../niche/wizard.ts';
 
 const LABEL_MAX = 120;
 const TEXT_MAX = 10000;
+const DESCRIPTION_MAX = 5000; // wizard input cap (§7.4 — validated before spend)
+const NICHE_WIZARD_CACHE_KEY = 'stratus-niche-wizard';
 const DOCTRINE_KEYS: (keyof NicheDoctrine)[] = [
   'replyTargetMin',
   'replyTargetMax',
@@ -201,4 +205,64 @@ nicheRouter.delete('/niches/:slug', (c) => {
   // channel delete leaving tag strings behind (a stale link degrades gracefully).
   db.delete(niches).where(eq(niches.slug, slug)).run();
   return c.json({ ok: true });
+});
+
+// N0.8 — the wizard: prose self-description → a complete PROPOSED niche
+// (persona/beliefs/replyPersona + 3 pillars + ≤5 channels). One Grok structured-
+// outputs call, ~$0.01, human-clicked; the proposal is NEVER persisted here (the
+// extension reviews/edits, then saves through the CRUD routes) — the
+// `POST /x/pillars/draft` exposure class. The router stays always-mounted; the
+// XAI key is checked at runtime (§7.22). Description is validated BEFORE the key
+// check so the $0 guards are testable without a key, and the paid call is last
+// (§7.4 — spend downstream of every reversible refusal).
+nicheRouter.post('/niche/draft', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return c.json({ error: 'invalid_body' }, 400);
+  const b = raw as Record<string, unknown>;
+
+  const rawDesc = b.description;
+  if (typeof rawDesc !== 'string' || rawDesc.length > DESCRIPTION_MAX)
+    return c.json({ error: 'invalid_description' }, 400);
+  const description = rawDesc.trim();
+  if (description === '') return c.json({ error: 'invalid_description' }, 400);
+
+  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+
+  let result: Awaited<ReturnType<typeof askGrok>>;
+  try {
+    result = await askGrok({
+      messages: buildNicheWizardInput(description),
+      reasoningEffort: 'low',
+      maxOutputTokens: 2500,
+      temperature: 0.7,
+      jsonSchema: { name: 'niche', schema: NICHE_WIZARD_SCHEMA },
+      promptCacheKey: NICHE_WIZARD_CACHE_KEY,
+    });
+  } catch (err) {
+    if (err instanceof GrokApiError) {
+      return c.json(
+        {
+          error: 'grok_upstream_error',
+          status: err.status,
+          message: err.message,
+          requestId: err.requestId,
+        },
+        err.status === 429 ? 429 : 502,
+      );
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/niche/draft failed:', detail);
+    return c.json({ error: 'draft_failed', detail }, 502);
+  }
+
+  const proposal = parseNicheProposal(result.text);
+  if (!proposal) return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+
+  return c.json({
+    proposal,
+    model: result.model,
+    costUsd: result.costUsd,
+    requestId: result.requestId,
+  });
 });

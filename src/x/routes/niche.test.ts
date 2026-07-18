@@ -11,6 +11,7 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { niches } from '../db/schema.ts';
 import { DEFAULT_DOCTRINE, DEFAULT_NICHE } from '../niche/defaults.ts';
+import { buildNicheWizardInput, parseNicheProposal } from '../niche/wizard.ts';
 import { nicheRouter } from './niche.ts';
 
 const app = new Hono();
@@ -187,5 +188,98 @@ describe('niche CRUD + activation', () => {
     const unknown = await send<{ error: string }>('/x/niches/does-not-exist-n2', 'DELETE');
     expect(unknown.status).toBe(404);
     expect(unknown.body.error).toBe('not_found');
+  });
+});
+
+// A valid, well-formed proposal Grok would return (structured outputs). Shared by
+// the parse tests below.
+const VALID_PROPOSAL = {
+  slug: 'nutrition',
+  label: 'Evidence-based nutrition',
+  description: 'A registered dietitian building science-first meal systems in public.',
+  persona: '- Registered dietitian, 10 years clinical.\n- Ships evidence-based plans.',
+  beliefs: '- Whole foods > supplements.\n- Adherence beats optimality.',
+  replyPersona: '- I am a dietitian.\n- I build in public.',
+  pillars: [
+    { slug: 'meal-prep', label: 'Meal prep — the HOW', body: 'Practical batch cooking systems.' },
+    {
+      slug: 'myth-busting',
+      label: 'Myth busting — the WHY',
+      body: 'Debunk fad diets with evidence.',
+    },
+    {
+      slug: 'client-wins',
+      label: 'Client wins — the WHO',
+      body: 'Real adherence stories from clients.',
+    },
+  ],
+  channels: [
+    { slug: 'protein', label: 'Protein', keywords: ['Protein', 'whey', 'protein'] },
+    { slug: 'fasting', label: 'Fasting', keywords: ['fasting', 'IF'] },
+  ],
+};
+
+describe('niche wizard (N0.8)', () => {
+  test('POST /niche/draft — empty description → 400 (pre-network)', async () => {
+    const { status, body } = await send<{ error: string }>('/x/niche/draft', 'POST', {
+      description: '   ',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_description');
+  });
+
+  test('POST /niche/draft — oversize description → 400 (pre-network)', async () => {
+    const { status, body } = await send<{ error: string }>('/x/niche/draft', 'POST', {
+      description: 'x'.repeat(5001),
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_description');
+  });
+
+  test('POST /niche/draft — valid description, no XAI key → 503 (no Grok call)', async () => {
+    // Force the key absent + restore, so this NEVER spends even on a dev machine
+    // that has XAI_API_KEY set. The description is valid, so a 503 proves the key
+    // check gates the paid call.
+    const prev = process.env.XAI_API_KEY;
+    process.env.XAI_API_KEY = undefined;
+    // biome-ignore lint/performance/noDelete: must actually unset, not set to "undefined"
+    delete process.env.XAI_API_KEY;
+    try {
+      const { status, body } = await send<{ error: string }>('/x/niche/draft', 'POST', {
+        description: 'A vegan nutrition coach who ships meal plans and debunks fad diets.',
+      });
+      expect(status).toBe(503);
+      expect(body.error).toBe('grok_not_configured');
+    } finally {
+      if (prev !== undefined) process.env.XAI_API_KEY = prev;
+    }
+  });
+
+  test('parseNicheProposal — valid proposal parses, keywords lowercased + deduped', () => {
+    const p = parseNicheProposal(JSON.stringify(VALID_PROPOSAL));
+    expect(p).not.toBeNull();
+    expect(p?.slug).toBe('nutrition');
+    expect(p?.pillars.length).toBe(3);
+    expect(p?.channels.length).toBe(2);
+    expect(p?.channels[0]?.keywords).toEqual(['protein', 'whey']);
+  });
+
+  test('parseNicheProposal — uncoercible niche slug → null', () => {
+    expect(parseNicheProposal(JSON.stringify({ ...VALID_PROPOSAL, slug: '!!!' }))).toBeNull();
+  });
+
+  test('parseNicheProposal — wrong pillar count → null', () => {
+    const two = { ...VALID_PROPOSAL, pillars: VALID_PROPOSAL.pillars.slice(0, 2) };
+    expect(parseNicheProposal(JSON.stringify(two))).toBeNull();
+  });
+
+  test('parseNicheProposal — junk JSON → null', () => {
+    expect(parseNicheProposal('not json {')).toBeNull();
+  });
+
+  test('buildNicheWizardInput puts the user description after the instruction block', () => {
+    const desc = 'UNIQUE_MARKER_DESCRIPTION_9x7q';
+    const [msg] = buildNicheWizardInput(desc);
+    expect(msg?.content.indexOf(desc)).toBeGreaterThan(msg?.content.indexOf('EXAMPLE NICHE') ?? -1);
   });
 });

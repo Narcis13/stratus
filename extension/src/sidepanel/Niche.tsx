@@ -3,8 +3,11 @@ import {
   ApiError,
   type Niche,
   type NicheActive,
+  type NicheChannelProposal,
   type NicheDoctrine,
   type NichePatchBody,
+  type NichePillarProposal,
+  type NicheProposal,
   api,
 } from './api.ts';
 import { type Settings, getSettings } from './storage.ts';
@@ -25,6 +28,10 @@ const ERR: Record<string, string> = {
   last_active_niche: "Can't deactivate the only active niche — activate another first.",
   niche_active: "Can't delete the active niche — activate another first.",
   not_found: 'Niche not found.',
+  grok_not_configured: 'The AI wizard needs XAI_API_KEY set on the server.',
+  grok_parse_error: "The AI didn't return a usable niche — try again.",
+  grok_upstream_error: 'The AI service is unavailable right now — try again.',
+  draft_failed: 'The AI wizard failed — try again.',
 };
 
 function errMsg(e: unknown, fallback: string): string {
@@ -138,6 +145,12 @@ export function NicheCard(): JSX.Element {
           ))}
         </ul>
       )}
+
+      <NicheWizard
+        settings={settings}
+        prevActiveSlug={active?.niche.slug ?? null}
+        onDone={refresh}
+      />
 
       <AddNiche settings={settings} onCreated={refresh} />
     </section>
@@ -436,7 +449,7 @@ function AddNiche({ settings, onCreated }: AddProps): JSX.Element {
       </div>
       <p className="muted">
         Created inactive — Activate it below to switch. Persona, beliefs and reply persona are
-        required (the AI wizard can fill them later).
+        required (or use the AI wizard above to fill them).
       </p>
 
       <label className="field">
@@ -487,6 +500,328 @@ function AddNiche({ settings, onCreated }: AddProps): JSX.Element {
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+interface WizardProps {
+  settings: Settings;
+  prevActiveSlug: string | null;
+  onDone: () => void;
+}
+
+// N0.8 — the AI wizard: paste a prose self-description → Grok proposes a full
+// niche (persona/beliefs/replyPersona + 3 pillars + ≤5 channels) → review/edit →
+// Create. Persisting order matters: create the niche, ACTIVATE it, THEN create
+// the pillars/channels so their server-side stamps land on the new niche (the
+// POST routes stamp whatever niche is active). We then offer to switch back to
+// whatever was active before, since activating is a real app-wide side effect.
+function NicheWizard({ settings, prevActiveSlug, onDone }: WizardProps): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [description, setDescription] = useState('');
+  const [proposal, setProposal] = useState<NicheProposal | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<{ slug: string; back: string | null } | null>(null);
+
+  const reset = (): void => {
+    setDescription('');
+    setProposal(null);
+    setErr(null);
+    setDone(null);
+  };
+
+  const generate = async (): Promise<void> => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api.niche.draft(settings, description.trim());
+      setProposal(r.proposal);
+    } catch (e) {
+      setErr(errMsg(e, 'Generation failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setField = <K extends keyof NicheProposal>(key: K, val: NicheProposal[K]): void =>
+    setProposal((p) => (p ? { ...p, [key]: val } : p));
+
+  const setPillar = (i: number, patch: Partial<NichePillarProposal>): void =>
+    setProposal((p) =>
+      p ? { ...p, pillars: p.pillars.map((x, j) => (j === i ? { ...x, ...patch } : x)) } : p,
+    );
+
+  const setChannel = (i: number, patch: Partial<NicheChannelProposal>): void =>
+    setProposal((p) =>
+      p ? { ...p, channels: p.channels.map((x, j) => (j === i ? { ...x, ...patch } : x)) } : p,
+    );
+
+  const create = async (): Promise<void> => {
+    if (!proposal) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.niche.create(settings, {
+        slug: proposal.slug,
+        label: proposal.label,
+        persona: proposal.persona,
+        beliefs: proposal.beliefs,
+        replyPersona: proposal.replyPersona,
+        ...(proposal.description.trim() !== '' ? { description: proposal.description.trim() } : {}),
+      });
+      // Activate FIRST so the pillar/channel creates below stamp the new niche.
+      await api.niche.update(settings, proposal.slug, { active: true });
+      for (const p of proposal.pillars) {
+        await api.pillars.create(settings, { slug: p.slug, label: p.label, body: p.body });
+      }
+      for (const ch of proposal.channels) {
+        await api.channels.create(settings, {
+          slug: ch.slug,
+          label: ch.label,
+          ...(ch.keywords.length > 0 ? { keywords: ch.keywords } : {}),
+        });
+      }
+      setDone({ slug: proposal.slug, back: prevActiveSlug });
+      setProposal(null);
+      onDone(); // refresh the card — the new niche is now active
+    } catch (e) {
+      setErr(errMsg(e, 'Create failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const switchBack = async (): Promise<void> => {
+    if (!done?.back) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.niche.update(settings, done.back, { active: true });
+      reset();
+      setOpen(false);
+      onDone();
+    } catch (e) {
+      setErr(errMsg(e, 'Switch failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <div className="pillar-add-bar">
+        <button type="button" onClick={() => setOpen(true)}>
+          AI wizard — describe your niche
+        </button>
+      </div>
+    );
+  }
+
+  if (done) {
+    return (
+      <div className="pillar-card pillar-add">
+        <div className="pillar-card-head">
+          <strong>Niche created</strong>
+          <span className="badge badge-auto">active</span>
+        </div>
+        <p className="muted">
+          <code className="pillar-slug">{done.slug}</code> was created with its pillars and
+          channels, and is now the active niche.
+        </p>
+        {err && <div className="error">{err}</div>}
+        <div className="pillar-card-actions">
+          {done.back && done.back !== done.slug && (
+            <button type="button" onClick={() => void switchBack()} disabled={busy}>
+              {busy ? '…' : `Switch back to ${done.back}`}
+            </button>
+          )}
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              reset();
+              setOpen(false);
+            }}
+            disabled={busy}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pillar-card pillar-add">
+      <div className="pillar-card-head">
+        <strong>AI niche wizard</strong>
+      </div>
+
+      {!proposal ? (
+        <>
+          <p className="muted">
+            Paste who you are / what your niche is (Romanian OK). The AI drafts a full niche —
+            persona, beliefs, 3 pillars and channels — for you to review before saving.
+          </p>
+          <label className="field">
+            <span>Description</span>
+            <textarea
+              rows={8}
+              value={description}
+              placeholder="e.g. I'm a registered dietitian who ships evidence-based meal plans and debunks fad diets, building in public…"
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </label>
+          {err && <div className="error">{err}</div>}
+          <div className="pillar-card-actions">
+            <button
+              type="button"
+              className="primary"
+              onClick={() => void generate()}
+              disabled={busy || description.trim() === ''}
+            >
+              {busy ? 'Generating…' : 'Generate'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                reset();
+                setOpen(false);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="muted">
+            Review and edit, then Create. Creating activates this niche (you can switch back after).
+          </p>
+          <label className="field">
+            <span>Slug</span>
+            <input
+              value={proposal.slug}
+              onChange={(e) => setField('slug', e.target.value)}
+              spellCheck={false}
+            />
+          </label>
+          <label className="field">
+            <span>Label</span>
+            <input value={proposal.label} onChange={(e) => setField('label', e.target.value)} />
+          </label>
+          <label className="field">
+            <span>Description</span>
+            <textarea
+              rows={4}
+              value={proposal.description}
+              onChange={(e) => setField('description', e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Persona</span>
+            <textarea
+              rows={8}
+              value={proposal.persona}
+              onChange={(e) => setField('persona', e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Beliefs</span>
+            <textarea
+              rows={8}
+              value={proposal.beliefs}
+              onChange={(e) => setField('beliefs', e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>Reply persona</span>
+            <textarea
+              rows={4}
+              value={proposal.replyPersona}
+              onChange={(e) => setField('replyPersona', e.target.value)}
+            />
+          </label>
+
+          <div className="field">
+            <span>Pillars (3)</span>
+            {proposal.pillars.map((p, i) => (
+              <div key={p.slug || i} className="pillar-card" style={{ marginTop: 6 }}>
+                <input
+                  value={p.slug}
+                  onChange={(e) => setPillar(i, { slug: e.target.value })}
+                  spellCheck={false}
+                  placeholder="slug"
+                />
+                <input
+                  value={p.label}
+                  onChange={(e) => setPillar(i, { label: e.target.value })}
+                  placeholder="label"
+                  style={{ marginTop: 4 }}
+                />
+                <textarea
+                  rows={3}
+                  value={p.body}
+                  onChange={(e) => setPillar(i, { body: e.target.value })}
+                  style={{ marginTop: 4 }}
+                />
+              </div>
+            ))}
+          </div>
+
+          {proposal.channels.length > 0 && (
+            <div className="field">
+              <span>Channels</span>
+              {proposal.channels.map((ch, i) => (
+                <div key={ch.slug || i} className="row" style={{ gap: 6, marginTop: 4 }}>
+                  <input
+                    value={ch.slug}
+                    onChange={(e) => setChannel(i, { slug: e.target.value })}
+                    spellCheck={false}
+                    placeholder="slug"
+                    style={{ flex: '0 0 110px' }}
+                  />
+                  <input
+                    value={ch.keywords.join(', ')}
+                    onChange={(e) =>
+                      setChannel(i, {
+                        keywords: e.target.value
+                          .split(',')
+                          .map((k) => k.trim().toLowerCase())
+                          .filter((k) => k !== ''),
+                      })
+                    }
+                    placeholder="keywords, comma-separated"
+                    style={{ flex: 1 }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {err && <div className="error">{err}</div>}
+          <div className="pillar-card-actions">
+            <button type="button" className="primary" onClick={() => void create()} disabled={busy}>
+              {busy ? 'Creating…' : 'Create niche'}
+            </button>
+            <button type="button" onClick={() => setProposal(null)} disabled={busy}>
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                reset();
+                setOpen(false);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }
