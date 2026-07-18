@@ -92,6 +92,14 @@ export function KitEditor({ kit, onPatch, onReplace, onError, onNotice }: Props)
           disabled={!kit.watermark}
         />
       </div>
+      <label className="row studio-check">
+        <input
+          type="checkbox"
+          checked={kit.mascot}
+          onChange={(e) => onPatch({ mascot: e.target.checked })}
+        />
+        <span>Cloud mascot</span>
+      </label>
       <label className="field">
         <span>AI background style suffix (the brand — keep "no text")</span>
         <textarea

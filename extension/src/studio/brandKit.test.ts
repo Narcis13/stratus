@@ -19,6 +19,8 @@ describe('brand kit round-trip', () => {
       watermark: false,
       watermarkText: 'made by hand',
       imageStyleSuffix: 'flat vector, no text',
+      // non-default so the round-trip proves the field is read, not defaulted
+      mascot: false,
     };
     expect(parseBrandKit(serializeBrandKit(kit))).toEqual(kit);
   });
@@ -48,6 +50,20 @@ describe('brand kit round-trip', () => {
     expect(parseBrandKit('42')).toBeNull();
     expect(parseBrandKit('[1,2]')).toBeNull();
     expect(parseBrandKit('{nope')).toBeNull();
+  });
+
+  test('legacy kit without a mascot field reads as mascot:true', () => {
+    const parsed = parseBrandKit(JSON.stringify({ bg: '#101010', accent: '#ff6600' }));
+    expect(parsed?.mascot).toBe(true);
+  });
+
+  test('non-boolean mascot falls back to the default', () => {
+    expect(parseBrandKit(JSON.stringify({ mascot: 'nope' }))?.mascot).toBe(true);
+  });
+
+  test('mascot:false round-trips (opt-out survives export/import)', () => {
+    const off = parseBrandKit(serializeBrandKit({ ...DEFAULT_BRAND_KIT, mascot: false }));
+    expect(off?.mascot).toBe(false);
   });
 });
 

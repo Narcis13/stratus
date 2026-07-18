@@ -16,6 +16,8 @@ import {
   statCardSpec,
 } from './templates.ts';
 
+// mascot off by default so the S3/S4 snapshots below stay byte-identical; the
+// mascot-wiring block flips it on explicitly.
 const kit: BrandKit = {
   bg: '#0f1419',
   accent: '#1d9bf0',
@@ -24,6 +26,7 @@ const kit: BrandKit = {
   watermark: true,
   watermarkText: 'stratus',
   imageStyleSuffix: 'flat vector, no text',
+  mascot: false,
 };
 
 // A stub bitmap — templates only store the ref (no methods called), so a plain
@@ -223,5 +226,64 @@ describe('pfpFrameSpec', () => {
   test('empty initial still renders something', () => {
     const spec = pfpFrameSpec({ photo: null, initial: '' }, kit);
     expect(spec.layers[2]).toMatchObject({ text: '?' });
+  });
+});
+
+describe('mascot wiring (S5.3)', () => {
+  const withMascot: BrandKit = { ...kit, mascot: true };
+  const hasPath = (spec: { layers: Array<{ kind: string }> }): boolean =>
+    spec.layers.some((l) => l.kind === 'path');
+
+  test('quote: mascot adds path layers; mascot:false is byte-identical', () => {
+    const off = quoteCardSpec({ text: 'ship' }, kit);
+    const on = quoteCardSpec({ text: 'ship' }, withMascot);
+    expect(hasPath(off)).toBe(false);
+    expect(hasPath(on)).toBe(true);
+    // stripping the mascot paths from `on` reproduces the pre-mascot card exactly
+    expect(on.layers.filter((l) => l.kind !== 'path')).toEqual(off.layers);
+  });
+
+  test('quote: an AI background suppresses the mascot', () => {
+    const spec = quoteCardSpec({ text: 'ship', background: STUB_BG }, withMascot);
+    expect(hasPath(spec)).toBe(false);
+  });
+
+  test('stat: celebrates on a positive week, idles otherwise', () => {
+    const base = {
+      followers: 1000,
+      delta: null,
+      sparkline: [],
+      weekLabel: 'w',
+      posts: null,
+      replies: null,
+      topPostText: null,
+      topPostViews: null,
+      streakDays: null,
+    };
+    const up = statCardSpec({ ...base, delta: 25 }, withMascot);
+    const down = statCardSpec({ ...base, delta: -5 }, withMascot);
+    const upPaths = up.layers.filter((l) => l.kind === 'path').length;
+    const downPaths = down.layers.filter((l) => l.kind === 'path').length;
+    // celebrating adds arm puffs + confetti → strictly more path layers than happy
+    expect(upPaths).toBeGreaterThan(downPaths);
+    expect(downPaths).toBeGreaterThan(0);
+    expect(hasPath(statCardSpec({ ...base, delta: 25 }, kit))).toBe(false);
+  });
+
+  test('banner: thinking mascot only with no milestone and no AI background', () => {
+    expect(hasPath(bannerSpec({ headline: 'h', keywords: [], followers: null }, withMascot))).toBe(
+      true,
+    );
+    expect(hasPath(bannerSpec({ headline: 'h', keywords: [], followers: 980 }, withMascot))).toBe(
+      false,
+    );
+    expect(
+      hasPath(
+        bannerSpec(
+          { headline: 'h', keywords: [], followers: null, background: STUB_BG },
+          withMascot,
+        ),
+      ),
+    ).toBe(false);
   });
 });

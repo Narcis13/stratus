@@ -6,6 +6,7 @@
 
 import type { BrandKit } from './brandKit.ts';
 import { type Layer, type RenderSpec, contrastOn, shade, withAlpha } from './compose.ts';
+import { mascotLayers } from './mascot.ts';
 
 export const QUOTE_CARD = { w: 1200, h: 675 } as const;
 export const STAT_CARD = { w: 1200, h: 675 } as const;
@@ -97,6 +98,11 @@ export function quoteCardSpec(data: QuoteCardData, kit: BrandKit): RenderSpec {
       box: { x: 96, y: 556, w: 700, h: 44 },
       color: kit.accent,
     });
+  }
+  // A small happy cloud tucked into the bottom-left, below the handle and clear
+  // of the bottom-right watermark. Skipped under an AI background — the art wins.
+  if (kit.mascot && !data.background) {
+    layers.push(...mascotLayers({ pose: 'happy', x: 96, y: 598, scale: 0.55, kit }));
   }
   layers.push(...watermarkLayer(kit, ink));
   return { w: QUOTE_CARD.w, h: QUOTE_CARD.h, layers };
@@ -254,6 +260,13 @@ export function statCardSpec(data: StatCardData, kit: BrandKit): RenderSpec {
     });
   }
 
+  // The mascot celebrates a growing week and idles otherwise — tucked under the
+  // sparkline, above the divider. Data-driven pose, no typing.
+  if (kit.mascot) {
+    const pose = data.delta !== null && data.delta > 0 ? 'celebrating' : 'happy';
+    layers.push(...mascotLayers({ pose, x: 1020, y: 334, scale: 0.6, kit }));
+  }
+
   if (kit.handle !== '') {
     layers.push({
       kind: 'text',
@@ -332,6 +345,11 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
         align: 'center',
       },
     );
+  }
+  // A thinking cloud only when the right side is free (no follower milestone
+  // there to fill it) and no AI background is washing it out.
+  if (kit.mascot && !data.background && data.followers === null) {
+    layers.push(...mascotLayers({ pose: 'thinking', x: 1190, y: 140, scale: 1.5, kit }));
   }
   // Bottom-right identity: the handle wins; the watermark only fills in when
   // no handle is set (a banner already IS the profile — don't double-sign).

@@ -21,6 +21,10 @@ export interface BrandKit {
    *  clause is load-bearing (image models garble words — brand text is always
    *  canvas-rendered on top, never generated). */
   imageStyleSuffix: string;
+  /** SURFACES S5.3 — show the deterministic cloud mascot on cards that support
+   *  it (quote/stat/banner). Default true; legacy kits without the field read
+   *  as true so an old import keeps the mascot. */
+  mascot: boolean;
 }
 
 export const DEFAULT_IMAGE_STYLE_SUFFIX =
@@ -39,6 +43,7 @@ export const DEFAULT_BRAND_KIT: BrandKit = {
   watermark: true,
   watermarkText: 'stratus',
   imageStyleSuffix: DEFAULT_IMAGE_STYLE_SUFFIX,
+  mascot: true,
 };
 
 function isValidColor(v: unknown): v is string {
@@ -78,6 +83,7 @@ export function parseBrandKit(raw: string): BrandKit | null {
       typeof o.imageStyleSuffix === 'string' && o.imageStyleSuffix.trim() !== ''
         ? o.imageStyleSuffix.trim()
         : DEFAULT_BRAND_KIT.imageStyleSuffix,
+    mascot: typeof o.mascot === 'boolean' ? o.mascot : DEFAULT_BRAND_KIT.mascot,
   };
 }
 
