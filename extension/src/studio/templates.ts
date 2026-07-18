@@ -5,6 +5,7 @@
 // the palette constraint is what makes months of cards read as one brand.
 
 import type { BrandKit } from './brandKit.ts';
+import { MONO_ADVANCE, type TokenKind, tokenizeLine } from './codeTokens.ts';
 import {
   type Layer,
   type PatternKind,
@@ -21,6 +22,14 @@ export const BANNER = { w: 1500, h: 500 } as const;
 export const PFP_FRAME = { w: 400, h: 400 } as const;
 export const MILESTONE_CARD = { w: 1200, h: 675 } as const;
 export const STREAK_CARD = { w: 1200, h: 675 } as const;
+export const CODE_CARD = { w: 1200, h: 675 } as const;
+
+/** Bundled JetBrains Mono (loaded via FontFace as 'StudioMono'); the code card
+ *  always renders monospace regardless of the kit's display font, and its
+ *  fixed advance ratio (MONO_ADVANCE) is what keeps the layout measure-free.
+ *  The tail is the system-mono fallback when the woff2s fail to load. */
+export const STUDIO_MONO_STACK =
+  "'StudioMono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace";
 
 /** Deterministic count format (fixed locale — no machine drift). */
 export function fmtCount(n: number): string {
@@ -668,5 +677,149 @@ export function streakCardSpec(data: StreakCardData, kit: BrandKit): RenderSpec 
     });
   }
   layers.push(...watermarkLayer(kit, ink, 22, 36));
+  return { w, h, layers };
+}
+
+// ------------------------------------------------------------------- code card
+
+export interface CodeCardData {
+  /** Raw snippet — newlines are line breaks; hard-truncated to the caps below. */
+  code: string;
+  /** Filename / title shown centered in the window's title bar. */
+  title: string;
+}
+
+function monoFont(weight: number, sizePx: number) {
+  return { family: STUDIO_MONO_STACK, weight, sizePx };
+}
+
+// Fixed-advance layout constants — no canvas measurement (that's why the mono
+// font is bundled). A token at column c sits at codeLeft + c·SIZE·MONO_ADVANCE.
+const CODE_FONT_PX = 22;
+const CODE_LINE_H = 1.28;
+const CODE_MAX_LINES = 18;
+const CODE_MAX_COLS = 62;
+const CODE_PANEL = { x: 72, y: 44, w: 1056, h: 588 };
+const CODE_PAD_X = 40;
+const CODE_GUTTER_W = 48;
+const CODE_TITLE_BAR_H = 60;
+const CODE_TOP = CODE_PANEL.y + CODE_TITLE_BAR_H + 12;
+const CODE_LEFT = CODE_PANEL.x + CODE_PAD_X;
+const CODE_TEXT_LEFT = CODE_LEFT + CODE_GUTTER_W;
+
+function tokenColor(kind: TokenKind, kit: BrandKit, ink: string): string {
+  switch (kind) {
+    case 'keyword':
+      return kit.accent;
+    case 'string':
+      return shade(kit.accent, 0.45);
+    case 'number':
+      return shade(kit.accent, -0.25);
+    case 'comment':
+      return withAlpha(ink, 0.45);
+    default:
+      return ink;
+  }
+}
+
+/** 1200×675 — a code snippet as a branded terminal window. Measure-free
+ *  monospace layout keeps the spec pure/snapshot-testable; token colors all
+ *  derive from the kit's two colors, so it re-skins with the brand. */
+export function codeCardSpec(data: CodeCardData, kit: BrandKit): RenderSpec {
+  const { w, h } = CODE_CARD;
+  const ink = contrastOn(kit.bg);
+  const advance = CODE_FONT_PX * MONO_ADVANCE;
+  const lineHeightPx = CODE_FONT_PX * CODE_LINE_H;
+
+  const rawLines = data.code.replace(/\r\n/g, '\n').split('\n');
+  const trimmed = rawLines.length > CODE_MAX_LINES;
+  const shown = rawLines.slice(0, trimmed ? CODE_MAX_LINES - 1 : CODE_MAX_LINES);
+
+  const layers: Layer[] = [
+    // A dark "desktop" behind the terminal, then the window panel (its fill IS
+    // the kit bg, so ink=contrastOn(kit.bg) reads on it).
+    { kind: 'fill', color: shade(kit.bg, -0.5) },
+    {
+      kind: 'panel',
+      box: CODE_PANEL,
+      radius: 20,
+      fill: kit.bg,
+      shadow: { blur: 44, color: withAlpha('#000000', 0.4), dy: 16 },
+    },
+  ];
+
+  // Three monochrome window discs (no hardcoded Apple colors — muted ink).
+  const discY = CODE_PANEL.y + CODE_TITLE_BAR_H / 2;
+  [0.28, 0.2, 0.14].forEach((alpha, i) => {
+    layers.push({
+      kind: 'ring',
+      cx: CODE_PANEL.x + 32 + i * 34,
+      cy: discY,
+      r: 10,
+      width: 20,
+      color: withAlpha(ink, alpha),
+    });
+  });
+
+  const title = data.title.trim();
+  if (title !== '') {
+    layers.push({
+      kind: 'text',
+      text: title,
+      font: monoFont(400, 22),
+      box: { x: CODE_PANEL.x, y: CODE_PANEL.y + 18, w: CODE_PANEL.w, h: 30 },
+      color: withAlpha(ink, 0.6),
+      align: 'center',
+      maxLines: 1,
+      minSizePx: 16,
+    });
+  }
+
+  shown.forEach((rawLine, li) => {
+    const y = CODE_TOP + li * lineHeightPx;
+    // Line number, right-aligned in the gutter.
+    layers.push({
+      kind: 'text',
+      text: `${li + 1}`,
+      font: monoFont(400, CODE_FONT_PX),
+      box: { x: CODE_LEFT, y, w: CODE_GUTTER_W - 14, h: lineHeightPx },
+      color: withAlpha(ink, 0.35),
+      align: 'right',
+      maxLines: 1,
+    });
+
+    let col = 0;
+    for (const token of tokenizeLine(rawLine.slice(0, CODE_MAX_COLS))) {
+      const x = CODE_TEXT_LEFT + col * advance;
+      // A generous box (full font px per char ≫ 0.6 advance) guarantees the
+      // single-line, left-aligned token never wraps or ellipsizes.
+      layers.push({
+        kind: 'text',
+        text: token.text,
+        font: monoFont(token.kind === 'keyword' ? 700 : 400, CODE_FONT_PX),
+        box: { x, y, w: token.text.length * CODE_FONT_PX + 8, h: lineHeightPx },
+        color: tokenColor(token.kind, kit, ink),
+        maxLines: 1,
+      });
+      col += token.text.length;
+    }
+  });
+
+  if (trimmed) {
+    layers.push({
+      kind: 'text',
+      text: '⌄ trimmed',
+      font: monoFont(400, CODE_FONT_PX),
+      box: {
+        x: CODE_TEXT_LEFT,
+        y: CODE_TOP + shown.length * lineHeightPx,
+        w: 400,
+        h: lineHeightPx,
+      },
+      color: withAlpha(ink, 0.4),
+      maxLines: 1,
+    });
+  }
+
   return { w, h, layers };
 }

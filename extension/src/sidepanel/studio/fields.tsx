@@ -120,6 +120,42 @@ export function StreakFields({
   );
 }
 
+export function CodeFields({
+  title,
+  code,
+  onTitle,
+  onCode,
+}: {
+  title: string;
+  code: string;
+  onTitle: (v: string) => void;
+  onCode: (v: string) => void;
+}): JSX.Element {
+  return (
+    <>
+      <label className="field">
+        <span>Filename</span>
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => onTitle(e.target.value)}
+          placeholder="snippet.ts"
+        />
+      </label>
+      <label className="field">
+        <span>Code (≤18 lines · ≤62 cols — longer is trimmed)</span>
+        <textarea
+          value={code}
+          onChange={(e) => onCode(e.target.value)}
+          rows={8}
+          spellCheck={false}
+          placeholder="Paste a snippet — blank shows a sample…"
+        />
+      </label>
+    </>
+  );
+}
+
 export function BannerFields({
   headline,
   keywords,

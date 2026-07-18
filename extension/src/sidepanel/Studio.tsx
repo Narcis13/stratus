@@ -37,6 +37,7 @@ import { KitEditor } from './studio/KitEditor.tsx';
 import {
   BackgroundFields,
   BannerFields,
+  CodeFields,
   LibraryRail,
   MilestoneFields,
   PfpFields,
@@ -132,6 +133,9 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const bannerSeeded = useRef(false);
 
   const [pfpBitmap, setPfpBitmap] = useState<ImageBitmap | null>(null);
+
+  const [codeTitle, setCodeTitle] = useState('');
+  const [codeText, setCodeText] = useState('');
 
   // S5.5 celebration cards: auto-detected value + a manual override. The
   // override wins when set; blank falls back to what the account/streak reads.
@@ -468,6 +472,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             patternSeed,
             milestoneData,
             streakData,
+            codeTitle,
+            codeText,
           },
           kit,
         );
@@ -503,6 +509,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     patternSeed,
     milestoneData,
     streakData,
+    codeTitle,
+    codeText,
   ]);
 
   useEffect(
@@ -638,6 +646,10 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       )}
 
       {template === 'pfp' && <PfpFields onPickPhoto={(e) => void onPickPhoto(e)} />}
+
+      {template === 'code' && (
+        <CodeFields title={codeTitle} code={codeText} onTitle={setCodeTitle} onCode={setCodeText} />
+      )}
 
       {template === 'milestone' && (
         <MilestoneFields

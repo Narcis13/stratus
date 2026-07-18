@@ -4,14 +4,17 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { BrandKit } from './brandKit.ts';
+import { MONO_ADVANCE } from './codeTokens.ts';
 import {
   BANNER,
+  CODE_CARD,
   MILESTONE_CARD,
   PFP_FRAME,
   QUOTE_CARD,
   STAT_CARD,
   STREAK_CARD,
   bannerSpec,
+  codeCardSpec,
   fmtCount,
   milestoneCardSpec,
   pfpFrameSpec,
@@ -371,6 +374,65 @@ describe('streakCardSpec (S5.5)', () => {
       true,
     );
     expect(spec.layers.some((l) => l.kind === 'path')).toBe(false);
+  });
+});
+
+describe('codeCardSpec (S5.6)', () => {
+  const textLayers = (spec: { layers: Array<{ kind: string }> }) =>
+    spec.layers.filter((l) => l.kind === 'text') as Array<{
+      text: string;
+      color: string;
+      box: { x: number };
+      font: { sizePx: number; weight: number };
+    }>;
+
+  test('window chrome: desktop fill, panel, three discs, then text', () => {
+    const spec = codeCardSpec({ code: 'const x = 1', title: 'a.ts' }, kit);
+    expect(spec.w).toBe(CODE_CARD.w);
+    expect(spec.h).toBe(CODE_CARD.h);
+    expect(kinds(spec).slice(0, 6)).toEqual(['fill', 'panel', 'ring', 'ring', 'ring', 'text']);
+    // the title bar text is the filename
+    expect((spec.layers[5] as { text: string }).text).toBe('a.ts');
+  });
+
+  test('tokens are kit-colored — keyword=accent, comment=muted ink', () => {
+    const spec = codeCardSpec({ code: 'const x = 1 // note', title: '' }, kit);
+    const kw = textLayers(spec).find((l) => l.text === 'const');
+    const comment = textLayers(spec).find((l) => l.text === '// note');
+    expect(kw?.color).toBe(kit.accent);
+    expect(comment?.color).toMatch(/^rgba\(/);
+  });
+
+  test('column x-math: token x = codeLeft + col · sizePx · MONO_ADVANCE', () => {
+    // two keywords at columns 0 and 6 on the same line
+    const spec = codeCardSpec({ code: 'const const', title: '' }, kit);
+    const kws = textLayers(spec).filter((l) => l.text === 'const');
+    expect(kws.length).toBe(2);
+    const [a, b] = kws as [(typeof kws)[0], (typeof kws)[0]];
+    const size = a.font.sizePx;
+    expect(b.box.x - a.box.x).toBeCloseTo(6 * size * MONO_ADVANCE, 5);
+  });
+
+  test('over-cap input hard-truncates with a "trimmed" footer', () => {
+    const code = Array.from({ length: 40 }, () => 'x').join('\n');
+    const spec = codeCardSpec({ code, title: '' }, kit);
+    const lineNums = textLayers(spec)
+      .map((l) => l.text)
+      .filter((t) => /^\d+$/.test(t));
+    // 18-line cap: 17 shown lines + the trimmed footer
+    expect(lineNums.at(-1)).toBe('17');
+    expect(textLayers(spec).some((l) => /trimmed/.test(l.text))).toBe(true);
+  });
+
+  test('an over-wide line is clipped to the column cap', () => {
+    const spec = codeCardSpec({ code: 'a'.repeat(100), title: '' }, kit);
+    const body = textLayers(spec).find((l) => l.text.startsWith('a'));
+    expect(body?.text.length).toBe(62);
+  });
+
+  test('deterministic — same input renders byte-identically', () => {
+    const data = { code: 'export fn main() {}', title: 'm.rs' };
+    expect(codeCardSpec(data, kit)).toEqual(codeCardSpec(data, kit));
   });
 });
 

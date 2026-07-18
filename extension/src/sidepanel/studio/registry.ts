@@ -6,6 +6,7 @@ import type { BrandKit } from '../../studio/brandKit.ts';
 import type { PatternKind, RenderSpec } from '../../studio/compose.ts';
 import {
   BANNER,
+  CODE_CARD,
   MILESTONE_CARD,
   type MilestoneCardData,
   PFP_FRAME,
@@ -15,6 +16,7 @@ import {
   type StatCardData,
   type StreakCardData,
   bannerSpec,
+  codeCardSpec,
   milestoneCardSpec,
   pfpFrameSpec,
   quoteCardSpec,
@@ -22,7 +24,7 @@ import {
   streakCardSpec,
 } from '../../studio/templates.ts';
 
-export type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp' | 'milestone' | 'streak';
+export type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp' | 'milestone' | 'streak' | 'code';
 
 export interface TemplateMeta {
   id: TemplateId;
@@ -62,6 +64,12 @@ export const TEMPLATES: TemplateMeta[] = [
     id: 'streak',
     label: 'Streak',
     size: { w: STREAK_CARD.w, h: STREAK_CARD.h },
+    supportsAiBackground: false,
+  },
+  {
+    id: 'code',
+    label: 'Code card',
+    size: { w: CODE_CARD.w, h: CODE_CARD.h },
     supportsAiBackground: false,
   },
 ];
@@ -114,7 +122,17 @@ export interface TemplateState {
    *  C9 streak, with the manual override already folded in. */
   milestoneData: MilestoneCardData;
   streakData: StreakCardData;
+  /** S5.6 code card — filename + raw snippet. */
+  codeTitle: string;
+  codeText: string;
 }
+
+/** A sample snippet so the code card previews immediately (empty input → this). */
+export const DEFAULT_CODE = `// stratus — ship in public
+async function post(draft) {
+  const slot = await bestTime();
+  return schedule(draft, slot);
+}`;
 
 /** Behavior-neutral dispatch — identical output to the pre-refactor render ternary. */
 export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): RenderSpec {
@@ -154,5 +172,13 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
       return milestoneCardSpec(state.milestoneData, kit);
     case 'streak':
       return streakCardSpec(state.streakData, kit);
+    case 'code':
+      return codeCardSpec(
+        {
+          code: state.codeText.trim() !== '' ? state.codeText : DEFAULT_CODE,
+          title: state.codeTitle.trim() || 'snippet.ts',
+        },
+        kit,
+      );
   }
 }
