@@ -20,6 +20,7 @@ import { GrokApiError, askGrok } from '../../grok/index.ts';
 import type { ReasoningEffort } from '../../grok/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
+import { loadActiveNicheSafe } from '../niche/store.ts';
 import {
   type RelationshipFacts,
   renderRelationship,
@@ -185,6 +186,13 @@ replies.post('/replies/generate', async (c) => {
   // training row for the BAND recalibration crosstab (§6.2).
   if (!ctx.signals) ctx.signals = { band, ...gateSignals };
 
+  // N0.4: reply grounding comes from the active niche (server-stamped, never
+  // client-supplied). Loaded AFTER the band gate — a refused call reads
+  // nothing — and stamped into ctx before the insert so contextSnapshot
+  // records which niche grounded this draft (future per-niche crosstab key).
+  const niche = loadActiveNicheSafe();
+  ctx.niche = { slug: niche.slug };
+
   // Relationship block (C3): what the people layer knows about this handle,
   // injected at the variable tail so the prompt stops meeting everyone for the
   // first time. Stamped into ctx BEFORE the insert so contextSnapshot records
@@ -203,7 +211,9 @@ replies.post('/replies/generate', async (c) => {
   if (guidance) ctx.guidance = guidance;
 
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
-  const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs);
+  const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs, {
+    replyPersona: niche.replyPersona,
+  });
 
   const callGrok = (): ReturnType<typeof askGrok> =>
     askGrok({
@@ -213,7 +223,8 @@ replies.post('/replies/generate', async (c) => {
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
       jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
-      promptCacheKey: PROMPT_CACHE_KEY,
+      // Niche-suffixed so editing the niche cleanly busts the cached prefix.
+      promptCacheKey: `${PROMPT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
     });
 
   let result: Awaited<ReturnType<typeof askGrok>>;
@@ -389,7 +400,11 @@ replies.post('/replies/generate-batch', async (c) => {
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
   // Playbook guidance (C4): one gated line for the whole batch, variable tail.
   const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
-  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance);
+  // N0.4: same niche grounding as the single path — single and batch can't drift.
+  const niche = loadActiveNicheSafe();
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance, {
+    replyPersona: niche.replyPersona,
+  });
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
   // single-reply path (user-accepted, RU.3). Scale with the batch, capped.
   const maxOutputTokens = Math.min(9000, 200 + tweets.length * 420);
@@ -403,7 +418,8 @@ replies.post('/replies/generate-batch', async (c) => {
       maxOutputTokens,
       temperature: DEFAULT_TEMPERATURE,
       jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
-      promptCacheKey: BATCH_PROMPT_CACHE_KEY,
+      // Niche-suffixed so editing the niche cleanly busts the cached prefix.
+      promptCacheKey: `${BATCH_PROMPT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
     });
   } catch (err) {
     if (err instanceof GrokApiError) {

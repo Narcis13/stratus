@@ -8,6 +8,7 @@
 
 import type { GrokMessage } from '../../grok/index.ts';
 import type { Band } from '../../shared/replyBand.ts';
+import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { RELATIONSHIP_INSTRUCTION } from '../people/relationship.ts';
 import { type PillarDef, renderPillars } from '../posts/pillars.ts';
 
@@ -47,10 +48,19 @@ export interface PostContext {
    *  only, same discipline as `relationship`; persisted via contextSnapshot so
    *  guided drafts stay distinguishable from unguided ones. */
   guidance?: string;
+  /** Active niche at draft time (N0.4). Server-stamped — parseContext never
+   *  accepts it from the client; persisted via contextSnapshot as the key for
+   *  future per-niche outcome analytics. */
+  niche?: { slug: string };
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
 const IDEA_PLACEHOLDER = '{{IDEA}}';
+// N0.4: the "Who I am" body comes from the active niche. Constant per niche, so
+// it substitutes IN PLACE (not at the variable tail) — the prefix stays byte-
+// stable across calls and xAI prefix caching survives; the route's cache key
+// carries slug+updatedAt to bust on niche edits.
+export const REPLY_PERSONA_PLACEHOLDER = '{{REPLY_PERSONA}}';
 const MAX_TOP_COMMENTS = 10;
 
 export const REPLY_PROMPT_TEMPLATE = `## The job
@@ -63,11 +73,7 @@ The profile visit must be **earned by curiosity** — never ask for a follow or 
 
 ## Who I am (the COMPLETE persona — infer nothing beyond these three facts)
 
-- I'm a **solopreneur**.
-- I'm **passionate about programming, AI, and marketing**.
-- I **build in public**.
-
-That is the entire biography you have. Never invent or imply anything else — no age, no location, no day job, no family, no client stories, no career arc. You can voice opinions and stances as mine, in first person. You cannot invent autobiographical facts — no "I shipped X in 14 days", no "my clients", no made-up numbers. If the steer gives a fact, use it; otherwise stay at the level of stance and observation. A fabricated "37%" or a fake anecdote is worse than no specific at all.
+{{REPLY_PERSONA}}
 
 ---
 
@@ -316,8 +322,14 @@ export function buildBatchGrokInput(
   override?: string,
   pillars?: PillarDef[],
   guidance?: string,
+  opts?: { replyPersona?: string },
 ): GrokMessage[] {
-  const head = override && override.trim().length > 0 ? override : batchReplyHead();
+  // The voice block sliced into batchReplyHead() carries {{REPLY_PERSONA}}
+  // (N0.4) — substitute here so single and batch ground on the same niche.
+  const head = substituteReplyPersona(
+    override && override.trim().length > 0 ? override : batchReplyHead(),
+    opts?.replyPersona,
+  );
   const rendered = tweets.map((t, i) => renderBatchTweet(t, i)).join('\n\n');
   const ideaText = idea?.trim() ?? '';
   let content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}`;
@@ -407,13 +419,26 @@ export function parseBatchReplies(raw: string): BatchReply[] | null {
   return out;
 }
 
+// N0.4: the persona substitutes FIRST — before the tweet context and idea land —
+// so client-supplied content can never inject an expandable {{REPLY_PERSONA}}
+// token. A template without the token (custom overrides predating it) passes
+// through untouched, the same tolerance the {{IDEA}} path extends.
+function substituteReplyPersona(template: string, replyPersona?: string): string {
+  if (!template.includes(REPLY_PERSONA_PLACEHOLDER)) return template;
+  return template.split(REPLY_PERSONA_PLACEHOLDER).join(replyPersona ?? DEFAULT_NICHE.replyPersona);
+}
+
 export function buildGrokInput(
   ctx: PostContext,
   override?: string,
   idea?: string,
   pillars?: PillarDef[],
+  opts?: { replyPersona?: string },
 ): GrokMessage[] {
-  const template = override && override.trim().length > 0 ? override : REPLY_PROMPT_TEMPLATE;
+  const template = substituteReplyPersona(
+    override && override.trim().length > 0 ? override : REPLY_PROMPT_TEMPLATE,
+    opts?.replyPersona,
+  );
   const context = renderContext(ctx);
   // split/join (not replace) so a '$' in the context can't trigger
   // String.prototype.replace's special replacement patterns.

@@ -207,3 +207,29 @@ describe.if(authed)('batch reply guards (Radar §7.2)', () => {
     expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id_0');
   });
 });
+
+describe.if(authed)('reply band gate (§7.3)', () => {
+  // A dead post (old, tiny, not bait) refuses with 422 BEFORE any Grok spend —
+  // and before the niche read (N0.4: refuse-before-work keeps this path
+  // byte-identical to the pre-niche behavior).
+  test('dead post without override → 422 band_gate', async () => {
+    const res = await app.request('/x/replies/generate', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        context: {
+          tweetId: '123456',
+          handle: 'someone',
+          author: 'Some One',
+          text: 'a quiet post nobody saw',
+          url: 'https://x.com/someone/status/123456',
+          postedAt: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+          metrics: { views: 50, replies: 2, reposts: 0, likes: 1 },
+          topComments: [],
+        },
+      }),
+    });
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { error: string }).error).toBe('band_gate');
+  });
+});

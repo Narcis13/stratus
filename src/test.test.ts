@@ -374,6 +374,57 @@ describe('reply prompt (§7.1)', () => {
     }
   });
 
+  // N0.4 equivalence guarantee: with the untouched seed niche (all defaults),
+  // the assembled prompt must carry the ORIGINAL "Who I am" body byte-exact,
+  // in place. The fixture is an independent copy of the pre-extraction text —
+  // deliberately NOT read from the .md (which now holds the placeholder) nor
+  // from DEFAULT_NICHE (which is what's under test).
+  const ORIGINAL_WHO_I_AM_BODY = `- I'm a **solopreneur**.
+- I'm **passionate about programming, AI, and marketing**.
+- I **build in public**.
+
+That is the entire biography you have. Never invent or imply anything else — no age, no location, no day job, no family, no client stories, no career arc. You can voice opinions and stances as mine, in first person. You cannot invent autobiographical facts — no "I shipped X in 14 days", no "my clients", no made-up numbers. If the steer gives a fact, use it; otherwise stay at the level of stance and observation. A fabricated "37%" or a fake anecdote is worse than no specific at all.`;
+
+  test('N0.4: template holds the placeholder, not the persona', () => {
+    expect(REPLY_PROMPT_TEMPLATE).toContain('{{REPLY_PERSONA}}');
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('solopreneur');
+  });
+
+  test('N0.4 equivalence: seed niche restores the original "Who I am" body byte-exact', () => {
+    // DEFAULT_NICHE itself must not have drifted from the original prose.
+    expect(DEFAULT_NICHE.replyPersona).toBe(ORIGINAL_WHO_I_AM_BODY);
+
+    const [msg] = buildGrokInput(promptCtx);
+    const content = msg?.content ?? '';
+    expect(content).toContain(
+      `## Who I am (the COMPLETE persona — infer nothing beyond these three facts)\n\n${ORIGINAL_WHO_I_AM_BODY}\n\n---`,
+    );
+    expect(content).not.toContain('{{REPLY_PERSONA}}');
+  });
+
+  test('N0.4: custom reply persona substitutes in place of the builder identity', () => {
+    const [msg] = buildGrokInput(promptCtx, undefined, undefined, undefined, {
+      replyPersona: 'NUTRITION REPLY PERSONA BLOCK',
+    });
+    const content = msg?.content ?? '';
+    expect(content).toContain('NUTRITION REPLY PERSONA BLOCK');
+    expect(content).not.toContain('solopreneur');
+    expect(content).not.toContain('{{REPLY_PERSONA}}');
+  });
+
+  test('N0.4: custom override without the token passes through untouched', () => {
+    const [msg] = buildGrokInput(
+      promptCtx,
+      'Custom prompt: {{TWEET_CONTEXT}}',
+      undefined,
+      undefined,
+      {
+        replyPersona: 'NUTRITION REPLY PERSONA BLOCK',
+      },
+    );
+    expect(msg?.content).not.toContain('NUTRITION REPLY PERSONA BLOCK');
+  });
+
   test('buildGrokInput substitutes the idea into the tag', () => {
     const [msg] = buildGrokInput(promptCtx, undefined, 'fă-l să sune ca un constructor');
     expect(msg?.content).toContain('<idea>fă-l să sune ca un constructor</idea>');
@@ -506,6 +557,22 @@ describe('batch replies (Radar §7.2)', () => {
     expect(content).not.toContain('not three paraphrases');
     expect(content).not.toContain('{{TWEET_CONTEXT}}');
     expect(content).not.toContain('{{IDEA}}');
+    // N0.4: the sliced voice block carries {{REPLY_PERSONA}} — the batch
+    // builder must substitute it, never ship the raw token to Grok.
+    expect(content).not.toContain('{{REPLY_PERSONA}}');
+  });
+
+  test('N0.4: batch grounds on the seed persona by default, custom persona via opts', () => {
+    const defaultContent = buildBatchGrokInput(tweets)[0]?.content ?? '';
+    expect(defaultContent).toContain("- I'm a **solopreneur**.");
+    expect(defaultContent).toContain('That is the entire biography you have.');
+
+    const custom = buildBatchGrokInput(tweets, undefined, undefined, undefined, undefined, {
+      replyPersona: 'NUTRITION REPLY PERSONA BLOCK',
+    })[0]?.content;
+    expect(custom).toContain('NUTRITION REPLY PERSONA BLOCK');
+    expect(custom).not.toContain('solopreneur');
+    expect(custom).not.toContain('{{REPLY_PERSONA}}');
   });
 
   test('buildBatchGrokInput leaves an empty idea tag when none given', () => {
