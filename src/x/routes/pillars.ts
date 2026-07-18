@@ -15,6 +15,7 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import { contentPillars } from '../db/schema.ts';
+import { loadActiveNicheSafe } from '../niche/store.ts';
 import {
   PILLAR_DRAFT_SCHEMA,
   buildPillarDraftInput,
@@ -189,9 +190,15 @@ pillars.post('/pillars/draft', async (c) => {
     if (!target) return c.json({ error: 'pillar_not_found' }, 404);
   }
 
+  // N0.3: persona grounding from the active niche; the prose description (when
+  // present) rides along so a new pillar can fit the wider self-description.
+  const niche = loadActiveNicheSafe();
+  const persona = niche.description ? `${niche.persona}\n\n${niche.description}` : niche.persona;
+
   const messages = buildPillarDraftInput({
     mode,
     existing,
+    persona,
     ...(idea !== undefined ? { idea } : {}),
     ...(target !== undefined ? { target } : {}),
     ...(instruction !== undefined ? { instruction } : {}),
@@ -205,7 +212,9 @@ pillars.post('/pillars/draft', async (c) => {
       maxOutputTokens: 700,
       temperature: 0.7,
       jsonSchema: { name: 'pillar', schema: PILLAR_DRAFT_SCHEMA },
-      promptCacheKey: PILLAR_DRAFT_CACHE_KEY,
+      // Niche-suffixed: the persona sits at the top of this prompt, so a niche
+      // edit changes the prefix — bust the cache bucket with it.
+      promptCacheKey: `${PILLAR_DRAFT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
     });
   } catch (err) {
     if (err instanceof GrokApiError) {

@@ -27,6 +27,7 @@ import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import type { ReasoningEffort } from '../../grok/index.ts';
 import { metricsSnapshots, postsPublished, scheduledPosts, voiceTweets } from '../db/schema.ts';
+import { loadActiveNicheSafe } from '../niche/store.ts';
 import { type PillarDef, parsePillar } from '../posts/pillars.ts';
 import {
   type PostPillar,
@@ -163,10 +164,15 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
   // Playbook guidance (C4): gated topStructures line from my own measured
   // winners, appended at the variable tail. Best-effort; null under the gate.
   const guidance = await loadPostGuidanceSafe();
+  // N0.3: §1/§5 grounding comes from the active niche (server-stamped, never
+  // client-supplied); a niche-layer failure degrades to the builder defaults.
+  const niche = loadActiveNicheSafe();
   const messages = buildPostDraftInput({
     winners,
     remix: opts.remix,
     pillars: opts.pillars,
+    persona: niche.persona,
+    beliefs: niche.beliefs,
     ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
     ...(guidance !== null ? { guidance } : {}),
@@ -181,7 +187,8 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
       jsonSchema: { name: 'post_drafts', schema: buildPostDraftsSchema(slugs) },
-      promptCacheKey: PROMPT_CACHE_KEY,
+      // Niche-suffixed so editing the niche cleanly busts the cached prefix.
+      promptCacheKey: `${PROMPT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
     });
   } catch (err) {
     if (err instanceof GrokApiError) {

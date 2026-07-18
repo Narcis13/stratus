@@ -1,10 +1,11 @@
 // Grok meta-prompt for drafting a NEW content pillar or tweaking an existing
 // one (POST /x/pillars/draft, §8.6). The model returns a {slug,label,body}
 // proposal — never persisted here; the user reviews/edits it in the extension
-// and saves through the CRUD routes. Grounded on a compact persona + the
-// existing active pillars so a new pillar fits the voice and doesn't overlap.
+// and saves through the CRUD routes. Grounded on the active niche's persona +
+// the existing active pillars so a new pillar fits the voice and doesn't overlap.
 
 import type { GrokMessage } from '../../grok/index.ts';
+import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { type PillarDef, isValidPillarSlug, renderPillars } from './pillars.ts';
 
 export interface PillarProposal {
@@ -35,10 +36,6 @@ export const PILLAR_DRAFT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-// Compact, audience-relevant persona — enough for a new pillar to fit the person
-// without dragging in the full §1 biography. Inventing beyond this is forbidden.
-const PERSONA = `I'm a 51-year-old solopreneur in Pitești, Romania. Economist by training, 30 years of coding as a serious hobby (386 → Turbo Pascal → Delphi → today AI coding agents like Claude Code). Day job: IT admin at a public hospital. My wife is an independent accountant with ~20 SMB clients, so I see real business problems from both sides. I build in public, ship-or-die, and publish in English though I think in Romanian. Passionate about programming, AI, and marketing.`;
-
 const FORMAT_RULES = `What a content pillar is here: a recurring theme the post drafter writes against. Each pillar has:
 - slug: a short kebab-case id (e.g. ai-craft).
 - label: a short heading in the form "Name — the ANGLE".
@@ -47,6 +44,10 @@ const FORMAT_RULES = `What a content pillar is here: a recurring theme the post 
 export interface BuildPillarDraftOptions {
   mode: 'new' | 'tweak';
   existing: PillarDef[];
+  /** Persona grounding from the active niche (N0.3) — the route passes
+   *  niche.persona (+ description when present). Defaults to the builder niche
+   *  so the proposal is never persona-less. Inventing beyond it is forbidden. */
+  persona?: string;
   /** Optional Romanian-or-English steer. */
   idea?: string;
   /** Tweak only: the pillar being revised + the change to make. */
@@ -77,7 +78,7 @@ ${opts.instruction?.trim() || opts.idea?.trim() || 'Sharpen and tighten it; make
 
   const content = `You help maintain the content pillars for my X (Twitter) posting.
 
-${PERSONA}
+${opts.persona ?? DEFAULT_NICHE.persona}
 
 ${FORMAT_RULES}
 
