@@ -1,0 +1,215 @@
+// Per-template field sections (SURFACES S5.2): dumb, props-driven components
+// extracted verbatim from Studio.tsx. The shell owns all state, loading, and
+// handlers; these only render inputs and relay changes. BackgroundFields and
+// LibraryRail are the presentational halves of the shell-owned AI-background
+// and asset-library machinery.
+
+import type { ChangeEvent, JSX } from 'react';
+import type { StatCardData } from '../../studio/templates.ts';
+import type { ContentPillar, MediaAsset } from '../api.ts';
+
+export function QuoteFields({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}): JSX.Element {
+  return (
+    <label className="field">
+      <span>Quote text</span>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={4}
+        placeholder="Paste the draft or line worth framing…"
+      />
+    </label>
+  );
+}
+
+export function StatFields({
+  loading,
+  data,
+  onReload,
+}: {
+  loading: boolean;
+  data: StatCardData | null;
+  onReload: () => void;
+}): JSX.Element {
+  return (
+    <div className="row studio-data-row">
+      <span className="muted">
+        {loading ? 'Reading the week…' : data ? `Live data: ${data.weekLabel}` : 'No data yet'}
+      </span>
+      <button type="button" onClick={onReload} disabled={loading}>
+        Reload
+      </button>
+    </div>
+  );
+}
+
+export function BannerFields({
+  headline,
+  keywords,
+  milestone,
+  followers,
+  onHeadline,
+  onKeywords,
+  onMilestone,
+}: {
+  headline: string;
+  keywords: string;
+  milestone: boolean;
+  followers: number | null;
+  onHeadline: (v: string) => void;
+  onKeywords: (v: string) => void;
+  onMilestone: (v: boolean) => void;
+}): JSX.Element {
+  return (
+    <>
+      <label className="field">
+        <span>Headline</span>
+        <input
+          type="text"
+          value={headline}
+          onChange={(e) => onHeadline(e.target.value)}
+          placeholder="Building in public"
+        />
+      </label>
+      <label className="field">
+        <span>Keywords (comma-separated — prefilled from your pillars)</span>
+        <input type="text" value={keywords} onChange={(e) => onKeywords(e.target.value)} />
+      </label>
+      <label className="row studio-check">
+        <input
+          type="checkbox"
+          checked={milestone}
+          onChange={(e) => onMilestone(e.target.checked)}
+        />
+        <span>
+          Show follower milestone
+          {followers !== null ? ` (${followers})` : ' (no snapshot yet)'}
+        </span>
+      </label>
+    </>
+  );
+}
+
+export function PfpFields({
+  onPickPhoto,
+}: {
+  onPickPhoto: (e: ChangeEvent<HTMLInputElement>) => void;
+}): JSX.Element {
+  return (
+    <label className="field">
+      <span>Photo (circle-cropped in your brand ring)</span>
+      <input type="file" accept="image/*" onChange={onPickPhoto} />
+    </label>
+  );
+}
+
+export function BackgroundFields({
+  hasBackground,
+  pillars,
+  pillarSlug,
+  prompt,
+  loading,
+  cost,
+  onClear,
+  onReseed,
+  onPromptChange,
+  onGenerate,
+}: {
+  hasBackground: boolean;
+  pillars: ContentPillar[];
+  pillarSlug: string;
+  prompt: string;
+  loading: boolean;
+  cost: number | null;
+  onClear: () => void;
+  onReseed: (slug: string) => void;
+  onPromptChange: (v: string) => void;
+  onGenerate: () => void;
+}): JSX.Element {
+  return (
+    <section className="studio-bg">
+      <div className="row studio-data-row">
+        <span className="muted">AI background (composited under your text)</span>
+        {hasBackground && (
+          <button type="button" onClick={onClear}>
+            Remove background
+          </button>
+        )}
+      </div>
+      {pillars.length > 0 && (
+        <label className="field">
+          <span>Seed from pillar</span>
+          <select value={pillarSlug} onChange={(e) => onReseed(e.target.value)}>
+            {pillars.map((p) => (
+              <option key={p.slug} value={p.slug}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="field">
+        <span>Prompt (style suffix from your brand kit; the "no text" clause is load-bearing)</span>
+        <textarea value={prompt} onChange={(e) => onPromptChange(e.target.value)} rows={3} />
+      </label>
+      <div className="row">
+        <button type="button" onClick={onGenerate} disabled={loading}>
+          {loading ? 'Generating…' : 'Generate background (~$0.02)'}
+        </button>
+        {cost !== null && <span className="muted">last: ${cost.toFixed(3)}</span>}
+      </div>
+    </section>
+  );
+}
+
+export function LibraryRail({
+  library,
+  onRefresh,
+  onReopen,
+  onDelete,
+}: {
+  library: MediaAsset[];
+  onRefresh: () => void;
+  onReopen: (asset: MediaAsset) => void;
+  onDelete: (id: string) => void;
+}): JSX.Element {
+  return (
+    <section className="studio-library">
+      <div className="panel-header">
+        <h3>Library</h3>
+        <button type="button" onClick={onRefresh}>
+          Refresh
+        </button>
+      </div>
+      <div className="studio-library-rail">
+        {library.map((a) => (
+          <div key={a.id} className="studio-asset">
+            <button
+              type="button"
+              className="studio-asset-open"
+              onClick={() => onReopen(a)}
+              title={a.prompt ?? a.kind}
+            >
+              <span className="studio-asset-kind">{a.kind}</span>
+              <span className="muted">{a.width && a.height ? `${a.width}×${a.height}` : ''}</span>
+            </button>
+            <button
+              type="button"
+              className="studio-asset-del"
+              onClick={() => onDelete(a.id)}
+              title="Delete asset"
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}

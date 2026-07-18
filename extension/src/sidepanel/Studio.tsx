@@ -1,32 +1,34 @@
-// The Studio (SURFACES S3.3): template picker → live preview → Copy PNG /
-// Download. The preview IS the artifact — every field edit re-renders the
-// exact pixels that will be exported, because the engine is deterministic.
-// Export ends in a human paste: /2/media/upload still needs OAuth 1.0a, so
-// stratus never attaches images via the API. $0 throughout.
+// The Studio (SURFACES S3.3, refactored S5.2 into a template registry + field
+// components): template picker → live preview → Copy PNG / Download. The preview
+// IS the artifact — every field edit re-renders the exact pixels that will be
+// exported, because the engine is deterministic. Export ends in a human paste:
+// /2/media/upload still needs OAuth 1.0a, so stratus never attaches images via
+// the API. $0 throughout.
 
 import { type ChangeEvent, type JSX, useCallback, useEffect, useRef, useState } from 'react';
-import {
-  type BrandKit,
-  DEFAULT_BRAND_KIT,
-  loadBrandKit,
-  parseBrandKit,
-  saveBrandKit,
-} from '../studio/brandKit.ts';
+import { type BrandKit, loadBrandKit, saveBrandKit } from '../studio/brandKit.ts';
 import { render } from '../studio/compose.ts';
 import { ensureStudioFonts } from '../studio/fonts.ts';
-import {
-  BANNER,
-  PFP_FRAME,
-  QUOTE_CARD,
-  STAT_CARD,
-  type StatCardData,
-  bannerSpec,
-  pfpFrameSpec,
-  quoteCardSpec,
-  statCardSpec,
-} from '../studio/templates.ts';
+import type { StatCardData } from '../studio/templates.ts';
 import { ApiError, type ContentPillar, type MediaAsset, api } from './api.ts';
 import type { Settings } from './storage.ts';
+import { KitEditor } from './studio/KitEditor.tsx';
+import {
+  BackgroundFields,
+  BannerFields,
+  LibraryRail,
+  PfpFields,
+  QuoteFields,
+  StatFields,
+} from './studio/fields.tsx';
+import {
+  EMPTY_STAT,
+  TEMPLATES,
+  type TemplateId,
+  buildSpec,
+  supportsAiBackground,
+  templateMeta,
+} from './studio/registry.ts';
 
 /** ImageBitmap from a data: URL — same-origin, so it never taints the canvas
  *  (the whole point of the server returning base64 instead of an xAI URL). */
@@ -50,43 +52,11 @@ function seedImagePrompt(pillarLabel: string | null, styleSuffix: string): strin
   return `${subject}. ${styleSuffix}`;
 }
 
-/** Templates that composite an AI background under their text. */
-const BG_TEMPLATES = new Set<TemplateId>(['quote', 'banner']);
-
 /** Seed handed over from the Composer's "Make visual" or a leader's re-up. */
 export interface StudioSeed {
   text: string;
   /** Calendar row the visual belongs to — enables the media_note stamp. */
   postId?: string;
-}
-
-type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp';
-
-const TEMPLATES: Array<{ id: TemplateId; label: string; size: string }> = [
-  { id: 'quote', label: 'Quote card', size: `${QUOTE_CARD.w}×${QUOTE_CARD.h}` },
-  { id: 'stat', label: 'Stat card', size: `${STAT_CARD.w}×${STAT_CARD.h}` },
-  { id: 'banner', label: 'Banner', size: `${BANNER.w}×${BANNER.h}` },
-  { id: 'pfp', label: 'Profile pic', size: `${PFP_FRAME.w}×${PFP_FRAME.h}` },
-];
-
-const EMPTY_STAT: StatCardData = {
-  followers: null,
-  delta: null,
-  sparkline: [],
-  weekLabel: '',
-  posts: null,
-  replies: null,
-  topPostText: null,
-  topPostViews: null,
-  streakDays: null,
-};
-
-// <input type="color"> only speaks #rrggbb.
-function toColorInput(hex: string): string {
-  const m = /^#([0-9a-f]{3})$/i.exec(hex);
-  if (!m) return hex;
-  const s = m[1] as string;
-  return `#${s.replace(/./g, (c) => c + c)}`;
 }
 
 interface Props {
@@ -216,7 +186,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   // style suffix, and load the library — once, when a background-capable
   // template first comes into view.
   useEffect(() => {
-    if (!kit || !BG_TEMPLATES.has(template) || bgPromptSeeded.current) return;
+    if (!kit || !supportsAiBackground(template) || bgPromptSeeded.current) return;
     bgPromptSeeded.current = true;
     void (async () => {
       try {
@@ -287,14 +257,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     setNotice(null);
     try {
       const pngBase64 = await blobToBase64(blob);
-      const t = TEMPLATES.find((x) => x.id === template);
-      const [w, h] = (t?.size ?? '').split('×').map((n) => Number.parseInt(n, 10));
+      const { w, h } = templateMeta(template).size;
       await api.assets.save(settings, {
         pngBase64,
         kind: template,
         ...(bgBitmap && bgPrompt.trim() !== '' ? { prompt: bgPrompt.trim() } : {}),
-        ...(Number.isFinite(w) ? { width: w } : {}),
-        ...(Number.isFinite(h) ? { height: h } : {}),
+        width: w,
+        height: h,
       });
       setNotice('Saved to your asset library.');
       await loadLibrary();
@@ -311,7 +280,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     try {
       const { base64, mediaType } = await api.assets.png(settings, asset.id);
       const bmp = await bitmapFromDataUrl(`data:${mediaType};base64,${base64}`);
-      if (!BG_TEMPLATES.has(template)) setTemplate('quote');
+      if (!supportsAiBackground(template)) setTemplate('quote');
       setBgBitmap(bmp);
       if (asset.prompt) setBgPrompt(asset.prompt);
       setNotice('Re-opened as the background layer — add your text on top.');
@@ -337,28 +306,20 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       setRendering(true);
       try {
         await ensureStudioFonts();
-        const spec =
-          template === 'quote'
-            ? quoteCardSpec(
-                { text: quoteText.trim() || 'Your words, pixel-crisp.', background: bgBitmap },
-                kit,
-              )
-            : template === 'stat'
-              ? statCardSpec(statData ?? EMPTY_STAT, kit)
-              : template === 'banner'
-                ? bannerSpec(
-                    {
-                      headline: bannerHeadline.trim() || 'Building in public',
-                      keywords: bannerKeywords
-                        .split(',')
-                        .map((k) => k.trim())
-                        .filter((k) => k !== ''),
-                      followers: bannerMilestone ? bannerFollowers : null,
-                      background: bgBitmap,
-                    },
-                    kit,
-                  )
-                : pfpFrameSpec({ photo: pfpBitmap, initial: kit.handle }, kit);
+        const spec = buildSpec(
+          template,
+          {
+            quoteText,
+            statData,
+            bannerHeadline,
+            bannerKeywords,
+            bannerFollowers,
+            bannerMilestone,
+            pfpBitmap,
+            bgBitmap,
+          },
+          kit,
+        );
         // A document canvas (not OffscreenCanvas) so the loaded FontFaces are
         // guaranteed visible to measureText/fillText.
         const blob = await render(spec, document.createElement('canvas'));
@@ -405,6 +366,11 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     });
   };
 
+  const replaceKit = (next: BrandKit): void => {
+    setKit(next);
+    void saveBrandKit(next);
+  };
+
   const copyPng = async (): Promise<void> => {
     const blob = lastBlob.current;
     if (!blob) return;
@@ -421,10 +387,10 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const download = (): void => {
     const blob = lastBlob.current;
     if (!blob) return;
-    const t = TEMPLATES.find((x) => x.id === template);
+    const { w, h } = templateMeta(template).size;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `stratus-${template}-${t?.size ?? ''}.png`;
+    a.download = `stratus-${template}-${w}×${h}.png`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -435,38 +401,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     if (!seedPostId) return;
     setError(null);
     try {
-      const label = TEMPLATES.find((x) => x.id === template)?.label ?? 'visual';
+      const label = templateMeta(template).label;
       await api.update(settings, seedPostId, { mediaNote: `${label} made in Studio` });
       setStamped(true);
       setNotice('Post marked — it renders an amber "post manually" chip now.');
     } catch (e) {
       setError(e instanceof ApiError ? `Stamp failed: ${e.message}` : 'Stamp failed');
     }
-  };
-
-  const exportKit = (): void => {
-    if (!kit) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(
-      new Blob([JSON.stringify(kit, null, 2)], { type: 'application/json' }),
-    );
-    a.download = 'stratus-brand-kit.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  const importKit = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const parsed = parseBrandKit(await file.text());
-    if (!parsed) {
-      setError('Not a brand kit JSON.');
-      return;
-    }
-    setKit(parsed);
-    await saveBrandKit(parsed);
-    setNotice('Brand kit imported.');
   };
 
   const onPickPhoto = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -492,77 +433,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       </div>
 
       {kitOpen && (
-        <section className="studio-kit">
-          <div className="studio-kit-row">
-            <label className="studio-color">
-              <span>Background</span>
-              <input
-                type="color"
-                value={toColorInput(kit.bg)}
-                onChange={(e) => patchKit({ bg: e.target.value })}
-              />
-            </label>
-            <label className="studio-color">
-              <span>Accent</span>
-              <input
-                type="color"
-                value={toColorInput(kit.accent)}
-                onChange={(e) => patchKit({ accent: e.target.value })}
-              />
-            </label>
-          </div>
-          <label className="field">
-            <span>Handle (no @)</span>
-            <input
-              type="text"
-              value={kit.handle}
-              onChange={(e) => patchKit({ handle: e.target.value.replace(/^@+/, '') })}
-              placeholder="yourhandle"
-            />
-          </label>
-          <div className="studio-kit-row">
-            <label className="row studio-check">
-              <input
-                type="checkbox"
-                checked={kit.watermark}
-                onChange={(e) => patchKit({ watermark: e.target.checked })}
-              />
-              <span>Watermark</span>
-            </label>
-            <input
-              type="text"
-              value={kit.watermarkText}
-              onChange={(e) => patchKit({ watermarkText: e.target.value })}
-              disabled={!kit.watermark}
-            />
-          </div>
-          <label className="field">
-            <span>AI background style suffix (the brand — keep "no text")</span>
-            <textarea
-              value={kit.imageStyleSuffix}
-              onChange={(e) => patchKit({ imageStyleSuffix: e.target.value })}
-              rows={2}
-            />
-          </label>
-          <div className="row studio-kit-actions">
-            <button type="button" onClick={exportKit}>
-              Export JSON
-            </button>
-            <label className="studio-import">
-              Import
-              <input type="file" accept="application/json" onChange={(e) => void importKit(e)} />
-            </label>
-            <button
-              type="button"
-              onClick={() => {
-                setKit({ ...DEFAULT_BRAND_KIT });
-                void saveBrandKit({ ...DEFAULT_BRAND_KIT });
-              }}
-            >
-              Reset
-            </button>
-          </div>
-        </section>
+        <KitEditor
+          kit={kit}
+          onPatch={patchKit}
+          onReplace={replaceKit}
+          onError={setError}
+          onNotice={setNotice}
+        />
       )}
 
       <div className="studio-templates">
@@ -574,113 +451,46 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             onClick={() => setTemplate(t.id)}
           >
             <span>{t.label}</span>
-            <span className="muted">{t.size}</span>
+            <span className="muted">
+              {t.size.w}×{t.size.h}
+            </span>
           </button>
         ))}
       </div>
 
-      {template === 'quote' && (
-        <label className="field">
-          <span>Quote text</span>
-          <textarea
-            value={quoteText}
-            onChange={(e) => setQuoteText(e.target.value)}
-            rows={4}
-            placeholder="Paste the draft or line worth framing…"
-          />
-        </label>
-      )}
+      {template === 'quote' && <QuoteFields value={quoteText} onChange={setQuoteText} />}
 
       {template === 'stat' && (
-        <div className="row studio-data-row">
-          <span className="muted">
-            {statLoading
-              ? 'Reading the week…'
-              : statData
-                ? `Live data: ${statData.weekLabel}`
-                : 'No data yet'}
-          </span>
-          <button type="button" onClick={() => void loadStatData()} disabled={statLoading}>
-            Reload
-          </button>
-        </div>
+        <StatFields loading={statLoading} data={statData} onReload={() => void loadStatData()} />
       )}
 
       {template === 'banner' && (
-        <>
-          <label className="field">
-            <span>Headline</span>
-            <input
-              type="text"
-              value={bannerHeadline}
-              onChange={(e) => setBannerHeadline(e.target.value)}
-              placeholder="Building in public"
-            />
-          </label>
-          <label className="field">
-            <span>Keywords (comma-separated — prefilled from your pillars)</span>
-            <input
-              type="text"
-              value={bannerKeywords}
-              onChange={(e) => setBannerKeywords(e.target.value)}
-            />
-          </label>
-          <label className="row studio-check">
-            <input
-              type="checkbox"
-              checked={bannerMilestone}
-              onChange={(e) => setBannerMilestone(e.target.checked)}
-            />
-            <span>
-              Show follower milestone
-              {bannerFollowers !== null ? ` (${bannerFollowers})` : ' (no snapshot yet)'}
-            </span>
-          </label>
-        </>
+        <BannerFields
+          headline={bannerHeadline}
+          keywords={bannerKeywords}
+          milestone={bannerMilestone}
+          followers={bannerFollowers}
+          onHeadline={setBannerHeadline}
+          onKeywords={setBannerKeywords}
+          onMilestone={setBannerMilestone}
+        />
       )}
 
-      {template === 'pfp' && (
-        <label className="field">
-          <span>Photo (circle-cropped in your brand ring)</span>
-          <input type="file" accept="image/*" onChange={(e) => void onPickPhoto(e)} />
-        </label>
-      )}
+      {template === 'pfp' && <PfpFields onPickPhoto={(e) => void onPickPhoto(e)} />}
 
-      {BG_TEMPLATES.has(template) && (
-        <section className="studio-bg">
-          <div className="row studio-data-row">
-            <span className="muted">AI background (composited under your text)</span>
-            {bgBitmap && (
-              <button type="button" onClick={clearBackground}>
-                Remove background
-              </button>
-            )}
-          </div>
-          {pillars.length > 0 && (
-            <label className="field">
-              <span>Seed from pillar</span>
-              <select value={pillarSlug} onChange={(e) => reseedPrompt(e.target.value)}>
-                {pillars.map((p) => (
-                  <option key={p.slug} value={p.slug}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label className="field">
-            <span>
-              Prompt (style suffix from your brand kit; the "no text" clause is load-bearing)
-            </span>
-            <textarea value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} rows={3} />
-          </label>
-          <div className="row">
-            <button type="button" onClick={() => void generateBackground()} disabled={genLoading}>
-              {genLoading ? 'Generating…' : 'Generate background (~$0.02)'}
-            </button>
-            {genCost !== null && <span className="muted">last: ${genCost.toFixed(3)}</span>}
-          </div>
-        </section>
+      {supportsAiBackground(template) && (
+        <BackgroundFields
+          hasBackground={bgBitmap !== null}
+          pillars={pillars}
+          pillarSlug={pillarSlug}
+          prompt={bgPrompt}
+          loading={genLoading}
+          cost={genCost}
+          onClear={clearBackground}
+          onReseed={reseedPrompt}
+          onPromptChange={setBgPrompt}
+          onGenerate={() => void generateBackground()}
+        />
       )}
 
       <div className="studio-preview">
@@ -732,39 +542,12 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       </small>
 
       {library.length > 0 && (
-        <section className="studio-library">
-          <div className="panel-header">
-            <h3>Library</h3>
-            <button type="button" onClick={() => void loadLibrary()}>
-              Refresh
-            </button>
-          </div>
-          <div className="studio-library-rail">
-            {library.map((a) => (
-              <div key={a.id} className="studio-asset">
-                <button
-                  type="button"
-                  className="studio-asset-open"
-                  onClick={() => void reopenAsset(a)}
-                  title={a.prompt ?? a.kind}
-                >
-                  <span className="studio-asset-kind">{a.kind}</span>
-                  <span className="muted">
-                    {a.width && a.height ? `${a.width}×${a.height}` : ''}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="studio-asset-del"
-                  onClick={() => void deleteAsset(a.id)}
-                  title="Delete asset"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
+        <LibraryRail
+          library={library}
+          onRefresh={() => void loadLibrary()}
+          onReopen={(a) => void reopenAsset(a)}
+          onDelete={(id) => void deleteAsset(id)}
+        />
       )}
     </div>
   );
