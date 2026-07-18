@@ -16,8 +16,13 @@
 import { type SQL, and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
-import type { ReasoningEffort } from '../../grok/index.ts';
+import {
+  type AskLlmResult,
+  type LlmProvider,
+  type LlmReasoningEffort,
+  askLLM,
+  llmErrorPayload,
+} from '../../llm/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
@@ -58,13 +63,12 @@ import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 // cap for two variants), so 520 leaves headroom for the third variant.
 const MAX_OUTPUT_TOKENS = 520;
 const DEFAULT_TEMPERATURE = 0.7;
-const DEFAULT_REASONING: ReasoningEffort = 'low';
+const DEFAULT_REASONING: LlmReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
-// The single-reply cache key comes from the registry (AI.3): a sha of the
-// effective prompt body, so a customized prompt never shares a cached prefix
-// with the default; the niche suffix still busts on niche edits.
-// Batch (Radar §7.2): one Grok call drafts a reply per queued hot/warm tweet.
-const BATCH_PROMPT_CACHE_KEY = 'stratus-x-reply-batch';
+// Both cache keys come from the registry (AI.3 single, AI.5 batch): a sha of
+// the effective prompt body, so a customized prompt never shares a cached
+// prefix with the default; the niche suffix still busts on niche edits.
+// Batch (Radar §7.2): one LLM call drafts a reply per queued hot/warm tweet.
 const MAX_BATCH_TWEETS = 25;
 
 const TWEET_ID_RE = /^\d{1,32}$/;
@@ -99,6 +103,9 @@ interface RawBody {
   override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
+  // AI.5: per-request LLM provider override ('grok' | 'openrouter'); absent →
+  // the stored AI setting decides inside askLLM.
+  provider?: unknown;
   reasoningEffort?: unknown;
   // §8.6 opt-in (default off, set by the extension Settings toggle): steer the
   // reply toward one of the active content pillars.
@@ -151,7 +158,17 @@ replies.post('/replies/generate', async (c) => {
     model = body.model;
   }
 
-  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = body.provider;
+  }
+
+  // Only a body-supplied effort rides in opts — the house default goes through
+  // askLLM's defaults tier so the stored AI setting can sit between them (D44).
+  let reasoningEffort: LlmReasoningEffort | undefined;
   if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
     const r = body.reasoningEffort;
     if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
@@ -228,34 +245,45 @@ replies.post('/replies/generate', async (c) => {
     template: prompt.body,
   });
 
-  const callGrok = (): ReturnType<typeof askGrok> =>
-    askGrok({
-      ...(model !== undefined ? { model } : {}),
-      messages,
-      reasoningEffort,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      temperature: DEFAULT_TEMPERATURE,
-      jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
-      // Sha of the effective prompt body + niche suffix — busts the cached
-      // prefix on either a prompt override edit or a niche edit.
-      promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
-    });
+  // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+  // house defaults below — precedence encoded once in askLLM, D44).
+  const callLlm = (): Promise<AskLlmResult> =>
+    askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        messages,
+        jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
+        // Sha of the effective prompt body + niche suffix — busts the cached
+        // prefix on either a prompt override edit or a niche edit (grok-only).
+        promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      {
+        defaults: {
+          temperature: DEFAULT_TEMPERATURE,
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          reasoningEffort: DEFAULT_REASONING,
+        },
+      },
+    );
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  let result: AskLlmResult;
   let costUsd: number;
   let variants: ReplyVariant[] | null;
   try {
-    result = await callGrok();
+    result = await callLlm();
     costUsd = result.costUsd;
     variants = parseReplyVariants(result.text);
 
     // Specificity gate (§7.1): if no variant carries a digit, a first-person
     // marker, or a named tool, burn exactly one regenerate. Both calls are
-    // already cost-logged by askGrok; we just sum the draft's denormalized
-    // costUsd. A second all-generic round ships anyway — the human edits.
+    // already cost-logged by the provider client; we just sum the draft's
+    // denormalized costUsd. A second all-generic round ships anyway — the
+    // human edits.
     const someSpecific = variants?.some((v) => passesSpecificityGate(v.text)) ?? false;
     if (variants === null || !someSpecific) {
-      const retry = await callGrok();
+      const retry = await callLlm();
       costUsd += retry.costUsd;
       const retryVariants = parseReplyVariants(retry.text);
       if (retryVariants !== null) {
@@ -264,19 +292,8 @@ replies.post('/replies/generate', async (c) => {
       }
     }
   } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          type: err.type,
-          code: err.code,
-          message: err.message,
-          requestId: err.requestId,
-        },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/replies/generate failed:', detail);
     return c.json({ error: 'generate_failed', detail }, 502);
@@ -337,6 +354,7 @@ interface BatchBody {
   idea?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
+  provider?: unknown;
   reasoningEffort?: unknown;
   applyPillars?: unknown;
 }
@@ -377,7 +395,15 @@ replies.post('/replies/generate-batch', async (c) => {
     model = body.model;
   }
 
-  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = body.provider;
+  }
+
+  let reasoningEffort: LlmReasoningEffort | undefined;
   if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
     const r = body.reasoningEffort;
     if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
@@ -419,40 +445,44 @@ replies.post('/replies/generate-batch', async (c) => {
   const meBrief = (await loadMeContextSafe('reply')) ?? undefined;
   // N0.4: same niche grounding as the single path — single and batch can't drift.
   const niche = loadActiveNicheSafe();
+  // Registry prompt (AI.5): the standalone batch default, DB-overridable like
+  // the single-reply key; a per-request systemPromptOverride still beats it.
+  const batchPrompt = loadPromptSafe('reply-batch');
   const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance, {
     replyPersona: niche.replyPersona,
+    template: batchPrompt.body,
     ...(meBrief !== undefined ? { meBrief } : {}),
   });
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
-  // single-reply path (user-accepted, RU.3). Scale with the batch, capped.
+  // single-reply path (user-accepted, RU.3). Scale with the batch, capped. A
+  // stored AI-settings maxOutputTokens overrides this computed cap (D44
+  // precedence) — clear the setting if batches start truncating.
   const maxOutputTokens = Math.min(9000, 200 + tweets.length * 420);
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      ...(model !== undefined ? { model } : {}),
-      messages,
-      reasoningEffort,
-      maxOutputTokens,
-      temperature: DEFAULT_TEMPERATURE,
-      jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
-      // Niche-suffixed so editing the niche cleanly busts the cached prefix.
-      promptCacheKey: `${BATCH_PROMPT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
-    });
-  } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          type: err.type,
-          code: err.code,
-          message: err.message,
-          requestId: err.requestId,
+    result = await askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        messages,
+        jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
+        // Sha of the effective batch body + niche suffix (grok-only) — busts
+        // the cached prefix on a prompt override edit or a niche edit.
+        promptCacheKey: `${batchPrompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      {
+        defaults: {
+          temperature: DEFAULT_TEMPERATURE,
+          maxOutputTokens,
+          reasoningEffort: DEFAULT_REASONING,
         },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+      },
+    );
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/replies/generate-batch failed:', detail);
     return c.json({ error: 'generate_failed', detail }, 502);

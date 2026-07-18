@@ -25,6 +25,7 @@ import { priceFor } from './x/pricing.ts';
 import {
   type BatchTweet,
   type PostContext,
+  REPLY_BATCH_PROMPT_TEMPLATE,
   REPLY_PROMPT_TEMPLATE,
   blankLineBetweenPropositions,
   buildBatchGrokInput,
@@ -76,7 +77,7 @@ import {
   rankTargets,
   targetBand,
 } from './x/routes/voice.ts';
-import { parseExtractedTemplate } from './x/routes/voiceExtract.ts';
+import { EXTRACT_PROMPT_TEMPLATE, parseExtractedTemplate } from './x/voice/extractPrompt.ts';
 import { msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
@@ -544,21 +545,20 @@ describe('batch replies (Radar §7.2)', () => {
     expect(msg?.content.trimEnd().endsWith('<idea>fii contrarian</idea>')).toBe(true);
   });
 
-  test('batch head keeps the sliced voice block, not the single-reply variants section (RU.1 slice guard)', () => {
+  test('batch head keeps the voice block, not the single-reply variants section', () => {
     const content = buildBatchGrokInput(tweets)[0]?.content ?? '';
-    // The persona + forbidden lists rode in via the VOICE_BLOCK slice.
+    // The persona + forbidden lists live verbatim in the standalone batch
+    // template (AI.5 — the anti-drift test below locks them to the single
+    // default). Single-reply-only content must never leak in.
     expect(content).toContain('Forbidden openers');
     expect(content).toContain('solopreneur');
-    // VOICE_BLOCK_END bounds the slice at the heading. If it desyncs, the slice
-    // falls back to the whole template and the single-reply variants section +
-    // its {{…}} placeholders leak in. The batch head now legitimately contains
-    // "## The three variants for each post" (RU.3), so the leak sentinel is a
-    // single-reply-only phrase ('not three paraphrases', L91) + the placeholders.
     expect(content).not.toContain('not three paraphrases');
     expect(content).not.toContain('{{TWEET_CONTEXT}}');
+    // The template's own {{POSTS}}/{{IDEA}} tokens must be fully substituted.
+    expect(content).not.toContain('{{POSTS}}');
     expect(content).not.toContain('{{IDEA}}');
-    // N0.4: the sliced voice block carries {{REPLY_PERSONA}} — the batch
-    // builder must substitute it, never ship the raw token to Grok.
+    // N0.4: the voice block carries {{REPLY_PERSONA}} — the batch builder must
+    // substitute it, never ship the raw token to Grok.
     expect(content).not.toContain('{{REPLY_PERSONA}}');
   });
 
@@ -578,6 +578,38 @@ describe('batch replies (Radar §7.2)', () => {
   test('buildBatchGrokInput leaves an empty idea tag when none given', () => {
     const [msg] = buildBatchGrokInput(tweets);
     expect(msg?.content.trimEnd().endsWith('<idea></idea>')).toBe(true);
+  });
+
+  test('AI.5 anti-drift: the standalone batch DEFAULT embeds the reply DEFAULT voice block verbatim', () => {
+    // The old slicer's headings, now applied to DEFAULTS only (Decision 2):
+    // both defaults carry the raw {{REPLY_PERSONA}} token (D3), so the sliced
+    // block compares verbatim. A voice edit to reply prompt.md that isn't
+    // mirrored into REPLY_BATCH_PROMPT_TEMPLATE fails here.
+    const start = REPLY_PROMPT_TEMPLATE.indexOf('## Who I am');
+    const end = REPLY_PROMPT_TEMPLATE.indexOf('## The three variants');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const voiceBlock = REPLY_PROMPT_TEMPLATE.slice(start, end).trimEnd();
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain(voiceBlock);
+    // The render contract: posts + idea at the variable tail, persona in place.
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain('{{POSTS}}');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain('{{IDEA}}');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain('{{REPLY_PERSONA}}');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE.indexOf('{{POSTS}}')).toBeLessThan(
+      REPLY_BATCH_PROMPT_TEMPLATE.indexOf('{{IDEA}}'),
+    );
+  });
+
+  test('AI.5: a reply-batch template override changes the rendered batch prompt', () => {
+    const custom = 'CUSTOM BATCH HEAD\n\nPOSTS:\n{{POSTS}}\n\nSTEER: <idea>{{IDEA}}</idea>';
+    const content =
+      buildBatchGrokInput(tweets, 'go', undefined, undefined, undefined, { template: custom })[0]
+        ?.content ?? '';
+    expect(content.startsWith('CUSTOM BATCH HEAD')).toBe(true);
+    expect(content).toContain('id: 111');
+    expect(content).toContain('<idea>go</idea>');
+    expect(content).not.toContain('{{POSTS}}');
+    expect(content).not.toContain('solopreneur');
   });
 
   test('parseBatchReplies maps id→tweetId, keeps variants, trims, coerces unknown angles', () => {
@@ -1887,6 +1919,21 @@ describe('content pillars (§8.6)', () => {
     expect(custom[0]?.content).not.toContain('Alteramens');
     expect(custom[0]?.content).not.toContain('Pitești');
   });
+
+  test('AI.5: a pillar-draft template override changes the prompt; jobs stay code-built', () => {
+    const msg = buildPillarDraftInput({
+      mode: 'new',
+      existing: [],
+      template: 'MY TEMPLATE | {{PERSONA}} | {{EXISTING_PILLARS}} | {{JOB}}',
+      persona: 'P',
+      idea: 'steer',
+    });
+    const content = msg[0]?.content ?? '';
+    expect(content.startsWith('MY TEMPLATE | P | (none yet) | ')).toBe(true);
+    expect(content).toContain('Propose ONE new content pillar');
+    expect(content).toContain('steer');
+    expect(content).not.toContain('{{JOB}}');
+  });
 });
 
 describe('createPost gates (§9.2/§8.5)', () => {
@@ -2055,6 +2102,13 @@ describe('parseExtractedTemplate (§8.3)', () => {
   test('missing field → null', () => {
     expect(parseExtractedTemplate(JSON.stringify({ hookType: 'x' }))).toBeNull();
     expect(parseExtractedTemplate('garbage')).toBeNull();
+  });
+
+  test('AI.5: EXTRACT_PROMPT_TEMPLATE renders the tweet at the tail (old prefix+text parity)', () => {
+    const rendered = EXTRACT_PROMPT_TEMPLATE.split('{{TWEET_TEXT}}').join('MY FIXTURE TWEET');
+    expect(rendered.startsWith('Analyze the STRUCTURE')).toBe(true);
+    expect(rendered.endsWith('THE POST:\n\nMY FIXTURE TWEET')).toBe(true);
+    expect(rendered).not.toContain('{{TWEET_TEXT}}');
   });
 });
 

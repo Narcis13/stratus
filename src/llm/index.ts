@@ -14,6 +14,7 @@ export function mountLlm(app: Hono): void {
 export {
   askLLM,
   llmConfigured,
+  llmErrorPayload,
   llmProviderReady,
   resolveProvider,
   LlmNotConfiguredError,
@@ -22,6 +23,7 @@ export type {
   AskLlmOptions,
   AskLlmResult,
   LlmDefaults,
+  LlmErrorPayload,
   LlmJsonSchemaFormat,
   LlmMessage,
   LlmProvider,

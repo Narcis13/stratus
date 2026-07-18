@@ -1,11 +1,16 @@
-// Template extraction over the voice-library swipe file (§8.3). One Grok
+// Template extraction over the voice-library swipe file (§8.3). One LLM
 // structured-output pass per saved tweet distills the reusable STRUCTURE —
 // hook shape, beat skeleton, line-break rhythm, length class, rhetorical
-// device — into columns on `voice_tweets`. Grok-backed, so mounted under the
-// XAI_API_KEY guard (same as replies/drafter); ~$0.005/tweet, one-time.
+// device — into columns on `voice_tweets`. LLM-backed, so mounted under the
+// XAI_API_KEY guard (same as replies/drafter; the AI.6 gate flip owns the
+// mount); ~$0.005/tweet on Grok, one-time.
 //
 //   POST /voice/tweets/:tweetId/extract   (re)extract one tweet
 //   POST /voice/extract-batch  { limit? }  backfill un-extracted tweets, ≤50/call
+//
+// The prompt is registry key `voice-extract` (AI.5) — DB override else the
+// shipped default in ../voice/extractPrompt.ts, shared with the playbook
+// extract-winners path. Provider comes from the AI settings (askLLM).
 //
 // ToS posture is hard law here: what's stored is structural metadata derived
 // for personal analysis. Drafts that consume it (the §8.1 Remix path) must
@@ -14,114 +19,52 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { GrokApiError } from '../../grok/index.ts';
+import { type AskLlmResult, LlmNotConfiguredError, askLLM } from '../../llm/index.ts';
+import { OpenRouterApiError } from '../../openrouter/index.ts';
 import { voiceTweets } from '../db/schema.ts';
+import { loadPromptSafe, renderPrompt } from '../prompts/registry.ts';
+import {
+  type ExtractedTemplate,
+  TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
+  TEMPLATE_SCHEMA,
+  parseExtractedTemplate,
+} from '../voice/extractPrompt.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const DEFAULT_BATCH_LIMIT = 20;
 const MAX_BATCH_LIMIT = 50;
-// Shared with the C4 own-winner extraction (routes/playbook.ts) — one prompt,
-// one cache key, one output cap, so the two extract paths can never drift.
-export const TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS = 250;
-export const TEMPLATE_EXTRACT_CACHE_KEY = 'stratus-x-template-extract';
-
-export const TEMPLATE_LENGTHS = ['short', 'medium', 'long'] as const;
-export type TemplateLength = (typeof TEMPLATE_LENGTHS)[number];
-
-export interface ExtractedTemplate {
-  hookType: string;
-  skeleton: string;
-  lineBreakPattern: string;
-  length: TemplateLength;
-  device: string;
-}
-
-export const TEMPLATE_SCHEMA = {
-  type: 'object',
-  properties: {
-    hookType: {
-      type: 'string',
-      description:
-        'First-line hook pattern in 2-4 words, e.g. "stat hook", "contrast hook", "story hook", "question hook", "bold claim"',
-    },
-    skeleton: {
-      type: 'string',
-      description:
-        'Beat-by-beat structure in compact notation, e.g. "contrast hook -> short declarative -> list of 3 -> question close"',
-    },
-    lineBreakPattern: {
-      type: 'string',
-      description:
-        'How lines and whitespace are used, e.g. "one-liner", "3 short paragraphs", "list with blank lines"',
-    },
-    length: { type: 'string', enum: [...TEMPLATE_LENGTHS] },
-    device: {
-      type: 'string',
-      description:
-        'Main rhetorical device, e.g. "repetition", "numbered list", "before/after", "direct address"',
-    },
-  },
-  required: ['hookType', 'skeleton', 'lineBreakPattern', 'length', 'device'],
-  additionalProperties: false,
-} as const;
-
-export const EXTRACT_PROMPT_PREFIX = `Analyze the STRUCTURE of the X post below for a personal swipe file. Describe only the reusable skeleton — the shape of the writing, never its topic, claims, or specifics. Someone reading your output alone must not be able to tell what the post was about.
-
-Return JSON: {"hookType": "…", "skeleton": "…", "lineBreakPattern": "…", "length": "…", "device": "…"}
-- hookType: the first-line hook pattern in 2-4 words ("stat hook", "contrast hook", "story hook", "question hook", "bold claim", …).
-- skeleton: the beat-by-beat structure in compact arrow notation ("contrast hook -> short declarative -> list of 3 -> question close").
-- lineBreakPattern: how lines/whitespace carry the rhythm ("one-liner", "3 short paragraphs", "list with blank lines", "wall of text").
-- length: short (under 140 chars) | medium (140-280) | long (over 280).
-- device: the main rhetorical device ("repetition", "numbered list", "before/after", "direct address", "irony", …).
-
-THE POST:
-
-`;
-
-// Exported for unit tests (pure).
-export function parseExtractedTemplate(raw: string): ExtractedTemplate | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const v = parsed as Record<string, unknown>;
-  for (const k of ['hookType', 'skeleton', 'lineBreakPattern', 'device'] as const) {
-    if (typeof v[k] !== 'string' || (v[k] as string).trim() === '') return null;
-  }
-  const length = (TEMPLATE_LENGTHS as readonly string[]).includes(v.length as string)
-    ? (v.length as TemplateLength)
-    : 'medium';
-  return {
-    hookType: (v.hookType as string).trim(),
-    skeleton: (v.skeleton as string).trim(),
-    lineBreakPattern: (v.lineBreakPattern as string).trim(),
-    length,
-    device: (v.device as string).trim(),
-  };
-}
 
 type VoiceTweetRow = typeof voiceTweets.$inferSelect;
 
+// Shares the registry key (one prompt, one cache bucket) with the C4
+// own-winner extraction in routes/playbook.ts, so the two paths can't drift.
 async function extractOne(
   tweet: VoiceTweetRow,
 ): Promise<{ template: ExtractedTemplate; costUsd: number } | { error: string }> {
   if (!tweet.text.trim()) return { error: 'empty_text' };
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  const prompt = loadPromptSafe('voice-extract');
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      prompt: EXTRACT_PROMPT_PREFIX + tweet.text,
-      reasoningEffort: 'low',
-      maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
-      temperature: 0.2,
-      jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
-      promptCacheKey: TEMPLATE_EXTRACT_CACHE_KEY,
-    });
+    result = await askLLM(
+      {
+        prompt: renderPrompt(prompt.body, { TWEET_TEXT: tweet.text }),
+        jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      {
+        defaults: {
+          reasoningEffort: 'low',
+          maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
+          temperature: 0.2,
+        },
+      },
+    );
   } catch (err) {
+    if (err instanceof LlmNotConfiguredError) return { error: 'llm_not_configured' };
     if (err instanceof GrokApiError) return { error: `grok_${err.status}` };
+    if (err instanceof OpenRouterApiError) return { error: `openrouter_${err.status}` };
     return { error: err instanceof Error ? err.message : String(err) };
   }
 

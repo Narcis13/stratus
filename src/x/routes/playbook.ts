@@ -15,7 +15,14 @@
 import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { GrokApiError } from '../../grok/index.ts';
+import {
+  type AskLlmResult,
+  LlmNotConfiguredError,
+  type LlmProvider,
+  askLLM,
+} from '../../llm/index.ts';
+import { OpenRouterApiError } from '../../openrouter/index.ts';
 import {
   accountSnapshots,
   ideas,
@@ -57,15 +64,14 @@ import {
   topAngles,
   topStructures,
 } from '../playbook.ts';
+import { loadPromptSafe, renderPrompt } from '../prompts/registry.ts';
 import type { PostContext, ReplyVariant } from '../replies/prompt.ts';
-import { targetBand } from './voice.ts';
 import {
-  EXTRACT_PROMPT_PREFIX,
-  TEMPLATE_EXTRACT_CACHE_KEY,
   TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
   TEMPLATE_SCHEMA,
   parseExtractedTemplate,
-} from './voiceExtract.ts';
+} from '../voice/extractPrompt.ts';
+import { targetBand } from './voice.ts';
 
 // Full posted history — same ceiling as /replies/outcomes (the crosstab wants
 // everything; a single user is nowhere near it).
@@ -537,6 +543,7 @@ playbook.post('/playbook/extract-winners', async (c) => {
 
   const raw = await c.req.json().catch(() => ({}));
   let limit = MAX_WINNER_EXTRACT;
+  let provider: LlmProvider | undefined;
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const l = (raw as Record<string, unknown>).limit;
     if (l !== undefined && l !== null) {
@@ -544,6 +551,12 @@ playbook.post('/playbook/extract-winners', async (c) => {
         return c.json({ error: 'invalid_limit' }, 400);
       }
       limit = Math.min(MAX_WINNER_EXTRACT, l);
+    }
+    // AI.5: per-request LLM provider override; absent → the stored AI setting.
+    const p = (raw as Record<string, unknown>).provider;
+    if (p !== undefined && p !== null) {
+      if (p !== 'grok' && p !== 'openrouter') return c.json({ error: 'invalid_provider' }, 400);
+      provider = p;
     }
   }
 
@@ -565,6 +578,9 @@ playbook.post('/playbook/extract-winners', async (c) => {
     })
     .sort((a, b) => b.views - a.views);
 
+  // Registry prompt (AI.5): the same `voice-extract` key + cache bucket as the
+  // §8.3 voice-tweet extract path, so the two extract paths can't drift.
+  const prompt = loadPromptSafe('voice-extract');
   const batch = candidates.slice(0, limit);
   let extracted = 0;
   let costUsd = 0;
@@ -574,20 +590,34 @@ playbook.post('/playbook/extract-winners', async (c) => {
       failures.push({ tweetId: post.tweetId, error: 'empty_text' });
       continue;
     }
-    let result: Awaited<ReturnType<typeof askGrok>>;
+    let result: AskLlmResult;
     try {
-      result = await askGrok({
-        prompt: EXTRACT_PROMPT_PREFIX + post.text,
-        reasoningEffort: 'low',
-        maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
-        temperature: 0.2,
-        jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
-        promptCacheKey: TEMPLATE_EXTRACT_CACHE_KEY,
-      });
+      result = await askLLM(
+        {
+          prompt: renderPrompt(prompt.body, { TWEET_TEXT: post.text }),
+          ...(provider !== undefined ? { provider } : {}),
+          jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
+          promptCacheKey: prompt.cacheKey,
+        },
+        {
+          defaults: {
+            reasoningEffort: 'low',
+            maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
+            temperature: 0.2,
+          },
+        },
+      );
     } catch (err) {
       failures.push({
         tweetId: post.tweetId,
-        error: err instanceof GrokApiError ? `grok_${err.status}` : String(err),
+        error:
+          err instanceof LlmNotConfiguredError
+            ? 'llm_not_configured'
+            : err instanceof GrokApiError
+              ? `grok_${err.status}`
+              : err instanceof OpenRouterApiError
+                ? `openrouter_${err.status}`
+                : String(err),
       });
       continue;
     }

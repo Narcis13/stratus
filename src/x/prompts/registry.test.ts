@@ -6,8 +6,15 @@
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { db } from '../../db/client.ts';
 import { promptOverrides } from '../db/schema.ts';
+import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE, buildPostDraftInput } from '../posts/prompt.ts';
-import { type PostContext, REPLY_PROMPT_TEMPLATE, buildGrokInput } from '../replies/prompt.ts';
+import {
+  type PostContext,
+  REPLY_BATCH_PROMPT_TEMPLATE,
+  REPLY_PROMPT_TEMPLATE,
+  buildGrokInput,
+} from '../replies/prompt.ts';
+import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
 import {
   PROMPT_KEYS,
   PROMPT_SPECS,
@@ -39,11 +46,15 @@ const ctx: PostContext = {
 
 describe('prompt registry (AI.3)', () => {
   test('keys + specs: defaults are the byte-synced templates, required present', () => {
-    expect(PROMPT_KEYS).toEqual(['reply', 'post']);
+    expect(PROMPT_KEYS).toEqual(['reply', 'reply-batch', 'post', 'voice-extract', 'pillar-draft']);
     expect(isPromptKey('reply')).toBe(true);
+    expect(isPromptKey('reply-batch')).toBe(true);
     expect(isPromptKey('thread')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS['reply-batch'].defaultBody).toBe(REPLY_BATCH_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS['voice-extract'].defaultBody).toBe(EXTRACT_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS['pillar-draft'].defaultBody).toBe(PILLAR_DRAFT_TEMPLATE);
     // Every spec's own default must validate clean — required present, no
     // unknown tokens (the optional niche placeholders are known).
     for (const key of PROMPT_KEYS) {

@@ -18,14 +18,20 @@
 // tweet) ride along as "my proven posts" — the voice clone anchors on measured
 // performance, not taste. All $0: pure SQL over already-billed reads.
 //
-// Cost: askGrok already writes the platform='grok' cost_events row — don't
-// double-log here. ~$0.01/draft call at the 12KB cached prefix.
+// Cost: the provider client (askGrok / askOpenRouter via askLLM) already
+// writes the cost_events row — don't double-log here. ~$0.01/draft call at
+// the 12KB cached prefix on Grok.
 
 import { desc, eq, inArray } from 'drizzle-orm';
 import { type Context, Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
-import type { ReasoningEffort } from '../../grok/index.ts';
+import {
+  type AskLlmResult,
+  type LlmProvider,
+  type LlmReasoningEffort,
+  askLLM,
+  llmErrorPayload,
+} from '../../llm/index.ts';
 import { metricsSnapshots, postsPublished, scheduledPosts, voiceTweets } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
 import { type PillarDef, parsePillar } from '../posts/pillars.ts';
@@ -47,7 +53,7 @@ import { loadPostGuidanceSafe } from './playbook.ts';
 // against the cap (verified live on the reply route under a 350 cap).
 const MAX_OUTPUT_TOKENS = 600;
 const DEFAULT_TEMPERATURE = 0.7;
-const DEFAULT_REASONING: ReasoningEffort = 'low';
+const DEFAULT_REASONING: LlmReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
 const WINNERS_LIMIT = 5;
 // Recent non-reply posts scanned for measured winners. The account is far from
@@ -68,6 +74,9 @@ interface RawBody {
   voiceTweetId?: unknown;
   tweetId?: unknown;
   model?: unknown;
+  // AI.5: per-request LLM provider override ('grok' | 'openrouter'); absent →
+  // the stored AI setting decides inside askLLM.
+  provider?: unknown;
   reasoningEffort?: unknown;
 }
 
@@ -85,7 +94,7 @@ drafter.post('/posts/draft', async (c) => {
     pillars.map((p) => p.slug),
   );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, ideaId, model, reasoningEffort } = parsed;
+  const { body, pillar, idea, ideaId, model, provider, reasoningEffort } = parsed;
 
   let remix: RemixSource | null = null;
   if (body.voiceTweetId !== undefined && body.voiceTweetId !== null) {
@@ -113,6 +122,7 @@ drafter.post('/posts/draft', async (c) => {
     ideaId,
     remix,
     model,
+    provider,
     reasoningEffort,
     quoteTweetId: null,
     pillars,
@@ -131,7 +141,7 @@ drafter.post('/posts/reup', async (c) => {
     pillars.map((p) => p.slug),
   );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, ideaId, model, reasoningEffort } = parsed;
+  const { body, pillar, idea, ideaId, model, provider, reasoningEffort } = parsed;
 
   const tweetId = typeof body.tweetId === 'string' ? body.tweetId.trim() : '';
   if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
@@ -152,6 +162,7 @@ drafter.post('/posts/reup', async (c) => {
     ideaId,
     remix: null,
     model,
+    provider,
     reasoningEffort,
     quoteTweetId: tweetId,
     pillars,
@@ -166,7 +177,8 @@ interface GenerateOptions {
   ideaId: string | undefined;
   remix: RemixSource | null;
   model: string | undefined;
-  reasoningEffort: ReasoningEffort;
+  provider: LlmProvider | undefined;
+  reasoningEffort: LlmReasoningEffort | undefined;
   quoteTweetId: string | null;
   pillars: PillarDef[];
 }
@@ -199,33 +211,32 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
     ...(meContext !== null ? { meContext } : {}),
   });
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+  // house defaults below — precedence encoded once in askLLM, D44).
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      ...(opts.model !== undefined ? { model: opts.model } : {}),
-      messages,
-      reasoningEffort: opts.reasoningEffort,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      temperature: DEFAULT_TEMPERATURE,
-      jsonSchema: { name: 'post_drafts', schema: buildPostDraftsSchema(slugs) },
-      // Sha of the effective prompt body + niche suffix — busts the cached
-      // prefix on either a prompt override edit or a niche edit.
-      promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
-    });
-  } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          type: err.type,
-          code: err.code,
-          message: err.message,
-          requestId: err.requestId,
+    result = await askLLM(
+      {
+        ...(opts.model !== undefined ? { model: opts.model } : {}),
+        ...(opts.provider !== undefined ? { provider: opts.provider } : {}),
+        ...(opts.reasoningEffort !== undefined ? { reasoningEffort: opts.reasoningEffort } : {}),
+        messages,
+        jsonSchema: { name: 'post_drafts', schema: buildPostDraftsSchema(slugs) },
+        // Sha of the effective prompt body + niche suffix — busts the cached
+        // prefix on either a prompt override edit or a niche edit (grok-only).
+        promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      {
+        defaults: {
+          temperature: DEFAULT_TEMPERATURE,
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          reasoningEffort: DEFAULT_REASONING,
         },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+      },
+    );
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/posts/draft failed:', detail);
     return c.json({ error: 'draft_failed', detail }, 502);
@@ -329,7 +340,8 @@ interface ParsedCommon {
   idea: string | undefined;
   ideaId: string | undefined;
   model: string | undefined;
-  reasoningEffort: ReasoningEffort;
+  provider: LlmProvider | undefined;
+  reasoningEffort: LlmReasoningEffort | undefined;
 }
 
 async function parseCommon(
@@ -370,7 +382,17 @@ async function parseCommon(
     model = body.model;
   }
 
-  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return { error: 'invalid_provider' };
+    }
+    provider = body.provider;
+  }
+
+  // Only a body-supplied effort rides in opts — the house default goes through
+  // askLLM's defaults tier so the stored AI setting can sit between them (D44).
+  let reasoningEffort: LlmReasoningEffort | undefined;
   if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
     const r = body.reasoningEffort;
     if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
@@ -379,5 +401,5 @@ async function parseCommon(
     reasoningEffort = r;
   }
 
-  return { body, pillar, idea, ideaId, model, reasoningEffort };
+  return { body, pillar, idea, ideaId, model, provider, reasoningEffort };
 }

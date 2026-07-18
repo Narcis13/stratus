@@ -7,6 +7,7 @@
 import type { GrokMessage } from '../../grok/index.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { type PillarDef, isValidPillarSlug, renderPillars } from './pillars.ts';
+import { PERSONA_PLACEHOLDER } from './prompt.ts';
 
 export interface PillarProposal {
   slug: string;
@@ -36,10 +37,28 @@ export const PILLAR_DRAFT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const FORMAT_RULES = `What a content pillar is here: a recurring theme the post drafter writes against. Each pillar has:
+// Registry default (key `pillar-draft`, AI.5). {{PERSONA}} substitutes in
+// place from the active niche (token-tolerant — an override may hardcode its
+// own persona); {{EXISTING_PILLARS}} and {{JOB}} are the render contract.
+export const PILLAR_DRAFT_TEMPLATE = `You help maintain the content pillars for my X (Twitter) posting.
+
+{{PERSONA}}
+
+What a content pillar is here: a recurring theme the post drafter writes against. Each pillar has:
 - slug: a short kebab-case id (e.g. ai-craft).
 - label: a short heading in the form "Name — the ANGLE".
-- body: ONE paragraph of guidance telling the drafter how to write this pillar — the angle, "why only me" (the unfair edge), the dominant register (plain / spicy / reflective), one concrete do and one don't. Specific > abstract. No fabricated biography beyond the persona above.`;
+- body: ONE paragraph of guidance telling the drafter how to write this pillar — the angle, "why only me" (the unfair edge), the dominant register (plain / spicy / reflective), one concrete do and one don't. Specific > abstract. No fabricated biography beyond the persona above.
+
+EXISTING PILLARS:
+{{EXISTING_PILLARS}}
+
+## Your job
+{{JOB}}
+
+Return JSON {"slug": "...", "label": "...", "body": "..."} — nothing else.`;
+
+const EXISTING_PILLARS_PLACEHOLDER = '{{EXISTING_PILLARS}}';
+const JOB_PLACEHOLDER = '{{JOB}}';
 
 export interface BuildPillarDraftOptions {
   mode: 'new' | 'tweak';
@@ -53,6 +72,8 @@ export interface BuildPillarDraftOptions {
   /** Tweak only: the pillar being revised + the change to make. */
   target?: PillarDef;
   instruction?: string;
+  /** Registry-loaded prompt body (AI.5, DB override else the shipped default). */
+  template?: string;
 }
 
 export function buildPillarDraftInput(opts: BuildPillarDraftOptions): GrokMessage[] {
@@ -76,19 +97,14 @@ ${opts.instruction?.trim() || opts.idea?.trim() || 'Sharpen and tighten it; make
     }`;
   }
 
-  const content = `You help maintain the content pillars for my X (Twitter) posting.
-
-${opts.persona ?? DEFAULT_NICHE.persona}
-
-${FORMAT_RULES}
-
-EXISTING PILLARS:
-${existingBlock}
-
-## Your job
-${job}
-
-Return JSON {"slug": "...", "label": "...", "body": "..."} — nothing else.`;
+  // Persona substitutes FIRST (token-tolerant, N0.3 discipline) so later
+  // content can never inject an expandable {{PERSONA}} token.
+  const template = opts.template ?? PILLAR_DRAFT_TEMPLATE;
+  let content = template.includes(PERSONA_PLACEHOLDER)
+    ? template.split(PERSONA_PLACEHOLDER).join(opts.persona ?? DEFAULT_NICHE.persona)
+    : template;
+  content = content.split(EXISTING_PILLARS_PLACEHOLDER).join(existingBlock);
+  content = content.split(JOB_PLACEHOLDER).join(job);
 
   return [{ role: 'user', content }];
 }

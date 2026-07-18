@@ -9,8 +9,13 @@
 // NEVER a silent fallback to the other provider. The user chose the provider;
 // silently running the other one would lie about which model produced a draft.
 
-import { type AskGrokResult, askGrok } from '../grok/index.ts';
-import { type AskOpenRouterResult, type FetchLike, askOpenRouter } from '../openrouter/index.ts';
+import { type AskGrokResult, GrokApiError, askGrok } from '../grok/index.ts';
+import {
+  type AskOpenRouterResult,
+  type FetchLike,
+  OpenRouterApiError,
+  askOpenRouter,
+} from '../openrouter/index.ts';
 import {
   type AiSettings,
   type LlmProvider,
@@ -86,6 +91,39 @@ export class LlmNotConfiguredError extends Error {
     );
     this.name = 'LlmNotConfiguredError';
   }
+}
+
+/** HTTP mapping for the three typed askLLM failures, shared by every route
+ *  call site (AI.5) so the error contract can't drift per route: missing key →
+ *  503, provider upstream error → 429/502 with the provider-tagged shape the
+ *  panel already knows from the Grok-only days. Returns null for anything else
+ *  — the route keeps its own generic branch (route-specific error key + log). */
+export interface LlmErrorPayload {
+  status: 429 | 502 | 503;
+  body: Record<string, unknown>;
+}
+
+export function llmErrorPayload(err: unknown): LlmErrorPayload | null {
+  if (err instanceof LlmNotConfiguredError) {
+    return {
+      status: 503,
+      body: { error: 'llm_not_configured', provider: err.provider, message: err.message },
+    };
+  }
+  if (err instanceof GrokApiError || err instanceof OpenRouterApiError) {
+    return {
+      status: err.status === 429 ? 429 : 502,
+      body: {
+        error: err instanceof GrokApiError ? 'grok_upstream_error' : 'openrouter_upstream_error',
+        status: err.status,
+        type: err.type,
+        code: err.code,
+        message: err.message,
+        requestId: err.requestId,
+      },
+    };
+  }
+  return null;
 }
 
 /** True if EITHER provider's env key is present. This is the AI-layer runtime

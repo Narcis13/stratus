@@ -13,17 +13,27 @@
 // following niche switches). Anything else matching {{A_Z}} is unknown: a
 // warning, not an error.
 //
-// Later AI-layer tasks append keys (reply-batch, thread, rewrite, ideas,
-// voice-extract, pillar-draft, digest, icebreaker) — add the spec here plus a
-// call-site `loadPromptSafe` wire; nothing else changes.
+// Later AI-layer tasks append keys (thread, rewrite, ideas, digest,
+// icebreaker) — add the spec here plus a call-site `loadPromptSafe` wire;
+// nothing else changes. Defaults must come from PURE modules only — importing
+// a route file from here cycles (routes → registry → templates, AI.5's
+// voice/extractPrompt.ts move exists exactly for that reason).
 
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { promptOverrides } from '../db/schema.ts';
+import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
-import { REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
+import { REPLY_BATCH_PROMPT_TEMPLATE, REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
+import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
 
-export const PROMPT_KEYS = ['reply', 'post'] as const;
+export const PROMPT_KEYS = [
+  'reply',
+  'reply-batch',
+  'post',
+  'voice-extract',
+  'pillar-draft',
+] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
 export function isPromptKey(value: unknown): value is PromptKey {
@@ -49,6 +59,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     required: ['{{TWEET_CONTEXT}}', '{{IDEA}}'],
     optional: ['{{REPLY_PERSONA}}'],
   },
+  'reply-batch': {
+    name: 'Reply drafts (batch)',
+    description:
+      'The Radar batch prompt behind POST /x/replies/generate-batch — three angle variants for each queued tweet in one call.',
+    defaultBody: REPLY_BATCH_PROMPT_TEMPLATE,
+    required: ['{{POSTS}}', '{{IDEA}}'],
+    optional: ['{{REPLY_PERSONA}}'],
+  },
   post: {
     name: 'Post drafts',
     description:
@@ -56,6 +74,22 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: POST_PROMPT_TEMPLATE,
     required: ['{{PILLARS}}', '{{MY_WINNERS}}', '{{REMIX}}', '{{PILLAR}}', '{{IDEA}}'],
     optional: ['{{PERSONA}}', '{{BELIEFS}}'],
+  },
+  'voice-extract': {
+    name: 'Template extraction',
+    description:
+      'The structure-extraction prompt behind voice-tweet extract and playbook extract-winners — distills a post into a reusable skeleton.',
+    defaultBody: EXTRACT_PROMPT_TEMPLATE,
+    required: ['{{TWEET_TEXT}}'],
+    optional: [],
+  },
+  'pillar-draft': {
+    name: 'Pillar drafting',
+    description:
+      'The meta-prompt behind POST /x/pillars/draft — proposes a new content pillar or tweaks an existing one.',
+    defaultBody: PILLAR_DRAFT_TEMPLATE,
+    required: ['{{EXISTING_PILLARS}}', '{{JOB}}'],
+    optional: ['{{PERSONA}}'],
   },
 };
 

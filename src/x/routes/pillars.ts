@@ -7,13 +7,13 @@
 //   POST   /pillars                     { slug, label, body, sortOrder?, active? }
 //   PATCH  /pillars/:slug               partial { label?, body?, sortOrder?, active? }
 //   DELETE /pillars/:slug               409 if it's the last active pillar
-//   POST   /pillars/draft               { mode:'new'|'tweak', idea?, slug?, instruction? }
+//   POST   /pillars/draft               { mode:'new'|'tweak', idea?, slug?, instruction?, provider? }
 //                                       → { proposal:{slug,label,body} } (not persisted)
 
 import { type SQL, and, asc, eq, isNull, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { type AskLlmResult, type LlmProvider, askLLM, llmErrorPayload } from '../../llm/index.ts';
 import { contentPillars } from '../db/schema.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
@@ -23,8 +23,7 @@ import {
   parsePillarProposal,
 } from '../posts/pillarDraft.ts';
 import { DEFAULT_PILLARS, type PillarDef, isValidPillarSlug } from '../posts/pillars.ts';
-
-const PILLAR_DRAFT_CACHE_KEY = 'stratus-pillar-draft';
+import { loadPromptSafe } from '../prompts/registry.ts';
 
 export const pillars = new Hono();
 
@@ -205,6 +204,16 @@ pillars.post('/pillars/draft', async (c) => {
     if (b.instruction.trim() !== '') instruction = b.instruction.trim();
   }
 
+  // AI.5: per-request LLM provider override; absent → the stored AI setting
+  // decides inside askLLM.
+  let provider: LlmProvider | undefined;
+  if (b.provider !== undefined && b.provider !== null) {
+    if (b.provider !== 'grok' && b.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = b.provider;
+  }
+
   const existing = await getActivePillars();
 
   let target: PillarDef | undefined;
@@ -224,39 +233,34 @@ pillars.post('/pillars/draft', async (c) => {
   const niche = loadActiveNicheSafe();
   const persona = niche.description ? `${niche.persona}\n\n${niche.description}` : niche.persona;
 
+  // Registry prompt (AI.5): DB override else the shipped default.
+  const prompt = loadPromptSafe('pillar-draft');
   const messages = buildPillarDraftInput({
     mode,
     existing,
     persona,
+    template: prompt.body,
     ...(idea !== undefined ? { idea } : {}),
     ...(target !== undefined ? { target } : {}),
     ...(instruction !== undefined ? { instruction } : {}),
   });
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      messages,
-      reasoningEffort: 'low',
-      maxOutputTokens: 700,
-      temperature: 0.7,
-      jsonSchema: { name: 'pillar', schema: PILLAR_DRAFT_SCHEMA },
-      // Niche-suffixed: the persona sits at the top of this prompt, so a niche
-      // edit changes the prefix — bust the cache bucket with it.
-      promptCacheKey: `${PILLAR_DRAFT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
-    });
+    result = await askLLM(
+      {
+        messages,
+        ...(provider !== undefined ? { provider } : {}),
+        jsonSchema: { name: 'pillar', schema: PILLAR_DRAFT_SCHEMA },
+        // Sha of the effective prompt body + niche suffix (the persona sits at
+        // the top of this prompt, so a niche edit changes the prefix too).
+        promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      { defaults: { reasoningEffort: 'low', maxOutputTokens: 700, temperature: 0.7 } },
+    );
   } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          message: err.message,
-          requestId: err.requestId,
-        },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/pillars/draft failed:', detail);
     return c.json({ error: 'draft_failed', detail }, 502);

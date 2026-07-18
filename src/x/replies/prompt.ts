@@ -231,14 +231,19 @@ export function passesSpecificityGate(text: string): boolean {
 // ------------------------------------------------------ batch (Radar §7.2)
 //
 // The Radar drafts replies for a whole queue of hot/warm tweets in ONE Grok
-// call. It reuses the reply-master VOICE/persona verbatim (sliced out of
-// REPLY_PROMPT_TEMPLATE so the two can never drift) but swaps the job and the
-// output: three variants (one per angle) per tweet, each block anchored to its
-// tweetId — the same 3-variant shape the single-reply path returns (RU.3), so a
-// radar draft carries the full angle set the on-page chips paste from.
+// call. It reuses the reply-master VOICE/persona verbatim but swaps the job and
+// the output: three variants (one per angle) per tweet, each block anchored to
+// its tweetId — the same 3-variant shape the single-reply path returns (RU.3),
+// so a radar draft carries the full angle set the on-page chips paste from.
+//
+// AI.5 retired the old heading-slicing of REPLY_PROMPT_TEMPLATE (a user-edited
+// template sliced on magic headings is a foot-gun): the batch prompt is now a
+// STANDALONE registry default. The anti-drift guarantee moved to a test
+// asserting this default embeds the default reply template's voice block
+// verbatim (src/test.test.ts); user-caused drift between customized reply and
+// reply-batch prompts is intentional, and Restore Defaults heals it.
 
-const VOICE_BLOCK_START = '## Who I am';
-const VOICE_BLOCK_END = '## The three variants';
+const POSTS_PLACEHOLDER = '{{POSTS}}';
 
 export interface BatchTweet {
   tweetId: string;
@@ -255,20 +260,12 @@ export interface BatchReply {
   variants: ReplyVariant[];
 }
 
-// The persona + "How the replies sound" + forbidden lists, lifted verbatim
-// from the single-reply template so any edit to the master voice propagates
-// here without a second copy to maintain.
-function sharedVoiceBlock(): string {
-  const start = REPLY_PROMPT_TEMPLATE.indexOf(VOICE_BLOCK_START);
-  const end = REPLY_PROMPT_TEMPLATE.indexOf(VOICE_BLOCK_END);
-  if (start === -1 || end === -1) return REPLY_PROMPT_TEMPLATE;
-  return REPLY_PROMPT_TEMPLATE.slice(start, end).trimEnd();
-}
-
-// Everything before the variable tail (the posts + idea). Kept as a stable
-// cacheable prefix — same prompt-cache discipline as the single-reply path.
-function batchReplyHead(): string {
-  return `## The job
+// The standalone batch default (AI.5). The voice block (persona + "How the
+// replies sound" + forbidden lists) is embedded VERBATIM from the single-reply
+// default — the anti-drift test locks the two defaults together. Variable
+// content ({{POSTS}}, {{IDEA}}) sits at the tail (cacheable-prefix layout);
+// {{REPLY_PERSONA}} substitutes in place from the active niche (N0.4).
+export const REPLY_BATCH_PROMPT_TEMPLATE = `## The job
 
 You are replying to a batch of X posts. For EACH post below, write ONE sharp reply that makes a stranger scrolling past stop, read it, and tap my profile. Replies are my single biggest growth lever on X — a sharp reply under a bigger account puts me in front of their audience for free.
 
@@ -276,7 +273,26 @@ The profile visit must be **earned by curiosity** — never ask for a follow or 
 
 ---
 
-${sharedVoiceBlock()}
+## Who I am (the COMPLETE persona — infer nothing beyond these three facts)
+
+{{REPLY_PERSONA}}
+
+---
+
+## How the replies sound
+
+1. **Plain spoken English.** Write it the way a builder says it out loud. Contractions (I'm, isn't, don't, here's). A sentence fragment when it lands.
+2. **Short sentences. Hard claims.** State it; don't qualify it to death. Take a side — balanced both-sides prose reads like a model covering itself.
+3. **First person singular** — I, my. No rhetorical "we".
+4. **Punchy over polished.** A blunt one-liner beats a smooth paragraph. Leave a rough edge in.
+5. **Specific beats generic.** A number from the post, a named tool, a concrete scenario — specificity is what makes a stranger curious enough to click. But every specific must come from the post itself, common knowledge, or my steer — never invented.
+6. **Zero emoji. No hashtags. No links. No @mention of the author** (I'm replying in-thread, they're tagged already).
+
+**Forbidden openers:** "Great post!", "Thanks for sharing", "Hot take:", "Unpopular opinion:", "Exactly", "True, but", "Sounds like", "Agreed", "This.", "So true", "Love this", "Great point", "100%", "Couldn't agree more", "Same here", "Well said", "Spot on". Opening with agreement is the #1 dead-reply pattern — 42% of a failed reference account's replies started that way. Open with the claim, the number, or the scene instead.
+
+**Forbidden words/phrases (LLM-isms):** dive deep, let's unpack, unlock, supercharge, elevate your, in today's fast-paced world, game-changer, revolutionary, disruptive, transform, seamless, holistic, robust, "it's not just X, it's Y", at the end of the day, synergy, and moralizing closers ("the future is now", "we're all in this together").
+
+---
 
 ---
 
@@ -302,8 +318,15 @@ For EACH post, produce **exactly three variants — one per angle** (extends, co
 
 Return JSON of the shape \`{"replies": [{"id": "<post id>", "variants": [{"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}]}, …]}\` — exactly one object per post, the \`id\` copied verbatim from the post it answers, and exactly three variants inside it (\`angle\` one of \`extends\`, \`contrarian\`, \`debate\`, each appearing once). Each \`text\` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary. Include every post; never merge two posts into one object.
 
-**My optional steer** comes in the \`<idea>\` tag. If it has content, let it shape the angle of every reply, in English (it may be in Romanian; translate the intent). If empty, you decide each angle from the post and the rules above.`;
-}
+**My optional steer** comes in the \`<idea>\` tag. If it has content, let it shape the angle of every reply, in English (it may be in Romanian; translate the intent). If empty, you decide each angle from the post and the rules above.
+
+**The posts I'm replying to:**
+
+{{POSTS}}
+
+**My optional steer:**
+
+<idea>{{IDEA}}</idea>`;
 
 function renderBatchTweet(t: BatchTweet, i: number): string {
   const lines = [
@@ -320,29 +343,42 @@ function renderBatchTweet(t: BatchTweet, i: number): string {
 // head — the cacheable prefix must not change with who's in the queue).
 const BATCH_RELATIONSHIP_NOTE = `Some posts above carry a RELATIONSHIP line — my real prior history with that author. ${RELATIONSHIP_INSTRUCTION}`;
 
-// Builds the single user message: stable instruction head, then the posts and
-// the optional steer at the very end (cacheable-prefix layout).
+// Builds the single user message from the registry template (AI.5): stable
+// instruction head, then the posts and the optional steer at the very end
+// (cacheable-prefix layout).
 export function buildBatchGrokInput(
   tweets: BatchTweet[],
   idea?: string,
   override?: string,
   pillars?: PillarDef[],
   guidance?: string,
-  opts?: { replyPersona?: string; meBrief?: string },
+  // `template` is the registry-loaded prompt (DB override or default) — a
+  // per-request `override` (systemPromptOverride) still beats it, matching the
+  // explicit > DB > code-default precedence askLLM encodes for params.
+  opts?: { replyPersona?: string; meBrief?: string; template?: string },
 ): GrokMessage[] {
-  // The voice block sliced into batchReplyHead() carries {{REPLY_PERSONA}}
-  // (N0.4) — substitute here so single and batch ground on the same niche.
-  const head = substituteReplyPersona(
-    override && override.trim().length > 0 ? override : batchReplyHead(),
+  // {{REPLY_PERSONA}} (N0.4) substitutes FIRST — before the posts and idea
+  // land — so client-supplied content can never inject an expandable token.
+  const template = substituteReplyPersona(
+    override && override.trim().length > 0
+      ? override
+      : (opts?.template ?? REPLY_BATCH_PROMPT_TEMPLATE),
     opts?.replyPersona,
   );
   const rendered = tweets.map((t, i) => renderBatchTweet(t, i)).join('\n\n');
+  // C3: the relationship note rides with the posts block so its position (after
+  // the posts, before the steer) survives the template render.
+  const posts = tweets.some((t) => t.relationship && t.relationship.trim() !== '')
+    ? `${rendered}\n\n${BATCH_RELATIONSHIP_NOTE}`
+    : rendered;
+  let content = template.includes(POSTS_PLACEHOLDER)
+    ? template.split(POSTS_PLACEHOLDER).join(posts)
+    : `${template}\n\n**The posts I'm replying to:**\n\n${posts}`;
   const ideaText = idea?.trim() ?? '';
-  let content = `${head}\n\n**The posts I'm replying to:**\n\n${rendered}`;
-  if (tweets.some((t) => t.relationship && t.relationship.trim() !== '')) {
-    content += `\n\n${BATCH_RELATIONSHIP_NOTE}`;
-  }
-  content += `\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
+  // Custom overrides may predate the tokens — still ship the posts and steer.
+  content = content.includes(IDEA_PLACEHOLDER)
+    ? content.split(IDEA_PLACEHOLDER).join(ideaText)
+    : `${content}\n\n**My optional steer:**\n\n<idea>${ideaText}</idea>`;
   if (pillars && pillars.length > 0) content += `\n\n${renderReplyPillarsBlock(pillars)}`;
   // C4: gated Playbook guidance rides once per batch, at the variable tail.
   if (guidance && guidance.trim() !== '') content += `\n\n${guidance}`;
