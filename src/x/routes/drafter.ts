@@ -38,6 +38,7 @@ import {
   parsePostDrafts,
 } from '../posts/prompt.ts';
 import { consumeIdeaSafe } from './ideas.ts';
+import { loadMeContextSafe } from './me.ts';
 import { getActivePillars } from './pillars.ts';
 import { loadPostGuidanceSafe } from './playbook.ts';
 
@@ -174,6 +175,10 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
   // Playbook guidance (C4): gated topStructures line from my own measured
   // winners, appended at the variable tail. Best-effort; null under the gate.
   const guidance = await loadPostGuidanceSafe();
+  // M1 (ME.3): the dynamic personal-context block, appended at the variable tail
+  // (before guidance). Best-effort — null on an empty profile OR any error, so
+  // an empty profile leaves the prompt byte-identical to before this feature.
+  const meContext = await loadMeContextSafe('post');
   // N0.3: §1/§5 grounding comes from the active niche (server-stamped, never
   // client-supplied); a niche-layer failure degrades to the builder defaults.
   const niche = loadActiveNicheSafe();
@@ -186,6 +191,7 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
     ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
     ...(guidance !== null ? { guidance } : {}),
+    ...(meContext !== null ? { meContext } : {}),
   });
 
   let result: Awaited<ReturnType<typeof askGrok>>;

@@ -851,6 +851,97 @@ describe('replies parseContext signals', () => {
   });
 });
 
+describe('ME.3 personal-context injection at the variable tail', () => {
+  // The builders append ctx.me / meContext / meBrief verbatim as opaque strings,
+  // so unique sentinels prove placement/order/count without a real rendered block
+  // (and can never collide with the template prose).
+  const POST_BLOCK = 'MEBLOCK::post-context-for-grounding';
+  const BRIEF = 'MEBRIEF::reply-personal-context';
+
+  const ctx: PostContext = {
+    url: 'https://x.com/someone/status/1',
+    tweetId: '1',
+    author: 'Some One',
+    handle: 'someone',
+    text: 'agents are eating SaaS',
+    postedAt: '2026-06-10T08:00:00Z',
+    metrics: { views: 100, replies: 1, reposts: 0, likes: 2 },
+    topComments: [],
+  };
+
+  test('post drafter: meContext appended purely at the tail; absent → byte-identical', () => {
+    const base = { winners: [] };
+    const cold = buildPostDraftInput(base)[0]?.content ?? '';
+    expect(cold).not.toContain(POST_BLOCK);
+
+    const warm = buildPostDraftInput({ ...base, meContext: POST_BLOCK })[0]?.content ?? '';
+    // Purely additive at the tail — the cold prompt is an exact prefix.
+    expect(warm).toBe(`${cold}\n\n${POST_BLOCK}`);
+
+    // Whitespace-only meContext counts as absent (no change).
+    expect(buildPostDraftInput({ ...base, meContext: '   ' })[0]?.content).toBe(cold);
+  });
+
+  test('post drafter: meContext sits before the guidance line', () => {
+    const both =
+      buildPostDraftInput({ winners: [], meContext: POST_BLOCK, guidance: 'GUIDE::structures' })[0]
+        ?.content ?? '';
+    expect(both.indexOf(POST_BLOCK)).toBeGreaterThan(-1);
+    expect(both.indexOf('GUIDE::structures')).toBeGreaterThan(both.indexOf(POST_BLOCK));
+  });
+
+  test('single reply: ctx.me appended after the idea, only when stamped', () => {
+    const cold = buildGrokInput(ctx)[0]?.content ?? '';
+    expect(cold).not.toContain(BRIEF);
+
+    const warm = buildGrokInput({ ...ctx, me: BRIEF })[0]?.content ?? '';
+    expect(warm).toContain(BRIEF);
+    expect(warm.indexOf(BRIEF)).toBeGreaterThan(warm.indexOf('</idea>'));
+
+    // Empty me → no change.
+    expect(buildGrokInput({ ...ctx, me: '' })[0]?.content).toBe(cold);
+  });
+
+  test('single reply: tail order is relationship → me → guidance', () => {
+    const warm =
+      buildGrokInput({ ...ctx, relationship: 'REL::block', me: BRIEF, guidance: 'GUIDE::block' })[0]
+        ?.content ?? '';
+    expect(warm.indexOf(BRIEF)).toBeGreaterThan(warm.indexOf('REL::block'));
+    expect(warm.indexOf('GUIDE::block')).toBeGreaterThan(warm.indexOf(BRIEF));
+  });
+
+  test('batch: meBrief rides exactly once at the tail, only when supplied', () => {
+    const t: BatchTweet = { tweetId: '1', handle: 'someone', author: 'SO', text: 'post one' };
+    const cold = buildBatchGrokInput([t])[0]?.content ?? '';
+    expect(cold).not.toContain(BRIEF);
+
+    const warm =
+      buildBatchGrokInput([t, { ...t, tweetId: '2' }], undefined, undefined, undefined, undefined, {
+        meBrief: BRIEF,
+      })[0]?.content ?? '';
+    // Exactly once — it describes me, not each of the 2 posts.
+    expect(warm.split(BRIEF).length - 1).toBe(1);
+    // At the very tail, after the last post.
+    expect(warm.indexOf(BRIEF)).toBeGreaterThan(warm.indexOf('POST 2'));
+  });
+
+  test('parseContext never copies a client-supplied me (server-stamped only)', () => {
+    const out = parseContext({
+      tweetId: '123456',
+      handle: '@someone',
+      author: 'Some One',
+      text: 'a tweet',
+      url: 'https://x.com/someone/status/123456',
+      postedAt: '2026-06-10T08:00:00Z',
+      metrics: { views: 10, replies: 0, reposts: 0, likes: 0 },
+      topComments: [],
+      me: 'INJECTED BY CLIENT',
+    });
+    if ('error' in out) throw new Error(out.error);
+    expect('me' in out).toBe(false);
+  });
+});
+
 describe('mentions refresh limiter (§7.5)', () => {
   const day1 = new Date('2026-06-10T08:00:00Z');
 

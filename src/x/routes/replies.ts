@@ -47,6 +47,7 @@ import {
   passesSpecificityGate,
 } from '../replies/prompt.ts';
 import { consumeIdeaSafe } from './ideas.ts';
+import { loadMeContextSafe } from './me.ts';
 import { getActivePillars } from './pillars.ts';
 import { loadReplyGuidanceSafe } from './playbook.ts';
 import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
@@ -203,6 +204,13 @@ replies.post('/replies/generate', async (c) => {
     new Date(),
   );
   if (relationship !== '') ctx.relationship = relationship;
+
+  // Me / My Profile brief (M1, ME.3): the dynamic personal-context layer, stamped
+  // into ctx BEFORE the insert (like relationship/niche/guidance) so
+  // contextSnapshot records whether this draft saw it — the Playbook's me-lift
+  // cell (ME.5) reads it back. Best-effort — a me-layer read never blocks a draft.
+  const me = await loadMeContextSafe('reply');
+  if (me) ctx.me = me;
 
   // Playbook guidance (C4): the gated topAngles line, stamped into ctx before
   // the insert (like relationship) so contextSnapshot records whether this
@@ -400,10 +408,14 @@ replies.post('/replies/generate-batch', async (c) => {
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
   // Playbook guidance (C4): one gated line for the whole batch, variable tail.
   const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
+  // M1 (ME.3): the personal-context brief, loaded once for the whole batch (it
+  // describes me, not the 25 targets). Same 'reply' brief as the single path.
+  const meBrief = (await loadMeContextSafe('reply')) ?? undefined;
   // N0.4: same niche grounding as the single path — single and batch can't drift.
   const niche = loadActiveNicheSafe();
   const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance, {
     replyPersona: niche.replyPersona,
+    ...(meBrief !== undefined ? { meBrief } : {}),
   });
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
   // single-reply path (user-accepted, RU.3). Scale with the batch, capped.

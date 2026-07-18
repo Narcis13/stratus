@@ -267,6 +267,11 @@ export interface BuildPostDraftOptions {
   persona?: string;
   /** Active niche's §5 beliefs body. Defaults to DEFAULT_NICHE.beliefs. */
   beliefs?: string;
+  /** Rendered Me / My Profile block (M1, ME.3), server-loaded via
+   *  loadMeContextSafe('post'). Appended at the variable tail before `guidance`
+   *  — POST_PROMPT_TEMPLATE / post prompt.md stay byte-identical, same pattern
+   *  as guidance. Empty/absent → no change to the rendered prompt. */
+  meContext?: string;
 }
 
 export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] {
@@ -284,6 +289,11 @@ export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] 
   content = content.split(REMIX_PLACEHOLDER).join(renderRemix(opts.remix ?? null));
   content = content.split(PILLAR_PLACEHOLDER).join(opts.pillar ?? '');
   content = content.split(IDEA_PLACEHOLDER).join(opts.idea?.trim() ?? '');
+  // M1 (ME.3): the dynamic personal-context block rides the variable tail,
+  // before guidance — same additive pattern, empty → no change.
+  if (opts.meContext && opts.meContext.trim() !== '') {
+    content = `${content}\n\n${opts.meContext}`;
+  }
   if (opts.guidance && opts.guidance.trim() !== '') {
     content = `${content}\n\n${opts.guidance}`;
   }

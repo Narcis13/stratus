@@ -52,6 +52,12 @@ export interface PostContext {
    *  accepts it from the client; persisted via contextSnapshot as the key for
    *  future per-niche outcome analytics. */
   niche?: { slug: string };
+  /** Rendered Me / My Profile brief (M1, ME.3). Server-stamped from routes/me.ts
+   *  — parseContext never accepts it from the client, same discipline as
+   *  `relationship`/`guidance`/`niche`. Persisted via contextSnapshot so the
+   *  Playbook's me-lift cell (ME.5) can split drafts that saw it from cold ones.
+   *  Injected at the variable tail, order relationship → me → guidance. */
+  me?: string;
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
@@ -322,7 +328,7 @@ export function buildBatchGrokInput(
   override?: string,
   pillars?: PillarDef[],
   guidance?: string,
-  opts?: { replyPersona?: string },
+  opts?: { replyPersona?: string; meBrief?: string },
 ): GrokMessage[] {
   // The voice block sliced into batchReplyHead() carries {{REPLY_PERSONA}}
   // (N0.4) — substitute here so single and batch ground on the same niche.
@@ -340,6 +346,9 @@ export function buildBatchGrokInput(
   if (pillars && pillars.length > 0) content += `\n\n${renderReplyPillarsBlock(pillars)}`;
   // C4: gated Playbook guidance rides once per batch, at the variable tail.
   if (guidance && guidance.trim() !== '') content += `\n\n${guidance}`;
+  // M1 (ME.3): the personal-context brief rides ONCE per batch — it describes
+  // me, not the targets — at the very tail.
+  if (opts?.meBrief && opts.meBrief.trim() !== '') content += `\n\n${opts.meBrief}`;
   return [{ role: 'user', content }];
 }
 
@@ -456,6 +465,11 @@ export function buildGrokInput(
   // byte-sync test against reply prompt.md) stays untouched.
   if (ctx.relationship && ctx.relationship.trim() !== '') {
     content = `${content}\n\n${ctx.relationship}`;
+  }
+  // M1 (ME.3): the personal-context brief, right after relationship (order
+  // relationship → me → guidance) — same server-stamped variable-tail pattern.
+  if (ctx.me && ctx.me.trim() !== '') {
+    content = `${content}\n\n${ctx.me}`;
   }
   if (pillars && pillars.length > 0) {
     content = `${content}\n\n${renderReplyPillarsBlock(pillars)}`;
