@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { NicheDoctrine } from '../niche/defaults.ts';
 
 // Migrated from Postgres (Neon) to local SQLite (bun:sqlite). Type mapping:
 //   timestamptz   -> integer({ mode: 'timestamp_ms' })  (epoch ms; app sees Date)
@@ -36,6 +37,9 @@ export const contentPillars = sqliteTable('content_pillars', {
   body: text('body').notNull(),
   sortOrder: integer('sort_order').default(0).notNull(),
   active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  // Owning niche (N0). Nullable; migration backfills 'builder'. Plain text (no
+  // FK) — the future per-niche partition is a backfill, not a rework.
+  niche: text('niche'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
@@ -59,6 +63,33 @@ export const channels = sqliteTable('channels', {
   active: integer('active', { mode: 'boolean' }).default(true).notNull(),
   pillar: text('pillar'),
   keywords: text('keywords', { mode: 'json' }).$type<string[]>(),
+  // Owning niche (N0). Nullable; migration backfills 'builder'.
+  niche: text('niche'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Niche (N0) — the first-class identity + strategy container. Exactly ONE active
+// niche at a time (v1). persona/beliefs/replyPersona are the prompt-grounding
+// blocks lifted out of the byte-synced templates (post prompt §1/§5, reply
+// prompt "Who I am"), so the active identity can change without a deploy — the
+// §8.6 move that made pillars editable. `doctrine` (nullable JSON) holds the 5
+// REPLY-GUIDE knobs; null = all defaults (resolveDoctrine merges field-by-field).
+// Seeded with `builder` (active), mirroring DEFAULT_NICHE byte-for-byte — the
+// DEFAULT_PILLARS seed discipline. Consumers stay inert until N0.3/N0.4/N0.5.
+export const niches = sqliteTable('niches', {
+  slug: text('slug').primaryKey(),
+  label: text('label').notNull(),
+  description: text('description'),
+  persona: text('persona').notNull(),
+  beliefs: text('beliefs').notNull(),
+  replyPersona: text('reply_persona').notNull(),
+  doctrine: text('doctrine', { mode: 'json' }).$type<Partial<NicheDoctrine>>(),
+  active: integer('active', { mode: 'boolean' }).default(false).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
