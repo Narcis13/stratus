@@ -685,3 +685,56 @@ export const harvestRows = sqliteTable(
     index('harvest_rows_run_idx').on(t.runId),
   ],
 );
+
+// Me / My Profile (M1): the DYNAMIC personal-context layer injected at the
+// prompt tail (post prompt.md §1 stays static). Human-written only — Grok never
+// authors these (§7.18). An empty profile renders an empty block, so with no
+// rows every prompt is byte-identical to before this feature (the rollback
+// story). `happened_at` null = undated, so created_at drives freshness windows.
+export const meEntries = sqliteTable(
+  'me_entries',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    kind: text('kind').notNull(), // fact | event | emotion | note
+    text: text('text').notNull(),
+    happenedAt: integer('happened_at', { mode: 'timestamp_ms' }),
+    pinned: integer('pinned', { mode: 'boolean' }).default(false).notNull(),
+    active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('me_entries_kind_active_idx').on(t.kind, t.active)],
+);
+
+// Measurable goals. `followers` goals auto-track progress from the latest
+// account_snapshots row ($0, daily getMe); `mrr`/`custom` take a manual
+// current_value. GR.7 (D4) extends this table rather than forking a second
+// goals system.
+export const meGoals = sqliteTable(
+  'me_goals',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    label: text('label').notNull(),
+    kind: text('kind').notNull(), // followers | mrr | custom
+    target: real('target').notNull(),
+    unit: text('unit'),
+    currentValue: real('current_value'),
+    deadline: integer('deadline', { mode: 'timestamp_ms' }),
+    status: text('status').notNull().default('active'), // active | achieved | dropped
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('me_goals_status_idx').on(t.status)],
+);
