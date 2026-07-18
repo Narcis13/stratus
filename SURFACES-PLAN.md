@@ -351,6 +351,48 @@ $0.07 generation).
 
 ---
 
+## 5b. Phase S5 — Studio 2.0: mascot, template gallery, patterns & presets — SHIPPED 2026-07-18
+
+> **Status: done.** Full build plan in **`plans/2026-07-16-studio-2.md`** (tasks ST.1–ST.9);
+> see CLAUDE.md §"Surfaces S5" and **[docs/s3-studio.md](./docs/s3-studio.md)** (the single
+> authoritative Studio doc) for the shipped shape.
+
+**Job:** turn the four static S3 templates into a memorable branded *system*, all $0
+recurring, no new X reads/writes, no new Grok text calls — everything new is client-side
+canvas.
+
+- **Cloud mascot** (`extension/src/studio/mascot.ts`) — a deterministic vector cloud
+  (chosen over an AI mascot: $0, pixel-identical, snapshot-testable), poses `happy /
+  celebrating / thinking / sleeping` tied to real data, all colors `shade(kit.accent,…)`
+  so it re-skins with the brand. `BrandKit.mascot` gates it; an AI background suppresses it.
+- **Six new templates** (milestone, streak, code/terminal, thread cover, numbered list,
+  chart card) — a gallery of ten, each a pure `spec(data,kit) → RenderSpec`. The code card
+  uses a measure-free fixed-advance layout (`MONO_ADVANCE = 0.6`, bundled JetBrains Mono);
+  milestone/chart pull already-billed `/x/metrics/account` + `/x/metrics/best-times`.
+- **Deterministic background patterns** (`dots · grid · diagonal · plus · blobs`) as $0
+  alternatives to AI backgrounds, via a new `pattern` layer kind + a seeded `mulberry32`
+  PRNG (`Math.random` banned in the Studio — determinism is the preview-IS-artifact contract).
+- **Named theme presets** — `studio:brandKits` bundle (Midnight / Paper / Neon starters),
+  legacy single-kit migrated on load; save-as / rename / delete; export/import accepts
+  both shapes.
+- **Registry refactor first** — `Studio.tsx` split into a shell + `registry.ts` (metadata
+  + `buildSpec` dispatch) + `fields.tsx` + `KitEditor.tsx`, so the eleventh template costs
+  a fraction of the fifth. No server data changes, no migrations; the only server touch was
+  widening the `ASSET_KINDS` whitelist (additive, unknown kinds degrade to `'other'`).
+
+**Cost:** $0 recurring (the S4 AI-background click is unchanged). **Done when:** the gallery
+renders all ten templates with the bundled fonts, the mascot poses track real data, presets
+re-skin instantly, patterns are deterministic, and Copy PNG pastes into X. **Browser-verified
+2026-07-18** over a render harness (all ten templates × three presets, fonts, mascot poses,
+determinism, Copy-PNG); the first real mascot-card pasted into a live tweet is the remaining
+real-world tail.
+
+**Tests:** `mascot.test.ts`, `milestones.test.ts`, `codeTokens.test.ts`, `chartData.test.ts`,
+expanded `compose.test.ts` / `templates.test.ts` / `brandKit.test.ts`; `scripts/smoke-studio.ts`
+extended so every S5 asset kind survives the whitelist ($0 default).
+
+---
+
 ## 6. Explicitly NOT doing (this plan)
 
 - **OAuth 1.0a media upload** — no API-attached images, no auto-posted visuals. The

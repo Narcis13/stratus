@@ -129,6 +129,31 @@ const gone = await app.request(`/x/assets/${assetId}/png`);
 if (gone.status !== 404) fail(`deleted asset /png → ${gone.status} (expected 404)`);
 ok('deleted; stream 404s');
 
+// 7. S5 template gallery kinds survive the whitelist (not coerced to 'other').
+//    Each new template saves under its own kind; the round-trip must echo it
+//    back verbatim — a regression in ASSET_KINDS would silently degrade to
+//    'other' and the S1 explorer/library filter would lose the kind.
+const S5_KINDS = ['milestone', 'streak', 'code', 'thread', 'list', 'chart'] as const;
+const kindIds: string[] = [];
+for (const kind of S5_KINDS) {
+  const r = await postJson<{ id: string; kind: string }>('/x/assets', {
+    pngBase64: B64,
+    kind,
+    width: 1200,
+    height: 675,
+  });
+  if (r.status !== 201) fail(`POST /x/assets kind=${kind} → ${r.status}`);
+  if (r.json.kind !== kind)
+    fail(`kind '${kind}' coerced to '${r.json.kind}' (whitelist regression)`);
+  kindIds.push(r.json.id);
+}
+ok(`S5 kinds survive the whitelist: ${S5_KINDS.join(', ')}`);
+for (const id of kindIds) {
+  const r = await app.request(`/x/assets/${id}`, { method: 'DELETE' });
+  if (r.status !== 200) fail(`cleanup DELETE ${id} → ${r.status}`);
+}
+ok(`cleaned up ${kindIds.length} S5-kind assets`);
+
 // Belt-and-suspenders: nothing this run created should remain.
 await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId));
 
