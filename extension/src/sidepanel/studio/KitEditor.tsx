@@ -1,9 +1,17 @@
-// The brand-kit editor (SURFACES S5.2): colors, handle, watermark, AI-background
-// style suffix, and export/import/reset — extracted verbatim from Studio.tsx.
-// Whole-kit swaps (import/reset) go through onReplace so the shell persists them.
+// The brand-kit editor (SURFACES S5.2, presets S5.4): the preset dropdown +
+// Save-as / rename / delete, the active kit's colors/handle/watermark/mascot/
+// style-suffix, and export/import/reset. Whole-bundle swaps (import/reset) and
+// every preset mutation go through callbacks so the shell persists them.
 
-import type { ChangeEvent, JSX } from 'react';
-import { type BrandKit, DEFAULT_BRAND_KIT, parseBrandKit } from '../../studio/brandKit.ts';
+import { type ChangeEvent, type JSX, useState } from 'react';
+import {
+  type BrandKit,
+  type BrandKits,
+  activeKit,
+  canDeletePreset,
+  parseBrandKitsFile,
+  serializeBrandKits,
+} from '../../studio/brandKit.ts';
 
 // <input type="color"> only speaks #rrggbb.
 function toColorInput(hex: string): string {
@@ -14,22 +22,43 @@ function toColorInput(hex: string): string {
 }
 
 interface Props {
-  kit: BrandKit;
-  /** Field-level edit — merged and persisted by the shell. */
+  bundle: BrandKits;
+  /** Field-level edit of the active kit — merged and persisted by the shell. */
   onPatch: (partial: Partial<BrandKit>) => void;
-  /** Whole-kit swap (import / reset) — persisted by the shell. */
-  onReplace: (kit: BrandKit) => void;
+  onSelectPreset: (name: string) => void;
+  /** Save the active kit under a new name and activate it. */
+  onSaveAs: (name: string) => void;
+  onRename: (from: string, to: string) => void;
+  onDelete: (name: string) => void;
+  /** Whole-bundle swap (import / reset) — persisted by the shell. */
+  onImport: (bundle: BrandKits) => void;
+  onResetActive: () => void;
   onError: (msg: string) => void;
   onNotice: (msg: string) => void;
 }
 
-export function KitEditor({ kit, onPatch, onReplace, onError, onNotice }: Props): JSX.Element {
+export function KitEditor({
+  bundle,
+  onPatch,
+  onSelectPreset,
+  onSaveAs,
+  onRename,
+  onDelete,
+  onImport,
+  onResetActive,
+  onError,
+  onNotice,
+}: Props): JSX.Element {
+  const kit = activeKit(bundle);
+  const names = Object.keys(bundle.kits);
+  const [newName, setNewName] = useState('');
+
   const exportKit = (): void => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(
-      new Blob([JSON.stringify(kit, null, 2)], { type: 'application/json' }),
+      new Blob([serializeBrandKits(bundle)], { type: 'application/json' }),
     );
-    a.download = 'stratus-brand-kit.json';
+    a.download = 'stratus-brand-kits.json';
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -38,17 +67,71 @@ export function KitEditor({ kit, onPatch, onReplace, onError, onNotice }: Props)
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
-    const parsed = parseBrandKit(await file.text());
+    const parsed = parseBrandKitsFile(await file.text());
     if (!parsed) {
       onError('Not a brand kit JSON.');
       return;
     }
-    onReplace(parsed);
+    onImport(parsed);
     onNotice('Brand kit imported.');
+  };
+
+  const saveAs = (): void => {
+    const n = newName.trim();
+    if (n === '') return;
+    onSaveAs(n);
+    setNewName('');
+    onNotice(`Saved preset "${n}".`);
+  };
+
+  const rename = (): void => {
+    const n = newName.trim();
+    if (n === '' || n === bundle.active) return;
+    onRename(bundle.active, n);
+    setNewName('');
   };
 
   return (
     <section className="studio-kit">
+      <div className="studio-kit-row">
+        <label className="field">
+          <span>Preset</span>
+          <select value={bundle.active} onChange={(e) => onSelectPreset(e.target.value)}>
+            {names.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={() => onDelete(bundle.active)}
+          disabled={!canDeletePreset(bundle, bundle.active)}
+          title="Delete the active preset (the last preset can't be deleted)"
+        >
+          Delete preset
+        </button>
+      </div>
+      <div className="studio-kit-row">
+        <input
+          type="text"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+          placeholder="New preset name"
+        />
+        <button type="button" onClick={saveAs} disabled={newName.trim() === ''}>
+          Save as
+        </button>
+        <button
+          type="button"
+          onClick={rename}
+          disabled={newName.trim() === '' || newName.trim() === bundle.active}
+        >
+          Rename
+        </button>
+      </div>
+
       <div className="studio-kit-row">
         <label className="studio-color">
           <span>Background</span>
@@ -116,8 +199,8 @@ export function KitEditor({ kit, onPatch, onReplace, onError, onNotice }: Props)
           Import
           <input type="file" accept="application/json" onChange={(e) => void importKit(e)} />
         </label>
-        <button type="button" onClick={() => onReplace({ ...DEFAULT_BRAND_KIT })}>
-          Reset
+        <button type="button" onClick={onResetActive}>
+          Reset preset
         </button>
       </div>
     </section>

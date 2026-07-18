@@ -5,7 +5,14 @@
 // the palette constraint is what makes months of cards read as one brand.
 
 import type { BrandKit } from './brandKit.ts';
-import { type Layer, type RenderSpec, contrastOn, shade, withAlpha } from './compose.ts';
+import {
+  type Layer,
+  type PatternKind,
+  type RenderSpec,
+  contrastOn,
+  shade,
+  withAlpha,
+} from './compose.ts';
 import { mascotLayers } from './mascot.ts';
 
 export const QUOTE_CARD = { w: 1200, h: 675 } as const;
@@ -37,18 +44,45 @@ function background(kit: BrandKit): Layer {
 // canvas-rendered text legible over arbitrary imagery — the brand text never
 // competes with the generated pixels. Without a background it's the plain
 // gradient fill, so every template stays backwards-compatible.
+//
+// SURFACES S5.4: a deterministic pattern is the $0 alternative to the AI
+// background — a faint texture over the gradient. An AI `bg` bitmap always wins
+// (patterns and AI backgrounds are mutually exclusive); the pattern ink derives
+// from contrastOn(kit.bg) at low alpha so it reads on light presets too.
 function baseLayers(
   kit: BrandKit,
   w: number,
   h: number,
   bg: ImageBitmap | null | undefined,
   scrimAlpha: number,
+  pattern?: { kind: PatternKind; seed: number } | null,
 ): Layer[] {
-  if (!bg) return [background(kit)];
-  return [
-    { kind: 'image', src: bg, fit: 'cover', box: { x: 0, y: 0, w, h } },
-    { kind: 'fill', color: withAlpha(kit.bg, scrimAlpha) },
-  ];
+  if (bg) {
+    return [
+      { kind: 'image', src: bg, fit: 'cover', box: { x: 0, y: 0, w, h } },
+      { kind: 'fill', color: withAlpha(kit.bg, scrimAlpha) },
+    ];
+  }
+  const layers: Layer[] = [background(kit)];
+  if (pattern) {
+    layers.push({
+      kind: 'pattern',
+      pattern: pattern.kind,
+      color: withAlpha(contrastOn(kit.bg), 0.07),
+      box: { x: 0, y: 0, w, h },
+      seed: pattern.seed,
+    });
+  }
+  return layers;
+}
+
+/** A pattern arg for baseLayers from a card's optional pattern fields (seed
+ *  defaults to 7 — only `blobs` reads it, but it's threaded for reroll). */
+function patternArg(
+  kind: PatternKind | undefined,
+  seed: number | undefined,
+): { kind: PatternKind; seed: number } | null {
+  return kind ? { kind, seed: seed ?? 7 } : null;
 }
 
 function watermarkLayer(kit: BrandKit, ink: string, sizePx = 24, margin = 40): Layer[] {
@@ -70,13 +104,23 @@ export interface QuoteCardData {
   text: string;
   /** SURFACES S4 — optional AI background composited under the quote. */
   background?: ImageBitmap | null;
+  /** SURFACES S5.4 — deterministic pattern (ignored when a background is set). */
+  patternKind?: PatternKind;
+  patternSeed?: number;
 }
 
 /** 1200×675 — a draft/tweet as a branded, pixel-crisp pull-quote. */
 export function quoteCardSpec(data: QuoteCardData, kit: BrandKit): RenderSpec {
   const ink = contrastOn(kit.bg);
   const layers: Layer[] = [
-    ...baseLayers(kit, QUOTE_CARD.w, QUOTE_CARD.h, data.background, 0.68),
+    ...baseLayers(
+      kit,
+      QUOTE_CARD.w,
+      QUOTE_CARD.h,
+      data.background,
+      0.68,
+      patternArg(data.patternKind, data.patternSeed),
+    ),
     { kind: 'rule', box: { x: 96, y: 104, w: 96, h: 10 }, color: kit.accent },
     {
       kind: 'text',
@@ -289,6 +333,9 @@ export interface BannerData {
   followers: number | null;
   /** SURFACES S4 — optional AI background composited under the header. */
   background?: ImageBitmap | null;
+  /** SURFACES S5.4 — deterministic pattern (ignored when a background is set). */
+  patternKind?: PatternKind;
+  patternSeed?: number;
 }
 
 /** 1500×500 — profile header: headline, pillar strip, live follower milestone.
@@ -299,7 +346,14 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
   const withMilestone = data.followers !== null;
 
   const layers: Layer[] = [
-    ...baseLayers(kit, BANNER.w, BANNER.h, data.background, 0.6),
+    ...baseLayers(
+      kit,
+      BANNER.w,
+      BANNER.h,
+      data.background,
+      0.6,
+      patternArg(data.patternKind, data.patternSeed),
+    ),
     { kind: 'rule', box: { x: 80, y: 96, w: 88, h: 10 }, color: kit.accent },
     {
       kind: 'text',

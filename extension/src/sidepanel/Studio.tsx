@@ -6,8 +6,20 @@
 // the API. $0 throughout.
 
 import { type ChangeEvent, type JSX, useCallback, useEffect, useRef, useState } from 'react';
-import { type BrandKit, loadBrandKit, saveBrandKit } from '../studio/brandKit.ts';
-import { render } from '../studio/compose.ts';
+import {
+  type BrandKit,
+  type BrandKits,
+  DEFAULT_BRAND_KIT,
+  activeKit,
+  deletePreset,
+  loadBrandKits,
+  patchActiveKit,
+  renamePreset,
+  saveBrandKits,
+  savePresetAs,
+  setActivePreset,
+} from '../studio/brandKit.ts';
+import { type PatternKind, render } from '../studio/compose.ts';
 import { ensureStudioFonts } from '../studio/fonts.ts';
 import type { StatCardData } from '../studio/templates.ts';
 import { ApiError, type ContentPillar, type MediaAsset, api } from './api.ts';
@@ -52,6 +64,21 @@ function seedImagePrompt(pillarLabel: string | null, styleSuffix: string): strin
   return `${subject}. ${styleSuffix}`;
 }
 
+// S5.4: the background of a background-capable template — the plain gradient, a
+// deterministic $0 pattern, or the ~$0.02 AI image. Patterns and the AI bitmap
+// are mutually exclusive; `bgMode` is the single source of truth (patternKind
+// derives from it).
+type BgMode = 'gradient' | PatternKind | 'ai';
+const BG_MODES: Array<{ id: BgMode; label: string }> = [
+  { id: 'gradient', label: 'Gradient' },
+  { id: 'dots', label: 'Dots' },
+  { id: 'grid', label: 'Grid' },
+  { id: 'diagonal', label: 'Diagonal' },
+  { id: 'plus', label: 'Plus' },
+  { id: 'blobs', label: 'Blobs' },
+  { id: 'ai', label: 'AI image' },
+];
+
 /** Seed handed over from the Composer's "Make visual" or a leader's re-up. */
 export interface StudioSeed {
   text: string;
@@ -66,7 +93,8 @@ interface Props {
 }
 
 export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element {
-  const [kit, setKit] = useState<BrandKit | null>(null);
+  const [bundle, setBundle] = useState<BrandKits | null>(null);
+  const kit = bundle ? activeKit(bundle) : null;
   const [kitOpen, setKitOpen] = useState(false);
   const [template, setTemplate] = useState<TemplateId>('quote');
 
@@ -85,7 +113,11 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
 
   const [pfpBitmap, setPfpBitmap] = useState<ImageBitmap | null>(null);
 
-  // S4: AI background composited under the quote/banner text.
+  // S4/S5.4: the background of a background-capable template. `bgMode` is the
+  // single source of truth; the AI bitmap only applies while mode === 'ai'.
+  const [bgMode, setBgMode] = useState<BgMode>('gradient');
+  const [patternSeed, setPatternSeed] = useState(7);
+  const patternKind: PatternKind | null = bgMode !== 'gradient' && bgMode !== 'ai' ? bgMode : null;
   const [bgBitmap, setBgBitmap] = useState<ImageBitmap | null>(null);
   const [bgPrompt, setBgPrompt] = useState('');
   const [pillars, setPillars] = useState<ContentPillar[]>([]);
@@ -107,7 +139,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const renderToken = useRef(0);
 
   useEffect(() => {
-    void loadBrandKit().then(setKit);
+    void loadBrandKits().then(setBundle);
   }, []);
 
   // Seed from Composer / re-up: quote card, text prefilled, stamp target kept.
@@ -249,6 +281,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     setGenCost(null);
   };
 
+  // Picking a pattern (or gradient) drops any AI bitmap — patterns and AI
+  // backgrounds are mutually exclusive; 'ai' keeps the bitmap for regeneration.
+  const chooseBgMode = (mode: BgMode): void => {
+    setBgMode(mode);
+    if (mode !== 'ai') clearBackground();
+  };
+
   const saveToLibrary = async (): Promise<void> => {
     const blob = lastBlob.current;
     if (!blob) return;
@@ -281,6 +320,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       const { base64, mediaType } = await api.assets.png(settings, asset.id);
       const bmp = await bitmapFromDataUrl(`data:${mediaType};base64,${base64}`);
       if (!supportsAiBackground(template)) setTemplate('quote');
+      setBgMode('ai');
       setBgBitmap(bmp);
       if (asset.prompt) setBgPrompt(asset.prompt);
       setNotice('Re-opened as the background layer — add your text on top.');
@@ -317,6 +357,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             bannerMilestone,
             pfpBitmap,
             bgBitmap,
+            patternKind,
+            patternSeed,
           },
           kit,
         );
@@ -348,6 +390,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     bannerMilestone,
     pfpBitmap,
     bgBitmap,
+    patternKind,
+    patternSeed,
   ]);
 
   useEffect(
@@ -357,19 +401,20 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     [previewUrl],
   );
 
-  const patchKit = (partial: Partial<BrandKit>): void => {
-    setKit((prev) => {
+  // Every kit/preset edit maps to a pure bundle transform, then persists.
+  const applyBundle = (fn: (b: BrandKits) => BrandKits): void => {
+    setBundle((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, ...partial };
-      void saveBrandKit(next);
+      const next = fn(prev);
+      void saveBrandKits(next);
       return next;
     });
   };
-
-  const replaceKit = (next: BrandKit): void => {
-    setKit(next);
-    void saveBrandKit(next);
-  };
+  const patchKit = (partial: Partial<BrandKit>): void =>
+    applyBundle((b) => patchActiveKit(b, partial));
+  const importBundle = (next: BrandKits): void => applyBundle(() => next);
+  const resetActiveKit = (): void =>
+    applyBundle((b) => patchActiveKit(b, { ...DEFAULT_BRAND_KIT }));
 
   const copyPng = async (): Promise<void> => {
     const blob = lastBlob.current;
@@ -421,7 +466,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   };
 
-  if (!kit) return <div className="panel muted">Loading…</div>;
+  if (!bundle || !kit) return <div className="panel muted">Loading…</div>;
 
   return (
     <div className="panel">
@@ -434,9 +479,14 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
 
       {kitOpen && (
         <KitEditor
-          kit={kit}
+          bundle={bundle}
           onPatch={patchKit}
-          onReplace={replaceKit}
+          onSelectPreset={(name) => applyBundle((b) => setActivePreset(b, name))}
+          onSaveAs={(name) => applyBundle((b) => savePresetAs(b, name, activeKit(b)))}
+          onRename={(from, to) => applyBundle((b) => renamePreset(b, from, to))}
+          onDelete={(name) => applyBundle((b) => deletePreset(b, name))}
+          onImport={importBundle}
+          onResetActive={resetActiveKit}
           onError={setError}
           onNotice={setNotice}
         />
@@ -479,6 +529,33 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       {template === 'pfp' && <PfpFields onPickPhoto={(e) => void onPickPhoto(e)} />}
 
       {supportsAiBackground(template) && (
+        <div className="studio-bg-modes">
+          <span className="muted">Background</span>
+          <div className="studio-templates">
+            {BG_MODES.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                className={`studio-template${bgMode === m.id ? ' studio-template-active' : ''}`}
+                onClick={() => chooseBgMode(m.id)}
+              >
+                <span>{m.label}</span>
+              </button>
+            ))}
+          </div>
+          {bgMode === 'blobs' && (
+            <button
+              type="button"
+              onClick={() => setPatternSeed((s) => s + 1)}
+              title="Reroll the blob placement"
+            >
+              Reroll
+            </button>
+          )}
+        </div>
+      )}
+
+      {supportsAiBackground(template) && bgMode === 'ai' && (
         <BackgroundFields
           hasBackground={bgBitmap !== null}
           pillars={pillars}

@@ -3,7 +3,7 @@
 // row + one field section — not another ternary branch in the render loop.
 
 import type { BrandKit } from '../../studio/brandKit.ts';
-import type { RenderSpec } from '../../studio/compose.ts';
+import type { PatternKind, RenderSpec } from '../../studio/compose.ts';
 import {
   BANNER,
   PFP_FRAME,
@@ -80,6 +80,10 @@ export interface TemplateState {
   bannerMilestone: boolean;
   pfpBitmap: ImageBitmap | null;
   bgBitmap: ImageBitmap | null;
+  /** S5.4 background pattern for background-capable templates (null = gradient
+   *  or an AI bitmap is set). Seed only matters for `blobs`. */
+  patternKind: PatternKind | null;
+  patternSeed: number;
 }
 
 /** Behavior-neutral dispatch — identical output to the pre-refactor render ternary. */
@@ -87,7 +91,13 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
   switch (id) {
     case 'quote':
       return quoteCardSpec(
-        { text: state.quoteText.trim() || 'Your words, pixel-crisp.', background: state.bgBitmap },
+        {
+          text: state.quoteText.trim() || 'Your words, pixel-crisp.',
+          background: state.bgBitmap,
+          ...(state.patternKind
+            ? { patternKind: state.patternKind, patternSeed: state.patternSeed }
+            : {}),
+        },
         kit,
       );
     case 'stat':
@@ -102,6 +112,9 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
             .filter((k) => k !== ''),
           followers: state.bannerMilestone ? state.bannerFollowers : null,
           background: state.bgBitmap,
+          ...(state.patternKind
+            ? { patternKind: state.patternKind, patternSeed: state.patternSeed }
+            : {}),
         },
         kit,
       );

@@ -287,3 +287,45 @@ describe('mascot wiring (S5.3)', () => {
     ).toBe(false);
   });
 });
+
+describe('background patterns (S5.4)', () => {
+  test('quote: a pattern adds a [fill, pattern] base carrying the kind through', () => {
+    const spec = quoteCardSpec({ text: 'ship', patternKind: 'dots' }, { ...kit, watermark: false });
+    // fill (gradient) then the pattern layer, THEN the card content.
+    expect(spec.layers[0]).toMatchObject({ kind: 'fill' });
+    expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'dots' });
+    // full-card box + low-alpha ink derived from the bg (works on light presets).
+    expect(spec.layers[1]).toMatchObject({ box: { x: 0, y: 0, w: QUOTE_CARD.w, h: QUOTE_CARD.h } });
+    expect((spec.layers[1] as { color: string }).color).toMatch(/^rgba\(/);
+  });
+
+  test('quote: no pattern is byte-identical to before (backwards-compatible)', () => {
+    const plain = quoteCardSpec({ text: 'ship' }, kit);
+    expect(plain.layers.some((l) => l.kind === 'pattern')).toBe(false);
+  });
+
+  test('quote: an AI background wins — the pattern is dropped', () => {
+    const spec = quoteCardSpec(
+      { text: 'ship', background: STUB_BG, patternKind: 'grid' },
+      { ...kit, watermark: false },
+    );
+    expect(spec.layers[0]).toMatchObject({ kind: 'image' });
+    expect(spec.layers[1]).toMatchObject({ kind: 'fill' }); // scrim
+    expect(spec.layers.some((l) => l.kind === 'pattern')).toBe(false);
+  });
+
+  test('blobs seed threads through to the pattern layer', () => {
+    const a = quoteCardSpec({ text: 'x', patternKind: 'blobs', patternSeed: 7 }, kit);
+    const b = quoteCardSpec({ text: 'x', patternKind: 'blobs', patternSeed: 8 }, kit);
+    expect((a.layers[1] as { seed?: number }).seed).toBe(7);
+    expect((b.layers[1] as { seed?: number }).seed).toBe(8);
+  });
+
+  test('banner carries a pattern through too', () => {
+    const spec = bannerSpec(
+      { headline: 'h', keywords: [], followers: null, patternKind: 'plus' },
+      kit,
+    );
+    expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'plus' });
+  });
+});

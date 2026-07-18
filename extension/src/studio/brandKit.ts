@@ -91,17 +91,145 @@ export function serializeBrandKit(kit: BrandKit): string {
   return JSON.stringify(kit, null, 2);
 }
 
-// ------------------------------------------------------------ chrome storage
+// --------------------------------------------------------- multi-preset (S5.4)
 
-const KEY_BRAND_KIT = 'studio:brandKit';
-
-export async function loadBrandKit(): Promise<BrandKit> {
-  const out = await chrome.storage.local.get(KEY_BRAND_KIT);
-  const raw = out[KEY_BRAND_KIT];
-  if (typeof raw !== 'string') return { ...DEFAULT_BRAND_KIT };
-  return parseBrandKit(raw) ?? { ...DEFAULT_BRAND_KIT };
+/** A named set of brand kits with one active — a whole brand switches in one
+ *  click. Stored client-side (no server table; the kit has always been
+ *  extension-local, export/import JSON is the portability story). */
+export interface BrandKits {
+  active: string;
+  kits: Record<string, BrandKit>;
 }
 
-export async function saveBrandKit(kit: BrandKit): Promise<void> {
-  await chrome.storage.local.set({ [KEY_BRAND_KIT]: serializeBrandKit(kit) });
+/** Built-in starter presets offered when the store is empty. Midnight is the
+ *  current default; Paper is a light background (contrastOn flips the ink);
+ *  Neon is a high-accent near-black. All three carry every field (incl.
+ *  `mascot`) so a preset load never drops one. */
+export const STARTER_KITS: Record<string, BrandKit> = {
+  Midnight: { ...DEFAULT_BRAND_KIT },
+  Paper: { ...DEFAULT_BRAND_KIT, bg: '#f7f9f9', accent: '#0f6fd1' },
+  Neon: { ...DEFAULT_BRAND_KIT, bg: '#0a0e12', accent: '#00e5a0' },
+};
+export const STARTER_ACTIVE = 'Midnight';
+
+function starterBundle(): BrandKits {
+  const kits: Record<string, BrandKit> = {};
+  for (const [name, kit] of Object.entries(STARTER_KITS)) kits[name] = { ...kit };
+  return { active: STARTER_ACTIVE, kits };
+}
+
+/** The active kit by reference (stable across renders unless it's edited), so a
+ *  React effect keyed on it doesn't re-fire every render. */
+export function activeKit(bundle: BrandKits): BrandKit {
+  return bundle.kits[bundle.active] ?? DEFAULT_BRAND_KIT;
+}
+
+export function serializeBrandKits(bundle: BrandKits): string {
+  return JSON.stringify(bundle, null, 2);
+}
+
+/** Lenient parse of the multi-preset shape — each kit falls back field-by-field
+ *  through parseBrandKit; the active pointer is clamped to an existing kit.
+ *  Null only when there isn't a single salvageable kit. */
+function parseBrandKitsObject(o: Record<string, unknown>): BrandKits | null {
+  if (!o.kits || typeof o.kits !== 'object' || Array.isArray(o.kits)) return null;
+  const kits: Record<string, BrandKit> = {};
+  for (const [name, v] of Object.entries(o.kits as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+    const kit = parseBrandKit(JSON.stringify(v));
+    if (kit) kits[name] = kit;
+  }
+  const names = Object.keys(kits);
+  if (names.length === 0) return null;
+  const active = typeof o.active === 'string' && kits[o.active] ? o.active : (names[0] as string);
+  return { active, kits };
+}
+
+/** Import parse accepting BOTH file shapes: the S5.4 multi bundle AND a legacy
+ *  single-kit JSON (wrapped into `{ active: 'default', kits: { default } }`).
+ *  Null on non-object / unparseable JSON. */
+export function parseBrandKitsFile(raw: string): BrandKits | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const o = parsed as Record<string, unknown>;
+  if ('kits' in o) return parseBrandKitsObject(o);
+  const single = parseBrandKit(raw);
+  return single ? { active: 'default', kits: { default: single } } : null;
+}
+
+// ------------------------------------------------------- pure preset mutations
+
+export function patchActiveKit(bundle: BrandKits, partial: Partial<BrandKit>): BrandKits {
+  const next = { ...activeKit(bundle), ...partial };
+  return { active: bundle.active, kits: { ...bundle.kits, [bundle.active]: next } };
+}
+
+export function setActivePreset(bundle: BrandKits, name: string): BrandKits {
+  return name in bundle.kits ? { ...bundle, active: name } : bundle;
+}
+
+/** Save `kit` under `name` and activate it (overwrites an existing name). */
+export function savePresetAs(bundle: BrandKits, name: string, kit: BrandKit): BrandKits {
+  const n = name.trim();
+  if (n === '') return bundle;
+  return { active: n, kits: { ...bundle.kits, [n]: { ...kit } } };
+}
+
+export function renamePreset(bundle: BrandKits, from: string, to: string): BrandKits {
+  const n = to.trim();
+  if (!(from in bundle.kits) || n === '' || n === from) return bundle;
+  const kits: Record<string, BrandKit> = {};
+  for (const [k, v] of Object.entries(bundle.kits)) kits[k === from ? n : k] = v;
+  return { active: bundle.active === from ? n : bundle.active, kits };
+}
+
+/** The last preset can never be deleted — the store must never reach zero kits
+ *  (mirrors the pillars last-active guard). */
+export function canDeletePreset(bundle: BrandKits, name: string): boolean {
+  return name in bundle.kits && Object.keys(bundle.kits).length > 1;
+}
+
+export function deletePreset(bundle: BrandKits, name: string): BrandKits {
+  if (!canDeletePreset(bundle, name)) return bundle;
+  const kits: Record<string, BrandKit> = {};
+  for (const [k, v] of Object.entries(bundle.kits)) if (k !== name) kits[k] = v;
+  const active = bundle.active === name ? (Object.keys(kits)[0] as string) : bundle.active;
+  return { active, kits };
+}
+
+// ------------------------------------------------------------ chrome storage
+
+const KEY_BRAND_KIT = 'studio:brandKit'; // legacy single-kit (still written)
+const KEY_BRAND_KITS = 'studio:brandKits'; // S5.4 multi-preset
+
+/** Load the multi-preset bundle: the new key wins; else migrate a legacy single
+ *  kit into `kits.default`; else seed the built-in starters. Persists the
+ *  result so migration/seed happen exactly once. */
+export async function loadBrandKits(): Promise<BrandKits> {
+  const out = await chrome.storage.local.get([KEY_BRAND_KITS, KEY_BRAND_KIT]);
+  const rawMulti = out[KEY_BRAND_KITS];
+  if (typeof rawMulti === 'string') {
+    const multi = parseBrandKitsFile(rawMulti);
+    if (multi) return multi;
+  }
+  const legacyRaw = out[KEY_BRAND_KIT];
+  const bundle =
+    typeof legacyRaw === 'string' && parseBrandKit(legacyRaw)
+      ? { active: 'default', kits: { default: parseBrandKit(legacyRaw) as BrandKit } }
+      : starterBundle();
+  await saveBrandKits(bundle);
+  return bundle;
+}
+
+export async function saveBrandKits(bundle: BrandKits): Promise<void> {
+  await chrome.storage.local.set({ [KEY_BRAND_KITS]: serializeBrandKits(bundle) });
+  // Keep the legacy key pointing at the active kit so a rollback build (which
+  // only reads studio:brandKit) still loads the right brand.
+  const active = bundle.kits[bundle.active];
+  if (active) await chrome.storage.local.set({ [KEY_BRAND_KIT]: serializeBrandKit(active) });
 }
