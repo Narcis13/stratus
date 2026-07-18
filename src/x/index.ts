@@ -31,6 +31,7 @@ import { peopleRouter } from './routes/people.ts';
 import { pillars } from './routes/pillars.ts';
 import { playbook } from './routes/playbook.ts';
 import { createPostsRouter } from './routes/posts.ts';
+import { promptsRouter } from './routes/prompts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
 import { settingsRouter } from './routes/settings.ts';
@@ -59,6 +60,11 @@ export function mountX(app: Hono): void {
   app.route('/x', calendar);
   app.route('/x', metrics);
   app.route('/x', pillars);
+  // AI.4: the prompt editor — CRUD over `prompt_overrides` (the editable half of
+  // the AI.3 registry). Always mounted: editing a prompt must work with no LLM
+  // key. Static `/prompts/*` paths (the `restore-defaults` static path and the
+  // `:key/reset` param path don't collide — different segment counts, §7.20).
+  app.route('/x', promptsRouter);
   // N0: niche CRUD + activation ratchet. Always mounted, $0. Static paths plus a
   // `/niches/:slug` param that shadows nothing (no other route lives under niche*).
   app.route('/x', nicheRouter);
