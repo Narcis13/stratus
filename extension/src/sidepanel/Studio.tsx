@@ -5,7 +5,15 @@
 // /2/media/upload still needs OAuth 1.0a, so stratus never attaches images via
 // the API. $0 throughout.
 
-import { type ChangeEvent, type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  type JSX,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   type BrandKit,
   type BrandKits,
@@ -21,7 +29,8 @@ import {
 } from '../studio/brandKit.ts';
 import { type PatternKind, render } from '../studio/compose.ts';
 import { ensureStudioFonts } from '../studio/fonts.ts';
-import type { StatCardData } from '../studio/templates.ts';
+import { latestCrossed } from '../studio/milestones.ts';
+import type { MilestoneCardData, StatCardData, StreakCardData } from '../studio/templates.ts';
 import { ApiError, type ContentPillar, type MediaAsset, api } from './api.ts';
 import type { Settings } from './storage.ts';
 import { KitEditor } from './studio/KitEditor.tsx';
@@ -29,9 +38,11 @@ import {
   BackgroundFields,
   BannerFields,
   LibraryRail,
+  MilestoneFields,
   PfpFields,
   QuoteFields,
   StatFields,
+  StreakFields,
 } from './studio/fields.tsx';
 import {
   EMPTY_STAT,
@@ -41,6 +52,15 @@ import {
   supportsAiBackground,
   templateMeta,
 } from './studio/registry.ts';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Auto-detected milestone (before the manual override folds in). */
+interface MilestoneAuto {
+  milestone: number | null;
+  crossedOn: string | null;
+  followers: number | null;
+}
 
 /** ImageBitmap from a data: URL — same-origin, so it never taints the canvas
  *  (the whole point of the server returning base64 instead of an xAI URL). */
@@ -112,6 +132,15 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const bannerSeeded = useRef(false);
 
   const [pfpBitmap, setPfpBitmap] = useState<ImageBitmap | null>(null);
+
+  // S5.5 celebration cards: auto-detected value + a manual override. The
+  // override wins when set; blank falls back to what the account/streak reads.
+  const [milestoneAuto, setMilestoneAuto] = useState<MilestoneAuto | null>(null);
+  const [milestoneOverride, setMilestoneOverride] = useState<number | null>(null);
+  const [milestoneLoading, setMilestoneLoading] = useState(false);
+  const [streakAuto, setStreakAuto] = useState<{ days: number | null; since: string } | null>(null);
+  const [streakOverride, setStreakOverride] = useState<number | null>(null);
+  const [streakLoading, setStreakLoading] = useState(false);
 
   // S4/S5.4: the background of a background-capable template. `bgMode` is the
   // single source of truth; the AI bitmap only applies while mode === 'ai'.
@@ -197,13 +226,91 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   }, [settings]);
 
+  // Milestone: detect the latest crossed follower rung over the account series
+  // client-side (§7.12 read-time compute) — no new server aggregation.
+  const loadMilestoneData = useCallback(async () => {
+    setMilestoneLoading(true);
+    setError(null);
+    try {
+      const res = await api.metrics.account(settings);
+      const crossed = latestCrossed(
+        res.series.map((p) => ({ date: p.snapshotAt, followers: p.followersCount })),
+      );
+      setMilestoneAuto({
+        milestone: crossed?.milestone ?? null,
+        crossedOn: crossed?.crossedOn ? crossed.crossedOn.slice(0, 10) : null,
+        followers: res.latest?.followersCount ?? null,
+      });
+    } catch (e) {
+      setError(e instanceof ApiError ? `Account data failed: ${e.message}` : 'Account data failed');
+      setMilestoneAuto({ milestone: null, crossedOn: null, followers: null });
+    } finally {
+      setMilestoneLoading(false);
+    }
+  }, [settings]);
+
+  // Streak: the live C9 quest streak; the start date is derived from its length.
+  const loadStreakData = useCallback(async () => {
+    setStreakLoading(true);
+    setError(null);
+    try {
+      const brief = await api.brief(settings);
+      const days = brief.quests.streak.current;
+      const since =
+        days > 0 ? new Date(Date.now() - (days - 1) * DAY_MS).toISOString().slice(0, 10) : '';
+      setStreakAuto({ days: days > 0 ? days : null, since });
+    } catch (e) {
+      setError(e instanceof ApiError ? `Streak data failed: ${e.message}` : 'Streak data failed');
+      setStreakAuto({ days: null, since: '' });
+    } finally {
+      setStreakLoading(false);
+    }
+  }, [settings]);
+
   useEffect(() => {
     if (template === 'stat' && statData === null && !statLoading) void loadStatData();
     if (template === 'banner' && !bannerSeeded.current) {
       bannerSeeded.current = true;
       void loadBannerData();
     }
-  }, [template, statData, statLoading, loadStatData, loadBannerData]);
+    if (template === 'milestone' && milestoneAuto === null && !milestoneLoading)
+      void loadMilestoneData();
+    if (template === 'streak' && streakAuto === null && !streakLoading) void loadStreakData();
+  }, [
+    template,
+    statData,
+    statLoading,
+    loadStatData,
+    loadBannerData,
+    milestoneAuto,
+    milestoneLoading,
+    loadMilestoneData,
+    streakAuto,
+    streakLoading,
+    loadStreakData,
+  ]);
+
+  // Resolve the celebration-card data the render loop feeds buildSpec: override
+  // beats auto; the date label only shows when the auto value is in effect.
+  // Memoized so a stable identity doesn't churn the debounced render effect.
+  const milestoneData = useMemo<MilestoneCardData>(
+    () => ({
+      milestone: milestoneOverride ?? milestoneAuto?.milestone ?? null,
+      followers: milestoneAuto?.followers ?? null,
+      dateLabel:
+        milestoneOverride === null && milestoneAuto?.crossedOn
+          ? `reached ${milestoneAuto.crossedOn}`
+          : '',
+    }),
+    [milestoneOverride, milestoneAuto],
+  );
+  const streakData = useMemo<StreakCardData>(
+    () => ({
+      days: streakOverride ?? streakAuto?.days ?? null,
+      dateLabel: streakOverride === null && streakAuto?.since ? streakAuto.since : '',
+    }),
+    [streakOverride, streakAuto],
+  );
 
   // S4: history rail — metadata only ($0 read), refreshed after save/delete.
   const loadLibrary = useCallback(async () => {
@@ -359,6 +466,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             bgBitmap,
             patternKind,
             patternSeed,
+            milestoneData,
+            streakData,
           },
           kit,
         );
@@ -392,6 +501,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     bgBitmap,
     patternKind,
     patternSeed,
+    milestoneData,
+    streakData,
   ]);
 
   useEffect(
@@ -527,6 +638,40 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       )}
 
       {template === 'pfp' && <PfpFields onPickPhoto={(e) => void onPickPhoto(e)} />}
+
+      {template === 'milestone' && (
+        <MilestoneFields
+          loading={milestoneLoading}
+          statusLabel={
+            milestoneAuto
+              ? milestoneAuto.milestone !== null
+                ? `Auto: ${milestoneAuto.milestone.toLocaleString('en-US')} followers${
+                    milestoneAuto.crossedOn ? ` (reached ${milestoneAuto.crossedOn})` : ''
+                  }`
+                : 'No milestone crossed yet'
+              : 'No account data yet'
+          }
+          override={milestoneOverride}
+          onOverride={setMilestoneOverride}
+          onReload={() => void loadMilestoneData()}
+        />
+      )}
+
+      {template === 'streak' && (
+        <StreakFields
+          loading={streakLoading}
+          statusLabel={
+            streakAuto
+              ? streakAuto.days !== null
+                ? `Current streak: ${streakAuto.days} day${streakAuto.days === 1 ? '' : 's'}`
+                : 'No streak yet — show up today'
+              : 'No streak data yet'
+          }
+          override={streakOverride}
+          onOverride={setStreakOverride}
+          onReload={() => void loadStreakData()}
+        />
+      )}
 
       {supportsAiBackground(template) && (
         <div className="studio-bg-modes">

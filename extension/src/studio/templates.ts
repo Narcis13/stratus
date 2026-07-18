@@ -19,6 +19,8 @@ export const QUOTE_CARD = { w: 1200, h: 675 } as const;
 export const STAT_CARD = { w: 1200, h: 675 } as const;
 export const BANNER = { w: 1500, h: 500 } as const;
 export const PFP_FRAME = { w: 400, h: 400 } as const;
+export const MILESTONE_CARD = { w: 1200, h: 675 } as const;
+export const STREAK_CARD = { w: 1200, h: 675 } as const;
 
 /** Deterministic count format (fixed locale — no machine drift). */
 export function fmtCount(n: number): string {
@@ -464,4 +466,207 @@ export function pfpFrameSpec(data: PfpData, kit: BrandKit): RenderSpec {
   }
   layers.push({ kind: 'ring', cx: 200, cy: 200, r: 183, width: 14, color: kit.accent });
   return { w: PFP_FRAME.w, h: PFP_FRAME.h, layers };
+}
+
+// ------------------------------------------------------------- celebration cards
+
+// The confetti backdrop uses a fixed PRNG seed so the celebration is
+// deterministic — same spec always paints the same blobs (preview-IS-artifact).
+const CONFETTI_SEED = 11;
+
+/** A translucent-accent `blobs` backdrop shared by the milestone/streak cards —
+ *  a built-in confetti, not the S5.4 background-pattern picker (these cards
+ *  aren't background-capable). */
+function confettiLayer(kit: BrandKit, w: number, h: number): Layer {
+  return {
+    kind: 'pattern',
+    pattern: 'blobs',
+    color: withAlpha(kit.accent, 0.25),
+    box: { x: 0, y: 0, w, h },
+    seed: CONFETTI_SEED,
+  };
+}
+
+/** A small-caps accent eyebrow centered across the card. */
+function eyebrow(kit: BrandKit, text: string, w: number): Layer {
+  return {
+    kind: 'text',
+    text,
+    font: font(kit, 800, 26),
+    box: { x: 0, y: 96, w, h: 34 },
+    color: kit.accent,
+    align: 'center',
+    letterSpacingPx: 6,
+  };
+}
+
+export interface MilestoneCardData {
+  /** The crossed rung to celebrate (auto-detected or a manual override).
+   *  null = nothing crossed and nothing typed → a graceful placeholder. */
+  milestone: number | null;
+  /** Current follower count, shown as "N and counting" context. */
+  followers: number | null;
+  /** e.g. "reached 2026-07-10" (empty = omit). */
+  dateLabel: string;
+}
+
+/** 1200×675 — a crossed follower milestone as build-in-public ammo. */
+export function milestoneCardSpec(data: MilestoneCardData, kit: BrandKit): RenderSpec {
+  const ink = contrastOn(kit.bg);
+  const muted = withAlpha(ink, 0.65);
+  const { w, h } = MILESTONE_CARD;
+  const layers: Layer[] = [background(kit), confettiLayer(kit, w, h), eyebrow(kit, 'MILESTONE', w)];
+
+  if (data.milestone !== null) {
+    const parts: string[] = [];
+    if (data.followers !== null)
+      parts.push(`${data.followers.toLocaleString('en-US')} and counting`);
+    if (data.dateLabel !== '') parts.push(data.dateLabel);
+    const subtitle = parts.join(' · ');
+
+    layers.push(
+      { kind: 'rule', box: { x: 540, y: 156, w: 120, h: 10 }, color: kit.accent },
+      {
+        kind: 'text',
+        text: fmtCount(data.milestone),
+        font: font(kit, 800, 180),
+        box: { x: 100, y: 196, w: 1000, h: 228 },
+        color: ink,
+        align: 'center',
+        vAlign: 'middle',
+        maxLines: 1,
+        minSizePx: 90,
+      },
+      {
+        kind: 'text',
+        text: 'followers',
+        font: font(kit, 400, 40),
+        box: { x: 0, y: 438, w, h: 50 },
+        color: muted,
+        align: 'center',
+      },
+    );
+    if (subtitle !== '') {
+      layers.push({
+        kind: 'text',
+        text: subtitle,
+        font: font(kit, 400, 28),
+        box: { x: 100, y: 502, w: 1000, h: 36 },
+        color: muted,
+        align: 'center',
+        maxLines: 1,
+      });
+    }
+    // Celebrating cloud to the right of the number — only with a value to cheer.
+    if (kit.mascot) {
+      layers.push(...mascotLayers({ pose: 'celebrating', x: 960, y: 180, scale: 0.72, kit }));
+    }
+  } else {
+    layers.push({
+      kind: 'text',
+      text: 'no milestone crossed yet',
+      font: font(kit, 700, 46),
+      box: { x: 100, y: 260, w: 1000, h: 140 },
+      color: muted,
+      align: 'center',
+      vAlign: 'middle',
+      maxLines: 2,
+      minSizePx: 28,
+    });
+  }
+
+  if (kit.handle !== '') {
+    layers.push({
+      kind: 'text',
+      text: `@${kit.handle}`,
+      font: font(kit, 700, 26),
+      box: { x: 0, y: 600, w, h: 36 },
+      color: kit.accent,
+      align: 'center',
+    });
+  }
+  layers.push(...watermarkLayer(kit, ink, 22, 36));
+  return { w, h, layers };
+}
+
+export interface StreakCardData {
+  /** Days shown up in a row (auto from the C9 streak or a manual override).
+   *  null = no streak yet → a graceful placeholder. */
+  days: number | null;
+  /** Streak start date, e.g. "2026-07-04" (empty = omit the "since" line). */
+  dateLabel: string;
+}
+
+/** 1200×675 — the C9 quest streak as a celebration card. */
+export function streakCardSpec(data: StreakCardData, kit: BrandKit): RenderSpec {
+  const ink = contrastOn(kit.bg);
+  const muted = withAlpha(ink, 0.65);
+  const { w, h } = STREAK_CARD;
+  const layers: Layer[] = [background(kit), confettiLayer(kit, w, h), eyebrow(kit, 'STREAK', w)];
+
+  if (data.days !== null) {
+    const subtitle =
+      data.dateLabel !== ''
+        ? `showed up every day since ${data.dateLabel}`
+        : 'showed up, every single day';
+    layers.push(
+      { kind: 'rule', box: { x: 540, y: 156, w: 120, h: 10 }, color: kit.accent },
+      {
+        kind: 'text',
+        text: `${data.days}`,
+        font: font(kit, 800, 180),
+        box: { x: 100, y: 196, w: 1000, h: 228 },
+        color: ink,
+        align: 'center',
+        vAlign: 'middle',
+        maxLines: 1,
+        minSizePx: 90,
+      },
+      {
+        kind: 'text',
+        text: 'day streak',
+        font: font(kit, 400, 40),
+        box: { x: 0, y: 438, w, h: 50 },
+        color: muted,
+        align: 'center',
+      },
+      {
+        kind: 'text',
+        text: subtitle,
+        font: font(kit, 400, 28),
+        box: { x: 100, y: 502, w: 1000, h: 36 },
+        color: muted,
+        align: 'center',
+        maxLines: 1,
+      },
+    );
+    if (kit.mascot) {
+      layers.push(...mascotLayers({ pose: 'celebrating', x: 960, y: 180, scale: 0.72, kit }));
+    }
+  } else {
+    layers.push({
+      kind: 'text',
+      text: 'no streak yet — show up today',
+      font: font(kit, 700, 46),
+      box: { x: 100, y: 260, w: 1000, h: 140 },
+      color: muted,
+      align: 'center',
+      vAlign: 'middle',
+      maxLines: 2,
+      minSizePx: 28,
+    });
+  }
+
+  if (kit.handle !== '') {
+    layers.push({
+      kind: 'text',
+      text: `@${kit.handle}`,
+      font: font(kit, 700, 26),
+      box: { x: 0, y: 600, w, h: 36 },
+      color: kit.accent,
+      align: 'center',
+    });
+  }
+  layers.push(...watermarkLayer(kit, ink, 22, 36));
+  return { w, h, layers };
 }

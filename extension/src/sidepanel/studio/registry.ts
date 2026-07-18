@@ -6,17 +6,23 @@ import type { BrandKit } from '../../studio/brandKit.ts';
 import type { PatternKind, RenderSpec } from '../../studio/compose.ts';
 import {
   BANNER,
+  MILESTONE_CARD,
+  type MilestoneCardData,
   PFP_FRAME,
   QUOTE_CARD,
   STAT_CARD,
+  STREAK_CARD,
   type StatCardData,
+  type StreakCardData,
   bannerSpec,
+  milestoneCardSpec,
   pfpFrameSpec,
   quoteCardSpec,
   statCardSpec,
+  streakCardSpec,
 } from '../../studio/templates.ts';
 
-export type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp';
+export type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp' | 'milestone' | 'streak';
 
 export interface TemplateMeta {
   id: TemplateId;
@@ -46,6 +52,18 @@ export const TEMPLATES: TemplateMeta[] = [
     size: { w: PFP_FRAME.w, h: PFP_FRAME.h },
     supportsAiBackground: false,
   },
+  {
+    id: 'milestone',
+    label: 'Milestone',
+    size: { w: MILESTONE_CARD.w, h: MILESTONE_CARD.h },
+    supportsAiBackground: false,
+  },
+  {
+    id: 'streak',
+    label: 'Streak',
+    size: { w: STREAK_CARD.w, h: STREAK_CARD.h },
+    supportsAiBackground: false,
+  },
 ];
 
 /** The union is closed and every id has a row, so this never misses. */
@@ -70,6 +88,14 @@ export const EMPTY_STAT: StatCardData = {
   streakDays: null,
 };
 
+/** Celebration cards before their data loads (or when it's absent). */
+export const EMPTY_MILESTONE: MilestoneCardData = {
+  milestone: null,
+  followers: null,
+  dateLabel: '',
+};
+export const EMPTY_STREAK: StreakCardData = { days: null, dateLabel: '' };
+
 /** Every per-template input the shell owns; buildSpec reads what each template needs. */
 export interface TemplateState {
   quoteText: string;
@@ -84,6 +110,10 @@ export interface TemplateState {
    *  or an AI bitmap is set). Seed only matters for `blobs`. */
   patternKind: PatternKind | null;
   patternSeed: number;
+  /** S5.5 celebration cards — resolved by the shell from the account series /
+   *  C9 streak, with the manual override already folded in. */
+  milestoneData: MilestoneCardData;
+  streakData: StreakCardData;
 }
 
 /** Behavior-neutral dispatch — identical output to the pre-refactor render ternary. */
@@ -120,5 +150,9 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
       );
     case 'pfp':
       return pfpFrameSpec({ photo: state.pfpBitmap, initial: kit.handle }, kit);
+    case 'milestone':
+      return milestoneCardSpec(state.milestoneData, kit);
+    case 'streak':
+      return streakCardSpec(state.streakData, kit);
   }
 }

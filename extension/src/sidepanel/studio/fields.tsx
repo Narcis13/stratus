@@ -49,6 +49,77 @@ export function StatFields({
   );
 }
 
+// S5.5 celebration cards: an auto-detected status line + a manual number
+// override (blank = use the detected value). The shell owns the loading and the
+// override→data resolution; these only render the input and status.
+export function MilestoneFields({
+  loading,
+  statusLabel,
+  override,
+  onOverride,
+  onReload,
+}: {
+  loading: boolean;
+  statusLabel: string;
+  override: number | null;
+  onOverride: (v: number | null) => void;
+  onReload: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <div className="row studio-data-row">
+        <span className="muted">{loading ? 'Reading your account…' : statusLabel}</span>
+        <button type="button" onClick={onReload} disabled={loading}>
+          Reload
+        </button>
+      </div>
+      <label className="field">
+        <span>Override number (blank = auto-detected)</span>
+        <input
+          type="number"
+          value={override ?? ''}
+          onChange={(e) => onOverride(e.target.value === '' ? null : Number(e.target.value))}
+          placeholder="e.g. 1000"
+        />
+      </label>
+    </>
+  );
+}
+
+export function StreakFields({
+  loading,
+  statusLabel,
+  override,
+  onOverride,
+  onReload,
+}: {
+  loading: boolean;
+  statusLabel: string;
+  override: number | null;
+  onOverride: (v: number | null) => void;
+  onReload: () => void;
+}): JSX.Element {
+  return (
+    <>
+      <div className="row studio-data-row">
+        <span className="muted">{loading ? 'Reading your streak…' : statusLabel}</span>
+        <button type="button" onClick={onReload} disabled={loading}>
+          Reload
+        </button>
+      </div>
+      <label className="field">
+        <span>Override days (blank = your live streak)</span>
+        <input
+          type="number"
+          value={override ?? ''}
+          onChange={(e) => onOverride(e.target.value === '' ? null : Number(e.target.value))}
+          placeholder="e.g. 7"
+        />
+      </label>
+    </>
+  );
+}
+
 export function BannerFields({
   headline,
   keywords,

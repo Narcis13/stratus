@@ -6,14 +6,18 @@ import { describe, expect, test } from 'bun:test';
 import type { BrandKit } from './brandKit.ts';
 import {
   BANNER,
+  MILESTONE_CARD,
   PFP_FRAME,
   QUOTE_CARD,
   STAT_CARD,
+  STREAK_CARD,
   bannerSpec,
   fmtCount,
+  milestoneCardSpec,
   pfpFrameSpec,
   quoteCardSpec,
   statCardSpec,
+  streakCardSpec,
 } from './templates.ts';
 
 // mascot off by default so the S3/S4 snapshots below stay byte-identical; the
@@ -285,6 +289,88 @@ describe('mascot wiring (S5.3)', () => {
         ),
       ),
     ).toBe(false);
+  });
+});
+
+describe('milestoneCardSpec (S5.5)', () => {
+  const withMascot: BrandKit = { ...kit, mascot: true };
+  const textOf = (l: { kind: string }): string => (l as { text?: string }).text ?? '';
+
+  test('crossed milestone → confetti backdrop, giant number, followers, subtitle', () => {
+    const spec = milestoneCardSpec(
+      { milestone: 1000, followers: 1024, dateLabel: 'reached 2026-07-10' },
+      kit,
+    );
+    expect(spec.w).toBe(MILESTONE_CARD.w);
+    expect(spec.h).toBe(MILESTONE_CARD.h);
+    // fill, then the blobs confetti UNDER the content.
+    expect(spec.layers[0]).toMatchObject({ kind: 'fill' });
+    expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'blobs' });
+    expect(spec.layers.some((l) => l.kind === 'text' && textOf(l) === '1k')).toBe(true);
+    expect(spec.layers.some((l) => l.kind === 'text' && textOf(l) === 'followers')).toBe(true);
+    expect(
+      spec.layers.some((l) => l.kind === 'text' && /1,024 and counting · reached/.test(textOf(l))),
+    ).toBe(true);
+  });
+
+  test('confetti is deterministic — the same data renders byte-identically', () => {
+    const data = { milestone: 500, followers: 512, dateLabel: 'x' };
+    expect(milestoneCardSpec(data, kit)).toEqual(milestoneCardSpec(data, kit));
+  });
+
+  test('mascot celebrates with a value; mascot:false has no path', () => {
+    expect(
+      milestoneCardSpec({ milestone: 500, followers: null, dateLabel: '' }, withMascot).layers.some(
+        (l) => l.kind === 'path',
+      ),
+    ).toBe(true);
+    expect(
+      milestoneCardSpec({ milestone: 500, followers: null, dateLabel: '' }, kit).layers.some(
+        (l) => l.kind === 'path',
+      ),
+    ).toBe(false);
+  });
+
+  test('null milestone → graceful placeholder, no mascot, no crash', () => {
+    const spec = milestoneCardSpec({ milestone: null, followers: null, dateLabel: '' }, withMascot);
+    expect(
+      spec.layers.some((l) => l.kind === 'text' && /no milestone crossed yet/.test(textOf(l))),
+    ).toBe(true);
+    // no value to cheer → the celebrating cloud is suppressed
+    expect(spec.layers.some((l) => l.kind === 'path')).toBe(false);
+  });
+});
+
+describe('streakCardSpec (S5.5)', () => {
+  const withMascot: BrandKit = { ...kit, mascot: true };
+  const textOf = (l: { kind: string }): string => (l as { text?: string }).text ?? '';
+
+  test('days → giant count, quest framing, mascot', () => {
+    const spec = streakCardSpec({ days: 7, dateLabel: '2026-07-04' }, withMascot);
+    expect(spec.w).toBe(STREAK_CARD.w);
+    expect(spec.layers[1]).toMatchObject({ kind: 'pattern', pattern: 'blobs' });
+    expect(spec.layers.some((l) => l.kind === 'text' && textOf(l) === '7')).toBe(true);
+    expect(
+      spec.layers.some(
+        (l) => l.kind === 'text' && /showed up every day since 2026-07-04/.test(textOf(l)),
+      ),
+    ).toBe(true);
+    expect(spec.layers.some((l) => l.kind === 'path')).toBe(true);
+  });
+
+  test('no start date → the fallback framing line', () => {
+    const spec = streakCardSpec({ days: 3, dateLabel: '' }, kit);
+    expect(
+      spec.layers.some((l) => l.kind === 'text' && /showed up, every single day/.test(textOf(l))),
+    ).toBe(true);
+  });
+
+  test('null days → graceful placeholder, no mascot', () => {
+    const spec = streakCardSpec({ days: null, dateLabel: '' }, withMascot);
+    expect(spec.layers.some((l) => l.kind === 'text' && /no streak yet/.test(textOf(l)))).toBe(
+      true,
+    );
+    expect(spec.layers.some((l) => l.kind === 'path')).toBe(false);
   });
 });
 

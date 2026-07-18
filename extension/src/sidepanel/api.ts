@@ -56,6 +56,7 @@ import {
   type MentionStatus,
   type MentionsRefreshResult,
   type MentionsResponse,
+  type MetricsAccountResponse,
   type PeopleListOpts,
   type PeopleListResponse,
   type Person,
@@ -156,6 +157,7 @@ export type {
   PinnedWatch,
   ListOpts,
   Mention,
+  MetricsAccountResponse,
   PillarCreateBody,
   PillarDraftBody,
   PillarDraftResult,
@@ -276,6 +278,12 @@ export const api = {
         s,
         `/x/metrics/best-times?tzOffsetMin=${new Date().getTimezoneOffset()}`,
       );
+    },
+
+    // S5.5 — the daily follower KPI series; the milestone card detects the
+    // latest crossed rung client-side over it ($0, already-billed data).
+    account(s: Settings): Promise<MetricsAccountResponse> {
+      return request<MetricsAccountResponse>(s, '/x/metrics/account');
     },
   },
 

@@ -616,6 +616,24 @@ export interface BestTimesResponse {
   cells: BestTimeCell[];
 }
 
+// GET /x/metrics/account — the daily follower KPI series (S5.5 milestone card
+// reads it). `snapshotAt` is the JSON-serialized Date (ISO string).
+export interface AccountSeriesPoint {
+  snapshotAt: string;
+  followersCount: number;
+  followingCount: number;
+  tweetCount: number;
+  listedCount: number;
+  deltas: { followers: number; following: number; tweets: number; listed: number } | null;
+  activity: { posts: number; replies: number };
+}
+
+export interface MetricsAccountResponse {
+  count: number;
+  latest: AccountSeriesPoint | null;
+  series: AccountSeriesPoint[];
+}
+
 // S0.4: one empty cadence anchor + its best-times score for today's weekday.
 // `sufficient` is n ≥ the advice gate; below it the UI renders "no data".
 export interface BriefGap {
