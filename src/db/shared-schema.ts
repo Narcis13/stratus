@@ -21,6 +21,9 @@ export const costEvents = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     ts: integer('ts', { mode: 'timestamp_ms' }).default(sql`(unixepoch() * 1000)`).notNull(),
+    // Free-text platform tag (a new provider needs no migration). Known values:
+    // 'x', 'grok' (xAI text), 'xai' (xAI images), 'openrouter' (second LLM
+    // provider); later 'linkedin'.
     platform: text('platform').notNull(),
     endpoint: text('endpoint'),
     status: integer('status'),
