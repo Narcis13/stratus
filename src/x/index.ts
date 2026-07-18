@@ -23,6 +23,7 @@ import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
 import { images } from './routes/images.ts';
 import { launch } from './routes/launch.ts';
+import { me } from './routes/me.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
 import { nicheRouter } from './routes/niche.ts';
@@ -61,6 +62,10 @@ export function mountX(app: Hono): void {
   // N0: niche CRUD + activation ratchet. Always mounted, $0. Static paths plus a
   // `/niches/:slug` param that shadows nothing (no other route lives under niche*).
   app.route('/x', nicheRouter);
+  // M1: the Me / My Profile personal-context layer. Always mounted, $0 (pure
+  // SQL — no Grok, no X). `/x/me` is a static prefix; its only params are on
+  // `/me/entries/:id` + `/me/goals/:id`, shadowing nothing (§7.20).
+  app.route('/x', me);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
