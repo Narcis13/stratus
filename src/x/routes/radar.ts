@@ -55,6 +55,12 @@ export interface RadarDraftInsert {
   signals: TweetSignals | null;
   replyText: string;
   angle: string;
+  // All 3 angle variants (RU.2); null until Task 3 supplies them in the batch
+  // response. replyText/angle stay the primary (variants[0]).
+  variants: { text: string; angle: string }[] | null;
+  // The Grok model that drafted these; copied onto the confirmed reply_drafts
+  // row later. Null when the batch didn't report one.
+  model: string | null;
 }
 
 // Pure — exported for unit tests. Pair each returned reply with the tweet it
@@ -63,6 +69,7 @@ export interface RadarDraftInsert {
 export function buildRadarDraftRows(
   tweets: RadarBatchTweet[],
   replies: { tweetId: string; text: string; angle: string }[],
+  model: string | null,
 ): RadarDraftInsert[] {
   const byId = new Map(tweets.map((t) => [t.tweetId, t]));
   const rows: RadarDraftInsert[] = [];
@@ -79,6 +86,9 @@ export function buildRadarDraftRows(
       signals: t.signals ?? null,
       replyText: r.text,
       angle: r.angle,
+      // Task 3 lands the 3-variant batch response; until then, null.
+      variants: null,
+      model,
     });
   }
   return rows;
@@ -90,8 +100,9 @@ export function buildRadarDraftRows(
 export async function persistRadarDrafts(
   tweets: RadarBatchTweet[],
   replies: { tweetId: string; text: string; angle: string }[],
+  model: string | null,
 ): Promise<void> {
-  const rows = buildRadarDraftRows(tweets, replies);
+  const rows = buildRadarDraftRows(tweets, replies, model);
   if (rows.length === 0) return;
   try {
     await db.insert(radarDrafts).values(rows);

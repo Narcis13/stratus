@@ -285,6 +285,7 @@ replies.post('/replies/generate', async (c) => {
       costUsd: costUsd.toFixed(5),
       grokRequestId: result.requestId,
       systemPromptOverride: systemOverride ?? null,
+      source: 'reply_master',
       status: 'generated',
     })
     .returning();
@@ -440,7 +441,7 @@ replies.post('/replies/generate-batch', async (c) => {
 
   // C0: the server keeps the copy — the session ring buffer alone lost every
   // draft on browser restart. Never fails the response (money already spent).
-  await persistRadarDrafts(tweets, out);
+  await persistRadarDrafts(tweets, out, result.model);
 
   return c.json({
     replies: out,

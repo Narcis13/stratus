@@ -316,7 +316,7 @@ export const replyDrafts = sqliteTable(
 
     replyText: text('reply_text').notNull(),
     replyTextEdited: text('reply_text_edited'),
-    // All variants from the structured two-variant call ({text, angle}[]);
+    // All variants from the structured three-variant call ({text, angle}[]);
     // replyText holds the primary pick. Null on pre-7.1 rows.
     variants: text('variants', { mode: 'json' }),
     // The optional human steer sent with the generate call (often Romanian).
@@ -332,6 +332,9 @@ export const replyDrafts = sqliteTable(
     grokRequestId: text('grok_request_id'),
 
     systemPromptOverride: text('system_prompt_override'),
+
+    // Draft origin (RU.2): 'reply_master' | 'radar'. Null = pre-RU legacy row.
+    source: text('source'),
 
     status: text('status').notNull().default('generated'),
     postedTweetId: text('posted_tweet_id'),
@@ -372,6 +375,16 @@ export const radarDrafts = sqliteTable(
     signals: text('signals', { mode: 'json' }),
     replyText: text('reply_text').notNull(),
     angle: text('angle').notNull(),
+    // All 3 angle variants (RU.2) — replyText stays the primary (variants[0]),
+    // so rank/rehydrate/old rows keep working. Null on pre-RU rows and CLI
+    // callers that never supplied variants.
+    variants: text('variants', { mode: 'json' }).$type<{ text: string; angle: string }[]>(),
+    // The Grok model that drafted these (RU.2) — copied onto the confirmed
+    // reply_drafts row (whose `model` is NOT NULL). Null on pre-RU rows.
+    model: text('model'),
+    // Soft link to the reply_drafts row this draft was confirmed into (RU.2).
+    // Null until confirmed; no FK — the reply_drafts row may outlive/precede it.
+    replyDraftId: text('reply_draft_id'),
     // Channel slugs (C8) — tagged from the Radar row, keyed by tweet_id.
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
     status: text('status').notNull().default('ready'), // ready | clicked | expired

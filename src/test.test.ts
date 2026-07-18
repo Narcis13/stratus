@@ -592,12 +592,16 @@ describe('radar drafts (C0)', () => {
     { tweetId: '222', handle: 'bob', author: 'bob', text: 'AI take' },
   ];
 
-  test('buildRadarDraftRows pairs replies with their tweets and keeps signals', () => {
-    const rows = buildRadarDraftRows(tweets, [
-      { tweetId: '111', text: 'my reply', angle: 'contrarian' },
-      { tweetId: '222', text: 'other reply', angle: 'extends' },
-      { tweetId: '999', text: 'unknown id dropped', angle: 'extends' },
-    ]);
+  test('buildRadarDraftRows pairs replies with their tweets, keeps signals, threads model', () => {
+    const rows = buildRadarDraftRows(
+      tweets,
+      [
+        { tweetId: '111', text: 'my reply', angle: 'contrarian' },
+        { tweetId: '222', text: 'other reply', angle: 'extends' },
+        { tweetId: '999', text: 'unknown id dropped', angle: 'extends' },
+      ],
+      'grok-4',
+    );
     expect(rows).toHaveLength(2);
     expect(rows[0]).toEqual({
       tweetId: '111',
@@ -609,10 +613,17 @@ describe('radar drafts (C0)', () => {
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
       replyText: 'my reply',
       angle: 'contrarian',
+      variants: null,
+      model: 'grok-4',
     });
     expect(rows[1]?.author).toBeNull();
     expect(rows[1]?.band).toBeNull();
     expect(rows[1]?.url).toBeNull();
+    expect(rows[1]?.model).toBe('grok-4');
+    // Null model threads through (CLI callers with no reported model).
+    expect(
+      buildRadarDraftRows(tweets, [{ tweetId: '111', text: 'x', angle: 'debate' }], null)[0]?.model,
+    ).toBeNull();
   });
 
   test('radarDraftExpired flips at exactly 48h', () => {

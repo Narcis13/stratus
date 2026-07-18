@@ -53,6 +53,7 @@ await persistRadarDrafts(
     { tweetId: T1, text: 'smoke reply one', angle: 'contrarian' },
     { tweetId: T2, text: 'smoke reply two', angle: 'extends' },
   ],
+  'grok-smoke',
 );
 
 const ready = await fetchDrafts('ready');
