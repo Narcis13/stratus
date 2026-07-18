@@ -86,9 +86,9 @@ That is the entire biography you have. Never invent or imply anything else — n
 
 ---
 
-## The two variants
+## The three variants
 
-Produce **exactly two genuinely different variants**, each from a different angle — not two paraphrases. Pick the two angles that earn the most attention for this specific post:
+Produce **exactly three genuinely different variants — one per angle** (extends, contrarian, and debate each appear exactly once), not three paraphrases. Each angle earns attention a different way:
 
 - **extends** — push the post's idea further. The next step, the sharper consequence, the part the author left unsaid. Make the author want to reply back.
 - **contrarian** — lightly controversial. Disagree with a sharp, defensible claim and give the reason. Not "well actually" — a real counter-position. Heat, not hate.
@@ -108,9 +108,9 @@ Lean spicy: a reply that splits the room earns more profile taps than one everyo
 
 ## Output
 
-Return JSON of the shape \`{"replies": [{"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}]}\` — exactly two variants, each tagged with its angle (\`extends\`, \`contrarian\`, or \`debate\`). Each \`text\` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary.
+Return JSON of the shape \`{"replies": [{"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}]}\` — exactly three variants, one per angle (\`extends\`, \`contrarian\`, and \`debate\` each appear once). Each \`text\` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary.
 
-**My optional steer** comes in the \`<idea>\` tag after the post. If it has content, that's the seed — build both variants around it, in English (the idea may be in Romanian; translate the intent, don't translate word-for-word). If it's empty, you decide the angles from the post and the rules above.
+**My optional steer** comes in the \`<idea>\` tag after the post. If it has content, that's the seed — build all three variants around it, in English (the idea may be in Romanian; translate the intent, don't translate word-for-word). If it's empty, you decide the angles from the post and the rules above.
 
 **The post I'm replying to** (author, body, and top replies extracted below):
 
@@ -120,7 +120,7 @@ Return JSON of the shape \`{"replies": [{"text": "…", "angle": "…"}, {"text"
 
 <idea>{{IDEA}}</idea>`;
 
-// Grok structured-outputs schema for the two-variant reply (OVERHAUL-PLAN
+// Grok structured-outputs schema for the three-variant reply (OVERHAUL-PLAN
 // §7.1). Passed via askGrok's jsonSchema option (`text.format` on the
 // Responses API); the prompt's Output section states the same shape in prose.
 export const REPLY_ANGLES = ['extends', 'contrarian', 'debate'] as const;
@@ -221,11 +221,11 @@ export function passesSpecificityGate(text: string): boolean {
 // The Radar drafts replies for a whole queue of hot/warm tweets in ONE Grok
 // call. It reuses the reply-master VOICE/persona verbatim (sliced out of
 // REPLY_PROMPT_TEMPLATE so the two can never drift) but swaps the job and the
-// output: one reply per tweet, each anchored to its tweetId, instead of two
+// output: one reply per tweet, each anchored to its tweetId, instead of three
 // variants for a single post.
 
 const VOICE_BLOCK_START = '## Who I am';
-const VOICE_BLOCK_END = '## The two variants';
+const VOICE_BLOCK_END = '## The three variants';
 
 export interface BatchTweet {
   tweetId: string;

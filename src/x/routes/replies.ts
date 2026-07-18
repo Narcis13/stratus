@@ -51,10 +51,10 @@ import { loadReplyGuidanceSafe } from './playbook.ts';
 import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 
 // Safety ceiling, not a length lever — reply length is enforced by the prompt
-// (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
-// that xAI does not count reasoning tokens against this cap (a low-effort
-// pass of ~520 reasoning tokens completed fine under a 350 cap).
-const MAX_OUTPUT_TOKENS = 350;
+// (~280 chars/variant). Three variants of JSON run ~225 output tokens; xAI does
+// not count reasoning tokens against this cap (verified live under the old 350
+// cap for two variants), so 520 leaves headroom for the third variant.
+const MAX_OUTPUT_TOKENS = 520;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: ReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;

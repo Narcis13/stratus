@@ -31,9 +31,9 @@ That is the entire biography you have. Never invent or imply anything else — n
 
 ---
 
-## The two variants
+## The three variants
 
-Produce **exactly two genuinely different variants**, each from a different angle — not two paraphrases. Pick the two angles that earn the most attention for this specific post:
+Produce **exactly three genuinely different variants — one per angle** (extends, contrarian, and debate each appear exactly once), not three paraphrases. Each angle earns attention a different way:
 
 - **extends** — push the post's idea further. The next step, the sharper consequence, the part the author left unsaid. Make the author want to reply back.
 - **contrarian** — lightly controversial. Disagree with a sharp, defensible claim and give the reason. Not "well actually" — a real counter-position. Heat, not hate.
@@ -53,9 +53,9 @@ Lean spicy: a reply that splits the room earns more profile taps than one everyo
 
 ## Output
 
-Return JSON of the shape `{"replies": [{"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}]}` — exactly two variants, each tagged with its angle (`extends`, `contrarian`, or `debate`). Each `text` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary.
+Return JSON of the shape `{"replies": [{"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}, {"text": "…", "angle": "…"}]}` — exactly three variants, one per angle (`extends`, `contrarian`, and `debate` each appear once). Each `text` is ONLY the raw reply text, exactly as it should appear on X — real newlines between propositions, no surrounding quotes, no backticks, no markdown, no commentary.
 
-**My optional steer** comes in the `<idea>` tag after the post. If it has content, that's the seed — build both variants around it, in English (the idea may be in Romanian; translate the intent, don't translate word-for-word). If it's empty, you decide the angles from the post and the rules above.
+**My optional steer** comes in the `<idea>` tag after the post. If it has content, that's the seed — build all three variants around it, in English (the idea may be in Romanian; translate the intent, don't translate word-for-word). If it's empty, you decide the angles from the post and the rules above.
 
 **The post I'm replying to** (author, body, and top replies extracted below):
 

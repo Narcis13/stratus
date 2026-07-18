@@ -364,6 +364,15 @@ describe('reply prompt (§7.1)', () => {
     expect(REPLY_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
   });
 
+  test('template asks for three variants, one per angle (RU.1)', () => {
+    expect(REPLY_PROMPT_TEMPLATE).toContain('## The three variants');
+    expect(REPLY_PROMPT_TEMPLATE).toContain('exactly three');
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('two variants');
+    for (const angle of ['extends', 'contrarian', 'debate']) {
+      expect(REPLY_PROMPT_TEMPLATE).toContain(angle);
+    }
+  });
+
   test('buildGrokInput substitutes the idea into the tag', () => {
     const [msg] = buildGrokInput(promptCtx, undefined, 'fă-l să sune ca un constructor');
     expect(msg?.content).toContain('<idea>fă-l să sune ca un constructor</idea>');
@@ -481,6 +490,19 @@ describe('batch replies (Radar §7.2)', () => {
     expect(msg?.content).toContain('solopreneur');
     // variable content sits at the very end (cacheable prefix)
     expect(msg?.content.trimEnd().endsWith('<idea>fii contrarian</idea>')).toBe(true);
+  });
+
+  test('batch head keeps the sliced voice block, not the single-reply variants section (RU.1 slice guard)', () => {
+    const content = buildBatchGrokInput(tweets)[0]?.content ?? '';
+    // The persona + forbidden lists rode in via the VOICE_BLOCK slice.
+    expect(content).toContain('Forbidden openers');
+    expect(content).toContain('solopreneur');
+    // VOICE_BLOCK_END bounds the slice at the heading. If it desyncs from the
+    // renamed heading, sharedVoiceBlock falls back to the whole template and
+    // the single-reply variants section + its {{…}} placeholders leak in.
+    expect(content).not.toContain('## The three variants');
+    expect(content).not.toContain('{{TWEET_CONTEXT}}');
+    expect(content).not.toContain('{{IDEA}}');
   });
 
   test('buildBatchGrokInput leaves an empty idea tag when none given', () => {
