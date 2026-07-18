@@ -97,8 +97,11 @@ describe.if(authed)('MCP transport', () => {
     // schema / curated / write
     expect(names.has('x_query')).toBe(true);
     expect(names.has('x_brief')).toBe(true);
+    expect(names.has('x_niche')).toBe(true);
     expect(names.has('x_draft_post')).toBe(true);
     expect(names.has('x_add_idea')).toBe(true);
+    // 3 schema + 11 curated (incl. x_niche) + 3 write.
+    expect(names.size).toBe(17);
   });
 });
 
@@ -128,6 +131,16 @@ describe.if(authed)('MCP tool tiers', () => {
     const { data, isError } = toolPayload(env);
     expect(isError).toBe(false);
     expect(typeof data).toBe('object');
+  });
+
+  test('curated tier: x_niche returns the active niche + doctrine', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_niche', arguments: {} });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const d = data as { niche?: { slug?: string }; doctrine?: { replyTargetMin?: number } };
+    expect(typeof d.niche?.slug).toBe('string');
+    expect((d.niche?.slug ?? '').length).toBeGreaterThan(0);
+    expect(typeof d.doctrine?.replyTargetMin).toBe('number');
   });
 
   test('write tier: x_add_idea creates an open idea', async () => {

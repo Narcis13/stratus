@@ -306,6 +306,17 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
     },
   );
 
+  server.registerTool(
+    'x_niche',
+    {
+      title: 'Active niche',
+      description:
+        'The active niche — the identity + strategy container: persona, beliefs, reply persona, prose description, and the resolved doctrine knobs (reply quota, week reply %, target follower band). Free, local read.',
+      inputSchema: {},
+    },
+    async () => route('/x/niche'),
+  );
+
   // -------------------------------------------------------------- Write tier
   // Tiny, never X-billed. The write ceiling is a DRAFT calendar row — MCP can
   // propose, only the human promotes it to `pending`.

@@ -25,6 +25,7 @@ import { images } from './routes/images.ts';
 import { launch } from './routes/launch.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
+import { nicheRouter } from './routes/niche.ts';
 import { peopleRouter } from './routes/people.ts';
 import { pillars } from './routes/pillars.ts';
 import { playbook } from './routes/playbook.ts';
@@ -57,6 +58,9 @@ export function mountX(app: Hono): void {
   app.route('/x', calendar);
   app.route('/x', metrics);
   app.route('/x', pillars);
+  // N0: niche CRUD + activation ratchet. Always mounted, $0. Static paths plus a
+  // `/niches/:slug` param that shadows nothing (no other route lives under niche*).
+  app.route('/x', nicheRouter);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
