@@ -58,6 +58,7 @@ Three checkboxes sit between the connection fields and the harvest section. Each
 
 - **What it does:** your stratus setup has "content pillars" — the handful of themes you want to be known for. When this is **on**, the AI reply drafter is nudged to steer replies toward those pillars. When **off** (the default), replies are drafted purely from the tweet you're responding to, with no pillar steering.
 - **When to turn it on:** if you want your replies to consistently reinforce your core topics. Leave it off if you'd rather each reply just react naturally to whatever it's answering.
+- **Note:** the content pillars themselves are owned and edited under the **Niche** card (below) — they belong to your active niche, not to a global list.
 
 ### Auto-type Reply Master drafts into the reply box (default off)
 
@@ -70,6 +71,27 @@ Three checkboxes sit between the connection fields and the harvest section. Each
 - **What data it captures:** only what's already on the hover card X drew because *you* hovered — handle, display name, basic profile info. It does **not** synthesize hovers, crawl, or read anything you didn't naturally bring up on screen. New people are added gently (a hover glimpse never overwrites richer data you've already saved).
 - **Why it's on by default:** it grows your relationship roster for free from browsing you were already doing. It's the effortless way the People layer fills itself in.
 - **How to opt out:** simply **uncheck** this box. It saves immediately, and the extension stops capturing people from hover cards from that point on. This is the one place to turn passive capture off.
+
+---
+
+## Your niche (identity & strategy)
+
+The **Niche** card is where "who you are" lives. A niche bundles the four things every AI draft and every coaching number is built from: your **persona** (the biography the post drafter grounds on), your **beliefs** (the principles it argues from), your **reply persona** (the short self-description replies use), a prose **description**, and five **doctrine** knobs. Editing any of these changes the next drafted post and reply **without a deploy** — the same way pillars became editable.
+
+### The active-niche editor
+
+- **Persona / beliefs / reply persona / description:** free-text fields. Save commits them; Reset discards unsaved edits. The next `/x/posts/draft` and `/x/replies/generate` immediately ground on the new text (nothing is cached across an edit).
+- **Doctrine (5 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), and the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces). These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+
+### Niches list & activation
+
+- Exactly **one niche is active at a time.** The list shows every niche; **Activate** swaps which one grounds your drafts and doctrine. **Delete** removes an inactive niche (you can't delete the active one).
+- **Creating a niche** needs a slug, label, and the persona/beliefs/reply-persona text (the server rejects empty grounding). New niches are created **inactive** — activate when you're ready.
+- A niche owns its **pillars and channels.** Activate a fresh niche with no pillars yet and the post drafter will politely refuse (`no_pillars_for_niche`) rather than borrow another niche's pillars — add its pillars first (Voice → Pillars, or the wizard).
+
+### The wizard (prose → a proposed niche)
+
+Paste a paragraph describing a niche ("I post about evidence-based nutrition for busy parents…") and **Generate** turns it into a complete **proposed** niche — persona, beliefs, reply persona, three pillars, and up to five channels — for you to review and edit before saving. It's one AI call (~$0.01), and the proposal is **never saved automatically**: nothing changes until you click Create. Saving runs in the right order (create → activate → its pillars → its channels) so the new niche's pillars/channels attach to it, not to whatever was active before.
 
 ---
 

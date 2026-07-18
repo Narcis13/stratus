@@ -14,6 +14,8 @@ Everything is fronted by Hono with a cost-tracking middleware. Postgres on Neon 
 
 Hard ceiling on scope: if a feature isn't in service of those three, it doesn't get built.
 
+> **Niche N0 (2026-07-18):** goal-serving *configuration* — persona/beliefs/reply-persona (prompt grounding), the content pillars (output taxonomy) + channels (input taxonomy), and the doctrine numbers (reply quota, 70/30 ratio, 2–10x target band) — is now owned by a first-class **`niches`** DB entity, editable from the Settings **Niche** card without a deploy (the §8.6 move applied to identity). Exactly one active niche (v1); pillars/channels are niche-owned and filtered to the active niche, drafts refuse `no_pillars_for_niche` rather than leak another niche's pillars. `src/my_niche.md` is now only the seed prose for the `builder` niche's `description` — the live source of truth is the `niches` table. See CLAUDE.md §"Niche N0" and `plans/2026-07-16-niche.md`.
+
 ## Product, in one paragraph each
 
 **Calendar.** I write 5–10 posts on a Sunday. Each row in `scheduled_posts` has `text`, `media_ids?`, `scheduled_for`, `status`. The worker wakes every 60 s, picks rows due in the last minute, posts them via the existing `createPost`, writes the resulting tweet ID back, and flips status. Failures stay `failed` with the error class — I retry by editing the row.

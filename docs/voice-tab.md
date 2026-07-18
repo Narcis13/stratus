@@ -112,6 +112,8 @@ Crucially, **the AI post drafter writes against these pillars.** When you draft 
 
 Each pillar comes seeded with three defaults the first time, but they're entirely yours to change.
 
+Pillars are **owned by your active niche** (see Settings → Niche). The list here — and the Composer's dropdown — shows only the active niche's pillars, so switching your active niche switches which pillars you see and draft against. A brand-new niche starts with no pillars until you add them (the drafter refuses to invent from another niche's pillars).
+
 ### Editing a pillar
 
 Each pillar is a card showing its **slug** (a short lowercase id like `ai-craft`, fixed once created) and two editable fields:
