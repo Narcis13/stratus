@@ -10,11 +10,12 @@
 //   POST   /pillars/draft               { mode:'new'|'tweak', idea?, slug?, instruction? }
 //                                       → { proposal:{slug,label,body} } (not persisted)
 
-import { asc, eq } from 'drizzle-orm';
+import { type SQL, and, asc, eq, isNull, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { GrokApiError, askGrok } from '../../grok/index.ts';
 import { contentPillars } from '../db/schema.ts';
+import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
 import {
   PILLAR_DRAFT_SCHEMA,
@@ -27,19 +28,31 @@ const PILLAR_DRAFT_CACHE_KEY = 'stratus-pillar-draft';
 
 export const pillars = new Hono();
 
-// Active pillars (sortOrder asc) for the drafter / reply prompt. Falls back to
-// the seed set when the table is empty (fresh DB / pre-migration) so a draft is
-// never pillar-less.
+// N0.6: a pillar is owned by the active niche when its stamp matches — or is
+// NULL (rows pre-dating the niche column; legacy tolerance only). After the N0.1
+// migration every row is stamped `builder`, so this is identity until a second
+// niche exists.
+function ownedByNiche(slug: string): SQL | undefined {
+  return or(eq(contentPillars.niche, slug), isNull(contentPillars.niche));
+}
+
+// Active pillars (sortOrder asc) for the drafter / reply prompt, scoped to the
+// active niche. Falls back to the seed set ONLY for the built-in `builder` niche
+// (fresh DB / pre-migration) — a custom niche with zero pillars returns []
+// deliberately, so the drafter refuses rather than leaking builder pillars.
 export async function getActivePillars(): Promise<PillarDef[]> {
+  const active = loadActiveNicheSafe();
   const rows = await db
     .select({ slug: contentPillars.slug, label: contentPillars.label, body: contentPillars.body })
     .from(contentPillars)
-    .where(eq(contentPillars.active, true))
+    .where(and(eq(contentPillars.active, true), ownedByNiche(active.slug)))
     .orderBy(asc(contentPillars.sortOrder), asc(contentPillars.slug));
-  return rows.length > 0 ? rows : DEFAULT_PILLARS;
+  if (rows.length > 0) return rows;
+  return active.slug === DEFAULT_NICHE.slug ? DEFAULT_PILLARS : [];
 }
 
 pillars.get('/pillars', async (c) => {
+  const active = loadActiveNicheSafe();
   const activeParam = c.req.query('active');
   const order = [asc(contentPillars.sortOrder), asc(contentPillars.slug)] as const;
   const rows =
@@ -47,11 +60,12 @@ pillars.get('/pillars', async (c) => {
       ? await db
           .select()
           .from(contentPillars)
+          .where(ownedByNiche(active.slug))
           .orderBy(...order)
       : await db
           .select()
           .from(contentPillars)
-          .where(eq(contentPillars.active, activeParam === 'true'))
+          .where(and(eq(contentPillars.active, activeParam === 'true'), ownedByNiche(active.slug)))
           .orderBy(...order);
   return c.json(rows);
 });
@@ -77,9 +91,11 @@ pillars.post('/pillars', async (c) => {
     .where(eq(contentPillars.slug, slug));
   if (existing.length > 0) return c.json({ error: 'slug_exists' }, 409);
 
+  // N0.6: stamp the owning niche so a new pillar joins the active niche's set.
+  const activeNiche = loadActiveNicheSafe();
   const [row] = await db
     .insert(contentPillars)
-    .values({ slug, label, body, sortOrder, active })
+    .values({ slug, label, body, sortOrder, active, niche: activeNiche.slug })
     .returning();
   return c.json(row, 201);
 });
@@ -112,12 +128,15 @@ pillars.patch('/pillars/:slug', async (c) => {
     patch.active = b.active;
   }
 
-  // Deactivating the last active pillar would leave the drafter enum empty.
+  // Deactivating the last active pillar would leave the drafter enum empty. The
+  // guard is per-niche (N0.6): counts only pillars in the active niche's set, so
+  // it can't false-fire on a pillar that belongs to a different, inactive niche.
   if (patch.active === false) {
+    const activeNiche = loadActiveNicheSafe();
     const activeRows = await db
       .select({ slug: contentPillars.slug })
       .from(contentPillars)
-      .where(eq(contentPillars.active, true));
+      .where(and(eq(contentPillars.active, true), ownedByNiche(activeNiche.slug)));
     if (activeRows.length <= 1 && activeRows.some((r) => r.slug === slug)) {
       return c.json({ error: 'last_active_pillar' }, 409);
     }
@@ -135,17 +154,27 @@ pillars.patch('/pillars/:slug', async (c) => {
 pillars.delete('/pillars/:slug', async (c) => {
   const slug = c.req.param('slug');
   const [existing] = await db
-    .select({ slug: contentPillars.slug, active: contentPillars.active })
+    .select({
+      slug: contentPillars.slug,
+      active: contentPillars.active,
+      niche: contentPillars.niche,
+    })
     .from(contentPillars)
     .where(eq(contentPillars.slug, slug));
   if (!existing) return c.json({ error: 'not_found' }, 404);
 
+  // Per-niche last-active guard (N0.6): only when the target belongs to the
+  // active niche's set — deleting another niche's pillar can't empty the live
+  // drafter enum, so it must not false-fire on the active niche's count.
   if (existing.active) {
-    const activeRows = await db
-      .select({ slug: contentPillars.slug })
-      .from(contentPillars)
-      .where(eq(contentPillars.active, true));
-    if (activeRows.length <= 1) return c.json({ error: 'last_active_pillar' }, 409);
+    const activeNiche = loadActiveNicheSafe();
+    if (existing.niche === activeNiche.slug || existing.niche === null) {
+      const activeRows = await db
+        .select({ slug: contentPillars.slug })
+        .from(contentPillars)
+        .where(and(eq(contentPillars.active, true), ownedByNiche(activeNiche.slug)));
+      if (activeRows.length <= 1) return c.json({ error: 'last_active_pillar' }, 409);
+    }
   }
 
   await db.delete(contentPillars).where(eq(contentPillars.slug, slug));

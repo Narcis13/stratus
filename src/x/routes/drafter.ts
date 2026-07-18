@@ -72,6 +72,11 @@ export const drafter = new Hono();
 
 drafter.post('/posts/draft', async (c) => {
   const pillars = await getActivePillars();
+  // N0.6: a non-default niche with zero active pillars has an empty enum —
+  // refuse BEFORE any Grok spend (§7.4) rather than leak the builder defaults.
+  if (pillars.length === 0) {
+    return c.json({ error: 'no_pillars_for_niche', niche: loadActiveNicheSafe().slug }, 409);
+  }
   const parsed = await parseCommon(
     c.req.raw,
     pillars.map((p) => p.slug),
@@ -113,6 +118,11 @@ drafter.post('/posts/draft', async (c) => {
 
 drafter.post('/posts/reup', async (c) => {
   const pillars = await getActivePillars();
+  // N0.6: same refuse-before-spend guard as /posts/draft — an empty niche enum
+  // must never reach askGrok.
+  if (pillars.length === 0) {
+    return c.json({ error: 'no_pillars_for_niche', niche: loadActiveNicheSafe().slug }, 409);
+  }
   const parsed = await parseCommon(
     c.req.raw,
     pillars.map((p) => p.slug),
