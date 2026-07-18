@@ -21,6 +21,11 @@ import {
   buildPostDraftsSchema,
   parsePostDrafts,
 } from './x/posts/prompt.ts';
+import {
+  THREAD_PROMPT_TEMPLATE,
+  buildThreadDraftInput,
+  parseThreadDraft,
+} from './x/posts/threadPrompt.ts';
 import { priceFor } from './x/pricing.ts';
 import {
   type BatchTweet,
@@ -1813,6 +1818,86 @@ A background tension I own honestly: I scatter across too many projects out of e
     expect(parsePillar(undefined)).toBeUndefined();
     expect(parsePillar(0)).toBe('invalid');
     expect(parsePillar('growth')).toBe('invalid');
+  });
+});
+
+describe('thread prompt (AI.7)', () => {
+  test('embedded template stays in sync with thread prompt.md', async () => {
+    const md = await Bun.file(new URL('../thread prompt.md', import.meta.url)).text();
+    expect(THREAD_PROMPT_TEMPLATE.trimEnd()).toBe(md.trimEnd());
+  });
+
+  test('variable content sits at the very end (cacheable prefix)', () => {
+    const fewShotAt = THREAD_PROMPT_TEMPLATE.indexOf('{{FEW_SHOT}}');
+    expect(fewShotAt).toBeGreaterThan(THREAD_PROMPT_TEMPLATE.length * 0.8);
+    expect(THREAD_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
+    // §1/§5 persona family substitutes in place, not at the tail.
+    expect(THREAD_PROMPT_TEMPLATE.indexOf('{{PERSONA}}')).toBeLessThan(
+      THREAD_PROMPT_TEMPLATE.length * 0.5,
+    );
+  });
+
+  const SLUGS = ['ai-craft', 'builder-51', 'unsexy-problems'];
+
+  test('parseThreadDraft returns pillar + ordered tweets, trims, flags no over-longs', () => {
+    const raw = JSON.stringify({ pillar: 'ai-craft', tweets: ['  one  ', 'two', 'three'] });
+    const out = parseThreadDraft(raw, SLUGS);
+    expect(out).toEqual({ pillar: 'ai-craft', tweets: ['one', 'two', 'three'], overLong: [] });
+  });
+
+  test('parseThreadDraft detects 280-char over-longs (1-based positions)', () => {
+    const long = 'x'.repeat(281);
+    const out = parseThreadDraft(
+      JSON.stringify({ pillar: 'builder-51', tweets: ['ok', long, 'ok'] }),
+      SLUGS,
+    );
+    expect(out?.overLong).toEqual([2]);
+  });
+
+  test('parseThreadDraft rejects a pillar outside the allowed set', () => {
+    expect(parseThreadDraft(JSON.stringify({ pillar: 'growth', tweets: ['a', 'b'] }), SLUGS)).toBe(
+      null,
+    );
+  });
+
+  test('parseThreadDraft rejects non-thread / malformed shapes', () => {
+    expect(parseThreadDraft('not json', SLUGS)).toBe(null);
+    expect(
+      parseThreadDraft(JSON.stringify({ pillar: 'ai-craft', tweets: ['only one'] }), SLUGS),
+    ).toBe(null);
+    expect(parseThreadDraft(JSON.stringify({ pillar: 'ai-craft', tweets: ['a', ''] }), SLUGS)).toBe(
+      null,
+    );
+    expect(parseThreadDraft(JSON.stringify({ pillar: 'ai-craft', tweets: 'nope' }), SLUGS)).toBe(
+      null,
+    );
+  });
+
+  test('buildThreadDraftInput folds pillar + count into the steer, keeps persona in place', () => {
+    const [msg] = buildThreadDraftInput({
+      winners: [],
+      pillar: 'ai-craft',
+      tweetCount: 5,
+      idea: 'de ce AI',
+    });
+    expect(msg?.content).toContain('Serve the "ai-craft" content pillar.');
+    expect(msg?.content).toContain('Write exactly 5 tweets.');
+    expect(msg?.content).toContain('de ce AI');
+    // Persona/beliefs substituted (no leftover tokens), few-shot placeholder gone.
+    expect(msg?.content).not.toContain('{{PERSONA}}');
+    expect(msg?.content).not.toContain('{{BELIEFS}}');
+    expect(msg?.content).not.toContain('{{FEW_SHOT}}');
+    expect(msg?.content).toContain('(no measured winners yet)');
+  });
+
+  test('buildThreadDraftInput appends meContext + guidance at the tail only', () => {
+    const base = buildThreadDraftInput({ winners: [] })[0]?.content ?? '';
+    const withTail = buildThreadDraftInput({
+      winners: [],
+      meContext: 'ME BLOCK',
+      guidance: 'GUIDANCE LINE',
+    })[0]?.content;
+    expect(withTail).toBe(`${base}\n\nME BLOCK\n\nGUIDANCE LINE`);
   });
 });
 

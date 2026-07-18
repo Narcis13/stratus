@@ -442,6 +442,36 @@ export function ComposerPanel({
     }
   };
 
+  // AI.7 — one LLM call drafts a whole thread (reusing the pillar + idea inputs).
+  // It lands as a draft head + segment tails sharing a threadId; we open it in
+  // the thread editor so the user can tweak segments, set a time, and schedule.
+  const draftThread = async (): Promise<void> => {
+    setDrafting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const effectiveIdea = idea.trim();
+      const ideaId = effectiveIdea ? selectedIdeaId : '';
+      const res = await api.drafts.thread(settings, {
+        ...(pillar ? { pillar } : {}),
+        ...(effectiveIdea ? { idea: effectiveIdea } : {}),
+        ...(ideaId ? { ideaId } : {}),
+      });
+      if (ideaId) {
+        setSelectedIdeaId('');
+        loadOpenIdeas();
+      }
+      const head = res.segments.find((s) => s.threadPosition === 1) ?? res.segments[0];
+      if (!head) throw new ApiError(0, 'empty_thread_response');
+      onSaved(head);
+      onEdit(head.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Thread draft failed');
+    } finally {
+      setDrafting(false);
+    }
+  };
+
   // Pick a generated draft → open it in the editor (it already exists as a draft
   // row); the user sets a time and Saves, promoting it to pending. No round-trip
   // through the Calendar tab.
@@ -770,7 +800,7 @@ export function ComposerPanel({
 
       {!isEditing && (
         <section className="drafter">
-          <h3>Draft with Grok (§8.1)</h3>
+          <h3>{threadMode ? 'Draft a thread with AI (§8.2)' : 'Draft with Grok (§8.1)'}</h3>
           {remixTweetId && (
             <div className="status-line">
               remixing structure of tweet <code>{remixTweetId}</code>{' '}
@@ -825,12 +855,18 @@ export function ComposerPanel({
               placeholder="seed for the three drafts…"
             />
           </label>
-          <button type="button" onClick={() => void generateDrafts()} disabled={drafting}>
+          <button
+            type="button"
+            onClick={() => void (threadMode ? draftThread() : generateDrafts())}
+            disabled={drafting}
+          >
             {drafting
               ? 'Drafting…'
-              : drafts.length > 0
-                ? 'Regenerate 3 drafts (~$0.01)'
-                : 'Generate 3 drafts (~$0.01)'}
+              : threadMode
+                ? 'Draft thread with AI (~$0.01)'
+                : drafts.length > 0
+                  ? 'Regenerate 3 drafts (~$0.01)'
+                  : 'Generate 3 drafts (~$0.01)'}
           </button>
 
           {drafts.length > 0 ? (

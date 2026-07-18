@@ -77,6 +77,27 @@ export interface PostDraftBody {
   voiceTweetId?: string;
 }
 
+// AI.7 — one LLM call drafts a whole thread; the head lands status='draft' and
+// the tails status='segment', sharing a threadId (loads into the thread editor).
+export interface ThreadDraftBody {
+  idea?: string;
+  ideaId?: string;
+  pillar?: PostPillar;
+  /** Target tweet count, clamped 3–8 server-side. */
+  tweetCount?: number;
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+}
+
+export interface ThreadDraftResponse {
+  threadId: string;
+  segments: ScheduledPost[];
+  costUsd: number;
+  model: string;
+  requestId?: string;
+}
+
 // --------------------------------------------------------------- ideas (C6)
 
 export type IdeaStatus = 'open' | 'consumed' | 'discarded';

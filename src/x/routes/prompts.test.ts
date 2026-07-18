@@ -85,7 +85,7 @@ describe('GET /x/prompts/:key', () => {
   });
 
   test('unknown key → 404 unknown_prompt', async () => {
-    const { status, body } = await send<{ error: string }>('/x/prompts/thread', 'GET');
+    const { status, body } = await send<{ error: string }>('/x/prompts/not-a-prompt', 'GET');
     expect(status).toBe(404);
     expect(body.error).toBe('unknown_prompt');
   });
@@ -150,7 +150,7 @@ describe('PATCH /x/prompts/:key', () => {
   });
 
   test('unknown key → 404', async () => {
-    const { status, body } = await send<{ error: string }>('/x/prompts/thread', 'PATCH', {
+    const { status, body } = await send<{ error: string }>('/x/prompts/not-a-prompt', 'PATCH', {
       body: 'x {{TWEET_CONTEXT}} {{IDEA}}',
     });
     expect(status).toBe(404);
@@ -173,7 +173,7 @@ describe('reset + restore-defaults', () => {
   });
 
   test('reset unknown key → 404', async () => {
-    const { status, body } = await send<{ error: string }>('/x/prompts/thread/reset', 'POST');
+    const { status, body } = await send<{ error: string }>('/x/prompts/not-a-prompt/reset', 'POST');
     expect(status).toBe(404);
     expect(body.error).toBe('unknown_prompt');
   });

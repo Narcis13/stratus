@@ -118,6 +118,8 @@ import {
   type SettingsPatchResult,
   type SettingsResetResult,
   type SettingsResponse,
+  type ThreadDraftBody,
+  type ThreadDraftResponse,
   type TopComment,
   type UpdateBody,
   type VoiceAuthor,
@@ -242,6 +244,8 @@ export type {
   SettingsPatchResult,
   SettingsResetResult,
   SettingsResponse,
+  ThreadDraftBody,
+  ThreadDraftResponse,
   TopComment,
   UpdateBody,
   VoiceAuthor,
@@ -357,6 +361,12 @@ export const api = {
     // §8.5 — quote-tweet re-up of one of my published posts.
     reup(s: Settings, body: PostReupBody): Promise<PostDraftResponse> {
       return request<PostDraftResponse>(s, '/x/posts/reup', { method: 'POST', body });
+    },
+
+    // AI.7 — one LLM call drafts a whole thread; head + segment rows land under
+    // a shared threadId and load straight into the Composer's thread editor.
+    thread(s: Settings, body: ThreadDraftBody): Promise<ThreadDraftResponse> {
+      return request<ThreadDraftResponse>(s, '/x/posts/draft-thread', { method: 'POST', body });
     },
   },
 

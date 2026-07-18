@@ -22,6 +22,7 @@
 // writes the cost_events row — don't double-log here. ~$0.01/draft call at
 // the 12KB cached prefix on Grok.
 
+import { randomUUID } from 'node:crypto';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { type Context, Hono } from 'hono';
 import { db } from '../../db/client.ts';
@@ -43,6 +44,12 @@ import {
   buildPostDraftsSchema,
   parsePostDrafts,
 } from '../posts/prompt.ts';
+import {
+  type ThreadDraft,
+  buildThreadDraftInput,
+  buildThreadDraftSchema,
+  parseThreadDraft,
+} from '../posts/threadPrompt.ts';
 import { loadPromptSafe } from '../prompts/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
 import { loadMeContextSafe } from './me.ts';
@@ -52,6 +59,10 @@ import { loadPostGuidanceSafe } from './playbook.ts';
 // Three posts of JSON run ~300 tokens; xAI doesn't count reasoning tokens
 // against the cap (verified live on the reply route under a 350 cap).
 const MAX_OUTPUT_TOKENS = 600;
+// A thread is up to 8 tweets of text plus JSON — much larger than 3 short posts.
+const THREAD_MAX_OUTPUT_TOKENS = 2000;
+const MIN_THREAD_TWEETS = 3;
+const MAX_THREAD_TWEETS = 8;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: LlmReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
@@ -73,6 +84,8 @@ interface RawBody {
   ideaId?: unknown;
   voiceTweetId?: unknown;
   tweetId?: unknown;
+  // AI.7 draft-thread only: target tweet count, clamped 3–8.
+  tweetCount?: unknown;
   model?: unknown;
   // AI.5: per-request LLM provider override ('grok' | 'openrouter'); absent →
   // the stored AI setting decides inside askLLM.
@@ -168,6 +181,155 @@ drafter.post('/posts/reup', async (c) => {
     pillars,
   });
 });
+
+// AI.7: one structured-outputs call drafts a whole thread (§8.2 shape). The head
+// lands status='draft', tails status='segment', sharing a thread_id — the exact
+// insert shape as POST /posts/threads (calendar.ts), but drafter-sourced and
+// never scheduled. A URL in any segment is allowed here (drafts); the schedule-
+// time guard re-checks the head on promotion. Nothing posts without a human.
+drafter.post('/posts/draft-thread', async (c) => {
+  const pillars = await getActivePillars();
+  // N0.6: same refuse-before-spend guard as /posts/draft — an empty niche enum
+  // must never reach the LLM.
+  if (pillars.length === 0) {
+    return c.json({ error: 'no_pillars_for_niche', niche: loadActiveNicheSafe().slug }, 409);
+  }
+  const slugs = pillars.map((p) => p.slug);
+  const parsed = await parseCommon(c.req.raw, slugs);
+  if ('error' in parsed) return c.json({ error: parsed.error }, 400);
+  const { body, pillar, idea, ideaId, model, provider, reasoningEffort } = parsed;
+
+  let tweetCount: number | undefined;
+  if (body.tweetCount !== undefined && body.tweetCount !== null) {
+    const n = body.tweetCount;
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1) {
+      return c.json({ error: 'invalid_tweet_count' }, 400);
+    }
+    tweetCount = Math.min(MAX_THREAD_TWEETS, Math.max(MIN_THREAD_TWEETS, n));
+  }
+
+  const winners = await topWinners();
+  // Same variable-tail grounding as the post drafter — gated Playbook guidance
+  // (C4) and the M1 personal-context block, both best-effort.
+  const guidance = await loadPostGuidanceSafe();
+  const meContext = await loadMeContextSafe('post');
+  const niche = loadActiveNicheSafe();
+  const prompt = loadPromptSafe('thread');
+
+  const buildMessages = (nudge?: string) => {
+    const msgs = buildThreadDraftInput({
+      winners,
+      pillars,
+      persona: niche.persona,
+      beliefs: niche.beliefs,
+      template: prompt.body,
+      ...(pillar !== undefined ? { pillar } : {}),
+      ...(idea !== undefined ? { idea } : {}),
+      ...(tweetCount !== undefined ? { tweetCount } : {}),
+      ...(guidance !== null ? { guidance } : {}),
+      ...(meContext !== null ? { meContext } : {}),
+    });
+    // The nudge rides a trailing message so the big cached prefix is preserved.
+    if (nudge) msgs.push({ role: 'user', content: nudge });
+    return msgs;
+  };
+
+  const callLlm = (nudge?: string): Promise<AskLlmResult> =>
+    askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        messages: buildMessages(nudge),
+        jsonSchema: { name: 'thread_draft', schema: buildThreadDraftSchema(slugs) },
+        promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      {
+        defaults: {
+          temperature: DEFAULT_TEMPERATURE,
+          maxOutputTokens: THREAD_MAX_OUTPUT_TOKENS,
+          reasoningEffort: DEFAULT_REASONING,
+        },
+      },
+    );
+
+  let result: AskLlmResult;
+  let costUsd: number;
+  let draft: ThreadDraft | null;
+  try {
+    result = await callLlm();
+    costUsd = result.costUsd;
+    draft = parseThreadDraft(result.text, slugs);
+    // Burn exactly one regenerate if a segment is over 280 chars (same one-retry
+    // discipline as the reply specificity gate). The nudge names the offenders;
+    // both calls are already cost-logged by the provider client — we just sum.
+    if (draft === null || draft.overLong.length > 0) {
+      const nudge =
+        draft && draft.overLong.length > 0
+          ? `Some tweets exceed 280 characters (${draft.overLong
+              .map((n) => `#${n}`)
+              .join(
+                ', ',
+              )}). Rewrite the whole thread so EVERY tweet is 280 characters or fewer — same idea, same order.`
+          : 'Return only valid JSON matching the schema: {"pillar":"...","tweets":["...","..."]} with 4-8 tweets, each 280 characters or fewer.';
+      const retry = await callLlm(nudge);
+      costUsd += retry.costUsd;
+      const retryDraft = parseThreadDraft(retry.text, slugs);
+      if (retryDraft) {
+        result = retry;
+        draft = retryDraft;
+      }
+    }
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/posts/draft-thread failed:', detail);
+    return c.json({ error: 'thread_draft_failed', detail }, 502);
+  }
+
+  if (draft === null || draft.overLong.length > 0) {
+    return c.json({ error: 'thread_invalid', requestId: result.requestId }, 502);
+  }
+
+  const { threadId, rows } = await insertThreadDraft(draft.pillar, draft.tweets, ideaId);
+
+  return c.json(
+    {
+      threadId,
+      segments: rows,
+      model: result.model,
+      costUsd,
+      requestId: result.requestId,
+    },
+    201,
+  );
+});
+
+// Insert a drafted thread exactly like POST /posts/threads: one head
+// (position 1, status='draft') + segment tails sharing a thread_id, all
+// source='drafter', unscheduled. Exported so a route test can assert the shape
+// without an LLM call. Consumes the seeding idea (backlinked to the head).
+export async function insertThreadDraft(pillar: string | null, tweets: string[], ideaId?: string) {
+  const threadId = randomUUID();
+  const rows = await db
+    .insert(scheduledPosts)
+    .values(
+      tweets.map((text, i) => ({
+        text,
+        threadId,
+        threadPosition: i + 1,
+        pillar,
+        source: 'drafter',
+        scheduledFor: null,
+        status: i === 0 ? 'draft' : 'segment',
+      })),
+    )
+    .returning();
+  const head = rows[0];
+  if (ideaId && head) await consumeIdeaSafe(ideaId, 'scheduled_posts', head.id);
+  return { threadId, rows };
+}
 
 // --------------------------------------------------------------- pipeline
 

@@ -10,6 +10,7 @@ import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE, buildPostDraftInput } from '../posts/prompt.ts';
+import { THREAD_PROMPT_TEMPLATE } from '../posts/threadPrompt.ts';
 import {
   type PostContext,
   REPLY_BATCH_PROMPT_TEMPLATE,
@@ -52,6 +53,7 @@ describe('prompt registry (AI.3)', () => {
       'reply',
       'reply-batch',
       'post',
+      'thread',
       'voice-extract',
       'pillar-draft',
       'digest',
@@ -61,9 +63,11 @@ describe('prompt registry (AI.3)', () => {
     expect(isPromptKey('reply-batch')).toBe(true);
     expect(isPromptKey('digest')).toBe(true);
     expect(isPromptKey('icebreaker')).toBe(true);
-    expect(isPromptKey('thread')).toBe(false);
+    expect(isPromptKey('thread')).toBe(true);
+    expect(isPromptKey('nonsense')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS.thread.defaultBody).toBe(THREAD_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['reply-batch'].defaultBody).toBe(REPLY_BATCH_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['voice-extract'].defaultBody).toBe(EXTRACT_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['pillar-draft'].defaultBody).toBe(PILLAR_DRAFT_TEMPLATE);
