@@ -272,6 +272,10 @@ export interface BuildPostDraftOptions {
    *  — POST_PROMPT_TEMPLATE / post prompt.md stay byte-identical, same pattern
    *  as guidance. Empty/absent → no change to the rendered prompt. */
   meContext?: string;
+  /** Registry-loaded prompt body (AI.3): the DB override when one exists, else
+   *  the shipped default. Defaults to POST_PROMPT_TEMPLATE so existing callers
+   *  and tests are untouched. */
+  template?: string;
 }
 
 export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] {
@@ -280,9 +284,9 @@ export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] 
   const pillars = opts.pillars && opts.pillars.length > 0 ? opts.pillars : DEFAULT_PILLARS;
   // Persona/beliefs go first so later user-content substitutions (idea, steer)
   // can never inject an expandable {{PERSONA}}/{{BELIEFS}} token.
-  let content = POST_PROMPT_TEMPLATE.split(PERSONA_PLACEHOLDER).join(
-    opts.persona ?? DEFAULT_NICHE.persona,
-  );
+  let content = (opts.template ?? POST_PROMPT_TEMPLATE)
+    .split(PERSONA_PLACEHOLDER)
+    .join(opts.persona ?? DEFAULT_NICHE.persona);
   content = content.split(BELIEFS_PLACEHOLDER).join(opts.beliefs ?? DEFAULT_NICHE.beliefs);
   content = content.split(PILLARS_PLACEHOLDER).join(renderPillars(pillars));
   content = content.split(WINNERS_PLACEHOLDER).join(renderWinners(opts.winners));

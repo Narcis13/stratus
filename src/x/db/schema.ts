@@ -738,3 +738,17 @@ export const meGoals = sqliteTable(
   },
   (t) => [index('me_goals_status_idx').on(t.status)],
 );
+
+// Prompt overrides (AI.3) — OVERRIDE ROWS ONLY, keyed by the registry's
+// PromptKey. Row absent = the shipped default in src/x/prompts/registry.ts
+// applies; restore = DELETE. No seed INSERT by design (sidesteps the
+// drizzle-kit dropped-seed trap, and a default improved in a later deploy
+// applies automatically unless the user overrode it). Never store secrets
+// here — the table is explorer/MCP-visible like everything except tokens.
+export const promptOverrides = sqliteTable('prompt_overrides', {
+  key: text('key').primaryKey(),
+  body: text('body').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});

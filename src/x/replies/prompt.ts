@@ -442,10 +442,13 @@ export function buildGrokInput(
   override?: string,
   idea?: string,
   pillars?: PillarDef[],
-  opts?: { replyPersona?: string },
+  // `template` is the registry-loaded prompt (AI.3, DB override or default) —
+  // a per-request `override` (systemPromptOverride) still beats it, matching
+  // the explicit > DB > code-default precedence askLLM encodes for params.
+  opts?: { replyPersona?: string; template?: string },
 ): GrokMessage[] {
   const template = substituteReplyPersona(
-    override && override.trim().length > 0 ? override : REPLY_PROMPT_TEMPLATE,
+    override && override.trim().length > 0 ? override : (opts?.template ?? REPLY_PROMPT_TEMPLATE),
     opts?.replyPersona,
   );
   const context = renderContext(ctx);

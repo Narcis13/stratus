@@ -37,6 +37,7 @@ import {
   buildPostDraftsSchema,
   parsePostDrafts,
 } from '../posts/prompt.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
 import { loadMeContextSafe } from './me.ts';
 import { getActivePillars } from './pillars.ts';
@@ -52,7 +53,8 @@ const WINNERS_LIMIT = 5;
 // Recent non-reply posts scanned for measured winners. The account is far from
 // outgrowing an in-memory rank at this size.
 const WINNERS_SCAN_LIMIT = 200;
-const PROMPT_CACHE_KEY = 'stratus-x-post-draft';
+// The post cache key comes from the registry (AI.3): a sha of the effective
+// prompt body, niche-suffixed at the call site.
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -182,12 +184,15 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
   // N0.3: §1/§5 grounding comes from the active niche (server-stamped, never
   // client-supplied); a niche-layer failure degrades to the builder defaults.
   const niche = loadActiveNicheSafe();
+  // Registry prompt (AI.3): DB override else the shipped default.
+  const prompt = loadPromptSafe('post');
   const messages = buildPostDraftInput({
     winners,
     remix: opts.remix,
     pillars: opts.pillars,
     persona: niche.persona,
     beliefs: niche.beliefs,
+    template: prompt.body,
     ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
     ...(guidance !== null ? { guidance } : {}),
@@ -203,8 +208,9 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
       jsonSchema: { name: 'post_drafts', schema: buildPostDraftsSchema(slugs) },
-      // Niche-suffixed so editing the niche cleanly busts the cached prefix.
-      promptCacheKey: `${PROMPT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      // Sha of the effective prompt body + niche suffix — busts the cached
+      // prefix on either a prompt override edit or a niche edit.
+      promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
     });
   } catch (err) {
     if (err instanceof GrokApiError) {

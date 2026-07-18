@@ -33,11 +33,11 @@ import {
   snippet,
   upsertPerson,
 } from '../people/store.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import {
   BATCH_REPLY_SCHEMA,
   type PostContext,
   type PostSignals,
-  REPLY_PROMPT_TEMPLATE,
   REPLY_VARIANTS_SCHEMA,
   type ReplyVariant,
   buildBatchGrokInput,
@@ -60,9 +60,9 @@ const MAX_OUTPUT_TOKENS = 520;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: ReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
-// Stable key so repeat drafts land on the same xAI server — the ~17.5KB
-// template is a cacheable prefix (context + idea sit at the very end).
-const PROMPT_CACHE_KEY = 'stratus-x-reply-draft';
+// The single-reply cache key comes from the registry (AI.3): a sha of the
+// effective prompt body, so a customized prompt never shares a cached prefix
+// with the default; the niche suffix still busts on niche edits.
 // Batch (Radar §7.2): one Grok call drafts a reply per queued hot/warm tweet.
 const BATCH_PROMPT_CACHE_KEY = 'stratus-x-reply-batch';
 const MAX_BATCH_TWEETS = 25;
@@ -218,9 +218,14 @@ replies.post('/replies/generate', async (c) => {
   const guidance = await loadReplyGuidanceSafe();
   if (guidance) ctx.guidance = guidance;
 
+  // Registry prompt (AI.3): DB override else the shipped default. Loaded after
+  // the band gate (a refused call reads nothing) — a per-request
+  // systemPromptOverride still beats it inside buildGrokInput.
+  const prompt = loadPromptSafe('reply');
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
   const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs, {
     replyPersona: niche.replyPersona,
+    template: prompt.body,
   });
 
   const callGrok = (): ReturnType<typeof askGrok> =>
@@ -231,8 +236,9 @@ replies.post('/replies/generate', async (c) => {
       maxOutputTokens: MAX_OUTPUT_TOKENS,
       temperature: DEFAULT_TEMPERATURE,
       jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
-      // Niche-suffixed so editing the niche cleanly busts the cached prefix.
-      promptCacheKey: `${PROMPT_CACHE_KEY}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      // Sha of the effective prompt body + niche suffix — busts the cached
+      // prefix on either a prompt override edit or a niche edit.
+      promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
     });
 
   let result: Awaited<ReturnType<typeof askGrok>>;
@@ -569,10 +575,10 @@ function parseTweetSignals(value: unknown): TweetSignals | null {
 
 // ---------------------------------------------------------------- list/get
 
-// The default Grok system prompt used when no `systemPromptOverride` is set.
-// Surfaced so the extension can show what the override replaces ($0, no Grok).
+// The effective Grok prompt used when no `systemPromptOverride` is set —
+// registry-loaded (AI.3), so a DB override shows here too ($0, no Grok).
 replies.get('/replies/default-prompt', (c) => {
-  return c.json({ prompt: REPLY_PROMPT_TEMPLATE });
+  return c.json({ prompt: loadPromptSafe('reply').body });
 });
 
 replies.get('/replies', async (c) => {
