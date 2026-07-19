@@ -54,6 +54,7 @@ describe('prompt registry (AI.3)', () => {
       'reply-batch',
       'post',
       'thread',
+      'rewrite',
       'voice-extract',
       'pillar-draft',
       'digest',
@@ -64,6 +65,7 @@ describe('prompt registry (AI.3)', () => {
     expect(isPromptKey('digest')).toBe(true);
     expect(isPromptKey('icebreaker')).toBe(true);
     expect(isPromptKey('thread')).toBe(true);
+    expect(isPromptKey('rewrite')).toBe(true);
     expect(isPromptKey('nonsense')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);

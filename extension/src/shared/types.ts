@@ -98,6 +98,29 @@ export interface ThreadDraftResponse {
   requestId?: string;
 }
 
+// AI.8 — rewrite assist: one LLM call returns three sharper versions of a draft.
+// No DB rows; the Composer applies the picked variant to its own text state.
+export type RewriteKind = 'tightened' | 'rehooked' | 'restructured';
+
+export interface RewriteVariant {
+  text: string;
+  kind: RewriteKind;
+}
+
+export interface RewriteBody {
+  text: string;
+  instruction?: string;
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+export interface RewriteResponse {
+  variants: RewriteVariant[];
+  costUsd: number;
+  model: string;
+  requestId?: string;
+}
+
 // --------------------------------------------------------------- ideas (C6)
 
 export type IdeaStatus = 'open' | 'consumed' | 'discarded';

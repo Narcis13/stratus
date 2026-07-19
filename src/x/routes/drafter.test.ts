@@ -68,6 +68,57 @@ describe('draft-thread route guards (AI.7)', () => {
   });
 });
 
+describe('rewrite route guards (AI.8)', () => {
+  test('empty text → 400 before any LLM spend', async () => {
+    const { status, body } = await post<{ error: string }>('/x/posts/rewrite', { text: '   ' });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_text');
+  });
+
+  test('oversized text → 400 before any LLM spend', async () => {
+    const { status, body } = await post<{ error: string }>('/x/posts/rewrite', {
+      text: 'x'.repeat(2001),
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_text');
+  });
+
+  test('oversized instruction → 400 before any LLM spend', async () => {
+    const { status, body } = await post<{ error: string }>('/x/posts/rewrite', {
+      text: 'a real draft',
+      instruction: 'x'.repeat(501),
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_instruction');
+  });
+
+  test('unknown provider → 400 before any LLM spend', async () => {
+    const { status, body } = await post<{ error: string }>('/x/posts/rewrite', {
+      text: 'a real draft',
+      provider: 'gemini',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_provider');
+  });
+
+  test('no LLM configured → 503 llm_not_configured (refuse before spend)', async () => {
+    const xai = process.env.XAI_API_KEY;
+    const openrouter = process.env.OPENROUTER_API_KEY;
+    process.env.XAI_API_KEY = '';
+    process.env.OPENROUTER_API_KEY = '';
+    try {
+      const { status, body } = await post<{ error: string }>('/x/posts/rewrite', {
+        text: 'a draft that would otherwise spend',
+      });
+      expect(status).toBe(503);
+      expect(body.error).toBe('llm_not_configured');
+    } finally {
+      process.env.XAI_API_KEY = xai ?? '';
+      process.env.OPENROUTER_API_KEY = openrouter ?? '';
+    }
+  });
+});
+
 describe('insertThreadDraft (AI.7)', () => {
   test('lands a draft head + segment tails sharing a threadId; GET returns siblings', async () => {
     const { threadId, rows } = await insertThreadDraft('ai-craft', ['hook', 'body one', 'payoff']);

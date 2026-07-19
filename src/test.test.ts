@@ -22,6 +22,11 @@ import {
   parsePostDrafts,
 } from './x/posts/prompt.ts';
 import {
+  REWRITE_PROMPT_TEMPLATE,
+  buildRewriteInput,
+  parseRewrite,
+} from './x/posts/rewritePrompt.ts';
+import {
   THREAD_PROMPT_TEMPLATE,
   buildThreadDraftInput,
   parseThreadDraft,
@@ -1898,6 +1903,76 @@ describe('thread prompt (AI.7)', () => {
       guidance: 'GUIDANCE LINE',
     })[0]?.content;
     expect(withTail).toBe(`${base}\n\nME BLOCK\n\nGUIDANCE LINE`);
+  });
+});
+
+describe('rewrite prompt (AI.8)', () => {
+  test('variable content ({{DRAFT}}/{{INSTRUCTION}}) sits at the very end', () => {
+    const draftAt = REWRITE_PROMPT_TEMPLATE.indexOf('{{DRAFT}}');
+    expect(draftAt).toBeGreaterThan(REWRITE_PROMPT_TEMPLATE.length * 0.7);
+    expect(REWRITE_PROMPT_TEMPLATE.trimEnd().endsWith('{{INSTRUCTION}}')).toBe(true);
+  });
+
+  test('parseRewrite returns trimmed variants of the three known kinds', () => {
+    const raw = JSON.stringify({
+      variants: [
+        { text: '  tight one  ', kind: 'tightened' },
+        { text: 'hook two', kind: 'rehooked' },
+        { text: 'shape three', kind: 'restructured' },
+      ],
+    });
+    expect(parseRewrite(raw)).toEqual([
+      { text: 'tight one', kind: 'tightened' },
+      { text: 'hook two', kind: 'rehooked' },
+      { text: 'shape three', kind: 'restructured' },
+    ]);
+  });
+
+  test('parseRewrite drops over-long and empty variants, keeps the survivors', () => {
+    const long = 'x'.repeat(561);
+    const raw = JSON.stringify({
+      variants: [
+        { text: long, kind: 'tightened' },
+        { text: '   ', kind: 'rehooked' },
+        { text: 'keeper', kind: 'restructured' },
+      ],
+    });
+    expect(parseRewrite(raw)).toEqual([{ text: 'keeper', kind: 'restructured' }]);
+    // The 560-char boundary is inclusive.
+    const edge = JSON.stringify({ variants: [{ text: 'y'.repeat(560), kind: 'tightened' }] });
+    expect(parseRewrite(edge)).toHaveLength(1);
+  });
+
+  test('parseRewrite skips unknown kinds and non-object entries, never the whole call', () => {
+    const raw = JSON.stringify({
+      variants: [
+        { text: 'ok', kind: 'punchier' },
+        'not an object',
+        { text: 'good', kind: 'tightened' },
+      ],
+    });
+    expect(parseRewrite(raw)).toEqual([{ text: 'good', kind: 'tightened' }]);
+  });
+
+  test('parseRewrite returns null on malformed shape, [] on an empty variants array', () => {
+    expect(parseRewrite('not json')).toBe(null);
+    expect(parseRewrite(JSON.stringify({ variants: 'nope' }))).toBe(null);
+    expect(parseRewrite(JSON.stringify({ nope: [] }))).toBe(null);
+    expect(parseRewrite(JSON.stringify({ variants: [] }))).toEqual([]);
+  });
+
+  test('buildRewriteInput substitutes the draft + instruction at the tail', () => {
+    const [msg] = buildRewriteInput({ draft: 'my $5 draft', instruction: 'fă-l mai tăios' });
+    expect(msg?.content).toContain('my $5 draft');
+    expect(msg?.content).toContain('fă-l mai tăios');
+    expect(msg?.content).not.toContain('{{DRAFT}}');
+    expect(msg?.content).not.toContain('{{INSTRUCTION}}');
+  });
+
+  test('buildRewriteInput fills a placeholder when no instruction is given', () => {
+    const [msg] = buildRewriteInput({ draft: 'a draft' });
+    expect(msg?.content).not.toContain('{{INSTRUCTION}}');
+    expect(msg?.content).toContain('(none — just sharpen it)');
   });
 });
 

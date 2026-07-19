@@ -44,6 +44,7 @@ import {
   buildPostDraftsSchema,
   parsePostDrafts,
 } from '../posts/prompt.ts';
+import { REWRITE_SCHEMA, buildRewriteInput, parseRewrite } from '../posts/rewritePrompt.ts';
 import {
   type ThreadDraft,
   buildThreadDraftInput,
@@ -63,6 +64,11 @@ const MAX_OUTPUT_TOKENS = 600;
 const THREAD_MAX_OUTPUT_TOKENS = 2000;
 const MIN_THREAD_TWEETS = 3;
 const MAX_THREAD_TWEETS = 8;
+// Three variants of ≤560 chars plus JSON scaffolding — larger than 3 short posts
+// but well under the thread cap.
+const REWRITE_MAX_OUTPUT_TOKENS = 900;
+const MAX_REWRITE_TEXT = 2000;
+const MAX_REWRITE_INSTRUCTION = 500;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_REASONING: LlmReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
@@ -304,6 +310,103 @@ drafter.post('/posts/draft-thread', async (c) => {
     },
     201,
   );
+});
+
+// AI.8: rewrite assist — one structured-outputs call returns three sharper
+// versions of a draft (tightened/rehooked/restructured). No DB rows: the
+// Composer applies the picked variant to its own state. No pillars, no niche
+// persona (a rewrite improves writing, never adds biography) — so the cache key
+// is the bare prompt sha with no niche suffix. Refuse-before-spend on bad input.
+drafter.post('/posts/rewrite', async (c) => {
+  const raw = await c.req.raw.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as {
+    text?: unknown;
+    instruction?: unknown;
+    model?: unknown;
+    provider?: unknown;
+  };
+
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (text.length < 1 || text.length > MAX_REWRITE_TEXT) {
+    return c.json({ error: 'invalid_text' }, 400);
+  }
+
+  let instruction: string | undefined;
+  if (body.instruction !== undefined && body.instruction !== null) {
+    if (typeof body.instruction !== 'string' || body.instruction.length > MAX_REWRITE_INSTRUCTION) {
+      return c.json({ error: 'invalid_instruction' }, 400);
+    }
+    const trimmed = body.instruction.trim();
+    if (trimmed !== '') instruction = trimmed;
+  }
+
+  let model: string | undefined;
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== 'string' || body.model.trim() === '') {
+      return c.json({ error: 'invalid_model' }, 400);
+    }
+    model = body.model;
+  }
+
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = body.provider;
+  }
+
+  const prompt = loadPromptSafe('rewrite');
+  const messages = buildRewriteInput({
+    draft: text,
+    template: prompt.body,
+    ...(instruction !== undefined ? { instruction } : {}),
+  });
+
+  let result: AskLlmResult;
+  try {
+    result = await askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        messages,
+        jsonSchema: { name: 'rewrite', schema: REWRITE_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      {
+        defaults: {
+          temperature: DEFAULT_TEMPERATURE,
+          maxOutputTokens: REWRITE_MAX_OUTPUT_TOKENS,
+          reasoningEffort: DEFAULT_REASONING,
+        },
+      },
+    );
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/posts/rewrite failed:', detail);
+    return c.json({ error: 'rewrite_failed', detail }, 502);
+  }
+
+  const variants = parseRewrite(result.text);
+  if (variants === null) {
+    return c.json({ error: 'rewrite_parse_error', requestId: result.requestId }, 502);
+  }
+  // Over-long variants were dropped by parseRewrite; zero survivors is a bad call.
+  if (variants.length === 0) {
+    return c.json({ error: 'rewrite_invalid', requestId: result.requestId }, 502);
+  }
+
+  return c.json({
+    variants,
+    model: result.model,
+    costUsd: result.costUsd,
+    requestId: result.requestId,
+  });
 });
 
 // Insert a drafted thread exactly like POST /posts/threads: one head

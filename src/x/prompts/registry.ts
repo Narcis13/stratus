@@ -26,6 +26,7 @@ import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
+import { REWRITE_PROMPT_TEMPLATE } from '../posts/rewritePrompt.ts';
 import { THREAD_PROMPT_TEMPLATE } from '../posts/threadPrompt.ts';
 import { REPLY_BATCH_PROMPT_TEMPLATE, REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
 import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
@@ -35,6 +36,7 @@ export const PROMPT_KEYS = [
   'reply-batch',
   'post',
   'thread',
+  'rewrite',
   'voice-extract',
   'pillar-draft',
   'digest',
@@ -88,6 +90,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: THREAD_PROMPT_TEMPLATE,
     required: ['{{PILLARS}}', '{{FEW_SHOT}}', '{{IDEA}}'],
     optional: ['{{PERSONA}}', '{{BELIEFS}}'],
+  },
+  rewrite: {
+    name: 'Rewrite assist',
+    description:
+      'The rewrite prompt behind POST /x/posts/rewrite — three sharper versions of a draft (tightened/rehooked/restructured), no DB rows.',
+    defaultBody: REWRITE_PROMPT_TEMPLATE,
+    required: ['{{DRAFT}}', '{{INSTRUCTION}}'],
+    optional: [],
   },
   'voice-extract': {
     name: 'Template extraction',

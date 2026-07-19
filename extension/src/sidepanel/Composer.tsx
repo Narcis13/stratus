@@ -4,6 +4,7 @@ import {
   ApiError,
   type Idea,
   type PostDraftResponse,
+  type RewriteVariant,
   type ScheduledPost,
   type ScheduledPostWithThread,
   type UpdateBody,
@@ -79,6 +80,13 @@ const REGISTER_LABEL: Record<PostRegister, string> = {
   reflective: 'reflective',
 };
 
+// AI.8 — rewrite variant labels for the "Improve with AI" cards.
+const REWRITE_KIND_LABEL: Record<RewriteVariant['kind'], string> = {
+  tightened: 'tightened',
+  rehooked: 'rehooked',
+  restructured: 'restructured',
+};
+
 export function ComposerPanel({
   settings,
   editingId,
@@ -115,6 +123,9 @@ export function ComposerPanel({
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
+  // AI.8 — "Improve with AI" rewrite of the current single-post text.
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteVariants, setRewriteVariants] = useState<RewriteVariant[]>([]);
 
   // S0.4 — best-times for the schedule picker; failure just hides the hints.
   useEffect(() => {
@@ -472,6 +483,30 @@ export function ComposerPanel({
     }
   };
 
+  // AI.8 — three sharper versions of the current single-post text. No DB rows;
+  // clicking a variant replaces the textarea. Same substance, better writing.
+  const improveWithAi = async (): Promise<void> => {
+    const draft = text.trim();
+    if (draft.length < 1) return;
+    setRewriting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.drafts.rewrite(settings, { text: draft });
+      setRewriteVariants(res.variants);
+      if (res.variants.length === 0) setNotice('No usable rewrites came back — try again.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Rewrite failed');
+    } finally {
+      setRewriting(false);
+    }
+  };
+
+  const applyRewrite = (v: RewriteVariant): void => {
+    setText(v.text);
+    setRewriteVariants([]);
+  };
+
   // Pick a generated draft → open it in the editor (it already exists as a draft
   // row); the user sets a time and Saves, promoting it to pending. No round-trip
   // through the Calendar tab.
@@ -667,6 +702,32 @@ export function ComposerPanel({
             disabled={isLocked}
           />
         </label>
+      )}
+
+      {!threadMode && !isThreadEdit && !isLocked && text.trim() !== '' && (
+        <div className="rewrite-assist">
+          <button type="button" onClick={() => void improveWithAi()} disabled={rewriting}>
+            {rewriting ? 'Improving…' : 'Improve with AI (~$0.003)'}
+          </button>
+          {rewriteVariants.length > 0 && (
+            <div className="draft-cards">
+              {rewriteVariants.map((v) => (
+                <div className="draft-card" key={v.kind}>
+                  <div className="draft-card-head">
+                    <span className="badge badge-register">{REWRITE_KIND_LABEL[v.kind]}</span>
+                    <span className="counter">{v.text.length}</span>
+                  </div>
+                  <div className="draft-card-text">{v.text}</div>
+                  <div className="row draft-card-actions">
+                    <button type="button" className="primary" onClick={() => applyRewrite(v)}>
+                      Use this →
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {(threadMode || isThreadEdit) && (

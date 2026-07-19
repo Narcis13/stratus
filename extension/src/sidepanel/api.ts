@@ -110,6 +110,8 @@ import {
   type ReplyDraftStatus,
   type ReplyGenerateBody,
   type ReplyPatchBody,
+  type RewriteBody,
+  type RewriteResponse,
   type ScheduledPost,
   type ScheduledPostWithThread,
   type ScrapeBody,
@@ -367,6 +369,12 @@ export const api = {
     // a shared threadId and load straight into the Composer's thread editor.
     thread(s: Settings, body: ThreadDraftBody): Promise<ThreadDraftResponse> {
       return request<ThreadDraftResponse>(s, '/x/posts/draft-thread', { method: 'POST', body });
+    },
+
+    // AI.8 — rewrite assist: three sharper versions of the current draft. No DB
+    // rows; the Composer applies the picked variant to its own text state.
+    rewrite(s: Settings, body: RewriteBody): Promise<RewriteResponse> {
+      return request<RewriteResponse>(s, '/x/posts/rewrite', { method: 'POST', body });
     },
   },
 
