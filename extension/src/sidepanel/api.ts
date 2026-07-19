@@ -115,6 +115,10 @@ import {
   type PostDraftResponse,
   type PostReupBody,
   type PostStatus,
+  type PromptDetail,
+  type PromptPatchResult,
+  type PromptResetResult,
+  type PromptSummary,
   type PromptsRestoreResult,
   type RepliesListOpts,
   type ReplyDraft,
@@ -123,6 +127,7 @@ import {
   type ReplyPatchBody,
   type RewriteBody,
   type RewriteResponse,
+  type RewriteVariant,
   type ScheduledPost,
   type ScheduledPostWithThread,
   type ScrapeBody,
@@ -153,7 +158,12 @@ export type {
   LlmModelsResponse,
   LlmProvider,
   LlmReasoningEffort,
+  PromptDetail,
+  PromptPatchResult,
+  PromptResetResult,
+  PromptSummary,
   PromptsRestoreResult,
+  RewriteVariant,
   AssetSaveBody,
   AuthorProfile,
   GeneratedImageItem,
@@ -575,9 +585,32 @@ export const api = {
     },
   },
 
-  // AI.4/AI.11 — DB-backed editable prompt registry. AI.10 wires only the
-  // Restore Default Prompts button; AI.11 adds list/get/patch/reset.
+  // AI.4/AI.11 — DB-backed editable prompt registry. Storage is override-rows-
+  // only: `customized` means a row exists; reset/restore delete it.
   prompts: {
+    list(s: Settings): Promise<PromptSummary[]> {
+      return request<PromptSummary[]>(s, '/x/prompts');
+    },
+
+    get(s: Settings, key: string): Promise<PromptDetail> {
+      return request<PromptDetail>(s, `/x/prompts/${encodeURIComponent(key)}`);
+    },
+
+    // Server re-validates required placeholders (400 missing_placeholder); the
+    // editor mirrors the check client-side for instant feedback.
+    patch(s: Settings, key: string, body: string): Promise<PromptPatchResult> {
+      return request<PromptPatchResult>(s, `/x/prompts/${encodeURIComponent(key)}`, {
+        method: 'PATCH',
+        body: { body },
+      });
+    },
+
+    reset(s: Settings, key: string): Promise<PromptResetResult> {
+      return request<PromptResetResult>(s, `/x/prompts/${encodeURIComponent(key)}/reset`, {
+        method: 'POST',
+      });
+    },
+
     restoreDefaults(s: Settings): Promise<PromptsRestoreResult> {
       return request<PromptsRestoreResult>(s, '/x/prompts/restore-defaults', { method: 'POST' });
     },

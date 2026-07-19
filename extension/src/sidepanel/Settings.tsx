@@ -6,6 +6,7 @@ import {
   pricePerMillion,
 } from '../shared/aiSettings.ts';
 import { NicheCard } from './Niche.tsx';
+import { PromptsPanel } from './Prompts.tsx';
 import { ApiError, type LlmModel, type LlmReasoningEffort, api } from './api.ts';
 import {
   DEFAULT_DENSITY,
@@ -518,19 +519,17 @@ function AiPanel({ settings }: { settings: Settings }): JSX.Element {
   );
 }
 
-// AI.10 — the Prompts subtab shell. The full editor lands in AI.11; for now the
-// Restore Default Prompts button lives here too (the user asked for it "in
-// settings"), reachable from both the AI panel footer and this tab.
+// AI.11 — the Prompts subtab: the per-prompt editor (Prompts.tsx) plus the
+// Restore Default Prompts button (also on the AI panel footer — the user asked
+// for it "in settings", so it's reachable from both).
 function PromptsTab({ settings }: { settings: Settings }): JSX.Element {
   return (
-    <div className="panel">
-      <h2>Prompts</h2>
-      <p className="muted">
-        Every AI surface reads an editable prompt. The per-prompt editor arrives next; for now you
-        can revert all customizations to the shipped defaults.
-      </p>
-      <RestoreDefaultPrompts settings={settings} />
-    </div>
+    <>
+      <PromptsPanel settings={settings} />
+      <div className="panel">
+        <RestoreDefaultPrompts settings={settings} />
+      </div>
+    </>
   );
 }
 

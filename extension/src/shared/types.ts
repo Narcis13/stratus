@@ -236,6 +236,39 @@ export interface PromptsRestoreResult {
   restored: number;
 }
 
+/** GET /x/prompts — one row per editable prompt key (AI.11). `customized` is
+ *  structural (an override row exists), never a diff. */
+export interface PromptSummary {
+  key: string;
+  name: string;
+  description: string;
+  required: string[];
+  customized: boolean;
+  updatedAt: number | null;
+}
+
+/** GET /x/prompts/:key — the live body (override or shipped default), the
+ *  default for eyeballing the diff, and the required-placeholder contract. */
+export interface PromptDetail {
+  key: string;
+  body: string;
+  defaultBody: string;
+  required: string[];
+  customized: boolean;
+}
+
+/** PATCH /x/prompts/:key — an override was upserted. `unknownPlaceholders` are
+ *  `{{TOKENS}}` the render will drop (a warning, never fatal). */
+export interface PromptPatchResult {
+  customized: boolean;
+  unknownPlaceholders: string[];
+}
+
+/** POST /x/prompts/:key/reset — the override row was deleted. */
+export interface PromptResetResult {
+  customized: boolean;
+}
+
 export interface PostReupBody {
   tweetId: string;
   idea?: string;

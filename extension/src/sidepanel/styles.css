@@ -1781,6 +1781,85 @@ button.danger:hover:not(:disabled) {
   flex: 1 1 auto;
 }
 
+/* ---------------------------------------------------------- prompts editor (AI.11) */
+
+.prompt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.prompt-row {
+  width: 100%;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.prompt-row:hover {
+  border-color: var(--strat-accent, var(--border));
+}
+.prompt-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prompt-key {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--muted);
+}
+.prompt-desc {
+  font-size: 12px;
+}
+.prompt-updated {
+  font-size: 11px;
+}
+.prompt-editor-head {
+  margin-bottom: 8px;
+}
+.prompt-placeholders {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.prompt-token {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--strat-status-posted) 16%, transparent);
+  color: var(--status-posted);
+}
+.prompt-token-missing {
+  background: color-mix(in srgb, var(--strat-status-failed) 18%, transparent);
+  color: var(--status-failed);
+}
+.prompt-body {
+  width: 100%;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.prompt-meta {
+  justify-content: space-between;
+  margin: 6px 0;
+}
+.prompt-default {
+  margin-top: 12px;
+}
+
 /* ---------------------------------------------------------- people (C1) */
 
 /* Any handle anywhere in the panel — click-through to the dossier. */
