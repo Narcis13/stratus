@@ -21,7 +21,7 @@ Everything in this tab is free — capturing, editing, tagging, reopening, and d
 
 ## Capturing an idea
 
-There are two ways to get an idea into the inbox. Both do the same thing in the end — create an idea with `open` status.
+There are three ways to get an idea into the inbox. All create an idea with `open` status.
 
 ### 1. The quick-add box (in this tab)
 
@@ -51,6 +51,12 @@ This saves the **selected text** as a new idea, and automatically attaches the *
 - A red **!** — something went wrong (for example, stratus isn't configured yet, or the server couldn't be reached). The idea was **not** saved; try again, or add it via the quick-add box.
 
 **It needs the token configured.** The context menu (like everything else) relies on stratus knowing your server address and bearer token — set in the extension's Settings. If those aren't filled in, the right-click save will fail with the red **!** badge. Configure the token once in Settings and it works everywhere, including this right-click menu.
+
+### 3. Generate ideas with AI
+
+When you're staring at an empty inbox, the **Generate ideas with AI** section asks the AI to propose fresh post ideas for you, grounded in **your content pillars** and your **measured winners** (your best-performing past posts). Optionally add a steer ("focus on onboarding", "more contrarian takes") and choose how many to generate (1–10, default 8). Click generate and it makes one AI call (~$0.005, on your **Settings → AI** provider) and returns a list of **proposals** — each with a suggested pillar and angle.
+
+Crucially, **generating writes nothing to your inbox.** The proposals are a preview. Each has its own **Save** button (which stores it as an `open` idea tagged `ai`, so you can tell AI-suggested ideas apart), plus a **Save all**. Discard the ones you don't like by simply not saving them. If your active niche has no pillars yet, generation refuses (there's nothing to ground on) rather than inventing off-topic ideas — add pillars first.
 
 ---
 

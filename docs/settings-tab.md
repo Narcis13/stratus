@@ -2,6 +2,16 @@
 
 The **Settings** tab is where you connect the stratus extension to your stratus server and control a few privacy and behavior switches. This is the first tab you have to deal with: until you enter the API URL and bearer token here, every other tab is locked and the extension keeps you on Settings. Once those two fields are filled in and saved, the rest of the app unlocks and stays connected — you rarely need to come back unless you change servers, rotate your token, or want to flip a toggle.
 
+### Three subtabs: General · AI · Prompts
+
+Settings is split into three subtabs across the top:
+
+- **General** — everything in the sections below: the connection fields, the behavior/privacy toggles, your niche, and harvest cursors. This is the default subtab.
+- **AI** — which LLM provider drafts your content (Grok or OpenRouter), and the model/temperature/token/effort knobs. See [AI provider](#ai-provider-the-ai-subtab).
+- **Prompts** — the editable text of every AI prompt behind the app, with a one-click "Restore Default Prompts". See [Prompts editor](#prompts-editor-the-prompts-subtab).
+
+The AI and Prompts subtabs are the "power user" half — you can ignore them entirely and everything drafts on the shipped defaults (Grok, stock prompts). They're there for when you want to run a different model or tune how the AI writes.
+
 ---
 
 ## First-time setup (do this first)
@@ -92,6 +102,40 @@ The **Niche** card is where "who you are" lives. A niche bundles the four things
 ### The wizard (prose → a proposed niche)
 
 Paste a paragraph describing a niche ("I post about evidence-based nutrition for busy parents…") and **Generate** turns it into a complete **proposed** niche — persona, beliefs, reply persona, three pillars, and up to five channels — for you to review and edit before saving. It's one AI call (~$0.01), and the proposal is **never saved automatically**: nothing changes until you click Create. Saving runs in the right order (create → activate → its pillars → its channels) so the new niche's pillars/channels attach to it, not to whatever was active before.
+
+---
+
+## AI provider (the AI subtab)
+
+The **AI** subtab controls which large language model drafts your posts, replies, threads, ideas, and everything else the app generates. By default everything runs on **Grok** (xAI). If you'd rather draft on Claude, GPT, Gemini, or any other model, you switch the provider to **OpenRouter** here and pick a model.
+
+- **Provider (Grok / OpenRouter):** a radio choice. **Grok** is the default and needs the server's `XAI_API_KEY`. **OpenRouter** is a gateway to hundreds of models (Claude, GPT, Gemini, Llama, …) and needs the server's `OPENROUTER_API_KEY`. If that key isn't set on the server, the OpenRouter option is greyed out with a hint — set the key in the server's environment first. (Keys live **only** in the server's environment, never in the extension or the database — that's a deliberate security rule.)
+- **OpenRouter model:** a text box with autocomplete. It suggests models from OpenRouter's live catalogue (id, friendly name, and per-token price), so you can see roughly what each costs before choosing. The default is `anthropic/claude-sonnet-4.5`. Any valid OpenRouter model id works, whether or not it's in the suggestion list.
+- **Temperature / Max output tokens / Reasoning effort:** optional knobs. Leave them **blank** and each draft surface uses its own sensible default (the "house" setting for that kind of draft). Fill one in and it overrides the house default for **every** surface. Temperature is 0–2 (higher = more varied); max output tokens caps the reply length; reasoning effort (none/low/medium/high) applies to models that support it.
+- **Save:** commits the provider config to the server.
+
+**Precedence, plainly:** a value typed into a specific draft (a per-request override, where the app exposes one) beats these AI-subtab settings, which in turn beat each surface's built-in default. So this subtab is the middle tier — a global preference you can still override case by case.
+
+**Where the spend shows up:** OpenRouter charges by the token and the exact cost of each call is read back from OpenRouter and logged under platform **`openrouter`** in your cost dashboard (`/cost/today`) — separate from Grok text spend (`grok`) and image spend (`xai`). There's a soft daily budget (`OPENROUTER_DAILY_BUDGET_USD`, default $1.00) that logs a warning once crossed; it doesn't block calls.
+
+**The Grok path is untouched.** Switching the model here only affects the OpenRouter path — Grok always drafts on `grok-4.3`. If you never touch this subtab, nothing about your drafting changes.
+
+---
+
+## Prompts editor (the Prompts subtab)
+
+Every AI feature in stratus is driven by a **prompt** — the instructions the model reads before it writes. The **Prompts** subtab lets you read and edit all **10** of them, and revert to the shipped defaults whenever you want.
+
+The 10 prompts are: **reply drafts**, **reply drafts (batch)**, **post drafts**, **thread drafts**, **rewrite assist**, **idea generator**, **template extraction**, **pillar drafting**, **Sunday digest**, and **icebreakers**. Each row shows its name, a one-line description, and an amber **"customized"** chip if you've edited it.
+
+- **Editing a prompt:** click a row to open the editor — a big monospace text box with the full prompt, a character count, and a set of **required-placeholder chips**. Placeholders look like `{{TWEET_CONTEXT}}` or `{{IDEA}}`; they're where the app injects the actual tweet, your pillars, your winners, and so on at draft time. A chip is **green** when its placeholder is still present in your text and **red** when it's missing. You can't save while any required placeholder is missing (Save greys out, and the server refuses it too) — a prompt that dropped `{{IDEA}}` would silently ignore your idea, so the editor won't let that happen. You can freely edit all the surrounding prose.
+- **Save / Reset this prompt:** Save stores your version as an override on the server; the next draft of that kind uses it immediately. "Reset this prompt" deletes just that one override, reverting it to the shipped default.
+- **Show default:** lets you compare your edit against the original text.
+- **Restore Default Prompts:** the big button (with a confirm dialog) that deletes **every** override at once — all 10 prompts snap back to their shipped defaults and the "customized" chips disappear. This is the recovery button if an edit made your drafts worse.
+
+**How overrides work under the hood:** a prompt you never edit has *no* stored row — it just uses the code default, which means an improved default shipped in a later stratus update applies automatically. The moment you save an edit, a row is stored and "customized" turns on; reset/restore delete that row. So "customized" is a real fact (a row exists), not a guess.
+
+**A caution:** editing prompts is genuinely powerful and genuinely able to make output worse — that's the point, it's yours to tune. The customized chip and Restore button are your safety net. There's no version history beyond that: defaults live in the app's source, and your only stored state is the current override.
 
 ---
 

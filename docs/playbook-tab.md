@@ -121,6 +121,17 @@ Two rows:
 
 Compare the two result cells. A line underneath tells you how many published replies are **unattributed** — hand-written or made before this tooling existed, so they can't be credited to either method. That number is context, not a verdict.
 
+### Model effectiveness
+
+**Question it answers:** *Which AI model actually produces my best-performing replies?*
+
+Since you can draft on different models (Grok, or any OpenRouter model — set in **Settings → AI**), stratus stamps the model onto every reply draft. This section buckets your published replies by the exact model that wrote them and shows median views and profile clicks per model, most-sampled model first. The model id is shown as-is (`grok-4.3`, `anthropic/claude-sonnet-4.5`, …) — a `/` in the id already tells you the provider.
+
+- **Each model is gated independently at n≥20.** A model that's drafted fewer than 20 of your published-and-measured replies shows "insufficient data (n=…)" rather than a number — so a model you tried twice can't look like a winner or a loser on noise.
+- **There's no "lift" line here** — unlike the paired comparisons above, this is just one cell per model, because there's no single baseline to divide against. It's a leaderboard you read by eye.
+
+This is the honest judge of the provider experiment: switch to a new model, keep drafting, and once ~20 measured replies accumulate its real numbers appear next to Grok's. (Note it can't isolate the *prompt* from the *model* — if you also edited prompts, both effects are folded into the same cell.)
+
 ### Relationship lift
 
 **Question it answers:** *When my reply draft is warmed up with what stratus knows about the person (our past exchanges), does it convert better than a cold draft?*

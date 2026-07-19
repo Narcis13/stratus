@@ -34,6 +34,10 @@ You can paste more than 280 characters (the box accepts a long blob on purpose).
 
 Clicking **Split into thread** breaks your text into a clean chain of tweets at natural boundaries (paragraphs first, then sentences, then words), switches you into thread mode, and tells you how many segments it made. This is the easy way to turn a long draft into a proper thread.
 
+### Improve with AI (rewrite assist)
+
+Under the text box is an **Improve with AI** button. It takes whatever you've written and asks the AI for **three sharper versions** of it — typically a tightened cut, a re-hooked opening, and a restructured take. You can add an optional instruction ("make it punchier", "lead with the number") to steer the rewrite. Each version comes back as a card you can preview; clicking one **replaces the text in the box** with that version (nothing is saved to your Calendar — it just edits your draft in place, so you're free to keep editing or undo by rewriting). It's one AI call (~$0.003) and it runs on whichever provider you picked in **Settings → AI**.
+
 ### Scheduling controls
 
 Below the text is **Scheduled for (local time)** — all times are shown and entered in *your* local time zone.
@@ -67,9 +71,11 @@ The resulting post appears on your Calendar with the matching status.
 
 ---
 
-## AI drafting (draft with Grok)
+## AI drafting (draft with AI)
 
-Below the scheduling controls, when you're writing a *new* post (not editing an existing one), there's a **Draft with Grok** section. This asks the Grok AI to write posts for you.
+Below the scheduling controls, when you're writing a *new* post (not editing an existing one), there's an AI drafting section. This asks the AI to write posts for you.
+
+> **Which model?** All AI drafting here — the three-draft generator, the thread drafter, and the rewrite assist — runs on the provider you selected in **Settings → AI** (Grok by default, or an OpenRouter model like Claude/GPT/Gemini). The cost preview and cost dashboard show the exact spend under that provider. Everything below works identically whichever model you use.
 
 ### The pillar dropdown
 
@@ -121,6 +127,10 @@ Each segment has controls:
 - **+ Add segment** — add another tweet to the chain.
 
 A running total under the list shows how many segments have content and the combined character count.
+
+### Draft thread with AI
+
+In thread mode there's a **Draft thread with AI** button that writes the whole chain for you from a single idea. Give it an idea (the same idea box and pillar dropdown as the single-post drafter — Romanian is fine, the thread comes back in English), optionally say how many tweets you want, and it develops the idea across 4–8 tweets in one AI call (~$0.008, on your **Settings → AI** provider). The result lands on your Calendar as a `draft` head tweet plus `segment` tails sharing a thread id, and opens right here in thread mode so you can reorder, edit, or trim before scheduling. As with every AI surface, **nothing posts until you schedule it.**
 
 ### Move link to first reply
 
