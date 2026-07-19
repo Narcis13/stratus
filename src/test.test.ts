@@ -93,7 +93,7 @@ import {
   targetBand,
 } from './x/routes/voice.ts';
 import { EXTRACT_PROMPT_TEMPLATE, parseExtractedTemplate } from './x/voice/extractPrompt.ts';
-import { msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
+import { maxTweetId, msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -224,6 +224,26 @@ describe('dailyMetrics schedule', () => {
   test('crosses the month boundary correctly', () => {
     // 2026-06-30 05:00 UTC → next 03:00 is 2026-07-01 03:00 (22h).
     expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 30, 5, 0, 0)), 3)).toBe(22 * HOUR);
+  });
+});
+
+describe('maxTweetId (discovery checkpoint high-water)', () => {
+  test('compares snowflakes as BigInt, not Number', () => {
+    // These differ only past Number's 2^53 safe range — a Number compare ties.
+    const lo = '2078076276561093110';
+    const hi = '2078111316628107769';
+    expect(maxTweetId(lo, hi)).toBe(hi);
+    expect(maxTweetId(hi, lo)).toBe(hi);
+  });
+
+  test('passes through when either side is undefined', () => {
+    expect(maxTweetId(undefined, '123')).toBe('123');
+    expect(maxTweetId('123', undefined)).toBe('123');
+    expect(maxTweetId(undefined, undefined)).toBeUndefined();
+  });
+
+  test('never regresses on equal ids', () => {
+    expect(maxTweetId('999', '999')).toBe('999');
   });
 });
 

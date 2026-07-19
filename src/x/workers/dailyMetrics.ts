@@ -5,7 +5,13 @@
 //      tweets posted manually from the X app. Scheduler-posted tweets are
 //      already in posts_published via the publisher, so steady-state discovery
 //      reads only the handful of new manual tweets. New rows seed
-//      nextPollAt = postedAt + 24h.
+//      nextPollAt = postedAt + 24h. The since_id checkpoint is discovery's OWN
+//      high-water mark (persisted in app_settings), NOT max(posts_published.id):
+//      the publisher inserts scheduled posts in real time with high snowflake
+//      ids, so deriving since_id from the table max could park it ABOVE a manual
+//      tweet posted earlier the same day — permanently hiding it (that gap lost
+//      a 1.7M-impression post once). Keying off discovery's own high-water means
+//      the publisher's live inserts never advance the checkpoint.
 //   B. Snapshot — read EVERY non-retired row (regardless of age) by batched id
 //      lookup (`GET /2/tweets?ids=`, ≤100 ids/call), write ONE metrics_snapshots
 //      row each, then retire. Whatever a tweet's metrics are at the next ~03:00
@@ -25,6 +31,7 @@
 
 import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
+import { appSettings } from '../../db/shared-schema.ts';
 import { beat } from '../../heartbeats.ts';
 import { accountSnapshots, metricsSnapshots, postsPublished } from '../db/schema.ts';
 import { getMe, getTweetsByIds, getUserTweets } from '../endpoints.ts';
@@ -187,19 +194,21 @@ async function discover(
   runOpts: RunOptions,
   result: RunResult,
 ): Promise<void> {
+  const stored = await loadDiscoveryCheckpoint();
   let sinceId: string | undefined;
   if (!runOpts.fullScan) {
-    // tweet_id is a snowflake — cast to bigint so ids sort numerically.
-    const [latest] = await db
-      .select({ tweetId: postsPublished.tweetId })
-      .from(postsPublished)
-      .orderBy(sql`CAST(${postsPublished.tweetId} AS INTEGER) desc`)
-      .limit(1);
-    sinceId = latest?.tweetId;
+    // Discovery's own high-water mark. On first run (no stored checkpoint) seed
+    // it from the current table max — matching the old behavior for that one
+    // run — but from then on the checkpoint advances ONLY here, never from the
+    // publisher's live inserts (see the header note on the since_id gap).
+    sinceId = stored ?? (await currentTableMaxId());
   }
 
   const maxResults = runOpts.maxResults ?? DEFAULT_MAX_RESULTS;
   const now = new Date();
+  // Track the newest id we actually pulled, so the persisted checkpoint is the
+  // timeline's high-water at THIS pass — not whatever the publisher inserted.
+  let maxSeen = sinceId;
 
   // Discovery doesn't request the private metric fields — it only needs to seed
   // rows. The snapshot pass does the authoritative owned read (with private
@@ -209,6 +218,7 @@ async function discover(
     ...(sinceId ? { sinceId } : {}),
   })) {
     result.scanned++;
+    maxSeen = maxTweetId(maxSeen, tweet.id);
 
     const repliedTo = tweet.referenced_tweets?.find((r) => r.type === 'replied_to');
     const postedAt = tweet.created_at ? new Date(tweet.created_at) : now;
@@ -234,6 +244,54 @@ async function discover(
 
     if (inserted.length > 0) result.discovered++;
   }
+
+  // Persist the high-water. maxTweetId against `stored` guarantees the checkpoint
+  // never regresses (e.g. a fullScan that returns only older tweets), and an
+  // empty pull re-persists the same value so bootstrap freezes the checkpoint
+  // below any tweet posted after this pass.
+  const next = maxTweetId(stored, maxSeen);
+  if (next) await saveDiscoveryCheckpoint(next);
+}
+
+const DISCOVERY_CHECKPOINT_KEY = 'x.discovery.since_id';
+
+async function loadDiscoveryCheckpoint(): Promise<string | undefined> {
+  const [row] = await db
+    .select({ value: appSettings.value })
+    .from(appSettings)
+    .where(eq(appSettings.key, DISCOVERY_CHECKPOINT_KEY))
+    .limit(1);
+  const v = row?.value;
+  return typeof v === 'string' && /^\d+$/.test(v) ? v : undefined;
+}
+
+async function saveDiscoveryCheckpoint(id: string): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(appSettings)
+    .values({ key: DISCOVERY_CHECKPOINT_KEY, value: id, updatedAt: now })
+    .onConflictDoUpdate({ target: appSettings.key, set: { value: id, updatedAt: now } });
+}
+
+async function currentTableMaxId(): Promise<string | undefined> {
+  // tweet_id is a snowflake — cast to integer so ids sort numerically.
+  const [latest] = await db
+    .select({ tweetId: postsPublished.tweetId })
+    .from(postsPublished)
+    .orderBy(sql`CAST(${postsPublished.tweetId} AS INTEGER) desc`)
+    .limit(1);
+  return latest?.tweetId;
+}
+
+/**
+ * The larger of two numeric tweet-id strings (snowflakes exceed Number's safe
+ * range — compare as BigInt). Either may be undefined. Pure — unit-tested in
+ * src/test.test.ts.
+ */
+export function maxTweetId(a: string | undefined, b: string | undefined): string | undefined {
+  if (a === undefined) return b;
+  if (b === undefined) return a;
+  return BigInt(a) >= BigInt(b) ? a : b;
 }
 
 async function snapshotDue(token: string, result: RunResult): Promise<void> {
