@@ -46,7 +46,10 @@ import {
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
+  type IdeaGenerateBody,
+  type IdeaGenerateResponse,
   type IdeaPatchBody,
+  type IdeaProposal,
   type IdeaStatus,
   type IdeasResponse,
   type ImageGenerateBody,
@@ -175,7 +178,10 @@ export type {
   FollowupsResponse,
   Idea,
   IdeaCreateBody,
+  IdeaGenerateBody,
+  IdeaGenerateResponse,
   IdeaPatchBody,
+  IdeaProposal,
   IdeaStatus,
   IdeasResponse,
   PinnedWatch,
@@ -663,6 +669,12 @@ export const api = {
 
     create(s: Settings, body: IdeaCreateBody): Promise<Idea> {
       return request<Idea>(s, '/x/ideas', { method: 'POST', body });
+    },
+
+    // AI.9 — generate post ideas from pillars + measured winners. Writes nothing;
+    // the panel saves picked proposals via create() with tags:['ai'].
+    generate(s: Settings, body: IdeaGenerateBody): Promise<IdeaGenerateResponse> {
+      return request<IdeaGenerateResponse>(s, '/x/ideas/generate', { method: 'POST', body });
     },
 
     patch(s: Settings, id: string, body: IdeaPatchBody): Promise<Idea> {

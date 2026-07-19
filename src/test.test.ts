@@ -7,6 +7,11 @@ import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
 import { DEFAULT_NICHE } from './x/niche/defaults.ts';
+import {
+  IDEAS_PROMPT_TEMPLATE,
+  buildIdeasInput,
+  parseIdeaProposals,
+} from './x/posts/ideasPrompt.ts';
 import { buildPillarDraftInput, parsePillarProposal } from './x/posts/pillarDraft.ts';
 import {
   DEFAULT_PILLARS,
@@ -1973,6 +1978,90 @@ describe('rewrite prompt (AI.8)', () => {
     const [msg] = buildRewriteInput({ draft: 'a draft' });
     expect(msg?.content).not.toContain('{{INSTRUCTION}}');
     expect(msg?.content).toContain('(none — just sharpen it)');
+  });
+});
+
+describe('ideas prompt (AI.9)', () => {
+  const SLUGS = ['ai-craft', 'builder-51', 'unsexy-problems'];
+
+  test('variable content ({{PILLARS}}/{{WINNERS}}/{{STEER}}) sits at the very end', () => {
+    const pillarsAt = IDEAS_PROMPT_TEMPLATE.indexOf('{{PILLARS}}');
+    expect(pillarsAt).toBeGreaterThan(IDEAS_PROMPT_TEMPLATE.length * 0.5);
+    expect(IDEAS_PROMPT_TEMPLATE.trimEnd().endsWith('{{STEER}}')).toBe(true);
+  });
+
+  test('parseIdeaProposals returns trimmed proposals of the known angles', () => {
+    const raw = JSON.stringify({
+      ideas: [
+        { text: '  an observation about agents  ', pillar: 'ai-craft', angle: 'observation' },
+        { text: 'a hot take', pillar: 'unsexy-problems', angle: 'stance' },
+      ],
+    });
+    expect(parseIdeaProposals(raw, SLUGS)).toEqual([
+      { text: 'an observation about agents', pillar: 'ai-craft', angle: 'observation' },
+      { text: 'a hot take', pillar: 'unsexy-problems', angle: 'stance' },
+    ]);
+  });
+
+  test('parseIdeaProposals NULLS a pillar outside the active set, never drops the idea', () => {
+    const raw = JSON.stringify({
+      ideas: [{ text: 'still a good idea', pillar: 'not-a-real-pillar', angle: 'story' }],
+    });
+    expect(parseIdeaProposals(raw, SLUGS)).toEqual([
+      { text: 'still a good idea', pillar: null, angle: 'story' },
+    ]);
+  });
+
+  test('parseIdeaProposals drops empty/over-long text and unknown angles, keeps survivors', () => {
+    const long = 'x'.repeat(501);
+    const raw = JSON.stringify({
+      ideas: [
+        { text: long, pillar: 'ai-craft', angle: 'observation' },
+        { text: '   ', pillar: 'ai-craft', angle: 'stance' },
+        { text: 'bad angle', pillar: 'ai-craft', angle: 'rant' },
+        'not an object',
+        { text: 'keeper', pillar: 'builder-51', angle: 'question' },
+      ],
+    });
+    expect(parseIdeaProposals(raw, SLUGS)).toEqual([
+      { text: 'keeper', pillar: 'builder-51', angle: 'question' },
+    ]);
+  });
+
+  test('parseIdeaProposals clamps to maxCount and null/[]-guards malformed shapes', () => {
+    const ideasArr = Array.from({ length: 6 }, (_, i) => ({
+      text: `idea ${i}`,
+      pillar: 'ai-craft',
+      angle: 'observation',
+    }));
+    expect(parseIdeaProposals(JSON.stringify({ ideas: ideasArr }), SLUGS, 3)).toHaveLength(3);
+    expect(parseIdeaProposals('not json', SLUGS)).toBe(null);
+    expect(parseIdeaProposals(JSON.stringify({ ideas: 'nope' }), SLUGS)).toBe(null);
+    expect(parseIdeaProposals(JSON.stringify({ nope: [] }), SLUGS)).toBe(null);
+    expect(parseIdeaProposals(JSON.stringify({ ideas: [] }), SLUGS)).toEqual([]);
+  });
+
+  test('buildIdeasInput renders pillars/winners/steer at the tail, $-safe', () => {
+    const [msg] = buildIdeasInput({
+      pillars: [{ slug: 'ai-craft', label: 'AI craft', body: 'lab journal' }],
+      winners: [{ text: 'my $5 winner', views: 4200, profileVisits: 30 }],
+      steer: 'despre agenți',
+      count: 5,
+    });
+    expect(msg?.content).toContain('ai-craft');
+    expect(msg?.content).toContain('my $5 winner');
+    expect(msg?.content).toContain('4200 views');
+    expect(msg?.content).toContain('despre agenți');
+    expect(msg?.content).toContain('Return exactly 5 ideas.');
+    expect(msg?.content).not.toContain('{{PILLARS}}');
+    expect(msg?.content).not.toContain('{{WINNERS}}');
+    expect(msg?.content).not.toContain('{{STEER}}');
+  });
+
+  test('buildIdeasInput fills placeholders when winners + steer are empty', () => {
+    const [msg] = buildIdeasInput({ winners: [] });
+    expect(msg?.content).toContain('(no measured winners yet)');
+    expect(msg?.content).toContain('(none — spread the ideas across the pillars)');
   });
 });
 

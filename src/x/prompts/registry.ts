@@ -24,6 +24,7 @@ import { db } from '../../db/client.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
+import { IDEAS_PROMPT_TEMPLATE } from '../posts/ideasPrompt.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
 import { REWRITE_PROMPT_TEMPLATE } from '../posts/rewritePrompt.ts';
@@ -37,6 +38,7 @@ export const PROMPT_KEYS = [
   'post',
   'thread',
   'rewrite',
+  'ideas',
   'voice-extract',
   'pillar-draft',
   'digest',
@@ -97,6 +99,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
       'The rewrite prompt behind POST /x/posts/rewrite — three sharper versions of a draft (tightened/rehooked/restructured), no DB rows.',
     defaultBody: REWRITE_PROMPT_TEMPLATE,
     required: ['{{DRAFT}}', '{{INSTRUCTION}}'],
+    optional: [],
+  },
+  ideas: {
+    name: 'Idea generator',
+    description:
+      'The idea-generator prompt behind POST /x/ideas/generate — pillars + measured winners → post ideas landing in the Idea Inbox, no DB rows until saved.',
+    defaultBody: IDEAS_PROMPT_TEMPLATE,
+    required: ['{{PILLARS}}', '{{WINNERS}}', '{{STEER}}'],
     optional: [],
   },
   'voice-extract': {

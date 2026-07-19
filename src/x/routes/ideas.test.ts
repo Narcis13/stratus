@@ -135,6 +135,35 @@ describe('idea lifecycle', () => {
     await send(`/x/ideas/${id}`, 'DELETE');
   });
 
+  // AI.9 — the generator's pre-spend guards. The builder niche has default
+  // pillars, so the no-pillars 409 can't fire here; the 503 test force-unsets
+  // BOTH provider keys so it never spends even on a machine that has one set.
+  test('generate: bad body / steer / count / provider → 400 before any LLM spend', async () => {
+    expect((await send('/x/ideas/generate', 'POST', 'nope')).status).toBe(400);
+    expect((await send('/x/ideas/generate', 'POST', { steer: 'x'.repeat(2001) })).status).toBe(400);
+    expect((await send('/x/ideas/generate', 'POST', { count: 0 })).status).toBe(400);
+    expect((await send('/x/ideas/generate', 'POST', { count: 2.5 })).status).toBe(400);
+    expect((await send('/x/ideas/generate', 'POST', { provider: 'gemini' })).status).toBe(400);
+    expect((await send('/x/ideas/generate', 'POST', { model: '' })).status).toBe(400);
+  });
+
+  test('generate: no LLM configured → 503 llm_not_configured (refuse before spend)', async () => {
+    const xai = process.env.XAI_API_KEY;
+    const openrouter = process.env.OPENROUTER_API_KEY;
+    process.env.XAI_API_KEY = '';
+    process.env.OPENROUTER_API_KEY = '';
+    try {
+      const { status, body } = await send<{ error: string }>('/x/ideas/generate', 'POST', {
+        steer: 'a real steer that would otherwise spend',
+      });
+      expect(status).toBe(503);
+      expect(body.error).toBe('llm_not_configured');
+    } finally {
+      process.env.XAI_API_KEY = xai ?? '';
+      process.env.OPENROUTER_API_KEY = openrouter ?? '';
+    }
+  });
+
   test('calendar detail carries "seeded by" provenance', async () => {
     const [post] = await db
       .insert(scheduledPosts)

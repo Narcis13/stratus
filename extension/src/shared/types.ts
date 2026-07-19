@@ -157,6 +157,34 @@ export interface IdeaPatchBody {
   consumedById?: string;
 }
 
+// AI.9 — idea generator: one LLM call turns pillars + measured winners into
+// post ideas. Writes nothing; the panel saves picked ones via POST /x/ideas.
+export type IdeaAngle = 'observation' | 'stance' | 'story' | 'question';
+
+export interface IdeaGenerateBody {
+  steer?: string;
+  /** 1–10, clamped server-side; default 8. */
+  count?: number;
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+export interface IdeaProposal {
+  text: string;
+  /** A slug from the active pillar set, or null when the model mis-tagged it. */
+  pillar: string | null;
+  angle: IdeaAngle;
+}
+
+export interface IdeaGenerateResponse {
+  ideas: IdeaProposal[];
+  count: number;
+  requested: number;
+  costUsd: number;
+  model: string;
+  requestId?: string;
+}
+
 export interface PostReupBody {
   tweetId: string;
   idea?: string;
