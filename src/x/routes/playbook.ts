@@ -44,6 +44,7 @@ import {
   type LatencyRow,
   type MeasuredOutcome,
   type MediaRow,
+  type ModelRow,
   type PillarRegisterRow,
   type ReplyOrigin,
   type RosterCoverage,
@@ -55,6 +56,7 @@ import {
   buildLatencyEffectiveness,
   buildMeEffectiveness,
   buildMediaEffectiveness,
+  buildModelEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildRosterCoverage,
@@ -121,6 +123,7 @@ async function latestOutcomes(ids: string[]): Promise<Map<string, SnapOutcome>> 
 
 interface ReplyRow {
   angle: string | null;
+  model: string;
   handle: string;
   hasRelationship: boolean;
   hasMe: boolean;
@@ -141,6 +144,7 @@ async function loadReplyRows(): Promise<ReplyRow[]> {
       contextSnapshot: replyDrafts.contextSnapshot,
       replyText: replyDrafts.replyText,
       variants: replyDrafts.variants,
+      model: replyDrafts.model,
       postedTweetId: replyDrafts.postedTweetId,
       createdAt: replyDrafts.createdAt,
     })
@@ -158,6 +162,7 @@ async function loadReplyRows(): Promise<ReplyRow[]> {
     const variants = d.variants as ReplyVariant[] | null;
     return {
       angle: variants?.find((v) => v.text === d.replyText)?.angle ?? null,
+      model: d.model,
       handle: d.sourceAuthorUsername.toLowerCase(),
       hasRelationship: typeof ctx?.relationship === 'string' && ctx.relationship.trim() !== '',
       hasMe: typeof ctx?.me === 'string' && ctx.me.trim() !== '',
@@ -213,6 +218,12 @@ function toLatencyRows(rows: ReplyRow[]): LatencyRow[] {
     }),
     outcome: r.outcome,
   }));
+}
+
+/** Reply rows keyed by drafting model (AI.12) — the judge of the OpenRouter
+ *  experiment. `model` is non-null on every posted reply, grouped as-is. */
+function toModelRows(rows: ReplyRow[]): ModelRow[] {
+  return rows.map((r) => ({ model: r.model, outcome: r.outcome }));
 }
 
 // --------------------------------------------------- roster coverage (§S0.7)
@@ -523,6 +534,7 @@ playbook.get('/playbook', async (c) => {
     mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
+    modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
     rosterCoverage: await loadRosterCoverage(
       new Date(Date.now() - ROSTER_WINDOW_MS),
       new Date(),

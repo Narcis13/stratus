@@ -1392,6 +1392,10 @@ export interface PlaybookLatencyCell extends PlaybookCell {
   bucket: '<15m' | '15-60m' | '1-6h' | '>6h' | 'unknown';
 }
 
+export interface PlaybookModelCell extends PlaybookCell {
+  model: string;
+}
+
 export interface PlaybookBandCell {
   band: 'hot' | 'warm' | 'skip' | null;
   n: number;
@@ -1495,6 +1499,13 @@ export interface Playbook {
     late: PlaybookCell;
     viewsLift: number | null;
     profileVisitsLift: number | null;
+  };
+  // Model effectiveness (AI.12): posted replies grouped by the model that
+  // drafted them — the judge of the OpenRouter experiment. Buckets only, each
+  // independently gated; no lift line (no canonical baseline pair).
+  modelEffectiveness: {
+    cells: PlaybookModelCell[];
+    totalMeasured: number;
   };
   // Roster coverage (§S0.7): of the last 7 days' posted replies, how many went
   // to in-band (2–10x) vs above/below/unknown-size authors.

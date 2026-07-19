@@ -312,6 +312,36 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
             )}
           </section>
 
+          <section className="brief-section">
+            <h3>Model effectiveness ({data.modelEffectiveness.totalMeasured} measured)</h3>
+            {data.modelEffectiveness.cells.length === 0 ? (
+              <div className="muted">No posted replies yet.</div>
+            ) : (
+              <table className="pb-table">
+                <thead>
+                  <tr>
+                    <th>model</th>
+                    <th>posted</th>
+                    <th>result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.modelEffectiveness.cells.map((c) => (
+                    <tr key={c.model}>
+                      <td>{c.model}</td>
+                      <td>{c.posted}</td>
+                      <td>{cellSummary(c, data.minN)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div className="muted pb-note">
+              which model drafts the replies that land — the judge of the OpenRouter experiment. A
+              bucket stays silent until it reaches n≥{data.minN}.
+            </div>
+          </section>
+
           <RosterCoverageSection rc={data.rosterCoverage} minN={data.minN} />
 
           <section className="brief-section">

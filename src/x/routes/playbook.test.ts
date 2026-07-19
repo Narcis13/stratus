@@ -321,6 +321,23 @@ describe('playbook route', () => {
     expect(open.latencyEffectiveness.viewsLift).toBeNull();
   });
 
+  test('model effectiveness buckets posted replies by drafting model (AI.12)', async () => {
+    const body = (await (await app.request('/x/playbook')).json()) as {
+      modelEffectiveness: {
+        cells: Array<{ model: string; posted: number; n: number; medianViews: number | null }>;
+        totalMeasured: number;
+      };
+    };
+    // Both posted single replies seed model 'test' (pb_r1 400, pb_r2 100).
+    const testBucket = body.modelEffectiveness.cells.find((c) => c.model === 'test');
+    expect(testBucket).toMatchObject({ posted: 2, n: 2, medianViews: 250 });
+    expect(body.modelEffectiveness.totalMeasured).toBe(2);
+    // Partition invariant: every measured reply lands in exactly one bucket.
+    expect(body.modelEffectiveness.cells.reduce((s, c) => s + c.n, 0)).toBe(
+      body.modelEffectiveness.totalMeasured,
+    );
+  });
+
   test('minN=1 opens the gates and the guidance speaks', async () => {
     const res = await app.request('/x/playbook?minN=1');
     // biome-ignore lint/suspicious/noExplicitAny: the test walks the whole payload

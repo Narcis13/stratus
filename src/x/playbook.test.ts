@@ -7,6 +7,7 @@ import {
   type IdeaRow,
   type LatencyRow,
   type MeasuredOutcome,
+  type ModelRow,
   type ScoredReply,
   authorSizeBucket,
   buildAngleEffectiveness,
@@ -16,6 +17,7 @@ import {
   buildLatencyEffectiveness,
   buildMeEffectiveness,
   buildMediaEffectiveness,
+  buildModelEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildRosterCoverage,
@@ -508,6 +510,47 @@ describe('buildLatencyEffectiveness', () => {
   test('default gate is 20 — silent on a thin sample', () => {
     const r = buildLatencyEffectiveness(rows);
     expect(r.viewsLift).toBeNull();
+    expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+  });
+});
+
+describe('buildModelEffectiveness', () => {
+  const rows: ModelRow[] = [
+    { model: 'grok-4.3', outcome: out(500, 10) },
+    { model: 'grok-4.3', outcome: out(300, 6) },
+    { model: 'grok-4.3', outcome: null }, // posted but unmeasured
+    { model: 'anthropic/claude-sonnet-4.5', outcome: out(200, 4) },
+  ];
+
+  test('buckets by raw model string, provider slash kept as-is', () => {
+    const r = buildModelEffectiveness(rows, 2);
+    expect(r.cells.map((c) => c.model)).toContain('anthropic/claude-sonnet-4.5');
+    const grok = r.cells.find((c) => c.model === 'grok-4.3');
+    // posted counts the unmeasured row; n does not.
+    expect(grok).toMatchObject({ posted: 3, n: 2, medianViews: 400, sufficient: true });
+  });
+
+  test('most-sampled bucket first', () => {
+    const r = buildModelEffectiveness(rows, 2);
+    expect(r.cells[0]?.model).toBe('grok-4.3');
+  });
+
+  test('partition invariant: Σ bucket n = totalMeasured, Σ posted = rows', () => {
+    const r = buildModelEffectiveness(rows, 2);
+    expect(r.cells.reduce((s, c) => s + c.n, 0)).toBe(r.totalMeasured);
+    expect(r.totalMeasured).toBe(3);
+    expect(r.cells.reduce((s, c) => s + c.posted, 0)).toBe(rows.length);
+  });
+
+  test('gate: each bucket independently below minN is insufficient', () => {
+    const gated = buildModelEffectiveness(rows, 3);
+    expect(gated.cells.find((c) => c.model === 'grok-4.3')?.sufficient).toBe(false);
+    const open = buildModelEffectiveness(rows, 2);
+    expect(open.cells.find((c) => c.model === 'grok-4.3')?.sufficient).toBe(true);
+  });
+
+  test('default gate is 20 — silent on a thin sample', () => {
+    const r = buildModelEffectiveness(rows);
     expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
   });
 });
