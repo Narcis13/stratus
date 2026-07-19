@@ -16,10 +16,10 @@ import * as sharedSchema from './shared-schema.ts';
 // production data — this happened, and the "flaky" brief.test.ts failures were
 // stale test rows in the live DB. Bun sets NODE_ENV=test under `bun test`, so
 // default test runs to :memory: instead of the production file.
-const path =
+export const sqlitePath =
   process.env.SQLITE_PATH ?? (process.env.NODE_ENV === 'test' ? ':memory:' : './stratus.db');
 
-export const sqlite = new Database(path, { create: true });
+export const sqlite = new Database(sqlitePath, { create: true });
 sqlite.exec('PRAGMA journal_mode = WAL;'); // readers never block the single writer
 sqlite.exec('PRAGMA busy_timeout = 5000;'); // wait out a momentary write lock, don't throw
 sqlite.exec('PRAGMA foreign_keys = ON;');

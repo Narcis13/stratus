@@ -1392,6 +1392,10 @@ button.danger:hover:not(:disabled) {
   z-index: 100;
 }
 .modal-card {
+  /* neutralize <dialog> UA styles (absolute positioning, canvastext color) */
+  position: static;
+  margin: 0;
+  color: inherit;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;

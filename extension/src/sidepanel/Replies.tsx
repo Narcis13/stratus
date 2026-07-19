@@ -839,10 +839,13 @@ function PromptViewer({
       }}
       role="presentation"
     >
-      <div
+      <dialog
+        open
         className="modal-card"
         onClick={(e) => e.stopPropagation()}
-        role="dialog"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose();
+        }}
         aria-modal="true"
         aria-label="Default reply system prompt"
       >
@@ -863,7 +866,7 @@ function PromptViewer({
             Use as starting point
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }
