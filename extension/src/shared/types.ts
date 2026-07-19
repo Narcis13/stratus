@@ -185,6 +185,57 @@ export interface IdeaGenerateResponse {
   requestId?: string;
 }
 
+// ------------------------------------------------------------------ AI / LLM §AI
+
+// AI.10 — Settings → AI panel. The provider config edited via /llm/settings.
+// API keys never live here (Decision 5) — they stay in server env; these are
+// only the routing knobs the panel can change.
+export type LlmProvider = 'grok' | 'openrouter';
+export type LlmReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+
+export interface AiSettings {
+  provider: LlmProvider;
+  openrouterModel: string;
+  /** null = each call site's own house default wins (the merge in askLLM). */
+  temperature: number | null;
+  maxOutputTokens: number | null;
+  reasoningEffort: LlmReasoningEffort | null;
+}
+
+/** GET /llm/settings — the typed settings plus env-key presence flags, so the
+ *  panel can grey out a provider whose key isn't set on the server. */
+export interface AiSettingsResponse extends AiSettings {
+  providers: { grok: boolean; openrouter: boolean };
+}
+
+/** PATCH /llm/settings — partial; an explicit null clears the numeric/effort
+ *  field back to the surface default (blank inputs map to null). */
+export interface AiSettingsPatchBody {
+  provider?: LlmProvider;
+  openrouterModel?: string;
+  temperature?: number | null;
+  maxOutputTokens?: number | null;
+  reasoningEffort?: LlmReasoningEffort | null;
+}
+
+/** GET /llm/models — OpenRouter's free model list. Prices are per-token USD
+ *  strings (as OpenRouter returns them), null when the model is free/unlisted. */
+export interface LlmModel {
+  id: string;
+  name: string;
+  promptPrice: string | null;
+  completionPrice: string | null;
+}
+
+export interface LlmModelsResponse {
+  models: LlmModel[];
+}
+
+/** POST /x/prompts/restore-defaults — deletes every override row. */
+export interface PromptsRestoreResult {
+  restored: number;
+}
+
 export interface PostReupBody {
   tweetId: string;
   idea?: string;

@@ -6,6 +6,9 @@
 
 import type { ApiRequest, ApiResponse, BinaryPayload } from '../shared/messages.ts';
 import {
+  type AiSettings,
+  type AiSettingsPatchBody,
+  type AiSettingsResponse,
   ApiError,
   type AssetSaveBody,
   type AuthorProfile,
@@ -55,6 +58,10 @@ import {
   type ImageGenerateBody,
   type ImageGenerateResponse,
   type ListOpts,
+  type LlmModel,
+  type LlmModelsResponse,
+  type LlmProvider,
+  type LlmReasoningEffort,
   type MeContextResponse,
   type MeEntry,
   type MeEntryCreateBody,
@@ -108,6 +115,7 @@ import {
   type PostDraftResponse,
   type PostReupBody,
   type PostStatus,
+  type PromptsRestoreResult,
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftStatus,
@@ -138,6 +146,14 @@ import type { Settings } from './storage.ts';
 
 export { ApiError };
 export type {
+  AiSettings,
+  AiSettingsPatchBody,
+  AiSettingsResponse,
+  LlmModel,
+  LlmModelsResponse,
+  LlmProvider,
+  LlmReasoningEffort,
+  PromptsRestoreResult,
   AssetSaveBody,
   AuthorProfile,
   GeneratedImageItem,
@@ -535,6 +551,35 @@ export const api = {
 
     reset(s: Settings, opts: { keys?: string[]; group?: string }): Promise<SettingsResetResult> {
       return request<SettingsResetResult>(s, '/x/settings/reset', { method: 'POST', body: opts });
+    },
+  },
+
+  // AI.10 — the LLM provider config (Settings → AI panel). Separate from the
+  // `settings` registry above: `/llm/*` is always mounted and holds the routing
+  // knobs (provider, model, temperature, tokens, effort). API keys stay in
+  // server env and never travel through here.
+  llm: {
+    getSettings(s: Settings): Promise<AiSettingsResponse> {
+      return request<AiSettingsResponse>(s, '/llm/settings');
+    },
+
+    // Partial patch; blank numeric/effort fields are sent as explicit null to
+    // clear the override. Selecting openrouter without its server key → 409.
+    patchSettings(s: Settings, patch: AiSettingsPatchBody): Promise<AiSettingsResponse> {
+      return request<AiSettingsResponse>(s, '/llm/settings', { method: 'PATCH', body: patch });
+    },
+
+    // OpenRouter's free model list for the picker datalist; 503 without the key.
+    models(s: Settings): Promise<LlmModelsResponse> {
+      return request<LlmModelsResponse>(s, '/llm/models');
+    },
+  },
+
+  // AI.4/AI.11 — DB-backed editable prompt registry. AI.10 wires only the
+  // Restore Default Prompts button; AI.11 adds list/get/patch/reset.
+  prompts: {
+    restoreDefaults(s: Settings): Promise<PromptsRestoreResult> {
+      return request<PromptsRestoreResult>(s, '/x/prompts/restore-defaults', { method: 'POST' });
     },
   },
 
