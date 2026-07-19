@@ -174,6 +174,27 @@ describe.if(authed)('pillars guards (§8.6)', () => {
   });
 });
 
+describe.if(authed)('backfill guard', () => {
+  test('non-numeric tweet id → 400 before any read or DB write', async () => {
+    const res = await app.request('/x/posts/backfill', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ tweetId: 'not-a-tweet-id' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
+  });
+
+  test('missing tweet id → 400', async () => {
+    const res = await app.request('/x/posts/backfill', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe.if(authed && Boolean(process.env.XAI_API_KEY))('pillar draft guard (§8.6)', () => {
   test('invalid mode → 400 before any Grok spend', async () => {
     const res = await app.request('/x/pillars/draft', {
