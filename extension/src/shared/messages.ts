@@ -4,6 +4,7 @@
 
 import type { EarlyReply } from './launch.ts';
 import type { RadarSighting } from './radar.ts';
+import type { ReplyVariant } from './types.ts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -54,7 +55,9 @@ export interface RadarDismiss {
 // the background so it stays the single writer of the session ring buffer.
 export interface RadarReplies {
   type: 'stratus/radar-replies';
-  replies: { tweetId: string; reply: string }[];
+  // `reply` is the primary (variants[0].text); `variants` carries all 3 angles
+  // (RU.4) so the buffer can serve the on-page variant chips (Task 7).
+  replies: { tweetId: string; reply: string; variants?: ReplyVariant[] }[];
 }
 
 // User clicked a reply-ready Radar row (its reply was copied). Routed through

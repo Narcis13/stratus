@@ -132,7 +132,11 @@ export function RadarSection({
       if (res.replies.length > 0) {
         const msg: RadarReplies = {
           type: 'stratus/radar-replies',
-          replies: res.replies.map((r) => ({ tweetId: r.tweetId, reply: r.text })),
+          replies: res.replies.map((r) => ({
+            tweetId: r.tweetId,
+            reply: r.text,
+            variants: r.variants,
+          })),
         };
         await chrome.runtime.sendMessage(msg);
       }
@@ -309,6 +313,11 @@ function RadarRow({
           </button>
         )}
         {s.reply && <span className="radar-ready">reply ready</span>}
+        {s.variants && s.variants.length > 1 && (
+          <span className="radar-angles" title="Angle variants ready on the tweet page">
+            {s.variants.length} angles
+          </span>
+        )}
         <button
           type="button"
           className="radar-dismiss"

@@ -51,7 +51,7 @@ import {
   mergeSightings,
   stampTiers,
 } from './shared/radar.ts';
-import type { ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
+import type { ReplyVariant, ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
@@ -267,13 +267,19 @@ async function dismissSightings(tweetIds: string[]): Promise<void> {
 // Attach batch-drafted replies onto matching sightings (§7.2). Single writer,
 // same as add/dismiss — a sighting evicted between draft and attach is simply
 // skipped (the panel only renders what's in the buffer).
-async function attachReplies(items: { tweetId: string; reply: string }[]): Promise<void> {
+async function attachReplies(
+  items: { tweetId: string; reply: string; variants?: ReplyVariant[] }[],
+): Promise<void> {
   const { sightings } = await readRadar();
-  const byId = new Map(items.map((i) => [i.tweetId, i.reply]));
+  const byId = new Map(items.map((i) => [i.tweetId, i]));
   await chrome.storage.session.set({
-    [RADAR_SIGHTINGS_KEY]: sightings.map((s) =>
-      byId.has(s.tweetId) ? { ...s, reply: byId.get(s.tweetId) } : s,
-    ),
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) => {
+      const item = byId.get(s.tweetId);
+      if (!item) return s;
+      const next: RadarSighting = { ...s, reply: item.reply };
+      if (item.variants && item.variants.length > 0) next.variants = item.variants;
+      return next;
+    }),
   });
 }
 

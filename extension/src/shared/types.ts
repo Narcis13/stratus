@@ -769,6 +769,8 @@ export interface BatchReplyItem {
   tweetId: string;
   text: string;
   angle: ReplyAngle;
+  // All 3 angle variants (RU.3); text/angle stay the primary (variants[0]).
+  variants: ReplyVariant[];
 }
 
 export interface BatchReplyResponse {

@@ -1111,6 +1111,15 @@ button.danger:hover:not(:disabled) {
   letter-spacing: 0.04em;
   color: var(--strat-band-hot);
 }
+/* RU.4 — "N angles" hint next to "reply ready"; the full picker lives on the
+   tweet page (Task 7), so the panel stays light. */
+.radar-angles {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
 
 /* S0.3 roster tier chip — reuses .stage-chip / .stage-ally / .stage-mutual,
    with a target-only color; rendered as a button that opens the dossier. */

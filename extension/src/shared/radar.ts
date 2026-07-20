@@ -9,6 +9,7 @@
 // sidepanel/Radar.tsx (reader).
 
 import type { TweetSignals } from '../replyBand.ts';
+import type { ReplyVariant } from './types.ts';
 
 export type RadarBand = 'hot' | 'warm';
 
@@ -41,6 +42,10 @@ export interface RadarSighting {
   // by the background after a "Draft replies" run. Survives re-sightings so a
   // drafted reply isn't wiped when the content script re-reports the tweet.
   reply?: string;
+  // All 3 angle variants (RU.4) from the batch draft — extends/contrarian/debate.
+  // `reply` stays the primary (variants[0].text); the full set rides for the
+  // on-page variant chips (Task 7). Survives re-sightings like `reply`.
+  variants?: ReplyVariant[];
   // ISO time the user clicked a reply-ready row (its reply was copied). A
   // clicked sighting leaves the live queue for the "Clicked" view so the queue
   // stays the not-yet-worked set. Survives re-sightings like `reply`.
@@ -81,9 +86,11 @@ export function mergeSightings(
     // Re-sighting from the content script carries no reply/clickedAt — keep the
     // ones the panel/background set earlier (incoming wins only if it has one).
     const reply = s.reply ?? prev.reply;
+    const variants = s.variants ?? prev.variants;
     const clickedAt = s.clickedAt ?? prev.clickedAt;
     const merged: RadarSighting = { ...s, firstSeenAt: prev.firstSeenAt };
     if (reply !== undefined) merged.reply = reply;
+    if (variants !== undefined) merged.variants = variants;
     if (clickedAt !== undefined) merged.clickedAt = clickedAt;
     byId.set(s.tweetId, merged);
   }
@@ -192,6 +199,9 @@ export interface RadarDraftRow {
   signals: TweetSignals | null;
   replyText: string;
   angle: string;
+  // All 3 angle variants (RU.2 column); null on pre-feature / CLI-primary rows.
+  // replyText/angle stay the primary (variants[0]).
+  variants: ReplyVariant[] | null;
   status: 'ready' | 'clicked' | 'expired';
   draftedAt: string;
   createdAt: string;
@@ -203,7 +213,7 @@ export interface RadarDraftRow {
 // draft time — displayAgeMin keeps ticking from there, same as a live capture.
 export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
   if (!row.band || !row.signals) return null;
-  return {
+  const s: RadarSighting = {
     tweetId: row.tweetId,
     url: row.url ?? `https://x.com/${row.handle}/status/${row.tweetId}`,
     handle: row.handle,
@@ -215,6 +225,8 @@ export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
     lastSeenAt: row.draftedAt,
     reply: row.replyText,
   };
+  if (row.variants && row.variants.length > 0) s.variants = row.variants;
+  return s;
 }
 
 export function isRadarSightings(v: unknown): v is RadarSighting[] {

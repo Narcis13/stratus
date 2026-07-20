@@ -72,6 +72,36 @@ describe('mergeSightings', () => {
     expect(mergeSightings([drafted], [updated], [])[0]?.reply).toBe('new');
   });
 
+  test('a re-sighting keeps the 3 angle variants the background attached (RU.4)', () => {
+    const drafted = sighting('1', {
+      reply: 'primary take',
+      variants: [
+        { text: 'primary take', angle: 'extends' },
+        { text: 'sharper take', angle: 'contrarian' },
+        { text: 'debate take', angle: 'debate' },
+      ],
+    });
+    const resighted = sighting('1', { lastSeenAt: '2026-06-10T11:00:00.000Z' });
+    const merged = mergeSightings([drafted], [resighted], []);
+    expect(merged[0]?.variants).toHaveLength(3);
+    expect(merged[0]?.variants?.[1]?.angle).toBe('contrarian');
+    expect(merged[0]?.reply).toBe('primary take');
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z');
+  });
+
+  test('a fresh variant set on the incoming sighting wins (RU.4)', () => {
+    const drafted = sighting('1', {
+      variants: [{ text: 'old', angle: 'extends' }],
+    });
+    const updated = sighting('1', {
+      variants: [
+        { text: 'new-a', angle: 'contrarian' },
+        { text: 'new-b', angle: 'debate' },
+      ],
+    });
+    expect(mergeSightings([drafted], [updated], [])[0]?.variants).toHaveLength(2);
+  });
+
   test('a re-sighting keeps clickedAt the panel stamped (stays in Clicked view)', () => {
     const clicked = sighting('1', { reply: 'r', clickedAt: '2026-06-10T12:00:00.000Z' });
     const resighted = sighting('1', { lastSeenAt: '2026-06-10T13:00:00.000Z' });
@@ -301,6 +331,7 @@ describe('draftRowToSighting (C0 rehydration)', () => {
     signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
     replyText: 'my drafted reply',
     angle: 'contrarian',
+    variants: null,
     status: 'ready',
     draftedAt: '2026-07-01T10:00:00.000Z',
     createdAt: '2026-07-01T10:00:00.000Z',
@@ -330,6 +361,25 @@ describe('draftRowToSighting (C0 rehydration)', () => {
   test('rows without band/signals cannot rehydrate (no rank, no why-line)', () => {
     expect(draftRowToSighting({ ...row, band: null })).toBeNull();
     expect(draftRowToSighting({ ...row, signals: null })).toBeNull();
+  });
+
+  test('maps the 3 angle variants from the server row (RU.4)', () => {
+    const s = draftRowToSighting({
+      ...row,
+      variants: [
+        { text: 'my drafted reply', angle: 'contrarian' },
+        { text: 'extend it', angle: 'extends' },
+        { text: 'fight me', angle: 'debate' },
+      ],
+    });
+    expect(s?.variants).toHaveLength(3);
+    expect(s?.variants?.[0]?.angle).toBe('contrarian');
+    expect(s?.reply).toBe('my drafted reply');
+  });
+
+  test('a row with null variants rehydrates without a variants key', () => {
+    const s = draftRowToSighting(row);
+    expect(s?.variants).toBeUndefined();
   });
 
   test('rehydrated sightings merge cleanly and keep their reply', () => {
