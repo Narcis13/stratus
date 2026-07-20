@@ -197,6 +197,84 @@ peopleRouter.get('/people/rankmap', async (c) => {
   return c.json({ count: Object.keys(map).length, map });
 });
 
+// ------------------------------------------------------------------ glance
+
+interface GlanceEntry {
+  stage: Stage;
+  isTarget: boolean;
+  openLoops: number; // unanswered mentions from this author
+  lastOutboundAt: string | null; // my last posted reply to them (ISO)
+  lastInboundAt: string | null; // their last mention/reply to me (ISO)
+  followersCount: number | null;
+}
+
+// The timeline-decoration map (AX.1): every handle stratus knows enough about to
+// draw a chip on. Richer membership than rankmap (all non-retired people, not
+// just engaged+), richer payload (open loops, recency, followers) — but the same
+// $0 pure-SQL shape. The content script fetches it once per session (10 min
+// cache) and stamps chips right of the name row. Handles are keyed lowercased.
+//
+// NOTE: registered before GET /people/:handle so the static path wins the match
+// (same trap rankmap dodges). Rankmap stays untouched — it feeds the radar tier
+// stamping and is deliberately minimal.
+peopleRouter.get('/people/glance', async (c) => {
+  const [personRows, openLoopRows, targetHandles] = await Promise.all([
+    db
+      .select({
+        handle: people.handle,
+        stage: people.stage,
+        lastOutboundAt: people.lastOutboundAt,
+        lastInboundAt: people.lastInboundAt,
+        followersCount: people.followersCount,
+      })
+      .from(people)
+      .where(eq(people.retired, false)),
+    db
+      .select({
+        handle: sql<string>`lower(${mentions.authorUsername})`,
+        n: sql<number>`count(*)`,
+      })
+      .from(mentions)
+      .where(and(eq(mentions.status, 'unanswered'), isNotNull(mentions.authorUsername)))
+      .groupBy(sql`lower(${mentions.authorUsername})`),
+    loadTargetHandles(),
+  ]);
+
+  const targetSet = new Set(targetHandles);
+  const openLoops: Record<string, number> = {};
+  for (const r of openLoopRows) openLoops[r.handle] = Number(r.n);
+
+  const map: Record<string, GlanceEntry> = {};
+  for (const p of personRows) {
+    map[p.handle] = {
+      stage: p.stage as Stage,
+      isTarget: targetSet.has(p.handle),
+      openLoops: openLoops[p.handle] ?? 0,
+      lastOutboundAt: p.lastOutboundAt?.toISOString() ?? null,
+      lastInboundAt: p.lastInboundAt?.toISOString() ?? null,
+      followersCount: p.followersCount ?? null,
+    };
+  }
+  // A target with no people row (or a retired one) still decorates the timeline
+  // as a bare target — same backfill as rankmap. A handle with an unanswered
+  // mention always has a people row (pullMentions upserts it), so openLoops for
+  // these is 0 in practice; `?? 0` keeps it correct if that ever changes.
+  for (const h of targetHandles) {
+    if (!map[h]) {
+      map[h] = {
+        stage: 'stranger',
+        isTarget: true,
+        openLoops: openLoops[h] ?? 0,
+        lastOutboundAt: null,
+        lastInboundAt: null,
+        followersCount: null,
+      };
+    }
+  }
+
+  return c.json({ count: Object.keys(map).length, map });
+});
+
 // ---------------------------------------------------------------- dossier
 
 peopleRouter.get('/people/:handle', async (c) => {
