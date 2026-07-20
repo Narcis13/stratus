@@ -148,6 +148,11 @@ export interface TemplateState {
   bannerKeywords: string;
   bannerFollowers: number | null;
   bannerMilestone: boolean;
+  /** Billboard mode (eval §3.4): a non-empty stance swaps the follower count for
+   *  a stance + crew line and renders keywords as a "·"-joined tagline. */
+  bannerStance: string;
+  bannerCrew: string;
+  bannerAnchor: boolean;
   pfpBitmap: ImageBitmap | null;
   bgBitmap: ImageBitmap | null;
   /** S5.4 background pattern for background-capable templates (null = gradient
@@ -176,6 +181,15 @@ export interface TemplateState {
   chartDelta: number;
   chartCells: ChartCell[];
 }
+
+/** Billboard defaults (eval §3.4) so the Banner tab opens on the stance layout.
+ *  The headline keeps its two lines via an explicit newline (the textarea and
+ *  layoutText both honor it). Clear the stance field to fall back to the classic
+ *  follower-milestone banner. */
+export const DEFAULT_BANNER_HEADLINE = '30 YEARS OF CODE.\nSHIPPING IN PUBLIC AT 51.';
+export const DEFAULT_BANNER_KEYWORDS = 'SaaS, AI agents, build in public';
+export const DEFAULT_BANNER_STANCE = 'PEOPLE FIRST — NUMBERS FOLLOW';
+export const DEFAULT_BANNER_CREW = '1,000+ of us';
 
 /** A sample snippet so the code card previews immediately (empty input → this). */
 export const DEFAULT_CODE = `// stratus — ship in public
@@ -220,6 +234,13 @@ export function buildSpec(id: TemplateId, state: TemplateState, kit: BrandKit): 
             .map((k) => k.trim())
             .filter((k) => k !== ''),
           followers: state.bannerMilestone ? state.bannerFollowers : null,
+          ...(state.bannerStance.trim() !== ''
+            ? {
+                stance: state.bannerStance.trim(),
+                crew: state.bannerCrew.trim(),
+                anchor: state.bannerAnchor,
+              }
+            : {}),
           background: state.bgBitmap,
           ...(state.patternKind
             ? { patternKind: state.patternKind, patternSeed: state.patternSeed }

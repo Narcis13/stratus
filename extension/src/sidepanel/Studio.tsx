@@ -55,6 +55,10 @@ import {
   ThreadFields,
 } from './studio/fields.tsx';
 import {
+  DEFAULT_BANNER_CREW,
+  DEFAULT_BANNER_HEADLINE,
+  DEFAULT_BANNER_KEYWORDS,
+  DEFAULT_BANNER_STANCE,
   EMPTY_STAT,
   TEMPLATES,
   type TemplateId,
@@ -138,10 +142,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const [statData, setStatData] = useState<StatCardData | null>(null);
   const [statLoading, setStatLoading] = useState(false);
 
-  const [bannerHeadline, setBannerHeadline] = useState('');
-  const [bannerKeywords, setBannerKeywords] = useState('');
+  const [bannerHeadline, setBannerHeadline] = useState(DEFAULT_BANNER_HEADLINE);
+  const [bannerKeywords, setBannerKeywords] = useState(DEFAULT_BANNER_KEYWORDS);
   const [bannerFollowers, setBannerFollowers] = useState<number | null>(null);
   const [bannerMilestone, setBannerMilestone] = useState(true);
+  const [bannerStance, setBannerStance] = useState(DEFAULT_BANNER_STANCE);
+  const [bannerCrew, setBannerCrew] = useState(DEFAULT_BANNER_CREW);
+  const [bannerAnchor, setBannerAnchor] = useState(true);
   const bannerSeeded = useRef(false);
 
   const [pfpBitmap, setPfpBitmap] = useState<ImageBitmap | null>(null);
@@ -518,6 +525,9 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
             bannerKeywords,
             bannerFollowers,
             bannerMilestone,
+            bannerStance,
+            bannerCrew,
+            bannerAnchor,
             pfpBitmap,
             bgBitmap,
             patternKind,
@@ -565,6 +575,9 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     bannerKeywords,
     bannerFollowers,
     bannerMilestone,
+    bannerStance,
+    bannerCrew,
+    bannerAnchor,
     pfpBitmap,
     bgBitmap,
     patternKind,
@@ -708,9 +721,15 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
           keywords={bannerKeywords}
           milestone={bannerMilestone}
           followers={bannerFollowers}
+          stance={bannerStance}
+          crew={bannerCrew}
+          anchor={bannerAnchor}
           onHeadline={setBannerHeadline}
           onKeywords={setBannerKeywords}
           onMilestone={setBannerMilestone}
+          onStance={setBannerStance}
+          onCrew={setBannerCrew}
+          onAnchor={setBannerAnchor}
         />
       )}
 

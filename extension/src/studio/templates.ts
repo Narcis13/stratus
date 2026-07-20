@@ -346,6 +346,16 @@ export interface BannerData {
   /** Pillar keywords strip — prefilled from the active content pillars. */
   keywords: string[];
   followers: number | null;
+  /** Billboard mode (eval §3.4): a right-side stance line that REPLACES the
+   *  follower milestone. When set, the keywords render as a plain "·"-joined
+   *  tagline under a gold divider (not pills), the headline honors explicit
+   *  newlines, and the @handle sign is dropped (the crew line owns the
+   *  bottom-right). Empty/undefined = the classic headline + pills + count. */
+  stance?: string;
+  /** Billboard second line under the stance, e.g. "1,000+ of us". */
+  crew?: string;
+  /** A gold anchor glyph beside the headline (billboard flourish). */
+  anchor?: boolean;
   /** SURFACES S4 — optional AI background composited under the header. */
   background?: ImageBitmap | null;
   /** SURFACES S5.4 — deterministic pattern (ignored when a background is set). */
@@ -353,12 +363,15 @@ export interface BannerData {
   patternSeed?: number;
 }
 
-/** 1500×500 — profile header: headline, pillar strip, live follower milestone.
- *  Regenerate monthly; S0.1's conversion rate judges the before/after. */
+/** 1500×500 — profile header. Two shapes: the classic headline + pillar pills +
+ *  live follower milestone, and the eval §3.4 "billboard" (a stance + crew count
+ *  in place of the number). Regenerate monthly; S0.1's conversion rate judges
+ *  the before/after. */
 export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
   const ink = contrastOn(kit.bg);
   const muted = withAlpha(ink, 0.7);
-  const withMilestone = data.followers !== null;
+  const billboard = data.stance !== undefined && data.stance.trim() !== '';
+  const withMilestone = !billboard && data.followers !== null;
 
   const layers: Layer[] = [
     ...baseLayers(
@@ -370,17 +383,88 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
       patternArg(data.patternKind, data.patternSeed),
     ),
     { kind: 'rule', box: { x: 80, y: 96, w: 88, h: 10 }, color: kit.accent },
-    {
+  ];
+
+  if (billboard) {
+    // Two-line headline (explicit \n survives layout), a gold anchor flourish, a
+    // divider, a "·"-joined tagline, and the stance + crew on the right where the
+    // follower count used to sit. No @handle sign — a banner already IS the
+    // profile, and the crew line owns the bottom-right (eval law #4).
+    layers.push({
       kind: 'text',
       text: data.headline,
-      font: font(kit, 800, 76),
-      box: { x: 80, y: 140, w: withMilestone ? 900 : 1340, h: 200 },
+      font: font(kit, 800, 66),
+      box: { x: 80, y: 118, w: 900, h: 172 },
       color: ink,
-      lineHeight: 1.15,
-      minSizePx: 40,
-      maxLines: 3,
-    },
-  ];
+      lineHeight: 1.16,
+      minSizePx: 38,
+      maxLines: 2,
+    });
+    if (data.anchor) {
+      // U+FE0E forces text (monochrome) presentation so the canvas fill recolors
+      // the anchor gold — default emoji presentation ignores fillStyle.
+      layers.push({
+        kind: 'text',
+        text: '⚓︎',
+        font: font(kit, 400, 62),
+        box: { x: 1010, y: 188, w: 130, h: 94 },
+        color: kit.accent,
+        vAlign: 'middle',
+        maxLines: 1,
+      });
+    }
+    layers.push({
+      kind: 'rule',
+      box: { x: 80, y: 298, w: 470, h: 4 },
+      color: withAlpha(kit.accent, 0.9),
+    });
+    if (data.keywords.length > 0) {
+      layers.push({
+        kind: 'text',
+        text: data.keywords.join(' · '),
+        font: font(kit, 600, 30),
+        box: { x: 80, y: 320, w: 900, h: 44 },
+        color: muted,
+        maxLines: 1,
+        minSizePx: 20,
+      });
+    }
+    layers.push({
+      kind: 'text',
+      text: data.stance as string,
+      font: font(kit, 800, 34),
+      box: { x: 760, y: 376, w: 660, h: 46 },
+      color: kit.accent,
+      align: 'right',
+      maxLines: 1,
+      minSizePx: 22,
+      letterSpacingPx: 1,
+    });
+    if (data.crew !== undefined && data.crew.trim() !== '') {
+      layers.push({
+        kind: 'text',
+        text: data.crew,
+        font: font(kit, 700, 28),
+        box: { x: 760, y: 424, w: 660, h: 40 },
+        color: withAlpha(ink, 0.85),
+        align: 'right',
+        maxLines: 1,
+        minSizePx: 18,
+      });
+    }
+    return { w: BANNER.w, h: BANNER.h, layers };
+  }
+
+  layers.push({
+    kind: 'text',
+    text: data.headline,
+    font: font(kit, 800, 76),
+    box: { x: 80, y: 140, w: withMilestone ? 900 : 1340, h: 200 },
+    color: ink,
+    lineHeight: 1.15,
+    minSizePx: 40,
+    maxLines: 3,
+  });
   if (data.keywords.length > 0) {
     layers.push({
       kind: 'badge',

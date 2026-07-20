@@ -275,24 +275,37 @@ export function BannerFields({
   keywords,
   milestone,
   followers,
+  stance,
+  crew,
+  anchor,
   onHeadline,
   onKeywords,
   onMilestone,
+  onStance,
+  onCrew,
+  onAnchor,
 }: {
   headline: string;
   keywords: string;
   milestone: boolean;
   followers: number | null;
+  stance: string;
+  crew: string;
+  anchor: boolean;
   onHeadline: (v: string) => void;
   onKeywords: (v: string) => void;
   onMilestone: (v: boolean) => void;
+  onStance: (v: string) => void;
+  onCrew: (v: string) => void;
+  onAnchor: (v: boolean) => void;
 }): JSX.Element {
+  const billboard = stance.trim() !== '';
   return (
     <>
       <label className="field">
-        <span>Headline</span>
-        <input
-          type="text"
+        <span>Headline (one line per row)</span>
+        <textarea
+          rows={2}
           value={headline}
           onChange={(e) => onHeadline(e.target.value)}
           placeholder="Building in public"
@@ -302,15 +315,42 @@ export function BannerFields({
         <span>Keywords (comma-separated — prefilled from your pillars)</span>
         <input type="text" value={keywords} onChange={(e) => onKeywords(e.target.value)} />
       </label>
+      <label className="field">
+        <span>Stance (right side — clear it for the follower-count banner)</span>
+        <input
+          type="text"
+          value={stance}
+          onChange={(e) => onStance(e.target.value)}
+          placeholder="PEOPLE FIRST — NUMBERS FOLLOW"
+        />
+      </label>
+      <label className="field">
+        <span>Crew line (under the stance)</span>
+        <input
+          type="text"
+          value={crew}
+          onChange={(e) => onCrew(e.target.value)}
+          placeholder="1,000+ of us"
+        />
+      </label>
+      <label className="row studio-check">
+        <input type="checkbox" checked={anchor} onChange={(e) => onAnchor(e.target.checked)} />
+        <span>Gold anchor beside the headline</span>
+      </label>
       <label className="row studio-check">
         <input
           type="checkbox"
           checked={milestone}
+          disabled={billboard}
           onChange={(e) => onMilestone(e.target.checked)}
         />
         <span>
           Show follower milestone
-          {followers !== null ? ` (${followers})` : ' (no snapshot yet)'}
+          {billboard
+            ? ' (off — the stance replaces it)'
+            : followers !== null
+              ? ` (${followers})`
+              : ' (no snapshot yet)'}
         </span>
       </label>
     </>

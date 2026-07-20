@@ -212,6 +212,53 @@ describe('bannerSpec', () => {
       text: 'stratus',
     });
   });
+
+  test('billboard: stance replaces the milestone, keywords become a tagline, no @handle sign', () => {
+    const spec = bannerSpec(
+      {
+        headline: '30 YEARS OF CODE.\nSHIPPING IN PUBLIC AT 51.',
+        keywords: ['SaaS', 'AI agents', 'build in public'],
+        followers: 980, // provided but must be suppressed in billboard mode
+        stance: 'PEOPLE FIRST — NUMBERS FOLLOW',
+        crew: '1,000+ of us',
+        anchor: true,
+      },
+      kit,
+    );
+    // fill, accent rule, headline, anchor, divider rule, tagline, stance, crew
+    expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'text', 'rule', 'text', 'text', 'text']);
+    // The follower count never renders in billboard mode.
+    expect(spec.layers.some((l) => (l as { text?: string }).text === '980')).toBe(false);
+    // No @handle watermark — the crew line owns the bottom-right.
+    expect(spec.layers.some((l) => l.kind === 'watermark')).toBe(false);
+    // Keywords are a "·"-joined plain text line, not a pill badge.
+    expect(spec.layers.some((l) => l.kind === 'badge')).toBe(false);
+    expect(spec.layers[5]).toMatchObject({ text: 'SaaS · AI agents · build in public' });
+    expect(spec.layers[3]).toMatchObject({ text: '⚓︎', color: kit.accent });
+    expect(spec.layers[6]).toMatchObject({
+      text: 'PEOPLE FIRST — NUMBERS FOLLOW',
+      align: 'right',
+      color: kit.accent,
+    });
+    expect(spec.layers[7]).toMatchObject({ text: '1,000+ of us', align: 'right' });
+  });
+
+  test('billboard: anchor and crew are optional', () => {
+    const spec = bannerSpec(
+      { headline: 'h', keywords: [], followers: null, stance: 'PEOPLE FIRST' },
+      kit,
+    );
+    // fill, rule, headline, divider, stance — no anchor, no tagline, no crew.
+    expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'rule', 'text']);
+    expect(spec.layers.some((l) => (l as { text?: string }).text === '⚓︎')).toBe(false);
+  });
+
+  test('billboard: a blank stance falls back to the classic milestone banner', () => {
+    const spec = bannerSpec({ headline: 'h', keywords: ['a'], followers: 980, stance: '   ' }, kit);
+    // Whitespace-only stance is not billboard: classic pills + milestone + sign.
+    expect(spec.layers.some((l) => l.kind === 'badge')).toBe(true);
+    expect(spec.layers.some((l) => (l as { text?: string }).text === '980')).toBe(true);
+  });
 });
 
 describe('pfpFrameSpec', () => {
