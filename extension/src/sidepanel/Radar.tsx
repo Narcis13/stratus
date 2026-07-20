@@ -10,7 +10,13 @@
 
 import { type JSX, useEffect, useState } from 'react';
 import { formatCount } from '../replyBand.ts';
-import type { RadarClick, RadarDismiss, RadarRehydrate, RadarReplies } from '../shared/messages.ts';
+import type {
+  RadarClick,
+  RadarConfirm,
+  RadarDismiss,
+  RadarRehydrate,
+  RadarReplies,
+} from '../shared/messages.ts';
 import {
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
@@ -82,6 +88,20 @@ function markClicked(tweetId: string): void {
       await chrome.runtime.sendMessage(msg);
     } catch (err) {
       console.warn('[stratus] radar click failed', err);
+    }
+  })();
+}
+
+// Promote this row's radar draft into a real reply_drafts row (RU.6) — the
+// background POSTs the confirm endpoint and stamps the returned draft id onto
+// the sighting for the on-page paste flow (RU.7). Best-effort, like markClicked.
+function confirmDraft(tweetId: string): void {
+  const msg: RadarConfirm = { type: 'stratus/radar-confirm', tweetId };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar confirm failed', err);
     }
   })();
 }
@@ -279,6 +299,7 @@ function RadarRow({
   const onOpen = (): void => {
     if (!s.reply) return;
     markClicked(s.tweetId);
+    confirmDraft(s.tweetId);
     void navigator.clipboard
       .writeText(s.reply)
       .then(() => {

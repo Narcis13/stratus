@@ -110,6 +110,22 @@ export function isRadarClick(msg: unknown): msg is RadarClick {
   );
 }
 
+// User opened a reply-ready Radar row (RU.6): promote its radar draft into a
+// real reply_drafts row. Routed through the background (single writer +
+// Authorization owner): it POSTs /x/radar/drafts/:tweetId/confirm and stamps
+// the returned draft id onto the sighting, so the on-page paste flow (RU.7)
+// can PATCH that row to `posted`.
+export interface RadarConfirm {
+  type: 'stratus/radar-confirm';
+  tweetId: string;
+}
+
+export function isRadarConfirm(msg: unknown): msg is RadarConfirm {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/radar-confirm' && typeof m.tweetId === 'string';
+}
+
 // --- Launch Room (C7) — all routed through the background: it owns the
 // chrome.alarms schedule and is the single writer of the launch:* session keys.
 

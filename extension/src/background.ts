@@ -34,6 +34,7 @@ import {
   isLaunchReport,
   isLaunchSync,
   isRadarClick,
+  isRadarConfirm,
   isRadarDismiss,
   isRadarRehydrate,
   isRadarReplies,
@@ -289,6 +290,36 @@ async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
   const { sightings } = await readRadar();
   await chrome.storage.session.set({
     [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, clickedAt } : s)),
+  });
+}
+
+// Confirm a radar draft into a real reply_drafts row (RU.6). POST the confirm
+// endpoint — idempotent server-side (RU.5): it promotes the newest non-expired
+// draft for the tweet and ratchets the radar status → clicked — then stamp the
+// returned draft id onto the sighting so the on-page paste flow (RU.7) can PATCH
+// that row to `posted`. Best-effort (§7.8): a failed confirm logs a warn and the
+// click UX proceeds (the reply was already copied to the clipboard).
+async function confirmDraft(tweetId: string): Promise<void> {
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: `/x/radar/drafts/${tweetId}/confirm`,
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] radar confirm failed', res.code);
+    return;
+  }
+  const draftId = (res.data as { id?: string } | undefined)?.id;
+  if (typeof draftId !== 'string') return;
+  await enqueueRadar(() => stampDraftId(tweetId, draftId));
+}
+
+// Stamp the confirmed reply_drafts id onto its sighting. Single writer, same as
+// markClicked — a sighting evicted between confirm and write is simply skipped.
+async function stampDraftId(tweetId: string, draftId: string): Promise<void> {
+  const { sightings } = await readRadar();
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, draftId } : s)),
   });
 }
 
@@ -566,6 +597,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (isRadarClick(msg)) {
     markDraftsOnServer([msg.tweetId], 'clicked');
     void enqueueRadar(() => markClicked(msg.tweetId, msg.clickedAt)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarConfirm(msg)) {
+    void confirmDraft(msg.tweetId).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );

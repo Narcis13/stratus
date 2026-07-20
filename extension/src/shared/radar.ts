@@ -50,6 +50,10 @@ export interface RadarSighting {
   // clicked sighting leaves the live queue for the "Clicked" view so the queue
   // stays the not-yet-worked set. Survives re-sightings like `reply`.
   clickedAt?: string;
+  // The reply_drafts row id (RU.6), stamped by the background after the confirm
+  // endpoint promotes this radar draft into a measured reply row. The on-page
+  // paste flow (RU.7) PATCHes it to `posted`. Survives re-sightings like `reply`.
+  draftId?: string;
   // Roster tier of the author (S0.3), stamped by the background from the cached
   // rankmap after every buffer write — always re-derived, never merged, so a
   // stage change is reflected on the next write.
@@ -88,10 +92,12 @@ export function mergeSightings(
     const reply = s.reply ?? prev.reply;
     const variants = s.variants ?? prev.variants;
     const clickedAt = s.clickedAt ?? prev.clickedAt;
+    const draftId = s.draftId ?? prev.draftId;
     const merged: RadarSighting = { ...s, firstSeenAt: prev.firstSeenAt };
     if (reply !== undefined) merged.reply = reply;
     if (variants !== undefined) merged.variants = variants;
     if (clickedAt !== undefined) merged.clickedAt = clickedAt;
+    if (draftId !== undefined) merged.draftId = draftId;
     byId.set(s.tweetId, merged);
   }
   const all = [...byId.values()];

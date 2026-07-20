@@ -102,6 +102,15 @@ describe('mergeSightings', () => {
     expect(mergeSightings([drafted], [updated], [])[0]?.variants).toHaveLength(2);
   });
 
+  test('a re-sighting keeps the draftId the background stamped after confirm (RU.6)', () => {
+    const confirmed = sighting('1', { reply: 'r', draftId: 'draft-abc' });
+    const resighted = sighting('1', { lastSeenAt: '2026-06-10T13:00:00.000Z' });
+    const merged = mergeSightings([confirmed], [resighted], []);
+    expect(merged[0]?.draftId).toBe('draft-abc');
+    expect(merged[0]?.reply).toBe('r');
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T13:00:00.000Z');
+  });
+
   test('a re-sighting keeps clickedAt the panel stamped (stays in Clicked view)', () => {
     const clicked = sighting('1', { reply: 'r', clickedAt: '2026-06-10T12:00:00.000Z' });
     const resighted = sighting('1', { lastSeenAt: '2026-06-10T13:00:00.000Z' });
