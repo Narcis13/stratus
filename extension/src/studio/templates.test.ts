@@ -213,7 +213,7 @@ describe('bannerSpec', () => {
     });
   });
 
-  test('billboard: stance replaces the milestone, keywords become a tagline, no @handle sign', () => {
+  test('billboard: stance replaces the milestone, keywords become a tagline, tiny sign not @handle', () => {
     const spec = bannerSpec(
       {
         headline: '30 YEARS OF CODE.\nSHIPPING IN PUBLIC AT 51.',
@@ -225,30 +225,43 @@ describe('bannerSpec', () => {
       },
       kit,
     );
-    // fill, accent rule, headline, anchor, divider rule, tagline, stance, crew
-    expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'text', 'rule', 'text', 'text', 'text']);
+    // fill, rule, headline, anchor, divider, tagline, stance, crew, tiny sign
+    expect(kinds(spec)).toEqual([
+      'fill',
+      'rule',
+      'text',
+      'text',
+      'rule',
+      'text',
+      'text',
+      'text',
+      'text',
+    ]);
     // The follower count never renders in billboard mode.
     expect(spec.layers.some((l) => (l as { text?: string }).text === '980')).toBe(false);
-    // No @handle watermark — the crew line owns the bottom-right.
+    // The big @handle sign the classic banner uses never appears here.
+    expect(spec.layers.some((l) => (l as { text?: string }).text === '@narcis')).toBe(false);
     expect(spec.layers.some((l) => l.kind === 'watermark')).toBe(false);
     // Keywords are a "·"-joined plain text line, not a pill badge.
     expect(spec.layers.some((l) => l.kind === 'badge')).toBe(false);
-    expect(spec.layers[5]).toMatchObject({ text: 'SaaS · AI agents · build in public' });
     expect(spec.layers[3]).toMatchObject({ text: '⚓︎', color: kit.accent });
+    expect(spec.layers[5]).toMatchObject({ text: 'SaaS · AI agents · build in public' });
     expect(spec.layers[6]).toMatchObject({
       text: 'PEOPLE FIRST — NUMBERS FOLLOW',
       align: 'right',
       color: kit.accent,
     });
     expect(spec.layers[7]).toMatchObject({ text: '1,000+ of us', align: 'right' });
+    // A tiny bottom-right brand mark (the kit's watermark text), right-aligned.
+    expect(spec.layers[8]).toMatchObject({ text: 'stratus', align: 'right' });
   });
 
-  test('billboard: anchor and crew are optional', () => {
+  test('billboard: anchor, crew and the tiny sign are optional', () => {
     const spec = bannerSpec(
       { headline: 'h', keywords: [], followers: null, stance: 'PEOPLE FIRST' },
-      kit,
+      { ...kit, watermark: false },
     );
-    // fill, rule, headline, divider, stance — no anchor, no tagline, no crew.
+    // fill, rule, headline, divider, stance — no anchor, tagline, crew or sign.
     expect(kinds(spec)).toEqual(['fill', 'rule', 'text', 'rule', 'text']);
     expect(spec.layers.some((l) => (l as { text?: string }).text === '⚓︎')).toBe(false);
   });

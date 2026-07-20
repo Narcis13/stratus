@@ -382,19 +382,19 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
       0.6,
       patternArg(data.patternKind, data.patternSeed),
     ),
-    { kind: 'rule', box: { x: 80, y: 96, w: 88, h: 10 }, color: kit.accent },
   ];
 
   if (billboard) {
-    // Two-line headline (explicit \n survives layout), a gold anchor flourish, a
-    // divider, a "·"-joined tagline, and the stance + crew on the right where the
-    // follower count used to sit. No @handle sign — a banner already IS the
-    // profile, and the crew line owns the bottom-right (eval law #4).
+    // The whole left stack (rule → two-line headline → divider → tagline) sits in
+    // the vertical MIDDLE band, above y≈300, so the profile avatar (bottom-left
+    // ~400×200 on web) never covers it. The stance + crew take the right where
+    // the follower count used to sit; a tiny watermark signs the bottom-right.
+    layers.push({ kind: 'rule', box: { x: 80, y: 50, w: 88, h: 10 }, color: kit.accent });
     layers.push({
       kind: 'text',
       text: data.headline,
-      font: font(kit, 800, 66),
-      box: { x: 80, y: 118, w: 900, h: 172 },
+      font: font(kit, 800, 64),
+      box: { x: 80, y: 66, w: 900, h: 156 },
       color: ink,
       lineHeight: 1.16,
       minSizePx: 38,
@@ -406,8 +406,8 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
       layers.push({
         kind: 'text',
         text: '⚓︎',
-        font: font(kit, 400, 62),
-        box: { x: 1010, y: 188, w: 130, h: 94 },
+        font: font(kit, 400, 60),
+        box: { x: 1010, y: 122, w: 130, h: 96 },
         color: kit.accent,
         vAlign: 'middle',
         maxLines: 1,
@@ -415,15 +415,15 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
     }
     layers.push({
       kind: 'rule',
-      box: { x: 80, y: 298, w: 470, h: 4 },
+      box: { x: 80, y: 238, w: 470, h: 4 },
       color: withAlpha(kit.accent, 0.9),
     });
     if (data.keywords.length > 0) {
       layers.push({
         kind: 'text',
         text: data.keywords.join(' · '),
-        font: font(kit, 600, 30),
-        box: { x: 80, y: 320, w: 900, h: 44 },
+        font: font(kit, 600, 28),
+        box: { x: 80, y: 258, w: 900, h: 40 },
         color: muted,
         maxLines: 1,
         minSizePx: 20,
@@ -433,7 +433,7 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
       kind: 'text',
       text: data.stance as string,
       font: font(kit, 800, 34),
-      box: { x: 760, y: 376, w: 660, h: 46 },
+      box: { x: 700, y: 360, w: 720, h: 46 },
       color: kit.accent,
       align: 'right',
       maxLines: 1,
@@ -445,16 +445,31 @@ export function bannerSpec(data: BannerData, kit: BrandKit): RenderSpec {
         kind: 'text',
         text: data.crew,
         font: font(kit, 700, 28),
-        box: { x: 760, y: 424, w: 660, h: 40 },
+        box: { x: 700, y: 408, w: 720, h: 40 },
         color: withAlpha(ink, 0.85),
         align: 'right',
         maxLines: 1,
         minSizePx: 18,
       });
     }
+    // A tiny bottom-right sign (the kit's watermark text) tucked under the crew
+    // line — a light brand mark, not the big @handle the classic banner uses.
+    if (kit.watermark && kit.watermarkText !== '') {
+      layers.push({
+        kind: 'text',
+        text: kit.watermarkText,
+        font: font(kit, 600, 18),
+        box: { x: 700, y: 456, w: 720, h: 26 },
+        color: withAlpha(ink, 0.4),
+        align: 'right',
+        maxLines: 1,
+        letterSpacingPx: 1,
+      });
+    }
     return { w: BANNER.w, h: BANNER.h, layers };
   }
 
+  layers.push({ kind: 'rule', box: { x: 80, y: 96, w: 88, h: 10 }, color: kit.accent });
   layers.push({
     kind: 'text',
     text: data.headline,
