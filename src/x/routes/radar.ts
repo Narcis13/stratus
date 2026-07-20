@@ -18,8 +18,8 @@ import { type SQL, and, desc, eq, inArray, lt, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
-import { radarDrafts } from '../db/schema.ts';
-import type { BatchTweet } from '../replies/prompt.ts';
+import { radarDrafts, replyDrafts } from '../db/schema.ts';
+import type { BatchTweet, PostContext, PostSignals } from '../replies/prompt.ts';
 import { parseChannelTags } from './channels.ts';
 
 export const RADAR_DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
@@ -130,8 +130,15 @@ export async function persistRadarDrafts(
 export const radar = new Hono();
 
 radar.get('/radar/drafts', async (c) => {
-  const statusStr = c.req.query('status') ?? 'ready';
-  if (!isStatus(statusStr)) return c.json({ error: 'invalid_status' }, 400);
+  const tweetId = c.req.query('tweetId');
+  if (tweetId !== undefined && !TWEET_ID_RE.test(tweetId)) {
+    return c.json({ error: 'invalid_tweet_id' }, 400);
+  }
+
+  const statusStr = c.req.query('status');
+  if (statusStr !== undefined && !isStatus(statusStr)) {
+    return c.json({ error: 'invalid_status' }, 400);
+  }
 
   const limitStr = c.req.query('limit');
   let limit = DEFAULT_LIST_LIMIT;
@@ -152,10 +159,21 @@ radar.get('/radar/drafts', async (c) => {
       ),
     );
 
+  // An explicit status wins. Otherwise a tweetId query (the on-page chip
+  // fallback / variants-get) wants that tweet's whole non-expired history —
+  // a row confirmed to `clicked` still carries its variants; the bare list
+  // keeps its ready-queue default.
+  const statusCond: SQL = statusStr
+    ? eq(radarDrafts.status, statusStr)
+    : tweetId
+      ? ne(radarDrafts.status, 'expired')
+      : eq(radarDrafts.status, 'ready');
+  const where = tweetId ? and(statusCond, eq(radarDrafts.tweetId, tweetId)) : statusCond;
+
   const rows = await db
     .select()
     .from(radarDrafts)
-    .where(eq(radarDrafts.status, statusStr))
+    .where(where)
     .orderBy(desc(radarDrafts.draftedAt))
     .limit(limit);
 
@@ -224,6 +242,109 @@ radar.patch('/radar/drafts/:tweetId/tags', async (c) => {
 
   if (updated.length === 0) return c.json({ error: 'not_found' }, 404);
   return c.json({ updated: updated.length, tags });
+});
+
+// Confirm (RU.5): promote the newest live radar draft for a tweet into a real,
+// measured `reply_drafts` row. Called when the user clicks a Radar row (the
+// "confirmed" moment) — status `copied`; the posted flip + `my_reply` event
+// stay on PATCH /x/replies/:id (never duplicated here). $0: pure DB. Idempotent
+// via the soft `reply_draft_id` link. The confirmed row carries the full
+// context so it flows into outcomes/angle/latency/quota like any Reply Master
+// draft — the exact (no-longer-text-matched) batch-vs-single Playbook split.
+radar.post('/radar/drafts/:tweetId/confirm', async (c) => {
+  const tweetId = c.req.param('tweetId');
+  if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
+
+  // Newest still-live row for this tweet. A `clicked` row counts (it's the
+  // idempotent hit); only `expired` is out of scope.
+  const [row] = await db
+    .select()
+    .from(radarDrafts)
+    .where(and(eq(radarDrafts.tweetId, tweetId), ne(radarDrafts.status, 'expired')))
+    .orderBy(desc(radarDrafts.draftedAt))
+    .limit(1);
+  if (!row) return c.json({ error: 'not_found' }, 404);
+
+  // Idempotent: already confirmed → return the linked reply_drafts row. A
+  // dangling link (the reply_drafts row was deleted) falls through to rebuild.
+  if (row.replyDraftId) {
+    const [existing] = await db
+      .select()
+      .from(replyDrafts)
+      .where(eq(replyDrafts.id, row.replyDraftId));
+    if (existing) return c.json(existing, 200);
+  }
+
+  // Rebuild a PostContext from what the Radar captured so buildReplyOutcomes
+  // (ctx.signals / ctx.metrics) and the Playbook latency/band readers
+  // (signals.ageMin) see the same shape a live Reply Master draft has. The
+  // band lives in its own column; the signals JSON never carried it.
+  const sig = row.signals as TweetSignals | null;
+  const signals: PostSignals | undefined = sig
+    ? {
+        band: row.band as PostSignals['band'],
+        views: sig.views,
+        replies: sig.replies,
+        ageMin: sig.ageMin,
+        vpm: sig.vpm,
+        bait: sig.bait,
+      }
+    : undefined;
+  // postedAt derived back from draft time − age. Null-signals (CLI) rows have
+  // no age → sourcePostedAt stays null and the snapshot falls back to the draft
+  // time (only ever read as a last-resort age fallback).
+  const sourcePostedAt = sig ? new Date(row.draftedAt.getTime() - sig.ageMin * 60000) : null;
+  const url = row.url ?? `https://x.com/${row.handle}/status/${row.tweetId}`;
+  const ctx: PostContext = {
+    url,
+    tweetId: row.tweetId,
+    author: row.author ?? row.handle,
+    handle: row.handle,
+    text: row.snippet,
+    postedAt: (sourcePostedAt ?? row.draftedAt).toISOString(),
+    metrics: { views: sig?.views ?? 0, replies: sig?.replies ?? 0, reposts: 0, likes: 0 },
+    topComments: [],
+    ...(signals ? { signals } : {}),
+  };
+
+  // Pre-variant / CLI rows kept only the primary — reconstruct the single-entry
+  // variants set so the confirmed row is well-formed.
+  const variants =
+    row.variants && row.variants.length > 0
+      ? row.variants
+      : [{ text: row.replyText, angle: row.angle }];
+
+  // One sync txn (§7.13 — no await inside, .all()/.run() terminals): create the
+  // reply_drafts row, then soft-link + ratchet the radar draft to `clicked`.
+  const created = db.transaction((tx) => {
+    const [draft] = tx
+      .insert(replyDrafts)
+      .values({
+        sourceTweetId: row.tweetId,
+        sourceAuthorUsername: row.handle,
+        sourceAuthorDisplayName: row.author ?? null,
+        sourceText: row.snippet,
+        sourceUrl: url,
+        sourcePostedAt,
+        contextSnapshot: ctx,
+        replyText: row.replyText,
+        variants,
+        model: row.model ?? 'radar-batch',
+        costUsd: null,
+        source: 'radar',
+        status: 'copied',
+      })
+      .returning()
+      .all();
+    if (!draft) throw new Error('reply_drafts insert returned no row');
+    tx.update(radarDrafts)
+      .set({ replyDraftId: draft.id, status: 'clicked' })
+      .where(eq(radarDrafts.id, row.id))
+      .run();
+    return draft;
+  });
+
+  return c.json(created, 201);
 });
 
 function isStatus(v: unknown): v is RadarDraftStatus {
