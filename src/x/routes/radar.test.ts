@@ -16,8 +16,9 @@ app.route('/x', radar);
 const T_WITH = '991000000000000001'; // full signals + 3 variants + model
 const T_NULL = '991000000000000002'; // CLI-shaped: null signals/variants/model
 const T_OTHER = '991000000000000003'; // filter-isolation sentinel
+const T_MANUAL = '991000000000000004'; // RU.8: band='manual' + signals
 const T_UNKNOWN = '991999999999999999'; // no row — 404
-const IDS = [T_WITH, T_NULL, T_OTHER];
+const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL];
 
 const PRIMARY_TEXT = 'v1 extends: I shipped mine in 3 days';
 const VARIANTS = [
@@ -73,6 +74,18 @@ beforeAll(async () => {
       replyText: 'r',
       angle: 'debate',
     },
+    {
+      // RU.8: a ⊕ manual add carries band='manual' with real signals.
+      tweetId: T_MANUAL,
+      url: `https://x.com/dave/status/${T_MANUAL}`,
+      handle: 'dave',
+      author: 'Dave',
+      snippet: 'a manually pinned tweet',
+      band: 'manual',
+      signals: { views: 800, replies: 3, ageMin: 10, vpm: 80, bait: false },
+      replyText: 'manual reply',
+      angle: 'extends',
+    },
   ]);
 });
 
@@ -96,7 +109,7 @@ interface ReplyRow {
   sourcePostedAt: string | null; // Date column → ISO string over JSON
   variants: { text: string; angle: string }[] | null;
   contextSnapshot: {
-    signals?: { band: string; views: number; ageMin: number };
+    signals?: { band: string | null; views: number; ageMin: number };
     metrics: { views: number; replies: number; reposts: number; likes: number };
     topComments: unknown[];
   };
@@ -192,5 +205,16 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
     expect(body.model).toBe('radar-batch'); // fallback for a null-model row
     expect(body.sourceUrl).toBe(`https://x.com/bob/status/${T_NULL}`); // constructed
     expect(body.variants).toEqual([{ text: 'a plain reply', angle: 'extends' }]);
+  });
+
+  test('a manual-band row (RU.8) confirms with signals.band coerced to null', async () => {
+    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_MANUAL}/confirm`, 'POST');
+    expect(status).toBe(201);
+    // The signals block still rides (metrics present) but band is NOT 'manual' —
+    // a manual pin is queue metadata, never a classifier verdict, so it can't
+    // enter the Playbook's hot/warm band cells (§7.19).
+    expect(body.contextSnapshot.signals).toBeDefined();
+    expect(body.contextSnapshot.signals?.band).toBeNull();
+    expect(body.contextSnapshot.metrics.views).toBe(800);
   });
 });

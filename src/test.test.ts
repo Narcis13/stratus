@@ -722,6 +722,13 @@ describe('batch replies (Radar §7.2)', () => {
     expect(ok.tweets[0]?.signals).toEqual(signals);
     expect('band' in (ok.tweets[1] ?? {})).toBe(false);
 
+    // A ⊕ manual add (RU.8) carries band: 'manual' through to radar_drafts.
+    const manual = parseBatchTweets([
+      { tweetId: '333', handle: 'carol', text: 'c', band: 'manual' },
+    ]);
+    if ('error' in manual) throw new Error(manual.error);
+    expect(manual.tweets[0]?.band).toBe('manual');
+
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
     });

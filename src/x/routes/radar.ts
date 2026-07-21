@@ -41,7 +41,9 @@ export function radarDraftExpired(draftedAt: Date, nowMs: number): boolean {
 // The batch endpoint's tweets, optionally carrying the Radar's capture-time
 // verdict (band + classifier inputs). CLI callers may omit them.
 export interface RadarBatchTweet extends BatchTweet {
-  band?: 'hot' | 'warm';
+  // 'manual' = a ⊕ pinned tweet (RU.8) — queue metadata, never a classifier
+  // verdict; stored on radar_drafts.band, coerced away from the reply snapshot.
+  band?: 'hot' | 'warm' | 'manual';
   signals?: TweetSignals;
 }
 
@@ -51,7 +53,7 @@ export interface RadarDraftInsert {
   handle: string;
   author: string | null;
   snippet: string;
-  band: 'hot' | 'warm' | null;
+  band: 'hot' | 'warm' | 'manual' | null;
   signals: TweetSignals | null;
   replyText: string;
   angle: string;
@@ -278,11 +280,13 @@ radar.post('/radar/drafts/:tweetId/confirm', async (c) => {
   // Rebuild a PostContext from what the Radar captured so buildReplyOutcomes
   // (ctx.signals / ctx.metrics) and the Playbook latency/band readers
   // (signals.ageMin) see the same shape a live Reply Master draft has. The
-  // band lives in its own column; the signals JSON never carried it.
+  // band lives in its own column; the signals JSON never carried it. A 'manual'
+  // add (RU.8) is queue metadata, not a classifier verdict — it becomes null in
+  // the snapshot so it never lands in the Playbook's hot/warm band cells (§7.19).
   const sig = row.signals as TweetSignals | null;
   const signals: PostSignals | undefined = sig
     ? {
-        band: row.band as PostSignals['band'],
+        band: row.band === 'manual' ? null : (row.band as PostSignals['band']),
         views: sig.views,
         replies: sig.replies,
         ageMin: sig.ageMin,

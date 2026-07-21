@@ -77,6 +77,7 @@ const VARIANT_CHIP_CLASS = 'stratus-variant-chip';
 const VARIANT_ANGLE_CLASS = 'stratus-variant-angle';
 const VARIANT_PREVIEW_CLASS = 'stratus-variant-preview';
 const VARIANT_HINT_CLASS = 'stratus-variant-hint';
+const RADAR_ADD_CLASS = 'stratus-radar-add-btn';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -167,6 +168,33 @@ function injectStyles(): void {
       color: rgb(244, 33, 46);
       border-color: rgb(244, 33, 46);
       background: rgba(244, 33, 46, 0.12);
+    }
+    .${RADAR_ADD_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      width: 22px;
+      height: 22px;
+      font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      border-radius: 9999px;
+      color: rgb(113, 118, 123);
+      border: 1px solid rgba(113, 118, 123, 0.4);
+      background: transparent;
+      margin-left: 6px;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${RADAR_ADD_CLASS}:hover {
+      color: rgb(29, 155, 240);
+      border-color: rgb(29, 155, 240);
+      background: rgba(29, 155, 240, 0.1);
+    }
+    .${RADAR_ADD_CLASS}[data-state="added"] {
+      color: rgb(0, 186, 124);
+      border-color: rgb(0, 186, 124);
+      background: rgba(0, 186, 124, 0.12);
     }
     .${REPLY_BTN_CLASS} {
       all: unset;
@@ -1806,6 +1834,89 @@ function flushRadar(): void {
   })();
 }
 
+// ------------------------------------------------- manual add to Radar (RU.8)
+//
+// A round ⊕ on every tweet's action row pushes it into the Radar queue
+// regardless of band — "I want to reply to this one, period." The sighting
+// carries band: 'manual' (queue metadata, ranked first; never a classifier
+// verdict — the confirm endpoint coerces it away from the reply snapshot), real
+// signals when the metrics label is present, synthesized zeros otherwise. Sent
+// through the same radar-report path the background (single writer, §7.24) owns,
+// flushed immediately — it's one deliberate click, not a scroll-time capture.
+
+const radarAddHandled = new WeakSet<Element>();
+
+function synthManualSignals(article: Element): TweetSignals {
+  const dt = article.querySelector('time')?.getAttribute('datetime');
+  const posted = dt ? Date.parse(dt) : Number.NaN;
+  const ageMin = Number.isNaN(posted) ? 0 : Math.max(0, (Date.now() - posted) / 60000);
+  return { views: 0, replies: 0, ageMin, vpm: 0, bait: false };
+}
+
+function attachRadarAddButton(article: Element): void {
+  const reply = article.querySelector('[data-testid="reply"]');
+  if (!reply) return;
+  const actionRow = reply.closest('div[role="group"]');
+  if (!actionRow || radarAddHandled.has(actionRow)) return;
+  if (!findPermalink(article)) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = RADAR_ADD_CLASS;
+  btn.title = 'Add this tweet to the stratus Radar queue';
+  btn.textContent = '⊕';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    onRadarAddClick(btn);
+  });
+
+  actionRow.appendChild(btn);
+  radarAddHandled.add(actionRow);
+}
+
+function onRadarAddClick(btn: HTMLButtonElement): void {
+  const article = btn.closest<HTMLElement>('article[data-testid="tweet"]');
+  if (!article) return;
+  const permalink = findPermalink(article);
+  if (!permalink) return;
+
+  const sig = readTweetSignals(article) ?? synthManualSignals(article);
+  const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  const userNameEl = article.querySelector('[data-testid="User-Name"]');
+  const author = userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  const now = new Date().toISOString();
+
+  const sighting: RadarSighting = {
+    tweetId: permalink.tweetId,
+    url: permalink.url,
+    handle: permalink.username,
+    author,
+    text: text.slice(0, 500),
+    band: 'manual',
+    signals: { ...sig, ageMin: Math.round(sig.ageMin), vpm: Math.round(sig.vpm * 10) / 10 },
+    firstSeenAt: now,
+    lastSeenAt: now,
+  };
+
+  // Flip to ✓ optimistically; the background is the single buffer writer (§7.24).
+  btn.textContent = '✓';
+  btn.dataset.state = 'added';
+  window.setTimeout(() => {
+    btn.textContent = '⊕';
+    delete btn.dataset.state;
+  }, 1500);
+
+  const msg: RadarReport = { type: 'stratus/radar-report', sightings: [sighting] };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar add failed', err);
+    }
+  })();
+}
+
 // ------------------------------------------------- passive hover capture (C6)
 //
 // When X renders a hover card because the user hovered a handle naturally, we
@@ -2010,6 +2121,7 @@ function scan(root: ParentNode): void {
   const glance = getGlanceMap();
   for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
+    attachRadarAddButton(article);
     applyBand(article);
     applyPersonChips(article, glance);
     if (focusedId) attachReplyMasterButton(article, focusedId);

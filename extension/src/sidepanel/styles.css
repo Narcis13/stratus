@@ -1068,6 +1068,12 @@ button.danger:hover:not(:disabled) {
   border: 1px solid color-mix(in srgb, var(--strat-band-warm) 55%, transparent);
   background: color-mix(in srgb, var(--strat-band-warm) 12%, transparent);
 }
+/* RU.8: a ⊕ manual add — distinct from the hot/warm classifier verdicts. */
+.radar-band-manual {
+  color: var(--strat-accent);
+  border: 1px solid color-mix(in srgb, var(--strat-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--strat-accent) 12%, transparent);
+}
 .radar-author {
   flex: 1;
   font-size: 11px;

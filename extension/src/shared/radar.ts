@@ -11,7 +11,11 @@
 import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyVariant } from './types.ts';
 
-export type RadarBand = 'hot' | 'warm';
+// 'manual' = the user pinned this tweet into the queue via the ⊕ button (RU.8).
+// It's queue/UX metadata, not a classifier verdict — a manual row never enters
+// the Playbook's hot/warm band cells (its reply_drafts signals keep the real
+// computed band, null when uncomputed).
+export type RadarBand = 'hot' | 'warm' | 'manual';
 
 // Who the author is, as far as the people layer knows (S0.3). A warm post from
 // an ally/mutual compounds a real relationship; a hot post from a rando is a
@@ -93,7 +97,10 @@ export function mergeSightings(
     const variants = s.variants ?? prev.variants;
     const clickedAt = s.clickedAt ?? prev.clickedAt;
     const draftId = s.draftId ?? prev.draftId;
-    const merged: RadarSighting = { ...s, firstSeenAt: prev.firstSeenAt };
+    // A manual add is a human pin (RU.8): a hot/warm re-sight from the content
+    // script never downgrades it. Otherwise the fresher incoming band wins.
+    const band = prev.band === 'manual' ? 'manual' : s.band;
+    const merged: RadarSighting = { ...s, band, firstSeenAt: prev.firstSeenAt };
     if (reply !== undefined) merged.reply = reply;
     if (variants !== undefined) merged.variants = variants;
     if (clickedAt !== undefined) merged.clickedAt = clickedAt;
@@ -102,7 +109,15 @@ export function mergeSightings(
   }
   const all = [...byId.values()];
   if (all.length <= RADAR_CAP) return all;
-  all.sort((a, b) => a.lastSeenAt.localeCompare(b.lastSeenAt));
+  // Evict least-recently-seen — but a manual add (a human pin) outlives any
+  // auto-captured row (RU.8): non-manual rows sort to the front (dropped first),
+  // manual rows to the back (kept). slice() keeps the tail.
+  all.sort((a, b) => {
+    const am = a.band === 'manual' ? 1 : 0;
+    const bm = b.band === 'manual' ? 1 : 0;
+    if (am !== bm) return am - bm;
+    return a.lastSeenAt.localeCompare(b.lastSeenAt);
+  });
   return all.slice(all.length - RADAR_CAP);
 }
 
@@ -151,11 +166,14 @@ function tierWeight(t: PersonTier | undefined): number {
   return 0;
 }
 
-// Queue order (S0.3): who the author is first (roster tier), THEN band (hot over
-// warm), then views-per-minute, then recency — the original order preserved
-// within a tier.
+// Queue order: a manual add (the human pinned it, RU.8) tops everything; then
+// (S0.3) who the author is (roster tier), THEN band (hot over warm), then
+// views-per-minute, then recency — the original order preserved within a rung.
 export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
   return [...sightings].sort((a, b) => {
+    const am = a.band === 'manual' ? 1 : 0;
+    const bm = b.band === 'manual' ? 1 : 0;
+    if (am !== bm) return bm - am;
     const tw = tierWeight(b.personTier) - tierWeight(a.personTier);
     if (tw !== 0) return tw;
     if (a.band !== b.band) return a.band === 'hot' ? -1 : 1;
@@ -243,7 +261,7 @@ export function isRadarSightings(v: unknown): v is RadarSighting[] {
     return (
       typeof r.tweetId === 'string' &&
       typeof r.url === 'string' &&
-      (r.band === 'hot' || r.band === 'warm') &&
+      (r.band === 'hot' || r.band === 'warm' || r.band === 'manual') &&
       typeof r.signals === 'object' &&
       r.signals !== null
     );

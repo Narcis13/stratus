@@ -554,9 +554,14 @@ export function parseBatchTweets(
       return { error: `invalid_tweet_text_${i}` };
     }
 
-    let band: 'hot' | 'warm' | undefined;
+    let band: 'hot' | 'warm' | 'manual' | undefined;
     if (r.band !== undefined && r.band !== null) {
-      if (r.band !== 'hot' && r.band !== 'warm') return { error: `invalid_tweet_band_${i}` };
+      // 'manual' = a ⊕ add (RU.8); stored on radar_drafts.band as queue metadata,
+      // never a classifier verdict — the confirm endpoint coerces it away from
+      // the reply_drafts contextSnapshot signals.
+      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual') {
+        return { error: `invalid_tweet_band_${i}` };
+      }
       band = r.band;
     }
 

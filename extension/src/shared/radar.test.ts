@@ -136,6 +136,30 @@ describe('mergeSightings', () => {
     expect(ids.has('fresh-1')).toBe(true);
     expect(ids.has('fresh-2')).toBe(true);
   });
+
+  test('a manual add (RU.8) is never downgraded by a hot re-sight', () => {
+    const pinned = sighting('1', { band: 'manual' });
+    const resighted = sighting('1', { band: 'hot' });
+    const merged = mergeSightings([pinned], [resighted], []);
+    expect(merged[0]?.band).toBe('manual');
+  });
+
+  test('eviction keeps a manual add over fresher auto-captured rows (RU.8)', () => {
+    // The pinned row is the oldest by lastSeenAt, yet RADAR_CAP fresher rows
+    // must not evict it — a human pin outlives auto-captures.
+    const pinned = sighting('pinned', {
+      band: 'manual',
+      lastSeenAt: '2026-06-10T00:00:00.000Z',
+    });
+    const fresh = Array.from({ length: RADAR_CAP }, (_, i) =>
+      sighting(`fresh-${i}`, {
+        lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z`,
+      }),
+    );
+    const merged = mergeSightings([pinned], fresh, []);
+    expect(merged).toHaveLength(RADAR_CAP);
+    expect(merged.some((s) => s.tweetId === 'pinned')).toBe(true);
+  });
 });
 
 describe('appendDismissed', () => {
@@ -179,6 +203,21 @@ describe('rankSightings', () => {
       'hot-slow',
       'warm-fast',
     ]);
+  });
+
+  test('a manual add (RU.8) ranks first, above roster tier and band', () => {
+    const rows = [
+      sighting('hot-ally', {
+        band: 'hot',
+        personTier: 'ally',
+        signals: { views: 5000, replies: 40, ageMin: 5, vpm: 1000, bait: false },
+      }),
+      sighting('manual-cold', {
+        band: 'manual',
+        signals: { views: 0, replies: 0, ageMin: 3, vpm: 0, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['manual-cold', 'hot-ally']);
   });
 
   test('does not mutate its input', () => {

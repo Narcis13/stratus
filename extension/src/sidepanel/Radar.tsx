@@ -383,6 +383,11 @@ function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
 // "1.5k views · 8 replies · 22m · 70/min · bait"
 function whyLine(s: RadarSighting): string {
   const { views, replies, vpm, bait } = s.signals;
+  // A ⊕ manual add (RU.8) with no captured metrics — don't render a line of
+  // zeros; a cold tweet the human pinned has nothing to quantify yet.
+  if (s.band === 'manual' && views === 0 && replies === 0) {
+    return `manually added · ${fmtAge(displayAgeMin(s))}`;
+  }
   const parts = [`${formatCount(views)} views`, `${replies} replies`, fmtAge(displayAgeMin(s))];
   if (vpm >= 1) parts.push(`${formatCount(Math.round(vpm))}/min`);
   if (bait) parts.push('bait');
