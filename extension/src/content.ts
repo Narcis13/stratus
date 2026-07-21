@@ -35,6 +35,8 @@ import type {
   LaunchReport,
   OpenPerson,
   RadarReport,
+  RadarVariantPasted,
+  RadarVariantsGet,
 } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 import type { RadarBand, RadarSighting } from './shared/radar.ts';
@@ -53,11 +55,13 @@ import type {
   AuthorProfile,
   PostContext,
   ReplyDraft,
+  ReplyVariant,
   ScrapeBody,
   ScrapedAuthor,
   ScrapedTweet,
   TopComment,
 } from './shared/types.ts';
+import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
 
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
@@ -67,6 +71,12 @@ const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const PERSON_CHIPS_CLASS = 'stratus-person-chips';
 const PERSON_CHIP_CLASS = 'stratus-person-chip';
 const CONTEXT_PANEL_CLASS = 'stratus-context-panel';
+// On-page radar variant chips (RU.7).
+const VARIANT_CHIPS_CLASS = 'stratus-variant-chips';
+const VARIANT_CHIP_CLASS = 'stratus-variant-chip';
+const VARIANT_ANGLE_CLASS = 'stratus-variant-angle';
+const VARIANT_PREVIEW_CLASS = 'stratus-variant-preview';
+const VARIANT_HINT_CLASS = 'stratus-variant-hint';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -330,6 +340,54 @@ function injectStyles(): void {
       padding-left: 8px;
     }
     .stratus-ctx-empty { font-size: 12px; color: rgb(113, 118, 123); }
+    .${VARIANT_CHIPS_CLASS} {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+      margin-left: 8px;
+      max-width: 260px;
+      vertical-align: middle;
+    }
+    .${VARIANT_CHIP_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+      box-sizing: border-box;
+      cursor: pointer;
+      max-width: 100%;
+      font: 400 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      padding: 3px 9px;
+      border-radius: 9999px;
+      color: rgb(170, 100, 220);
+      border: 1px solid rgba(170, 100, 220, 0.5);
+      background: transparent;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${VARIANT_CHIP_CLASS}:hover { background: rgba(170, 100, 220, 0.12); }
+    .${VARIANT_CHIP_CLASS}[data-active="1"] {
+      color: rgb(0, 186, 124);
+      border-color: rgb(0, 186, 124);
+      background: rgba(0, 186, 124, 0.12);
+    }
+    .${VARIANT_ANGLE_CLASS} {
+      flex: 0 0 auto;
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .${VARIANT_PREVIEW_CLASS} {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: rgb(113, 118, 123);
+    }
+    .${VARIANT_HINT_CLASS} { font-size: 11px; color: rgb(113, 118, 123); }
+    .${VARIANT_HINT_CLASS}:empty { display: none; }
   `;
   document.head.appendChild(style);
 }
@@ -1092,6 +1150,137 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
   replyMasterHandled.add(actionRow);
 }
 
+// -------------------------------------------------- on-page variant chips (RU.7)
+//
+// When a radar-drafted tweet's status page is open, inject a strip of angle
+// chips (extends / contrarian / debate) next to its action row. Clicking a chip
+// types that variant into the reply box (clipboard fallback) and marks the
+// draft posted — the radar reply becomes a measured reply_drafts row. Posting
+// stays manual (§7.28): the chip only fills the composer; the human hits Reply.
+
+// tweetId → variants (null = fetched, none). Fetched once per tweetId (a drafted
+// tweet's variants don't change within a session; a page reload clears this).
+const variantCache = new Map<string, ReplyVariant[] | null>();
+const variantFetchInFlight = new Set<string>();
+const variantChipsHandled = new WeakSet<Element>();
+
+function syncVariantChips(focusedId: string | null): void {
+  if (!focusedId) return;
+  for (const article of document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+    const permalink = findPermalink(article);
+    if (!permalink || permalink.tweetId !== focusedId) continue;
+    const reply = article.querySelector('[data-testid="reply"]');
+    if (!reply) return;
+    const actionRow = reply.closest('div[role="group"]');
+    if (!actionRow || variantChipsHandled.has(actionRow)) return;
+
+    if (!variantCache.has(focusedId)) {
+      requestVariants(focusedId); // chips inject on the re-scan after it resolves
+      return;
+    }
+    const variants = variantCache.get(focusedId);
+    if (!variants || variants.length === 0) return; // fetched, no radar variants
+    injectVariantChips(actionRow, focusedId, variants);
+    variantChipsHandled.add(actionRow);
+    return;
+  }
+}
+
+function requestVariants(tweetId: string): void {
+  if (variantFetchInFlight.has(tweetId)) return;
+  variantFetchInFlight.add(tweetId);
+  const msg: RadarVariantsGet = { type: 'stratus/radar-variants-get', tweetId };
+  void chrome.runtime
+    .sendMessage(msg)
+    .then((res: { ok?: boolean; variants?: unknown } | undefined) => {
+      variantCache.set(tweetId, res?.ok && isReplyVariants(res.variants) ? res.variants : null);
+    })
+    .catch((err) => {
+      console.warn('[stratus] radar variants-get failed', err);
+      variantCache.set(tweetId, null);
+    })
+    .finally(() => {
+      variantFetchInFlight.delete(tweetId);
+      scheduleScan();
+    });
+}
+
+function injectVariantChips(actionRow: Element, tweetId: string, variants: ReplyVariant[]): void {
+  const strip = document.createElement('div');
+  strip.className = VARIANT_CHIPS_CLASS;
+  strip.dataset.tweetId = tweetId;
+  for (const v of variants) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = VARIANT_CHIP_CLASS;
+    btn.title = v.text;
+    const angleEl = document.createElement('span');
+    angleEl.className = VARIANT_ANGLE_CLASS;
+    angleEl.textContent = v.angle;
+    const previewEl = document.createElement('span');
+    previewEl.className = VARIANT_PREVIEW_CLASS;
+    previewEl.textContent = variantChipPreview(v.text);
+    btn.append(angleEl, previewEl);
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      void onVariantChipClick(btn, strip, tweetId, v.text);
+    });
+    strip.appendChild(btn);
+  }
+  const hint = document.createElement('span');
+  hint.className = VARIANT_HINT_CLASS;
+  strip.appendChild(hint);
+  actionRow.appendChild(strip);
+}
+
+// Clear X's Draft.js reply composer before typing a variant in — selectAll +
+// delete only when it's non-empty (don't fight an empty editor's selection).
+function clearReplyEditor(editor: HTMLElement): void {
+  editor.focus();
+  if ((editor.textContent ?? '').trim() === '') return;
+  document.execCommand('selectAll');
+  document.execCommand('delete');
+}
+
+async function onVariantChipClick(
+  btn: HTMLButtonElement,
+  strip: HTMLElement,
+  tweetId: string,
+  text: string,
+): Promise<void> {
+  for (const el of strip.querySelectorAll<HTMLElement>(`.${VARIANT_CHIP_CLASS}`)) {
+    el.removeAttribute('data-active');
+  }
+  btn.dataset.active = '1';
+  const hint = strip.querySelector<HTMLElement>(`.${VARIANT_HINT_CLASS}`);
+
+  const editor = findReplyEditor();
+  if (editor) {
+    clearReplyEditor(editor);
+    await typeTextInto(editor, text);
+    if (hint) hint.textContent = '';
+  } else {
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      copied = false;
+    }
+    if (hint)
+      hint.textContent = copied ? 'Copied — open the reply box' : 'Open the reply box first';
+  }
+
+  // Confirm-if-needed + flip to posted happens in the background (single
+  // Authorization owner). Best-effort — the text is already in the composer.
+  const msg: RadarVariantPasted = { type: 'stratus/radar-variant-pasted', tweetId, text };
+  try {
+    await chrome.runtime.sendMessage(msg);
+  } catch (err) {
+    console.warn('[stratus] variant paste report failed', err);
+  }
+}
+
 // --------------------------------------------------------- reply-target band
 
 // Highlight timeline tweets that sit in the 1k–8k-view sweet spot worth
@@ -1826,6 +2015,7 @@ function scan(root: ParentNode): void {
     if (focusedId) attachReplyMasterButton(article, focusedId);
   }
   syncContextPanel(focusedId);
+  syncVariantChips(focusedId);
   syncAuthorButton();
   capturePassiveHoverCards();
   captureLaunchReplies();

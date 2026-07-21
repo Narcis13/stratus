@@ -126,6 +126,42 @@ export function isRadarConfirm(msg: unknown): msg is RadarConfirm {
   return m.type === 'stratus/radar-confirm' && typeof m.tweetId === 'string';
 }
 
+// Content script → background (RU.7): fetch a tweet's radar variants to render
+// the on-page chip strip. The background reads the session buffer first, then
+// falls back to GET /x/radar/drafts?tweetId= (covers a deep link that skipped
+// the panel). Response: `{ ok, variants: ReplyVariant[] | null, draftId }`.
+export interface RadarVariantsGet {
+  type: 'stratus/radar-variants-get';
+  tweetId: string;
+}
+
+// Content script → background (RU.7): the user clicked a variant chip (its text
+// was typed into the reply box). The background confirms the radar draft into a
+// reply_drafts row if needed (idempotent — covers deep links), then PATCHes it
+// to `posted` (paste-time semantics, §7.28 — the human still hits Reply). If the
+// chosen text differs from the primary it rides as replyTextEdited.
+export interface RadarVariantPasted {
+  type: 'stratus/radar-variant-pasted';
+  tweetId: string;
+  text: string;
+}
+
+export function isRadarVariantsGet(msg: unknown): msg is RadarVariantsGet {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/radar-variants-get' && typeof m.tweetId === 'string';
+}
+
+export function isRadarVariantPasted(msg: unknown): msg is RadarVariantPasted {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return (
+    m.type === 'stratus/radar-variant-pasted' &&
+    typeof m.tweetId === 'string' &&
+    typeof m.text === 'string'
+  );
+}
+
 // --- People dossier click-through (AX.6). A timeline chip or the tweet-page
 // context-panel header sends OpenPerson on click; the background opens the side
 // panel (best-effort — the click is a user gesture that may survive one hop) and

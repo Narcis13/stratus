@@ -41,6 +41,8 @@ import {
   isRadarRehydrate,
   isRadarReplies,
   isRadarReport,
+  isRadarVariantPasted,
+  isRadarVariantsGet,
 } from './shared/messages.ts';
 import {
   RADAR_DISMISSED_KEY,
@@ -55,6 +57,7 @@ import {
   stampTiers,
 } from './shared/radar.ts';
 import type { ReplyVariant, ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
+import { isReplyVariants } from './shared/variantChips.ts';
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
@@ -323,6 +326,74 @@ async function stampDraftId(tweetId: string, draftId: string): Promise<void> {
   await chrome.storage.session.set({
     [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, draftId } : s)),
   });
+}
+
+// The on-page variant chips (RU.7) ask for a tweet's radar variants. Serve the
+// session buffer first — a live sighting is the freshest copy — then fall back
+// to GET /x/radar/drafts?tweetId= (RU.5) so a deep link that never touched the
+// panel still gets chips. A row with no stored variants (pre-feature / CLI
+// primary) degrades to the single primary as one variant.
+async function getVariants(
+  tweetId: string,
+): Promise<{ variants: ReplyVariant[]; draftId: string | null } | null> {
+  const { sightings } = await readRadar();
+  const hit = sightings.find((s) => s.tweetId === tweetId);
+  if (isReplyVariants(hit?.variants)) {
+    return { variants: hit.variants, draftId: hit.draftId ?? null };
+  }
+
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/radar/drafts',
+    query: { tweetId },
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] variants-get fetch failed', res.code);
+    return null;
+  }
+  const rows = (res.data as { drafts?: RadarDraftRow[] } | undefined)?.drafts;
+  const row = Array.isArray(rows) ? rows[0] : undefined; // newest-first
+  if (!row) return null;
+  const variants: ReplyVariant[] = isReplyVariants(row.variants)
+    ? row.variants
+    : [{ text: row.replyText, angle: row.angle as ReplyVariant['angle'] }];
+  return { variants, draftId: null };
+}
+
+// A variant chip was pasted (RU.7). Confirm the radar draft into a reply_drafts
+// row — idempotent (RU.5), so a deep link that skipped the panel-click confirm
+// still lands one — then PATCH it to `posted` (paste-time semantics). The
+// confirm response IS the full reply_drafts row, so its `replyText` is the
+// primary: a chosen text that differs rides as replyTextEdited. Best-effort
+// (§7.8): a failure warns; the reply text is already in the composer.
+async function pasteVariant(tweetId: string, text: string): Promise<void> {
+  const confirm = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: `/x/radar/drafts/${tweetId}/confirm`,
+  });
+  if (!confirm.ok) {
+    if (confirm.code !== 'unconfigured') {
+      console.warn('[stratus] variant paste confirm failed', confirm.code);
+    }
+    return;
+  }
+  const row = confirm.data as { id?: string; replyText?: string } | undefined;
+  const id = row?.id;
+  if (typeof id !== 'string') return;
+
+  const body: { status: 'posted'; replyTextEdited?: string } = { status: 'posted' };
+  if (text !== row?.replyText) body.replyTextEdited = text;
+  const patch = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'PATCH',
+    path: `/x/replies/${id}`,
+    body,
+  });
+  if (!patch.ok && patch.code !== 'unconfigured') {
+    console.warn('[stratus] variant paste patch failed', patch.code);
+  }
 }
 
 // --- server copy (C0): radar_drafts is the restart-surviving mirror of the
@@ -617,6 +688,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (isRadarConfirm(msg)) {
     void confirmDraft(msg.tweetId).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarVariantsGet(msg)) {
+    void getVariants(msg.tweetId).then(
+      (data) =>
+        sendResponse({
+          ok: true,
+          variants: data?.variants ?? null,
+          draftId: data?.draftId ?? null,
+        }),
+      (err) => {
+        console.warn('[stratus] variants-get failed', err);
+        sendResponse({ ok: false });
+      },
+    );
+    return true;
+  }
+  if (isRadarVariantPasted(msg)) {
+    void pasteVariant(msg.tweetId, msg.text).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );
