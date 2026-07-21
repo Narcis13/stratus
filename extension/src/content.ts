@@ -46,6 +46,8 @@ import {
   mergePendingSighting,
   shouldReportSighting,
 } from './shared/sightings.ts';
+import { buildTweetContextModel } from './shared/tweetContext.ts';
+import type { Dossier, TweetContextModel } from './shared/tweetContext.ts';
 import type {
   AuthorProfile,
   PostContext,
@@ -63,6 +65,7 @@ const CHAN_CHIP_CLASS = 'stratus-chan-chip';
 const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const PERSON_CHIPS_CLASS = 'stratus-person-chips';
 const PERSON_CHIP_CLASS = 'stratus-person-chip';
+const CONTEXT_PANEL_CLASS = 'stratus-context-panel';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -245,6 +248,87 @@ function injectStyles(): void {
       border: 1px solid rgb(0, 186, 124);
       cursor: default;
     }
+    /* The purple sparkle circle is injected by the retired standalone "Reply
+       Master" extension (~/newme/clipx/reply-master), NOT by stratus — the real
+       fix is uninstalling it in chrome://extensions. This defensive rule only
+       guarantees it stays hidden if that extension is ever re-enabled. */
+    #reply-master-btn { display: none !important; }
+    .${CONTEXT_PANEL_CLASS} {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px 16px;
+      border-top: 1px solid rgba(113, 118, 123, 0.25);
+      font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: inherit;
+    }
+    .stratus-ctx-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stratus-ctx-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 auto;
+      min-width: 0;
+      cursor: pointer;
+    }
+    .stratus-ctx-since { color: rgb(113, 118, 123); font-size: 12px; }
+    .stratus-ctx-toggle {
+      all: unset;
+      cursor: pointer;
+      color: rgb(113, 118, 123);
+      font-size: 13px;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .stratus-ctx-toggle:hover { background: rgba(113, 118, 123, 0.12); }
+    .${CONTEXT_PANEL_CLASS}[data-collapsed="true"] .stratus-ctx-body { display: none; }
+    .stratus-ctx-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .stratus-ctx-meta { color: rgb(113, 118, 123); font-size: 12px; }
+    .stratus-ctx-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .stratus-ctx-tag {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      color: rgb(113, 118, 123);
+      border: 1px solid rgba(113, 118, 123, 0.35);
+    }
+    .stratus-ctx-banner {
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      color: rgb(0, 186, 124);
+      background: rgba(0, 186, 124, 0.1);
+    }
+    .stratus-ctx-row { display: flex; flex-direction: column; gap: 3px; }
+    .stratus-ctx-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: rgb(113, 118, 123);
+    }
+    .stratus-ctx-val { font-size: 13px; }
+    .stratus-ctx-list { display: flex; flex-direction: column; gap: 4px; }
+    .stratus-ctx-loop { font-size: 12px; }
+    .stratus-ctx-outcome { display: flex; flex-direction: column; gap: 1px; }
+    .stratus-ctx-outcome-text { font-size: 12px; }
+    .stratus-ctx-outcome-meta { font-size: 11px; color: rgb(113, 118, 123); }
+    .stratus-ctx-notes {
+      font-size: 12px;
+      color: rgb(113, 118, 123);
+      white-space: pre-wrap;
+      border-left: 2px solid rgba(113, 118, 123, 0.35);
+      padding-left: 8px;
+    }
+    .stratus-ctx-empty { font-size: 12px; color: rgb(113, 118, 123); }
   `;
   document.head.appendChild(style);
 }
@@ -1141,6 +1225,314 @@ function applyPersonChips(article: Element, glance: GlanceMap): void {
   }
 }
 
+// -------------------------------------------- tweet-page context panel (AX.5, $0)
+//
+// On a /status/ page, below the focused tweet's action row, a collapsible panel
+// shows who this person is to me: stage, exchanges, followers + momentum, tags,
+// whether I already replied to THIS tweet, open loops I owe them, my last
+// measured replies with outcomes, the angle that works, and my notes. All from
+// the C1 dossier (GET /x/people/:handle, pure SQL, $0), cached per handle for 5
+// min. The pure view-model is shared/tweetContext.ts; this is DOM plumbing only.
+
+const CONTEXT_COLLAPSED_KEY = 'augment:contextCollapsed';
+const DOSSIER_TTL_MS = 5 * 60_000;
+const CONTEXT_OUTCOME_MAX = 3;
+
+// engaged+ stages have their own tone class; below that (stranger/noticed) fall
+// back to the neutral gray `engaged` tone so a stage chip always renders.
+const TONED_STAGES = new Set(['engaged', 'responded', 'mutual', 'ally']);
+
+type DossierState = 'ready' | 'missing' | 'unavailable';
+interface DossierCacheEntry {
+  state: DossierState;
+  dossier: Dossier | null;
+  at: number;
+}
+
+let contextCollapsed = false;
+const dossierCache = new Map<string, DossierCacheEntry>();
+const dossierInFlight = new Set<string>();
+
+function initContextCollapsed(): void {
+  chrome.storage.local
+    .get(CONTEXT_COLLAPSED_KEY)
+    .then((out) => {
+      contextCollapsed = out[CONTEXT_COLLAPSED_KEY] === true;
+    })
+    .catch(() => {
+      /* keep default (expanded) */
+    });
+}
+
+async function refreshDossier(handle: string): Promise<void> {
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'GET',
+    path: `/x/people/${encodeURIComponent(handle)}`,
+  };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as ApiResponse<Dossier> | undefined;
+    if (res?.ok && res.data) {
+      dossierCache.set(handle, { state: 'ready', dossier: res.data, at: Date.now() });
+    } else if (res && !res.ok && res.status === 404) {
+      dossierCache.set(handle, { state: 'missing', dossier: null, at: Date.now() });
+    } else {
+      // unconfigured (no bearer) / network / other — cache so we don't refetch
+      // every scan, but render nothing (not a "no file" line).
+      dossierCache.set(handle, { state: 'unavailable', dossier: null, at: Date.now() });
+    }
+  } catch (err) {
+    console.warn('[stratus] dossier fetch failed', err);
+    dossierCache.set(handle, { state: 'unavailable', dossier: null, at: Date.now() });
+  }
+}
+
+// Returns the last cached entry (possibly stale, shown while refreshing) and
+// kicks a background fetch when expired. Unlike the timeline glance cache this
+// re-triggers a scan on fetch completion — a status page can be mutation-quiet,
+// so nothing else would re-render the panel once the dossier lands.
+function getDossier(handle: string): DossierCacheEntry | null {
+  const key = handle.toLowerCase();
+  const cached = dossierCache.get(key) ?? null;
+  const fresh = cached && Date.now() - cached.at < DOSSIER_TTL_MS;
+  if (!fresh && !dossierInFlight.has(key)) {
+    dossierInFlight.add(key);
+    void refreshDossier(key).finally(() => {
+      dossierInFlight.delete(key);
+      scheduleScan();
+    });
+  }
+  return cached;
+}
+
+function stageTone(stage: string): string {
+  return TONED_STAGES.has(stage) ? stage : 'engaged';
+}
+
+function ctxEl(tag: string, className: string, text?: string): HTMLElement {
+  const e = document.createElement(tag);
+  e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function compactNum(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`.replace('.0K', 'K');
+  return `${(n / 1_000_000).toFixed(1)}M`.replace('.0M', 'M');
+}
+
+function humanizeMinutes(min: number): string {
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function agoLabel(iso: string | null, nowMs: number): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return humanizeMinutes(Math.max(0, Math.floor((nowMs - t) / 60_000)));
+}
+
+function renderMissingPanel(handle: string, tweetId: string): HTMLElement {
+  const panel = ctxEl('div', CONTEXT_PANEL_CLASS);
+  panel.dataset.tweetId = tweetId;
+  panel.dataset.handle = handle;
+  panel.appendChild(ctxEl('div', 'stratus-ctx-empty', `No stratus file on @${handle}`));
+  return panel;
+}
+
+function renderContextPanel(
+  model: TweetContextModel,
+  handle: string,
+  tweetId: string,
+): HTMLElement {
+  const now = Date.now();
+  const h = model.header;
+  const panel = ctxEl('div', CONTEXT_PANEL_CLASS);
+  panel.dataset.tweetId = tweetId;
+  panel.dataset.handle = handle;
+  panel.dataset.collapsed = contextCollapsed ? 'true' : 'false';
+
+  const header = ctxEl('div', 'stratus-ctx-header');
+  const title = ctxEl('div', 'stratus-ctx-title');
+  title.dataset.handle = handle; // AX.6 wires the dossier click-through here.
+
+  const stageChip = ctxEl('span', PERSON_CHIP_CLASS, h.stage);
+  stageChip.dataset.tone = stageTone(h.stage);
+  title.appendChild(stageChip);
+  title.appendChild(
+    ctxEl(
+      'span',
+      'stratus-ctx-since',
+      h.sinceDays !== null ? `in your circles · ${h.sinceDays}d` : 'in your circles',
+    ),
+  );
+  header.appendChild(title);
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'stratus-ctx-toggle';
+  toggle.title = 'Collapse / expand stratus context';
+  toggle.textContent = contextCollapsed ? '▸' : '▾';
+  toggle.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    contextCollapsed = !contextCollapsed;
+    panel.dataset.collapsed = contextCollapsed ? 'true' : 'false';
+    toggle.textContent = contextCollapsed ? '▸' : '▾';
+    void chrome.storage.local.set({ [CONTEXT_COLLAPSED_KEY]: contextCollapsed }).catch(() => {});
+  });
+  header.appendChild(toggle);
+  panel.appendChild(header);
+
+  const body = ctxEl('div', 'stratus-ctx-body');
+
+  const metaBits: string[] = [];
+  if (h.followersCount !== null) metaBits.push(`${compactNum(h.followersCount)} followers`);
+  if (h.momentumPerDay !== null && h.momentumPerDay !== 0) {
+    metaBits.push(`${h.momentumPerDay > 0 ? '+' : ''}${h.momentumPerDay}/day`);
+  }
+  if (metaBits.length) body.appendChild(ctxEl('div', 'stratus-ctx-meta', metaBits.join(' · ')));
+
+  if (h.tags.length) {
+    const tagRow = ctxEl('div', 'stratus-ctx-tags');
+    for (const t of h.tags) tagRow.appendChild(ctxEl('span', 'stratus-ctx-tag', t));
+    body.appendChild(tagRow);
+  }
+
+  if (model.alreadyReplied) {
+    body.appendChild(
+      ctxEl(
+        'div',
+        'stratus-ctx-banner',
+        `You already replied to this tweet · ${humanizeMinutes(model.alreadyReplied.ageMin)}`,
+      ),
+    );
+  }
+
+  const r = model.relationship;
+  if (r.inbound > 0 || r.outbound > 0) {
+    const bits = [`${r.inbound} from them`, `${r.outbound} from you`];
+    const lastIn = agoLabel(r.lastInboundAt, now);
+    const lastOut = agoLabel(r.lastOutboundAt, now);
+    if (lastIn) bits.push(`last in ${lastIn}`);
+    if (lastOut) bits.push(`last out ${lastOut}`);
+    body.appendChild(ctxRow('exchanges', bits.join(' · ')));
+  }
+
+  if (model.openLoops.length) {
+    const row = ctxEl('div', 'stratus-ctx-row');
+    row.appendChild(ctxEl('span', 'stratus-ctx-label', `you owe · ${model.openLoops.length}`));
+    const list = ctxEl('div', 'stratus-ctx-list');
+    for (const loop of model.openLoops.slice(0, CONTEXT_OUTCOME_MAX)) {
+      list.appendChild(ctxEl('div', 'stratus-ctx-loop', `${loop.ageDays}d · ${loop.text}`));
+    }
+    row.appendChild(list);
+    body.appendChild(row);
+  }
+
+  if (model.outcomes.length) {
+    const row = ctxEl('div', 'stratus-ctx-row');
+    row.appendChild(ctxEl('span', 'stratus-ctx-label', 'your last replies'));
+    const list = ctxEl('div', 'stratus-ctx-list');
+    for (const o of model.outcomes) {
+      const item = ctxEl('div', 'stratus-ctx-outcome');
+      item.appendChild(ctxEl('div', 'stratus-ctx-outcome-text', o.text));
+      const bits: string[] = [];
+      if (o.views !== null) bits.push(`${compactNum(o.views)} views`);
+      if (o.profileVisits !== null) bits.push(`${compactNum(o.profileVisits)} profile`);
+      if (o.angle) bits.push(o.angle);
+      if (bits.length) item.appendChild(ctxEl('div', 'stratus-ctx-outcome-meta', bits.join(' · ')));
+      list.appendChild(item);
+    }
+    row.appendChild(list);
+    body.appendChild(row);
+  }
+
+  if (model.anglePreference) {
+    body.appendChild(
+      ctxRow(
+        'best angle',
+        `${model.anglePreference.angle} · ${model.anglePreference.measured} measured`,
+      ),
+    );
+  }
+
+  if (model.notes) body.appendChild(ctxEl('div', 'stratus-ctx-notes', model.notes));
+
+  panel.appendChild(body);
+  return panel;
+}
+
+function ctxRow(label: string, value: string): HTMLElement {
+  const row = ctxEl('div', 'stratus-ctx-row');
+  row.appendChild(ctxEl('span', 'stratus-ctx-label', label));
+  row.appendChild(ctxEl('span', 'stratus-ctx-val', value));
+  return row;
+}
+
+// Once-per-scan: upsert the context panel under the focused tweet, and tear a
+// stale panel down on SPA navigation (to the timeline or a different status).
+function syncContextPanel(focusedId: string | null): void {
+  const existing = document.querySelector<HTMLElement>(`.${CONTEXT_PANEL_CLASS}`);
+  if (!focusedId) {
+    existing?.remove(); // left the status page
+    return;
+  }
+
+  let focusedArticle: HTMLElement | null = null;
+  let handle = '';
+  for (const article of document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+    const permalink = findPermalink(article);
+    if (permalink && permalink.tweetId === focusedId) {
+      focusedArticle = article;
+      handle = permalink.username.toLowerCase();
+      break;
+    }
+  }
+  if (!focusedArticle || !handle) {
+    if (existing && existing.dataset.tweetId !== focusedId) existing.remove();
+    return;
+  }
+
+  const entry = getDossier(handle);
+  if (!entry || entry.state === 'unavailable') {
+    existing?.remove(); // loading with nothing cached, or unconfigured → render nothing
+    return;
+  }
+
+  const renderKey =
+    entry.state === 'ready'
+      ? `ready:${focusedId}:${handle}:${entry.at}`
+      : `missing:${focusedId}:${handle}`;
+  if (
+    existing &&
+    existing.dataset.renderKey === renderKey &&
+    focusedArticle.nextElementSibling === existing
+  ) {
+    return; // unchanged and still anchored — skip the rebuild
+  }
+
+  existing?.remove();
+  const panel =
+    entry.state === 'ready' && entry.dossier
+      ? renderContextPanel(
+          buildTweetContextModel(entry.dossier, focusedId, Date.now()),
+          handle,
+          focusedId,
+        )
+      : renderMissingPanel(handle, focusedId);
+  panel.dataset.renderKey = renderKey;
+  // Insert into the article's PARENT flow (as its next sibling), not inside the
+  // article: the action row is the article's last block, so this reads as "below
+  // the action row", and a sibling isn't carried when X recycles the article node.
+  focusedArticle.insertAdjacentElement('afterend', panel);
+}
+
 // --------------------------------------------------------------- radar (§7.2)
 
 // Hot/warm verdicts used to evaporate as you scrolled past. Stream them to the
@@ -1416,6 +1808,7 @@ function scan(root: ParentNode): void {
     applyPersonChips(article, glance);
     if (focusedId) attachReplyMasterButton(article, focusedId);
   }
+  syncContextPanel(focusedId);
   syncAuthorButton();
   capturePassiveHoverCards();
   captureLaunchReplies();
@@ -1438,6 +1831,7 @@ function start(): void {
   initHarvest();
   initTypeFromClipboard();
   initPassiveCaptureSetting();
+  initContextCollapsed();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });
