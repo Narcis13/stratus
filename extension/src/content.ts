@@ -22,9 +22,11 @@
 
 import { suggestChannels } from './channelSuggest.ts';
 import { initHarvest } from './harvester.ts';
-import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
-import type { Band, TweetSignals } from './replyBand.ts';
+import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
+import type { TweetSignals } from './replyBand.ts';
 import { parseEarlyReplies } from './shared/earlyReplies.ts';
+import { GLANCE_TTL_MS, buildPersonChips } from './shared/glance.ts';
+import type { GlanceMap } from './shared/glance.ts';
 import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
 import type {
   ApiRequest,
@@ -59,7 +61,8 @@ const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
 const CHAN_CHIP_CLASS = 'stratus-chan-chip';
 const CHAN_WRAP_CLASS = 'stratus-chan-chips';
-const BAND_BADGE_CLASS = 'stratus-band-badge';
+const PERSON_CHIPS_CLASS = 'stratus-person-chips';
+const PERSON_CHIP_CLASS = 'stratus-person-chip';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -191,20 +194,35 @@ function injectStyles(): void {
     article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 rgb(0, 186, 124); }
     article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 rgb(255, 179, 0); }
     article[data-testid="tweet"][data-stratus-band="skip"] { opacity: 0.45; }
-    .${BAND_BADGE_CLASS} {
+    .${PERSON_CHIPS_CLASS} {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 4px;
+      flex-shrink: 0;
+      overflow: hidden;
+      vertical-align: middle;
+    }
+    .${PERSON_CHIP_CLASS} {
       all: unset;
       display: inline-flex;
       align-items: center;
       box-sizing: border-box;
+      cursor: pointer;
       font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       letter-spacing: 0.02em;
-      padding: 3px 8px;
+      padding: 2px 7px;
       border-radius: 9999px;
-      margin-left: 8px;
       white-space: nowrap;
+      border: 1px solid transparent;
     }
-    .${BAND_BADGE_CLASS}[data-band="hot"]  { color: rgb(0, 186, 124); border: 1px solid rgba(0, 186, 124, 0.5); background: rgba(0, 186, 124, 0.10); }
-    .${BAND_BADGE_CLASS}[data-band="warm"] { color: rgb(214, 150, 0); border: 1px solid rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${PERSON_CHIP_CLASS}[data-tone="ally"]      { color: rgb(0, 186, 124);  border-color: rgba(0, 186, 124, 0.5);  background: rgba(0, 186, 124, 0.10); }
+    .${PERSON_CHIP_CLASS}[data-tone="mutual"]    { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
+    .${PERSON_CHIP_CLASS}[data-tone="responded"] { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${PERSON_CHIP_CLASS}[data-tone="engaged"]   { color: rgb(113, 118, 123); border-color: rgba(113, 118, 123, 0.5); background: rgba(113, 118, 123, 0.10); }
+    .${PERSON_CHIP_CLASS}[data-tone="target"]    { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
+    .${PERSON_CHIP_CLASS}[data-tone="warn"]      { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${PERSON_CHIP_CLASS}:hover { filter: brightness(1.15); }
     .${CHAN_WRAP_CLASS} { display: inline-flex; gap: 4px; margin-left: 4px; align-items: center; }
     .${CHAN_CHIP_CLASS} {
       all: unset;
@@ -1025,38 +1043,102 @@ function readTweetSignals(article: Element): TweetSignals | null {
   };
 }
 
-// The badge is recomputed every scan (NOT WeakSet-deduped): X recycles article
-// nodes as you scroll, and metrics climb as a tweet ages, so a cached verdict
-// goes stale. Re-querying the row each pass self-corrects recycled nodes.
-function renderBandBadge(article: Element, band: Band, sig: TweetSignals | null): void {
-  const reply = article.querySelector('[data-testid="reply"]');
-  const actionRow = reply?.closest('div[role="group"]');
-  if (!actionRow) return;
-
-  const existing = actionRow.querySelector<HTMLSpanElement>(`.${BAND_BADGE_CLASS}`);
-  if (!sig || (band !== 'hot' && band !== 'warm')) {
-    existing?.remove(); // 'skip' is conveyed by dimming; null shows nothing
-    return;
-  }
-
-  const badge = existing ?? document.createElement('span');
-  if (!existing) {
-    badge.className = BAND_BADGE_CLASS;
-    actionRow.appendChild(badge);
-  }
-  badge.dataset.band = band;
-  const age = sig.ageMin < 60 ? `${Math.round(sig.ageMin)}m` : `${Math.floor(sig.ageMin / 60)}h`;
-  const baitMark = sig.bait ? ' · ?' : '';
-  badge.textContent = `${formatCount(sig.views)} · ${sig.replies}r · ${age}${baitMark} · ${BAND_LABEL[band]}`;
-}
-
 function applyBand(article: HTMLElement): void {
   const sig = readTweetSignals(article);
   const band = sig ? classifyBand(sig) : null;
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
-  renderBandBadge(article, band, sig);
   if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+}
+
+// ----------------------------------------------------- person chips (AX.3, $0)
+//
+// Right of the name/handle line, small native-looking chips for people stratus
+// knows: a stage chip (engaged+), a ◎ target marker, an amber ↩ owed when they
+// have unanswered mentions in my inbox, and an `Nd` neglect mark. All derived
+// client-side from GET /x/people/glance (pure SQL, $0), cached per session
+// (GLANCE_TTL_MS, the channels-cache pattern). The view-model is
+// shared/glance.ts; this is only the DOM plumbing. Recomputed every scan (NOT
+// deduped) — X recycles article nodes and the neglect age ticks, so a cached
+// chip goes stale; a data-sig guard skips the DOM write when nothing changed.
+
+let glanceCache: { map: GlanceMap; at: number } | null = null;
+let glanceInFlight: Promise<void> | null = null;
+
+async function refreshGlanceMap(): Promise<void> {
+  const request: ApiRequest = { type: 'stratus/api', method: 'GET', path: '/x/people/glance' };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as
+      | ApiResponse<{ count: number; map: GlanceMap }>
+      | undefined;
+    if (res?.ok && res.data && typeof res.data.map === 'object') {
+      glanceCache = { map: res.data.map, at: Date.now() };
+    }
+    // A fresh install (no bearer) returns `unconfigured` — silent: chips just
+    // don't render, like the save button on an unconfigured extension.
+  } catch (err) {
+    console.warn('[stratus] glance fetch failed', err);
+  }
+}
+
+// scan() is synchronous, so this returns whatever's cached now (stale or empty)
+// and kicks off a background refresh when the cache is expired — the fresh map
+// lands for the next mutation scan (X emits them constantly).
+function getGlanceMap(): GlanceMap {
+  const fresh = glanceCache && Date.now() - glanceCache.at < GLANCE_TTL_MS;
+  if (!fresh && !glanceInFlight) {
+    glanceInFlight = refreshGlanceMap().finally(() => {
+      glanceInFlight = null;
+    });
+  }
+  return glanceCache?.map ?? {};
+}
+
+function applyPersonChips(article: Element, glance: GlanceMap): void {
+  const permalink = findPermalink(article);
+  const existing = article.querySelector<HTMLSpanElement>(`.${PERSON_CHIPS_CLASS}`);
+
+  const handle = permalink ? permalink.username.toLowerCase() : '';
+  const entry = handle ? glance[handle] : undefined;
+  const chips = entry ? buildPersonChips(entry, Date.now()).slice(0, 4) : [];
+
+  // querySelector returns the FIRST User-Name = the outer tweet's author (quote
+  // previews nest below), so chips decorate the real author's line only.
+  const userName = article.querySelector('[data-testid="User-Name"]');
+  if (chips.length === 0 || !userName) {
+    existing?.remove(); // unknown handle / no header row → clear any recycled span
+    return;
+  }
+
+  const sig = chips.map((c) => `${c.kind}:${c.label}:${c.tone}`).join('|');
+  if (existing && existing.dataset.handle === handle && existing.dataset.sig === sig) {
+    return; // unchanged — skip the DOM write (X mutates the subtree furiously)
+  }
+
+  const span = existing ?? document.createElement('span');
+  if (!existing) {
+    span.className = PERSON_CHIPS_CLASS;
+    userName.insertAdjacentElement('afterend', span);
+  }
+  span.dataset.handle = handle;
+  span.dataset.sig = sig;
+  span.textContent = '';
+  for (const chip of chips) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = PERSON_CHIP_CLASS;
+    btn.dataset.tone = chip.tone;
+    btn.dataset.handle = handle;
+    btn.title = chip.tooltip;
+    btn.textContent = chip.label;
+    // Task 6 (AX.6) wires the dossier click-through; until then a no-op that
+    // keeps the click from bubbling into X's row → tweet navigation.
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    span.appendChild(btn);
+  }
 }
 
 // --------------------------------------------------------------- radar (§7.2)
@@ -1327,9 +1409,11 @@ function flushLaunchReplies(): void {
 
 function scan(root: ParentNode): void {
   const focusedId = focusedTweetIdFromUrl();
+  const glance = getGlanceMap();
   for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
     applyBand(article);
+    applyPersonChips(article, glance);
     if (focusedId) attachReplyMasterButton(article, focusedId);
   }
   syncAuthorButton();
