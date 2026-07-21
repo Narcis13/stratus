@@ -136,38 +136,52 @@ describe('buildStructureEffectiveness', () => {
 });
 
 describe('classifyReplyOrigin', () => {
-  const draftIds = new Set(['901']);
+  // postedTweetId → reply_drafts.source (RU.9). null = reply_master / legacy.
+  const draftSource = new Map<string, string | null>([
+    ['901', null],
+    ['905', 'radar'],
+  ]);
   const radar = new Map([['777', ['Ship it.\n\nThen fix it.']]]);
 
   test('draft link wins even when a radar match also exists', () => {
     expect(
       classifyReplyOrigin(
         { tweetId: '901', inReplyToTweetId: '777', text: 'Ship it. Then fix it.' },
-        draftIds,
+        draftSource,
         radar,
       ),
     ).toBe('single');
   });
 
-  test('radar needs target AND collapsed-whitespace text equality', () => {
+  test('source=radar on a linked draft beats a text mismatch', () => {
+    expect(
+      classifyReplyOrigin(
+        { tweetId: '905', inReplyToTweetId: null, text: 'nothing like any radar draft' },
+        draftSource,
+        radar,
+      ),
+    ).toBe('radar');
+  });
+
+  test('radar needs target AND collapsed-whitespace text equality (legacy, null source)', () => {
     expect(
       classifyReplyOrigin(
         { tweetId: '902', inReplyToTweetId: '777', text: 'Ship it.  Then fix it.' },
-        draftIds,
+        draftSource,
         radar,
       ),
     ).toBe('radar');
     expect(
       classifyReplyOrigin(
         { tweetId: '903', inReplyToTweetId: '777', text: 'Something I typed myself' },
-        draftIds,
+        draftSource,
         radar,
       ),
     ).toBeNull();
     expect(
       classifyReplyOrigin(
         { tweetId: '904', inReplyToTweetId: '778', text: 'Ship it. Then fix it.' },
-        draftIds,
+        draftSource,
         radar,
       ),
     ).toBeNull();

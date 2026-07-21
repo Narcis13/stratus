@@ -44,6 +44,7 @@ async function seedReply(opts: {
   handle?: string;
   relationship?: string;
   me?: string;
+  source?: 'radar' | 'reply_master';
 }): Promise<void> {
   const replyText = `reply ${opts.id}`;
   await db
@@ -64,6 +65,7 @@ async function seedReply(opts: {
       replyText,
       variants: [{ text: replyText, angle: opts.angle }],
       model: 'test',
+      ...(opts.source ? { source: opts.source } : {}),
       status: 'posted',
       postedTweetId: opts.postedTweetId,
       createdAt: at(500),
@@ -613,5 +615,42 @@ describe('loadIdeaRows (S0.8)', () => {
     expect(idea.viewsLift).toBeNull();
     expect(idea.posts.viewsLift).toBeNull();
     expect(idea.replies.viewsLift).toBeNull();
+  });
+});
+
+describe('radar source-exact attribution (RU.9)', () => {
+  // A radar-confirmed draft: a posted reply_drafts row carrying source='radar'
+  // and a postedTweetId link, whose text matches NO radar_drafts row (its
+  // target 4242 has none). Under the old draftPostedIds→'single' rule this was
+  // misattributed 'single'; the source column now attributes it 'radar' with
+  // zero text equality. The main describe's permanent pb_r1/pb_r2 (single) and
+  // pb_r3 (radar, via legacy text-match) still stand, so this adds one to radar.
+  const ID = 'a0000000-0000-4000-8000-0000000000f9';
+
+  beforeAll(async () => {
+    await seedReply({
+      id: ID,
+      angle: 'extends',
+      postedTweetId: 'pb_ru9',
+      views: 300,
+      profileVisits: 3,
+      source: 'radar',
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(replyDrafts).where(eq(replyDrafts.id, ID));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, 'pb_ru9'));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, 'pb_ru9'));
+  });
+
+  test('a confirmed+posted radar draft classifies radar without text equality', async () => {
+    const res = await app.request('/x/playbook');
+    expect(res.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+    const body = (await res.json()) as any;
+    // pb_r1, pb_r2 stay single; pb_r3 (legacy fallback) + pb_ru9 (source) = radar.
+    expect(body.batchVsSingle.single.n).toBe(2);
+    expect(body.batchVsSingle.radar.n).toBe(2);
   });
 });

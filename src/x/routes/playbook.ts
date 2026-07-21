@@ -401,12 +401,15 @@ async function loadOriginRows(): Promise<{
     .limit(MAX_PUBLISHED_REPLIES);
 
   const draftLinks = await db
-    .select({ postedTweetId: replyDrafts.postedTweetId })
+    .select({ postedTweetId: replyDrafts.postedTweetId, source: replyDrafts.source })
     .from(replyDrafts)
     .where(and(eq(replyDrafts.status, 'posted'), isNotNull(replyDrafts.postedTweetId)));
-  const draftPostedIds = new Set(
-    draftLinks.flatMap((d) => (d.postedTweetId ? [d.postedTweetId] : [])),
-  );
+  // postedTweetId → reply_drafts.source (RU.9): exact attribution beats the
+  // radar text-match heuristic below. null source = pre-source legacy row.
+  const draftSourceByPostedId = new Map<string, string | null>();
+  for (const d of draftLinks) {
+    if (d.postedTweetId) draftSourceByPostedId.set(d.postedTweetId, d.source ?? null);
+  }
 
   const radarRows = await db
     .select({ tweetId: radarDrafts.tweetId, replyText: radarDrafts.replyText })
@@ -421,7 +424,7 @@ async function loadOriginRows(): Promise<{
   const classified: Array<{ origin: ReplyOrigin; tweetId: string }> = [];
   let unattributed = 0;
   for (const p of published) {
-    const origin = classifyReplyOrigin(p, draftPostedIds, radarByTarget);
+    const origin = classifyReplyOrigin(p, draftSourceByPostedId, radarByTarget);
     if (origin === null) {
       unattributed++;
       continue;

@@ -182,8 +182,9 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               </tbody>
             </table>
             <div className="status-line">
+              Radar rows are confirmed drafts (attributed by reply source, not text match).{' '}
               {data.batchVsSingle.unattributed} published replies unattributed (hand-written or
-              pre-tooling)
+              pre-tooling).
             </div>
           </section>
 
