@@ -33,6 +33,8 @@ import {
   isLaunchGet,
   isLaunchReport,
   isLaunchSync,
+  isOpenPerson,
+  isOpenPersonClear,
   isRadarClick,
   isRadarConfirm,
   isRadarDismiss,
@@ -559,7 +561,18 @@ chrome.notifications.onClicked.addListener((id) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// --- People dossier click-through (AX.6). The handoff session key is written
+// only here so the background stays the single chrome.storage.session writer;
+// App.tsx reads it (mount + onChanged) and clears it via OpenPersonClear.
+const OPEN_PERSON_KEY = 'stratus:openPerson';
+let openPersonChain: Promise<void> = Promise.resolve();
+function enqueueOpenPerson(fn: () => Promise<void>): Promise<void> {
+  const next = openPersonChain.then(fn);
+  openPersonChain = next.catch((err) => console.error('[stratus] open-person write failed', err));
+  return next;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (isApiRequest(msg)) {
     void handleApiRequest(msg).then(
       (res) => sendResponse(res),
@@ -616,6 +629,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         console.warn('[stratus] radar rehydrate failed', err);
         sendResponse({ ok: false });
       },
+    );
+    return true;
+  }
+  if (isOpenPerson(msg)) {
+    // A content-script click is a user gesture; sidePanel.open best-effort
+    // survives one message hop (Chrome >=116). If it doesn't, the panel is one
+    // action-click away and the session key still routes on next open.
+    const tabId = sender.tab?.id;
+    if (tabId !== undefined) {
+      chrome.sidePanel.open({ tabId }).catch(() => {
+        /* no gesture credit — ignore */
+      });
+    }
+    void enqueueOpenPerson(() =>
+      chrome.storage.session.set({ [OPEN_PERSON_KEY]: { handle: msg.handle, at: Date.now() } }),
+    ).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isOpenPersonClear(msg)) {
+    void enqueueOpenPerson(() => chrome.storage.session.remove(OPEN_PERSON_KEY)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
     );
     return true;
   }

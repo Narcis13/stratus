@@ -126,6 +126,33 @@ export function isRadarConfirm(msg: unknown): msg is RadarConfirm {
   return m.type === 'stratus/radar-confirm' && typeof m.tweetId === 'string';
 }
 
+// --- People dossier click-through (AX.6). A timeline chip or the tweet-page
+// context-panel header sends OpenPerson on click; the background opens the side
+// panel (best-effort — the click is a user gesture that may survive one hop) and
+// writes the handoff session key `stratus:openPerson` (background = single
+// session writer). App.tsx reads it, routes to the dossier, then sends
+// OpenPersonClear so a later panel open can't replay the stale handle.
+
+export interface OpenPerson {
+  type: 'stratus/open-person';
+  handle: string;
+}
+
+export interface OpenPersonClear {
+  type: 'stratus/open-person-clear';
+}
+
+export function isOpenPerson(msg: unknown): msg is OpenPerson {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/open-person' && typeof m.handle === 'string';
+}
+
+export function isOpenPersonClear(msg: unknown): msg is OpenPersonClear {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/open-person-clear';
+}
+
 // --- Launch Room (C7) — all routed through the background: it owns the
 // chrome.alarms schedule and is the single writer of the launch:* session keys.
 

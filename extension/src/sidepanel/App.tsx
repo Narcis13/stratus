@@ -1,4 +1,4 @@
-import { type JSX, useState } from 'react';
+import { type JSX, useEffect, useState } from 'react';
 import { CalendarPanel } from './Calendar.tsx';
 import { ChannelsPanel } from './Channels.tsx';
 import { ComposerPanel } from './Composer.tsx';
@@ -103,6 +103,33 @@ export function App(): JSX.Element {
     setTab('studio');
   };
   const onSaved = () => setRefreshKey((k) => k + 1);
+
+  // AX.6: a timeline chip or the tweet-page context panel writes
+  // chrome.storage.session['stratus:openPerson'] via the background (single
+  // writer). Consume it on mount + live, route to the dossier, then clear it so
+  // a later panel open can't replay the stale handle. Only setState setters are
+  // referenced (stable), so the empty dep array is exhaustive.
+  useEffect(() => {
+    const consume = (v: unknown) => {
+      const handle = (v as { handle?: unknown } | null)?.handle;
+      if (typeof handle === 'string' && handle) {
+        setPersonHandle(handle.replace(/^@/, '').toLowerCase());
+        setTab('people');
+        void chrome.runtime.sendMessage({ type: 'stratus/open-person-clear' }).catch(() => {});
+      }
+    };
+    void chrome.storage.session
+      .get('stratus:openPerson')
+      .then((out) => consume(out['stratus:openPerson']))
+      .catch(() => {});
+    const onChanged = (changes: { [k: string]: chrome.storage.StorageChange }, area: string) => {
+      if (area === 'session' && changes['stratus:openPerson']) {
+        consume(changes['stratus:openPerson'].newValue);
+      }
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
 
   const configured = isConfigured(settings);
   const activeTab: Tab = !configured && tab !== 'settings' ? 'settings' : tab;

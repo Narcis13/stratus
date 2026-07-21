@@ -33,6 +33,7 @@ import type {
   ApiResponse,
   LaunchGet,
   LaunchReport,
+  OpenPerson,
   RadarReport,
 } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
@@ -1178,6 +1179,14 @@ function getGlanceMap(): GlanceMap {
   return glanceCache?.map ?? {};
 }
 
+// AX.6: a timeline chip or the tweet-page context-panel header opens the
+// person's dossier in the side panel. The background owns sidePanel.open (the
+// click is a user gesture) and the `stratus:openPerson` session handoff key.
+function sendOpenPerson(handle: string): void {
+  const msg: OpenPerson = { type: 'stratus/open-person', handle };
+  void chrome.runtime.sendMessage(msg).catch(() => {});
+}
+
 function applyPersonChips(article: Element, glance: GlanceMap): void {
   const permalink = findPermalink(article);
   const existing = article.querySelector<HTMLSpanElement>(`.${PERSON_CHIPS_CLASS}`);
@@ -1215,11 +1224,12 @@ function applyPersonChips(article: Element, glance: GlanceMap): void {
     btn.dataset.handle = handle;
     btn.title = chip.tooltip;
     btn.textContent = chip.label;
-    // Task 6 (AX.6) wires the dossier click-through; until then a no-op that
-    // keeps the click from bubbling into X's row → tweet navigation.
+    // AX.6: open the dossier; preventDefault/stopPropagation so the click never
+    // bubbles into X's row → tweet navigation.
     btn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
+      sendOpenPerson(handle);
     });
     span.appendChild(btn);
   }
@@ -1359,7 +1369,14 @@ function renderContextPanel(
 
   const header = ctxEl('div', 'stratus-ctx-header');
   const title = ctxEl('div', 'stratus-ctx-title');
-  title.dataset.handle = handle; // AX.6 wires the dossier click-through here.
+  title.dataset.handle = handle;
+  // AX.6: the title opens the dossier. The collapse toggle is a sibling (not a
+  // child of title), so a toggle click never lands here.
+  title.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    sendOpenPerson(handle);
+  });
 
   const stageChip = ctxEl('span', PERSON_CHIP_CLASS, h.stage);
   stageChip.dataset.tone = stageTone(h.stage);
