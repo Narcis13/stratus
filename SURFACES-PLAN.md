@@ -393,6 +393,57 @@ extended so every S5 asset kind survives the whitelist ($0 default).
 
 ---
 
+## 5c. Phase S6 — Augmented X UI: people chips + full-context panel on x.com — SHIPPED 2026-07-21
+
+> **Status: done.** Full build plan in **`plans/2026-07-16-augmented-x-ui.md`** (tasks
+> AX.1–AX.7); see CLAUDE.md §"Surfaces S6" and **[docs/s6-augmented-ui.md](./docs/s6-augmented-ui.md)**
+> for the shipped shape. (The plan text said "Surfaces S5" — stale: S5 is Studio 2.0, so
+> this shipped as **S6**.)
+
+**Job:** render Circles context where the decision actually happens — on x.com itself —
+at **$0** (all new reads are SQL over already-billed stratus data, fetched through the
+existing background `ApiRequest` transport with client-side caches; no X API, no Grok).
+
+- **Green stats pill gone everywhere** — the left border still marks hot/warm/skip and
+  the radar stream is byte-untouched; the badge's signals survive in chip tooltips and
+  the radar "why" line.
+- **`GET /x/people/glance`** (in `routes/people.ts`, registered **before `:handle`** §7.20)
+  — the timeline-decoration map: all non-retired `people` + unanswered-mention open-loop
+  counts + `loadTargetHandles()` backfill → `{count, map: {lowercased handle → {stage,
+  isTarget, openLoops, lastOutboundAt, lastInboundAt, followersCount}}}`. Rankmap stays
+  untouched (different membership/contract, feeds the radar tier stamp).
+- **Person chips on the timeline** (`extension/src/shared/glance.ts` `buildPersonChips`,
+  bun-tested, inlined into the content IIFE) — right of the name/handle line: a stage chip
+  (only `engaged`+, `noticed`/`stranger` would be noise), `◎` for the 2–10x target roster,
+  amber `↩ n` when that person has unanswered mentions, `Nd` neglect mark (`NEGLECT_DAYS=7`).
+- **Full-context panel on the tweet page** (`extension/src/shared/tweetContext.ts`
+  `buildTweetContextModel`, bun-tested) — on `/status/` pages, a collapsible "stratus
+  context" panel below the tweet: who this person is to me (stage, since, followers +
+  momentum, tags), an "already replied to this tweet" banner, open loops I owe them, my
+  last measured replies with outcomes + the angle that works (gated ≥3 measured), and my
+  notes verbatim. Collapse flag in `chrome.storage.local['augment:contextCollapsed']`.
+- **Dossier click-through** — clicking a chip or the panel header fires
+  `stratus/open-person {handle}`; the background opens the side panel (best-effort gesture
+  hop) and writes the `stratus:openPerson` session handoff key (single writer); `App.tsx`
+  reads it → People dossier → clears it.
+- **Legacy button kill rule** — a defensive `#reply-master-btn { display: none !important }`
+  hides the retired standalone "Reply Master" extension's purple sparkle; the real fix is
+  the user uninstalling that extension in `chrome://extensions`.
+
+**Cost:** $0 (no X API, no Grok, no writes, no schema change, no new MCP tool — 19 tools
+unchanged). No `rankmap`/`stampTiers`/band-threshold changes; chips/panel are read-only
+except the one navigation affordance. **Done when:** no stats pill anywhere; a
+mutual-stage target with an unanswered mention shows stage + `◎` + `↩`; the status-page
+panel renders stage/exchanges/open loops/≥1 measured reply/notes; clicking a chip opens
+the dossier; `scripts/smoke-glance.ts` passes ($0). **Live-selector tail:** the
+`[data-testid="User-Name"]` insertion point and action-row anchors are X DOM and can
+drift — the browser walk over an unpacked extension is the remaining real-world check.
+
+**Tests:** `glance.test.ts`, `tweetContext.test.ts`, `messages.test.ts` (new guards) +
+the `routes/people.test.ts` glance describe; `scripts/smoke-glance.ts` ($0, real DB).
+
+---
+
 ## 6. Explicitly NOT doing (this plan)
 
 - **OAuth 1.0a media upload** — no API-attached images, no auto-posted visuals. The
