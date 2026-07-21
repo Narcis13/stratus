@@ -154,13 +154,13 @@ Empty state: *"No conversations yet. Refresh pulls new mentions (~$0.001 each)."
 
 ### 5. Radar
 
-**When it appears:** always present, fed live from your browsing session. **This is $0 and free-flowing.** As you scroll X, the extension quietly scores each tweet's **band** (hot/warm/skip). Every **hot** or **warm** tweet you scroll past gets added to the Radar queue here, so a good reply opportunity doesn't evaporate the moment it leaves your screen. (The queue lives in browser session memory and clears when you close the browser — though drafted replies are saved on the server and rehydrate after a restart.)
+**When it appears:** always present, fed live from your browsing session. **This is $0 and free-flowing.** As you scroll X, the extension quietly scores each tweet's **band** (hot/warm/skip). Every **hot** or **warm** tweet you scroll past gets added to the Radar queue here, so a good reply opportunity doesn't evaporate the moment it leaves your screen. You can also **pin any tweet regardless of band** with the round **⊕ "add to Radar"** button that sits on every tweet's action row on x.com — "I want to reply to this one, period." A pinned tweet gets a **`manual`** band chip and ranks at the very top of the queue. (The queue lives in browser session memory and clears when you close the browser — though drafted replies are saved on the server and rehydrate after a restart.)
 
-Rows are ranked by: **who the author is** first (an ally/mutual/target outranks a stranger), then band (hot before warm), then how fast the tweet is gaining views, then recency.
+Rows are ranked by: **manually pinned** first, then **who the author is** (an ally/mutual/target outranks a stranger), then band (hot before warm), then how fast the tweet is gaining views, then recency.
 
 **Header actions:**
 
-- **Draft replies (N)** — makes **one** Grok call that drafts a reply for every un-drafted tweet in the queue (up to 20 at a time). The cost of that single call is shown afterward. Each tweet then shows its ready reply.
+- **Draft replies (N)** — makes **one** Grok call that drafts a reply — three angle variants (extends / contrarian / debate) — for every un-drafted tweet in the queue (up to 20 at a time). The cost of that single call is shown afterward. Each tweet then shows its ready reply (the first variant), and drafts survive a browser restart with all three variants intact.
 - **Clear** — dismisses everything currently shown (so it won't come back).
 
 **Two tabs:**
@@ -170,12 +170,12 @@ Rows are ranked by: **who the author is** first (an ally/mutual/target outranks 
 
 **Each Radar row shows:**
 
-- A **band chip** — `hot` or `warm`.
+- A **band chip** — `hot`, `warm`, or `manual` (a tweet you pinned with ⊕).
 - The **author** (a link to their dossier).
 - A **tier chip** if the author is on your roster: `ally`, `mutual`, or `target` (also a dossier link) — this is *why* they outrank a louder stranger.
 - **reply ready** if a reply's been drafted.
 - **✕** to dismiss the row (done, or not worth it — dismissed tweets never re-enter the queue).
-- The **tweet text** as a link. If a reply has been drafted, **clicking the link copies that reply to your clipboard** (and opens the tweet in a new tab) — so you land on X with your reply ready to paste. The row then moves to the "Clicked" tab.
+- The **tweet text** as a link. If a reply has been drafted, **clicking the link copies that reply to your clipboard** (and opens the tweet in a new tab) — so you land on X with your reply ready to paste. On the tweet page, the three angle chips also appear beside the reply box: clicking one types that variant in and marks the draft **posted** (it becomes a measured `reply_drafts` row). The row then moves to the "Clicked" tab.
 - A **"why" line**, e.g. `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict (views, replies, age, views-per-minute, and whether it's reply-bait). The age keeps ticking while it sits in the queue.
 - The **drafted reply text** (once drafted), with a hint that opening the tweet copies it.
 - A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.

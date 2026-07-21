@@ -42,7 +42,7 @@ When you open the Replies tab and no draft is loaded yet, it reminds you of exac
 
 Other tabs in stratus surface tweets that already deserve a reply, and each has its own one-click draft button that uses the **same Grok reply engine**:
 
-- **Radar** — a live queue of hot/warm tweets stratus spotted while you browsed. Its "Draft replies" action writes a reply for the whole queue at once; each drafted reply is copied to your clipboard the moment you open that tweet.
+- **Radar** — a live queue of hot/warm tweets stratus spotted while you browsed (plus any tweet you manually pinned with the ⊕ button). Its "Draft replies" action writes the three-variant set for the whole queue at once; opening a queued tweet copies the reply and, on the tweet page, shows the three angle chips right beside the reply box — clicking one types that variant in and **marks the draft posted** (so it becomes a measured `reply_drafts` row, exactly like a 🪄 draft).
 - **Conversations / Inbox** — threads where someone mentioned or replied to *you* and you owe them an answer. Each open loop has a one-click Grok draft button; you Copy, paste on X, and mark it done.
 
 These surfaces draft *in place* (right there in their own tab) rather than loading the Replies-tab editor. The Replies tab itself is fed by the 🪄 button and is where you go to **edit, re-generate, and review the full history** of your drafts. Think of the 🪄 button as "start a fresh draft from the tweet I'm looking at," and the other tabs as "work through a ready-made list of opportunities."
@@ -110,9 +110,9 @@ Above the editor is an **Idea steer** box: *"Idea steer (optional — used on th
 - **It's one-shot.** The steer aims exactly *one* draft. After a successful generate it clears itself, so it can't leak into the replies that follow. If you want it again, type it again.
 - **Seed from the Idea Inbox.** If you've saved ideas in the **Idea Inbox** (the Ideas tab), a *"Seed from Idea Inbox"* dropdown appears above the box. Pick a saved idea and it fills the steer. When you generate, stratus marks that idea as *used* and links it to the resulting draft — so later you can see which idea produced which reply. You can also just free-type; emptying the box unlinks any picked idea.
 
-### Generating and the two variants
+### Generating and the three variants
 
-Every generate returns **two distinct replies**, and each is tagged with an **angle** describing its approach:
+Every generate returns **three distinct replies** — one per angle — and each is tagged with the **angle** describing its approach:
 
 | Angle | The reply's approach |
 |---|---|
@@ -120,7 +120,7 @@ Every generate returns **two distinct replies**, and each is tagged with an **an
 | **contrarian** | Pushes back — offers the opposite or a sharper counter-view. |
 | **debate** | Opens a genuine back-and-forth — a pointed question or challenge. |
 
-The two variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian`. **Click a chip to load that variant into the editor.** The active one is highlighted. This lets you A/B your own reply in one glance and pick the tone that fits.
+The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian`. **Click a chip to load that variant into the editor.** The active one is highlighted. This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call — see the Radar section of the Today tab.)
 
 ### Editing the reply
 
@@ -132,7 +132,7 @@ The reply itself sits in a big text box you can freely edit:
 
 ### Regenerate
 
-Not happy with either variant? **Regenerate** runs a fresh pair. It reuses whatever's currently in the idea steer and any system-prompt override you've set (see below), so you can tweak the steer and try again.
+Not happy with any variant? **Regenerate** runs a fresh set of three. It reuses whatever's currently in the idea steer and any system-prompt override you've set (see below), so you can tweak the steer and try again.
 
 ### What a draft costs
 
