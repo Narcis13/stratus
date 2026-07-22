@@ -35,6 +35,7 @@ import { createPostsRouter } from './routes/posts.ts';
 import { promptsRouter } from './routes/prompts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
+import { replyListsRouter } from './routes/replyLists.ts';
 import { settingsRouter } from './routes/settings.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
@@ -82,6 +83,9 @@ export function mountX(app: Hono): void {
   // C6: Idea Inbox — pure SQL, always mounted; consumption happens inside the
   // Grok-gated draft routes, but capture/list/reopen must work without the key.
   app.route('/x', ideasRouter);
+  // RL: reply lists — premade canned replies. CRUD (and later /use) are pure SQL
+  // and always mounted; only /generate (RL.4) needs an LLM and checks at runtime.
+  app.route('/x', replyListsRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
   // S4: Studio asset library (composed PNGs + AI backgrounds as SQLite BLOBs),

@@ -1,6 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import type { NicheDoctrine } from '../niche/defaults.ts';
+import type { HumanizerConfig } from '../replyLists/engine.ts';
 
 // Migrated from Postgres (Neon) to local SQLite (bun:sqlite). Type mapping:
 //   timestamptz   -> integer({ mode: 'timestamp_ms' })  (epoch ms; app sees Date)
@@ -752,3 +753,78 @@ export const promptOverrides = sqliteTable('prompt_overrides', {
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
 });
+
+// Reply lists (RL) — premade, templated, humanized canned replies for the
+// moments the machinery already surfaces (Launch Room early commenters, open
+// loops). The pick/render/jitter logic is pure (src/x/replyLists/engine.ts);
+// these three tables are the state it runs over.
+//
+// `humanizer` holds the per-list override, stored NORMALIZED through
+// parseHumanizerConfig (null = DEFAULT_HUMANIZER) so the /use path resolves it
+// without re-validating.
+export const replyLists = sqliteTable('reply_lists', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text('name').notNull(),
+  description: text('description'),
+  humanizer: text('humanizer', { mode: 'json' }).$type<HumanizerConfig>(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// `last_used_at` is the anti-repeat state — server-side on purpose, so the
+// shuffle survives a browser restart and stays one source of truth (Decision 1).
+// The index is exactly what pickItem's recency window reads.
+export const replyListItems = sqliteTable(
+  'reply_list_items',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    listId: text('list_id')
+      .notNull()
+      .references(() => replyLists.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).default(true).notNull(),
+    source: text('source').notNull().default('manual'), // manual | ai
+    lastUsedAt: integer('last_used_at', { mode: 'timestamp_ms' }),
+    useCount: integer('use_count').default(0).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('reply_list_items_list_used_idx').on(t.listId, t.lastUsedAt)],
+);
+
+// The use log: audit trail AND the measurement hook — the Playbook's `canned`
+// bucket matches a published reply against `rendered_text` (typos and all, so
+// the paste-exact match holds). Deliberately NOT FK'd to the list/item: the
+// history must outlive an edited-away item or a deleted list, or the attribution
+// silently loses rows.
+export const replyListUses = sqliteTable(
+  'reply_list_uses',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    listId: text('list_id').notNull(),
+    itemId: text('item_id').notNull(),
+    renderedText: text('rendered_text').notNull(),
+    targetTweetId: text('target_tweet_id'),
+    targetHandle: text('target_handle'),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('reply_list_uses_used_at_idx').on(t.usedAt)],
+);
