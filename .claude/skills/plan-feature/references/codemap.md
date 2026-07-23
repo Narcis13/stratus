@@ -24,7 +24,8 @@ Runtime: **Bun ≥1.1 + Hono** server on Hetzner (`https://stratus-narcis.duckdn
 
 | Path | What it is |
 |---|---|
-| `CLAUDE.md` | Session guardrails + full phase history. Update in the same commit as behavior changes. |
+| `CLAUDE.md` | Session guardrails ONLY (slimmed 2026-07-23): invariants, workflow pointers, stack quirks, cost sheet. Update only when a guardrail changes. |
+| `docs/PHASE-HISTORY.md` | Full chronological phase ledger (moved verbatim out of CLAUDE.md 2026-07-23). **Docs-sync tasks append their phase entry here, not in CLAUDE.md.** |
 | `PLAN.md` | **Canonical build plan, goals 1–3** (cadence ladders, phased build). |
 | `CIRCLES-PLAN.md` | **Canonical build plan, goal 4** (phases C0–C10, all shipped; C10 = the notifications surface, planned separately in `plans/2026-07-16-notifications.md` and folded in at NT.7). |
 | `SURFACES-PLAN.md` | Canonical plan for the S-phases (S0.x patches, S1 explorer, S2 MCP, S3 studio, S4 images). |
@@ -298,7 +299,7 @@ Migrations `0000`–`0018` (latest: `0018_flimsy_captain_universe` RL.2 `reply_l
 - **UI primitives (UI.10, D7 standing)**: every NEW panel surface from Wave 1 on composes `src/sidepanel/ui/` primitives (Section/EmptyState/SubTabs/SettingRow/Slider/GearPopover) + `--strat-*` tokens — no bespoke `<h3>`/muted-`<p>`/hand-rolled controls. Primitives are pure presentation (className + tokens, no state libs, no API calls); the settings PATCH lives in `settingsClient.ts`, and the panel renders knobs from `GET /x/settings` (extension never imports the server registry). Wave-5 polish (UI.12–16) migrates the pre-masterplan tabs onto them. (Unnumbered — see the `don't renumber` note above.)
 
 **Process**
-29. **Docs sync in the same commit**: CLAUDE.md phase entry, the relevant plan doc (PLAN/CIRCLES/SURFACES), the matching `docs/<tab>.md`, and THIS codemap.
+29. **Docs sync in the same commit**: `docs/PHASE-HISTORY.md` phase entry (NOT CLAUDE.md — slimmed 2026-07-23; CLAUDE.md changes only when a guardrail changes), the relevant plan doc (PLAN/CIRCLES/SURFACES), the matching `docs/<tab>.md`, and THIS codemap.
 30. **Smoke script per feature**: rerunnable, $0 default, `--live` for the one paid verification, cleans up after itself.
 31. **No obvious comments; comments explain why** (cost trade-off, policy quirk, race). No emojis.
 32. **Never write a raw control char into source — use the escape** (RL.7): `src/x/playbook.ts` held two literal NUL bytes as a composite-key sentinel, which made `file` report it as `data` and made **every `grep` over it silently return nothing** (`grep -a` was the only way to find `classifyReplyOrigin`). Fixed to `'\0'`; identical at runtime, greppable again. One-command audit: `for f in $(git ls-files '*.ts'); do file $f | grep -q ': data' && echo $f; done`.
