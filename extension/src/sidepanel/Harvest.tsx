@@ -1,18 +1,25 @@
 import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  HarvestEvent,
-  HarvestIngest,
-  HarvestMode,
-  HarvestOptions,
-  HarvestPace,
-  HarvestScope,
+import {
+  DEFAULT_HARVEST_FORM,
+  HARVEST_FORM_KEY,
+  type HarvestEvent,
+  type HarvestForm,
+  type HarvestIngest,
+  type HarvestMode,
+  type HarvestOptions,
+  type HarvestPace,
+  type HarvestScope,
+  parseHarvestForm,
+  passiveRowsToday,
 } from '../shared/harvest.ts';
+import { api } from './api.ts';
 import {
   type ActiveContext,
   type HarvestController,
   readActiveContext,
   startHarvest,
 } from './harvestClient.ts';
+import type { Settings } from './storage.ts';
 
 const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 
@@ -48,8 +55,13 @@ interface Result {
   ingest: HarvestIngest | null;
 }
 
-// Persisted so the choice survives panel close; default stays on.
+// Persisted so the choice survives panel close; default stays on. Predates the
+// HV.3 `harvestForm` blob and keeps its own key — other surfaces read it.
 const SEND_TO_STRATUS_KEY = 'harvestSendToStratus';
+
+// Enough to reach today's passive run past a busy day of hand harvests; the
+// route's own default is the same number.
+const RUNS_LOOKBACK = 20;
 
 const ERROR_TEXT: Record<string, string> = {
   no_handle: "Couldn't read a profile handle from that page.",
@@ -70,14 +82,17 @@ function fmtDate(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? '?' : d.toLocaleString();
 }
 
-export function HarvestPanel(): JSX.Element {
+export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element {
   const [ctx, setCtx] = useState<ActiveContext | null>(null);
   const [handle, setHandle] = useState('');
   const [touched, setTouched] = useState(false);
-  const [mode, setMode] = useState<HarvestMode>('posts');
-  const [scope, setScope] = useState<HarvestScope>('all');
-  const [pace, setPace] = useState<HarvestPace>('human');
-  const [maxStr, setMaxStr] = useState('');
+  const [mode, setMode] = useState<HarvestMode>(DEFAULT_HARVEST_FORM.mode);
+  const [scope, setScope] = useState<HarvestScope>(DEFAULT_HARVEST_FORM.scope);
+  const [pace, setPace] = useState<HarvestPace>(DEFAULT_HARVEST_FORM.pace);
+  const [maxStr, setMaxStr] = useState(DEFAULT_HARVEST_FORM.maxStr);
+  const [minViewsStr, setMinViewsStr] = useState(DEFAULT_HARVEST_FORM.minViewsStr);
+  const [downloadCsv, setDownloadCsv] = useState(DEFAULT_HARVEST_FORM.downloadCsv);
+  const [formLoaded, setFormLoaded] = useState(false);
   const [sendToStratus, setSendToStratus] = useState(true);
 
   useEffect(() => {
@@ -86,10 +101,53 @@ export function HarvestPanel(): JSX.Element {
     });
   }, []);
 
+  // Restore the form, then mirror every later edit back. `formLoaded` is what
+  // keeps the write effect from stamping the defaults over the stored value in
+  // the render before the read resolves.
+  useEffect(() => {
+    void chrome.storage.local.get(HARVEST_FORM_KEY).then((out) => {
+      const f = parseHarvestForm(out[HARVEST_FORM_KEY]);
+      setMode(f.mode);
+      setScope(f.scope);
+      setPace(f.pace);
+      setMaxStr(f.maxStr);
+      setMinViewsStr(f.minViewsStr);
+      setDownloadCsv(f.downloadCsv);
+      setFormLoaded(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!formLoaded) return;
+    const form: HarvestForm = { mode, scope, pace, maxStr, minViewsStr, downloadCsv };
+    void chrome.storage.local.set({ [HARVEST_FORM_KEY]: form });
+  }, [formLoaded, mode, scope, pace, maxStr, minViewsStr, downloadCsv]);
+
   const toggleSendToStratus = (next: boolean): void => {
     setSendToStratus(next);
     void chrome.storage.local.set({ [SEND_TO_STRATUS_KEY]: next });
   };
+
+  // Today's ambient capture (HV.1/HV.2). null = not loaded or the read failed —
+  // this is decoration on someone else's feature, so it stays silent rather
+  // than claiming zero.
+  const [passiveRows, setPassiveRows] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!settings.passiveHarvest) return;
+    let alive = true;
+    api.harvest
+      .runs(settings, { limit: RUNS_LOOKBACK })
+      .then((runs) => {
+        if (alive) setPassiveRows(passiveRowsToday(runs, Date.now()));
+      })
+      .catch(() => {
+        if (alive) setPassiveRows(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
 
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -123,6 +181,8 @@ export function HarvestPanel(): JSX.Element {
 
   const cleanHandle = handle.trim().replace(/^@/, '');
   const handleValid = HANDLE_RE.test(cleanHandle);
+  // Both sinks off = a scrape that scrolls for minutes and saves nothing.
+  const noOutput = !downloadCsv && !sendToStratus;
 
   const onEvent = useCallback((e: HarvestEvent) => {
     switch (e.type) {
@@ -158,7 +218,7 @@ export function HarvestPanel(): JSX.Element {
   }, []);
 
   const start = async (): Promise<void> => {
-    if (!handleValid || running) return;
+    if (!handleValid || running || noOutput) return;
     setError(null);
     setResult(null);
     setProgress(null);
@@ -166,12 +226,15 @@ export function HarvestPanel(): JSX.Element {
     setRunning(true);
 
     const max = Number.parseInt(maxStr, 10);
+    const minViews = Number.parseInt(minViewsStr, 10);
     const options: HarvestOptions = {
       mode,
       scope,
       pace,
       sendToStratus,
+      downloadCsv,
       ...(Number.isFinite(max) && max > 0 ? { max } : {}),
+      ...(Number.isFinite(minViews) && minViews > 0 ? { minViews } : {}),
     };
 
     try {
@@ -282,7 +345,28 @@ export function HarvestPanel(): JSX.Element {
             onChange={(e) => setMaxStr(e.target.value)}
           />
         </label>
+        <label className="field">
+          <span>Min views</span>
+          <input
+            type="number"
+            min={1}
+            placeholder="any"
+            value={minViewsStr}
+            disabled={running}
+            onChange={(e) => setMinViewsStr(e.target.value)}
+          />
+        </label>
       </div>
+
+      <label className="row harvest-toggle">
+        <input
+          type="checkbox"
+          checked={downloadCsv}
+          disabled={running}
+          onChange={(e) => setDownloadCsv(e.target.checked)}
+        />
+        <span>Download CSV</span>
+      </label>
 
       <label className="row harvest-toggle">
         <input
@@ -291,8 +375,14 @@ export function HarvestPanel(): JSX.Element {
           disabled={running}
           onChange={(e) => toggleSendToStratus(e.target.checked)}
         />
-        <span>Send to stratus (alongside the CSV)</span>
+        <span>Send to stratus</span>
       </label>
+
+      {noOutput && (
+        <div className="warn">
+          Turn on the CSV download or Send to stratus — with both off the harvest saves nothing.
+        </div>
+      )}
 
       {error && <div className="error">{error}</div>}
 
@@ -318,7 +408,7 @@ export function HarvestPanel(): JSX.Element {
         <button
           type="button"
           className="primary"
-          disabled={!handleValid}
+          disabled={!handleValid || noOutput}
           onClick={() => void start()}
         >
           {handleValid ? `Harvest @${cleanHandle}` : 'Enter a handle'}
@@ -330,7 +420,14 @@ export function HarvestPanel(): JSX.Element {
           {result.rows > 0 ? (
             <>
               {result.cancelled ? 'Stopped — saved ' : 'Done — saved '}
-              <strong>{result.rows}</strong> rows to <code>{result.filename}</code>.
+              <strong>{result.rows}</strong> rows{' '}
+              {result.filename ? (
+                <>
+                  to <code>{result.filename}</code>.
+                </>
+              ) : (
+                'to stratus only (no CSV).'
+              )}
               <br />
               Range {fmtDate(result.lastTime)} … {fmtDate(result.firstTime)}.
               {result.ingest?.sent && (
@@ -352,8 +449,19 @@ export function HarvestPanel(): JSX.Element {
 
       {result?.ingest && !result.ingest.sent && (
         <div className="warn">
-          Stratus ingest failed: <code>{result.ingest.error}</code> — the CSV was still saved.
+          Stratus ingest failed: <code>{result.ingest.error}</code>
+          {result.filename
+            ? ' — the CSV was still saved.'
+            : ' — and the CSV was off, so nothing was kept.'}
         </div>
+      )}
+
+      {settings.passiveHarvest ? (
+        passiveRows !== null && (
+          <p className="muted harvest-hint">Passive: {passiveRows} rows today</p>
+        )
+      ) : (
+        <p className="muted harvest-hint">Passive capture off</p>
       )}
     </div>
   );

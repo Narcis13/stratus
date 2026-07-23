@@ -158,6 +158,7 @@ export function useSettings(): { settings: Settings; loading: boolean } {
         !(KEY_APPLY_PILLARS_REPLIES in changes) &&
         !(KEY_AUTOTYPE_REPLY in changes) &&
         !(KEY_PASSIVE_CAPTURE in changes) &&
+        !(KEY_PASSIVE_HARVEST in changes) &&
         !(KEY_THEME in changes) &&
         !(KEY_DENSITY in changes) &&
         !(KEY_UI_SCALE in changes)

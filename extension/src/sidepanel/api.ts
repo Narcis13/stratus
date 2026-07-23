@@ -48,6 +48,7 @@ import {
   type GeneratedImageItem,
   type GoalKind,
   type GoalStatus,
+  type HarvestRun,
   type HumanizerConfig,
   type IcebreakersResponse,
   type Idea,
@@ -218,6 +219,7 @@ export type {
   FollowupKind,
   FollowupSnoozeBody,
   FollowupsResponse,
+  HarvestRun,
   Idea,
   IdeaCreateBody,
   IdeaGenerateBody,
@@ -681,6 +683,16 @@ export const api = {
         method: 'PATCH',
         body: { tags },
       });
+    },
+  },
+
+  // HV.3 — the run log, newest first. The Harvest tab reads it only to show
+  // today's passive row count; ingestion itself never goes through here (the
+  // content script POSTs straight to /x/harvest/* over the same transport).
+  harvest: {
+    runs(s: Settings, opts: { limit?: number } = {}): Promise<HarvestRun[]> {
+      const qs = opts.limit === undefined ? '' : `?limit=${opts.limit}`;
+      return request<HarvestRun[]>(s, `/x/harvest/runs${qs}`);
     },
   },
 

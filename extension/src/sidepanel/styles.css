@@ -661,6 +661,9 @@ button.danger:hover:not(:disabled) {
 }
 .harvest-tuning .field {
   flex: 1;
+  /* HV.3 added a third column (Min views); without this the inputs' intrinsic
+     min-width keeps them from shrinking and the row overflows the panel. */
+  min-width: 0;
 }
 
 .harvest-progress {

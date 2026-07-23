@@ -26,6 +26,7 @@ import {
   harvestCursorKey,
   isHarvestContextRequest,
   isRepliesPath,
+  passesMinViews,
   profileHandleFromUrl,
 } from './shared/harvest.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
@@ -333,6 +334,10 @@ interface HarvestCtx<R> {
   // oldest own (non-pinned) item seen so far, in or out of window — tracks how
   // far down the timeline we've scrolled, independent of what we kept.
   oldestSeenMs: number | null;
+  // HV.3 view floor. Applied AFTER noteSeen so a filtered-out item still counts
+  // as scrolled-past — otherwise a high floor would defeat the day-window
+  // exhaustion break and scroll to the hard step cap every time.
+  minViews: number | undefined;
 }
 
 type Harvester<R> = (ctx: HarvestCtx<R>) => number;
@@ -352,6 +357,7 @@ function harvestPosts(ctx: HarvestCtx<PostRow>): number {
       if (p.isRepost) continue; // skip bare reposts
       noteSeen(ctx, p);
       if (!inWindow(p.timeMs, ctx.window)) continue;
+      if (!passesMinViews(p.metrics.views, ctx.minViews)) continue;
       if (!ctx.store[p.id]) added++;
       ctx.store[p.id] = {
         text: p.text,
@@ -384,6 +390,8 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
       if (!reply.handle || reply.handle.toLowerCase() !== ctx.profile || !reply.id) continue;
       noteSeen(ctx, reply);
       if (!inWindow(reply.timeMs, ctx.window)) continue;
+      // The floor reads MY reply's views, never the original's.
+      if (!passesMinViews(reply.metrics.views, ctx.minViews)) continue;
       if (!ctx.store[reply.id]) added++;
       ctx.store[reply.id] = {
         o_id: orig.id ?? '',
@@ -651,7 +659,13 @@ async function runHarvest<R>(
 
   const cfg = PRESETS[options.pace] ?? PRESETS.human;
   const win = await windowFor(profile, mode, options.scope);
-  const ctx: HarvestCtx<R> = { store: {}, profile, window: win, oldestSeenMs: null };
+  const ctx: HarvestCtx<R> = {
+    store: {},
+    profile,
+    window: win,
+    oldestSeenMs: null,
+    minViews: options.minViews,
+  };
 
   emit({ type: 'started', handle: profile, mode, scope: options.scope });
 
@@ -721,9 +735,12 @@ async function runHarvest<R>(
     .map(rowTime)
     .filter((t): t is string => Boolean(t))
     .sort();
+  // HV.3: a DB-only run downloads nothing, and reports an empty filename so the
+  // panel can word the result "saved to stratus only" without a second flag.
+  const wantsCsv = options.downloadCsv !== false;
   const filename = `${profile}_${mode}${scopeSuffix(options.scope)}_${localDateStamp()}.csv`;
 
-  if (rows.length > 0) download(buildCsv(ctx.store), filename);
+  if (wantsCsv && rows.length > 0) download(buildCsv(ctx.store), filename);
 
   let ingest: HarvestIngest | undefined;
   if (rows.length > 0 && options.sendToStratus !== false) {
@@ -742,7 +759,7 @@ async function runHarvest<R>(
   emit({
     type: 'done',
     rows: rows.length,
-    filename: rows.length > 0 ? filename : '',
+    filename: wantsCsv && rows.length > 0 ? filename : '',
     firstTime: times[times.length - 1] ?? null,
     lastTime: times[0] ?? null,
     cancelled,

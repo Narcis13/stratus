@@ -646,6 +646,20 @@ export interface AuthorProfile {
   profileUrl?: string | null;
 }
 
+// ---------------------------------------------------------------- harvest
+
+// One `GET /x/harvest/runs` row. `mode` is the corpus discriminator: hand-run
+// harvests are 'posts'/'replies', while HV.1's ambient timeline capture hangs
+// its rows off a server-owned 'timeline' run, one per UTC day.
+export interface HarvestRun {
+  id: string;
+  handle: string;
+  mode: string;
+  scope: string;
+  rowCount: number;
+  createdAt: string;
+}
+
 // --------------------------------------------------------------- replies
 
 export type ReplyDraftStatus = 'generated' | 'copied' | 'posted' | 'discarded';

@@ -211,7 +211,7 @@ export function App(): JSX.Element {
             onClearSeed={() => setStudioSeed(null)}
           />
         ) : activeTab === 'harvest' ? (
-          <HarvestPanel />
+          <HarvestPanel settings={settings} />
         ) : activeTab === 'voice' ? (
           <VoicePanel settings={settings} onRemix={startRemix} onOpenPerson={openPerson} />
         ) : activeTab === 'replies' ? (

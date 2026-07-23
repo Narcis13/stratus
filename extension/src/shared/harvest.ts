@@ -3,6 +3,8 @@
 // drives a long-running scrape over a chrome.tabs port; the content script does
 // the human-paced scroll and DOM read, streaming progress back.
 
+import type { HarvestRun } from './types.ts';
+
 export type HarvestMode = 'posts' | 'replies';
 // 'all' scrapes the whole timeline (until bottom / max). 'today'/'yesterday'
 // keep only items whose timestamp falls on that local calendar day.
@@ -21,6 +23,20 @@ export interface HarvestOptions {
   // Ship rows to POST /x/harvest/* alongside the CSV download. Default on —
   // only an explicit false skips the upload (OVERHAUL-PLAN §6.3).
   sendToStratus?: boolean;
+  // HV.3 — download the CSV at the end of the run. Default on; an explicit
+  // false makes the harvest DB-only (the 'done' event's filename is then '').
+  downloadCsv?: boolean;
+  // HV.3 — drop items below this view count at store time, so the filter
+  // reaches the CSV and the ingest alike. Omitted/0 means no floor.
+  minViews?: number;
+}
+
+/** The min-views floor, applied to the harvested item's OWN views (never the
+ *  `orig` it replied to). An absent, non-finite or non-positive floor passes
+ *  everything — a blank input must never silently drop rows. */
+export function passesMinViews(views: number, minViews?: number): boolean {
+  if (minViews === undefined || !Number.isFinite(minViews) || minViews <= 0) return true;
+  return views >= minViews;
 }
 
 // One harvested row as shipped to POST /x/harvest/rows. `orig` is the tweet
@@ -61,6 +77,91 @@ export interface HarvestIngestRow {
 // Per-handle incremental cursor (§9.4), stored in chrome.storage.local.
 export function harvestCursorKey(handle: string, mode: HarvestMode): string {
   return `harvest:cursor:${handle.toLowerCase()}:${mode}`;
+}
+
+// ------------------------------------------------------ persisted form (HV.3)
+
+// One chrome.storage.local key holds the whole Harvest-tab form. The legacy
+// `harvestSendToStratus` key keeps its own slot — it predates this and other
+// surfaces already read it.
+export const HARVEST_FORM_KEY = 'harvestForm';
+
+// The numeric fields are kept as the raw input strings the panel holds, so a
+// blank box round-trips as blank instead of collapsing to a 0 floor.
+export interface HarvestForm {
+  mode: HarvestMode;
+  scope: HarvestScope;
+  pace: HarvestPace;
+  maxStr: string;
+  minViewsStr: string;
+  downloadCsv: boolean;
+}
+
+export const DEFAULT_HARVEST_FORM: HarvestForm = {
+  mode: 'posts',
+  scope: 'all',
+  pace: 'human',
+  maxStr: '',
+  minViewsStr: '',
+  downloadCsv: true,
+};
+
+function isHarvestMode(v: unknown): v is HarvestMode {
+  return v === 'posts' || v === 'replies';
+}
+
+function isHarvestScope(v: unknown): v is HarvestScope {
+  return v === 'all' || v === 'today' || v === 'yesterday' || v === 'since-last';
+}
+
+function isHarvestPace(v: unknown): v is HarvestPace {
+  return v === 'slow' || v === 'human' || v === 'fast';
+}
+
+function digitsOrBlank(v: unknown): string {
+  return typeof v === 'string' && /^\d*$/.test(v) ? v : '';
+}
+
+/** Lenient parse (the `parseBrandKit` pattern): every unrecognised or missing
+ *  field falls back to its default, so a form written by an older build — or a
+ *  hand-edited storage value — still restores instead of throwing the tab. */
+export function parseHarvestForm(raw: unknown): HarvestForm {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DEFAULT_HARVEST_FORM };
+  const o = raw as Record<string, unknown>;
+  return {
+    mode: isHarvestMode(o.mode) ? o.mode : DEFAULT_HARVEST_FORM.mode,
+    scope: isHarvestScope(o.scope) ? o.scope : DEFAULT_HARVEST_FORM.scope,
+    pace: isHarvestPace(o.pace) ? o.pace : DEFAULT_HARVEST_FORM.pace,
+    maxStr: digitsOrBlank(o.maxStr),
+    minViewsStr: digitsOrBlank(o.minViewsStr),
+    downloadCsv:
+      typeof o.downloadCsv === 'boolean' ? o.downloadCsv : DEFAULT_HARVEST_FORM.downloadCsv,
+  };
+}
+
+// ----------------------------------------------------- passive status (HV.3)
+
+// The discriminator HV.1 hangs ambient rows off; `POST /harvest/runs` still
+// refuses it, so only the server ever creates one of these runs.
+export const PASSIVE_RUN_MODE = 'timeline';
+
+/** Rows the passive tap captured during the current UTC day, read off
+ *  `GET /x/harvest/runs`. The server keys its synthetic run by UTC day
+ *  (`utcDayStart`), so the boundary here has to be UTC too — a local-midnight
+ *  window would read yesterday's run for part of every day. Summed rather than
+ *  first-match: there is exactly one such run today, and a sum can't silently
+ *  under-report if that ever stops being true. */
+export function passiveRowsToday(runs: readonly HarvestRun[], nowMs: number): number {
+  const now = new Date(nowMs);
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  let rows = 0;
+  for (const r of runs) {
+    if (r.mode !== PASSIVE_RUN_MODE) continue;
+    const at = Date.parse(r.createdAt);
+    if (Number.isNaN(at) || at < dayStart) continue;
+    rows += r.rowCount;
+  }
+  return rows;
 }
 
 // Outcome of the upload, attached to the final 'done' event. The CSV download
