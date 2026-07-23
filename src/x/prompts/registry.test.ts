@@ -18,6 +18,7 @@ import {
   REPLY_PROMPT_TEMPLATE,
   buildGrokInput,
 } from '../replies/prompt.ts';
+import { REPLY_LIST_PROMPT_TEMPLATE } from '../replyLists/generate.ts';
 import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
 import {
   PROMPT_KEYS,
@@ -61,6 +62,7 @@ describe('prompt registry (AI.3)', () => {
       'pillar-draft',
       'digest',
       'icebreaker',
+      'reply-list',
     ]);
     expect(isPromptKey('reply')).toBe(true);
     expect(isPromptKey('reply-batch')).toBe(true);
@@ -69,6 +71,7 @@ describe('prompt registry (AI.3)', () => {
     expect(isPromptKey('thread')).toBe(true);
     expect(isPromptKey('rewrite')).toBe(true);
     expect(isPromptKey('ideas')).toBe(true);
+    expect(isPromptKey('reply-list')).toBe(true);
     expect(isPromptKey('nonsense')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);
@@ -79,6 +82,7 @@ describe('prompt registry (AI.3)', () => {
     expect(PROMPT_SPECS['pillar-draft'].defaultBody).toBe(PILLAR_DRAFT_TEMPLATE);
     expect(PROMPT_SPECS.digest.defaultBody).toBe(DIGEST_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.icebreaker.defaultBody).toBe(ICEBREAKER_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS['reply-list'].defaultBody).toBe(REPLY_LIST_PROMPT_TEMPLATE);
     // Every spec's own default must validate clean — required present, no
     // unknown tokens (the optional niche placeholders are known).
     for (const key of PROMPT_KEYS) {

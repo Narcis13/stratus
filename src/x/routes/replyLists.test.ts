@@ -453,3 +453,58 @@ describe('reply list /use', () => {
     expect((await send(path, 'POST', {})).status).toBe(200);
   });
 });
+
+// ------------------------------------------------------------ RL.4 /generate
+//
+// Guards only — nothing here may reach an LLM. Every case either 400s/404s
+// before the call or force-unsets both provider keys so askLLM refuses.
+
+describe('reply list /generate', () => {
+  test('bad body, prompt, count, model or provider → 400 before any spend', async () => {
+    const list = await createList({ name: 'generate validation probe' });
+    const path = `/x/reply-lists/${list.id}/generate`;
+
+    expect((await send(path, 'POST', 'nope')).status).toBe(400);
+    expect((await send(path, 'POST', {})).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: '   ' })).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: 'x'.repeat(2001) })).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: 'ok', count: 0 })).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: 'ok', count: 31 })).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: 'ok', count: 2.5 })).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: 'ok', model: '' })).status).toBe(400);
+    expect((await send(path, 'POST', { prompt: 'ok', provider: 'gemini' })).status).toBe(400);
+    expect(
+      (await send('/x/reply-lists/not-a-uuid/generate', 'POST', { prompt: 'ok' })).status,
+    ).toBe(400);
+  });
+
+  test('an unknown list 404s before the call, whatever the keys say', async () => {
+    const res = await send<{ error: string }>(`/x/reply-lists/${MISSING_UUID}/generate`, 'POST', {
+      prompt: 'short congratulation replies',
+    });
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('not_found');
+  });
+
+  test('no LLM configured → 503 llm_not_configured (refuse before spend)', async () => {
+    const list = await createList({ name: 'generate 503 probe' });
+    const xai = process.env.XAI_API_KEY;
+    const openrouter = process.env.OPENROUTER_API_KEY;
+    process.env.XAI_API_KEY = '';
+    process.env.OPENROUTER_API_KEY = '';
+    try {
+      const res = await send<{ error: string }>(`/x/reply-lists/${list.id}/generate`, 'POST', {
+        prompt: 'replies that would otherwise spend',
+      });
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('llm_not_configured');
+    } finally {
+      process.env.XAI_API_KEY = xai ?? '';
+      process.env.OPENROUTER_API_KEY = openrouter ?? '';
+    }
+
+    // Proposal-only: a refused generate leaves the list exactly as it was.
+    const items = await db.select().from(replyListItems).where(eq(replyListItems.listId, list.id));
+    expect(items).toHaveLength(0);
+  });
+});

@@ -1,9 +1,9 @@
 // Reply lists (RL) — CRUD over the premade canned-reply lists and their items,
 // plus `/use` (the anti-repeat pick + humanized render). Mounted under `/x` by
-// `mountX` in ../index.ts — always mounted, every route here is $0 (pure SQL and
-// pure engine; nothing touches X or an LLM). The one route that needs more lands
-// later: `/generate` (RL.4, one LLM call behind a runtime key check, pillars.ts
-// shape).
+// `mountX` in ../index.ts — always mounted, and every route here is $0 (pure SQL
+// and pure engine) except `/generate`, the one LLM call: it writes nothing, and
+// askLLM enforces the resolved provider's key per request (§7.22 — the router
+// itself must stay mounted so all the CRUD works with no LLM key at all).
 //
 // Routes:
 //   GET    /reply-lists                      → [{...list, itemCount, enabledCount}] (sortOrder asc)
@@ -15,6 +15,7 @@
 //   PATCH  /reply-lists/:id/items/:itemId    { text?, enabled? }
 //   DELETE /reply-lists/:id/items/:itemId
 //   POST   /reply-lists/:id/use              { vars?, targetTweetId?, targetHandle?, preview? }
+//   POST   /reply-lists/:id/generate         { prompt, count?, model?, provider? } → proposal, no DB write
 //
 // `humanizer` is stored normalized through the engine's parseHumanizerConfig, so
 // /use never re-validates: `null` in the body clears back to DEFAULT_HUMANIZER,
@@ -24,7 +25,9 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import { type AskLlmResult, type LlmProvider, askLLM, llmErrorPayload } from '../../llm/index.ts';
 import { replyListItems, replyListUses, replyLists } from '../db/schema.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import {
   MAX_REPLY_LENGTH,
   type ReplyVars,
@@ -34,6 +37,14 @@ import {
   pickItem,
   resolveHumanizer,
 } from '../replyLists/engine.ts';
+import {
+  DEFAULT_GENERATED_ITEMS,
+  MAX_GENERATED_ITEMS,
+  MAX_GEN_PROMPT_LEN,
+  REPLY_LIST_GEN_SCHEMA,
+  buildListGenInput,
+  parseGeneratedItems,
+} from '../replyLists/generate.ts';
 
 const MAX_NAME_LEN = 120;
 const MAX_DESCRIPTION_LEN = 2000;
@@ -390,6 +401,113 @@ replyListsRouter.post('/reply-lists/:id/use', async (c) => {
   }
 
   return c.json({ itemId: item.id, text, missingVars, applied });
+});
+
+// One structured-outputs LLM call fills a list from a category prompt. Writes
+// NOTHING (Decision 3): the panel previews the proposal and the user applies it
+// through POST /items with mode replace|append and source:'ai', so the
+// destructive "overwrite my list" step stays an explicit human click. Every
+// guard fires before the call (§7.4) — an unknown list 404s without spending,
+// and askLLM's own per-request key check maps to 503 llm_not_configured.
+replyListsRouter.post('/reply-lists/:id/generate', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+    return c.json({ error: 'invalid_body' }, 400);
+  const b = raw as Record<string, unknown>;
+
+  const category = typeof b.prompt === 'string' ? b.prompt.trim() : '';
+  if (category === '' || category.length > MAX_GEN_PROMPT_LEN)
+    return c.json({ error: 'invalid_prompt' }, 400);
+
+  // Refused, not clamped: the panel sends what the user typed, and silently
+  // returning 12 of the 40 they asked for reads as a broken generator.
+  let count = DEFAULT_GENERATED_ITEMS;
+  if (b.count !== undefined && b.count !== null) {
+    if (
+      typeof b.count !== 'number' ||
+      !Number.isInteger(b.count) ||
+      b.count < 1 ||
+      b.count > MAX_GENERATED_ITEMS
+    )
+      return c.json({ error: 'invalid_count' }, 400);
+    count = b.count;
+  }
+
+  let model: string | undefined;
+  if (b.model !== undefined && b.model !== null) {
+    if (typeof b.model !== 'string' || b.model.trim() === '')
+      return c.json({ error: 'invalid_model' }, 400);
+    model = b.model;
+  }
+
+  let provider: LlmProvider | undefined;
+  if (b.provider !== undefined && b.provider !== null) {
+    if (b.provider !== 'grok' && b.provider !== 'openrouter')
+      return c.json({ error: 'invalid_provider' }, 400);
+    provider = b.provider;
+  }
+
+  const [list] = await db
+    .select({ id: replyLists.id })
+    .from(replyLists)
+    .where(eq(replyLists.id, id));
+  if (!list) return c.json({ error: 'not_found' }, 404);
+
+  // "More like these", and don't repeat them — disabled items included, since a
+  // duplicate of one the user switched off is just as unwanted.
+  const existing = await db
+    .select({ text: replyListItems.text })
+    .from(replyListItems)
+    .where(eq(replyListItems.listId, id))
+    .orderBy(asc(replyListItems.createdAt), asc(replyListItems.id));
+
+  // Bare cache key, no niche suffix: this prompt carries no persona/beliefs, so
+  // its cacheable prefix doesn't move when the active niche changes.
+  const prompt = loadPromptSafe('reply-list');
+  const messages = buildListGenInput({
+    prompt: category,
+    count,
+    existingItems: existing.map((r) => r.text),
+    template: prompt.body,
+  });
+
+  let result: AskLlmResult;
+  try {
+    result = await askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        messages,
+        jsonSchema: { name: 'reply_list_items', schema: REPLY_LIST_GEN_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      { defaults: { temperature: 0.9, maxOutputTokens: 1500, reasoningEffort: 'low' } },
+    );
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/reply-lists/:id/generate failed:', detail);
+    return c.json({ error: 'generate_failed', detail }, 502);
+  }
+
+  const items = parseGeneratedItems(result.text, count);
+  if (items === null)
+    return c.json({ error: 'items_parse_error', requestId: result.requestId }, 502);
+  if (items.length === 0)
+    return c.json({ error: 'items_invalid', requestId: result.requestId }, 502);
+
+  return c.json({
+    items,
+    count: items.length,
+    requested: count,
+    model: result.model,
+    costUsd: result.costUsd,
+    requestId: result.requestId,
+  });
 });
 
 // ---------------------------------------------------------------- helpers

@@ -124,14 +124,14 @@ The **AI** subtab controls which large language model drafts your posts, replies
 
 ## Prompts editor (the Prompts subtab)
 
-Every AI feature in stratus is driven by a **prompt** — the instructions the model reads before it writes. The **Prompts** subtab lets you read and edit all **10** of them, and revert to the shipped defaults whenever you want.
+Every AI feature in stratus is driven by a **prompt** — the instructions the model reads before it writes. The **Prompts** subtab lets you read and edit all **11** of them, and revert to the shipped defaults whenever you want.
 
-The 10 prompts are: **reply drafts**, **reply drafts (batch)**, **post drafts**, **thread drafts**, **rewrite assist**, **idea generator**, **template extraction**, **pillar drafting**, **Sunday digest**, and **icebreakers**. Each row shows its name, a one-line description, and an amber **"customized"** chip if you've edited it.
+The 11 prompts are: **reply drafts**, **reply drafts (batch)**, **post drafts**, **thread drafts**, **rewrite assist**, **idea generator**, **template extraction**, **pillar drafting**, **Sunday digest**, **icebreakers**, and **reply-list items** (the generator that fills a canned-reply list from a category prompt). Each row shows its name, a one-line description, and an amber **"customized"** chip if you've edited it.
 
 - **Editing a prompt:** click a row to open the editor — a big monospace text box with the full prompt, a character count, and a set of **required-placeholder chips**. Placeholders look like `{{TWEET_CONTEXT}}` or `{{IDEA}}`; they're where the app injects the actual tweet, your pillars, your winners, and so on at draft time. A chip is **green** when its placeholder is still present in your text and **red** when it's missing. You can't save while any required placeholder is missing (Save greys out, and the server refuses it too) — a prompt that dropped `{{IDEA}}` would silently ignore your idea, so the editor won't let that happen. You can freely edit all the surrounding prose.
 - **Save / Reset this prompt:** Save stores your version as an override on the server; the next draft of that kind uses it immediately. "Reset this prompt" deletes just that one override, reverting it to the shipped default.
 - **Show default:** lets you compare your edit against the original text.
-- **Restore Default Prompts:** the big button (with a confirm dialog) that deletes **every** override at once — all 10 prompts snap back to their shipped defaults and the "customized" chips disappear. This is the recovery button if an edit made your drafts worse.
+- **Restore Default Prompts:** the big button (with a confirm dialog) that deletes **every** override at once — all 11 prompts snap back to their shipped defaults and the "customized" chips disappear. This is the recovery button if an edit made your drafts worse.
 
 **How overrides work under the hood:** a prompt you never edit has *no* stored row — it just uses the code default, which means an improved default shipped in a later stratus update applies automatically. The moment you save an edit, a row is stored and "customized" turns on; reset/restore delete that row. So "customized" is a real fact (a row exists), not a guess.
 

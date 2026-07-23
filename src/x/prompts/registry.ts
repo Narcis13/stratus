@@ -30,6 +30,7 @@ import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
 import { REWRITE_PROMPT_TEMPLATE } from '../posts/rewritePrompt.ts';
 import { THREAD_PROMPT_TEMPLATE } from '../posts/threadPrompt.ts';
 import { REPLY_BATCH_PROMPT_TEMPLATE, REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
+import { REPLY_LIST_PROMPT_TEMPLATE } from '../replyLists/generate.ts';
 import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
 
 export const PROMPT_KEYS = [
@@ -43,6 +44,7 @@ export const PROMPT_KEYS = [
   'pillar-draft',
   'digest',
   'icebreaker',
+  'reply-list',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -139,6 +141,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
       'The opener prompt behind POST /x/people/:handle/icebreakers — two conversation starters grounded strictly on real shared context.',
     defaultBody: ICEBREAKER_PROMPT_TEMPLATE,
     required: ['{{GROUNDING}}'],
+    optional: [],
+  },
+  'reply-list': {
+    name: 'Reply-list items',
+    description:
+      'The generator behind POST /x/reply-lists/:id/generate — fills a canned-reply list from a category prompt; a proposal only, never persisted.',
+    defaultBody: REPLY_LIST_PROMPT_TEMPLATE,
+    required: ['{{COUNT}}', '{{REQUEST}}', '{{EXISTING_ITEMS}}'],
     optional: [],
   },
 };
