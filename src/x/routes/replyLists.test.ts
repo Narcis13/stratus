@@ -1,13 +1,15 @@
-// RL.2 reply-list CRUD: the round-trip, cascade delete, atomic replace, and the
-// validation guards — over the real (in-memory, auto-migrated) SQLite DB; bun
-// test runs with SQLITE_PATH=:memory:. The DB is shared across suites, so every
-// list this file creates is deleted in afterAll (items cascade with them).
+// RL.2 reply-list CRUD (round-trip, cascade delete, atomic replace, validation)
+// and RL.3 `/use` (anti-repeat pick, render, stamp) — over the real (in-memory,
+// auto-migrated) SQLite DB; bun test runs with SQLITE_PATH=:memory:. The DB is
+// shared across suites, so every list this file creates is deleted in afterAll
+// (items cascade with them) — and `reply_list_uses` is FK-free on purpose, so
+// its rows have to be deleted explicitly or they leak into RL.7's attribution.
 
 import { afterAll, describe, expect, test } from 'bun:test';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { replyListItems, replyLists } from '../db/schema.ts';
+import { replyListItems, replyListUses, replyLists } from '../db/schema.ts';
 import { DEFAULT_HUMANIZER, type HumanizerConfig } from '../replyLists/engine.ts';
 import { replyListsRouter } from './replyLists.ts';
 
@@ -60,6 +62,7 @@ async function createList(body: Record<string, unknown>): Promise<ListRow> {
 
 afterAll(async () => {
   if (createdListIds.length > 0) {
+    await db.delete(replyListUses).where(inArray(replyListUses.listId, createdListIds));
     await db.delete(replyLists).where(inArray(replyLists.id, createdListIds));
   }
 });
@@ -293,5 +296,160 @@ describe('reply list validation', () => {
     expect((await send(`/x/reply-lists/${list.id}`, 'PATCH', {})).status).toBe(400);
     expect((await send(`/x/reply-lists/${list.id}`, 'PATCH', { sortOrder: 1.5 })).status).toBe(400);
     expect((await send(`/x/reply-lists/${list.id}`, 'PATCH', { active: 'yes' })).status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------- RL.3 /use
+
+interface UseRow {
+  itemId: string;
+  text: string;
+  missingVars: string[];
+  applied: string[];
+}
+
+// The jitter is genuinely random (Math.random inside the route), so every test
+// that asserts on exact text uses a list whose humanizer can't fire. The jitter
+// itself is covered by the engine's seeded-rng suite.
+const QUIET = {
+  prefixes: [],
+  suffixes: [],
+  prefixChance: 0,
+  suffixChance: 0,
+  lowercaseChance: 0,
+  dropPeriodChance: 0,
+  typoChance: 0,
+};
+
+async function seedList(name: string, texts: string[]): Promise<ListRow> {
+  const list = await createList({ name, humanizer: QUIET });
+  const res = await send(`/x/reply-lists/${list.id}/items`, 'POST', {
+    mode: 'append',
+    items: texts.map((text) => ({ text })),
+  });
+  expect(res.status).toBe(200);
+  return list;
+}
+
+describe('reply list /use', () => {
+  test('10 uses on a 5-item list never repeat back to back and stamp every use', async () => {
+    const list = await seedList('use probe', [
+      'one {name}',
+      'two {name}',
+      'three {name}',
+      'four {name}',
+      'five {name}',
+    ]);
+
+    const picked: string[] = [];
+    for (let i = 0; i < 10; i += 1) {
+      const res = await send<UseRow>(`/x/reply-lists/${list.id}/use`, 'POST', {
+        vars: { name: 'Alex Pop', handle: '@alexp' },
+      });
+      expect(res.status).toBe(200);
+      // The exclusion window makes this structural, not lucky: the item just
+      // used is always the most recent, so it is always excluded next time.
+      expect(res.body.itemId).not.toBe(picked.at(-1));
+      picked.push(res.body.itemId);
+    }
+    expect(new Set(picked).size).toBeGreaterThan(1);
+
+    const uses = await db.select().from(replyListUses).where(eq(replyListUses.listId, list.id));
+    expect(uses).toHaveLength(10);
+
+    const items = await db.select().from(replyListItems).where(eq(replyListItems.listId, list.id));
+    expect(items.reduce((sum, i) => sum + i.useCount, 0)).toBe(10);
+    expect(items.filter((i) => i.lastUsedAt !== null).length).toBeGreaterThan(1);
+  });
+
+  test('preview composes without writing anything', async () => {
+    const list = await seedList('preview probe', ['thanks for the early read, {name}!']);
+
+    const res = await send<UseRow>(`/x/reply-lists/${list.id}/use`, 'POST', {
+      vars: { name: 'Narcis B' },
+      targetTweetId: '1234567890',
+      preview: true,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('thanks for the early read, Narcis B!');
+
+    const items = await db.select().from(replyListItems).where(eq(replyListItems.listId, list.id));
+    expect(items[0]?.lastUsedAt).toBeNull();
+    expect(items[0]?.useCount).toBe(0);
+    expect(
+      await db.select().from(replyListUses).where(eq(replyListUses.listId, list.id)),
+    ).toHaveLength(0);
+  });
+
+  test('a missing var degrades cleanly and is reported', async () => {
+    const list = await seedList('degrade probe', ['Thank you, {name}!']);
+
+    const filled = await send<UseRow>(`/x/reply-lists/${list.id}/use`, 'POST', {
+      vars: { name: 'Narcis 🚀' },
+      preview: true,
+    });
+    expect(filled.body.text).toBe('Thank you, Narcis!');
+    expect(filled.body.missingVars).toEqual([]);
+    expect(filled.body.applied).toEqual([]);
+
+    // Only a handle available: the item still gets used (never block the use,
+    // Decision 7), the name slot takes its leading comma with it.
+    const bare = await send<UseRow>(`/x/reply-lists/${list.id}/use`, 'POST', {
+      vars: { handle: 'alexp' },
+      preview: true,
+    });
+    expect(bare.body.text).toBe('Thank you!');
+    expect(bare.body.missingVars).toEqual(['name']);
+  });
+
+  test('the use row keeps the rendered text and the normalized target', async () => {
+    const list = await seedList('audit probe', ['appreciate this, {first_name}']);
+
+    const res = await send<UseRow>(`/x/reply-lists/${list.id}/use`, 'POST', {
+      vars: { name: 'Alex Pop' },
+      targetTweetId: ' 1922334455 ',
+      targetHandle: '@AlexP',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.text).toBe('appreciate this, Alex');
+
+    const [use] = await db.select().from(replyListUses).where(eq(replyListUses.listId, list.id));
+    expect(use?.renderedText).toBe(res.body.text);
+    expect(use?.itemId).toBe(res.body.itemId);
+    expect(use?.targetTweetId).toBe('1922334455');
+    expect(use?.targetHandle).toBe('alexp');
+  });
+
+  test('409 when nothing is usable — empty list or every item disabled', async () => {
+    const empty = await createList({ name: 'empty probe' });
+    expect((await send(`/x/reply-lists/${empty.id}/use`, 'POST', {})).status).toBe(409);
+
+    const list = await seedList('disabled probe', ['only one']);
+    const got = await send<{ list: ListRow; items: ItemRow[] }>(`/x/reply-lists/${list.id}`, 'GET');
+    await send(`/x/reply-lists/${list.id}/items/${got.body.items[0]?.id}`, 'PATCH', {
+      enabled: false,
+    });
+
+    const res = await send<{ error: string }>(`/x/reply-lists/${list.id}/use`, 'POST', {});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('no_enabled_items');
+  });
+
+  test('use validation: vars, target ids, preview, unknown list', async () => {
+    const list = await seedList('use validation probe', ['hello']);
+    const path = `/x/reply-lists/${list.id}/use`;
+
+    expect((await send(path, 'POST', { vars: 'Alex' })).status).toBe(400);
+    expect((await send(path, 'POST', { vars: { name: 42 } })).status).toBe(400);
+    expect((await send(path, 'POST', { vars: { handle: 'x'.repeat(121) } })).status).toBe(400);
+    expect((await send(path, 'POST', { targetTweetId: 'not-numeric' })).status).toBe(400);
+    expect((await send(path, 'POST', { targetHandle: 'not a handle' })).status).toBe(400);
+    expect((await send(path, 'POST', { preview: 'yes' })).status).toBe(400);
+    expect((await send(path, 'POST', 'nope')).status).toBe(400);
+    expect((await send(`/x/reply-lists/${MISSING_UUID}/use`, 'POST', {})).status).toBe(404);
+    expect((await send('/x/reply-lists/not-a-uuid/use', 'POST', {})).status).toBe(400);
+
+    // An empty body is a legitimate "use with no target".
+    expect((await send(path, 'POST', {})).status).toBe(200);
   });
 });

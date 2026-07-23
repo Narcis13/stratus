@@ -1,8 +1,9 @@
-// Reply lists (RL) — CRUD over the premade canned-reply lists and their items.
-// Mounted under `/x` by `mountX` in ../index.ts — always mounted, every route
-// here is $0 (pure SQL; nothing touches X or an LLM). The two routes that need
-// more land later: `/use` (RL.3, still $0) and `/generate` (RL.4, one LLM call
-// behind a runtime key check, pillars.ts shape).
+// Reply lists (RL) — CRUD over the premade canned-reply lists and their items,
+// plus `/use` (the anti-repeat pick + humanized render). Mounted under `/x` by
+// `mountX` in ../index.ts — always mounted, every route here is $0 (pure SQL and
+// pure engine; nothing touches X or an LLM). The one route that needs more lands
+// later: `/generate` (RL.4, one LLM call behind a runtime key check, pillars.ts
+// shape).
 //
 // Routes:
 //   GET    /reply-lists                      → [{...list, itemCount, enabledCount}] (sortOrder asc)
@@ -13,6 +14,7 @@
 //   POST   /reply-lists/:id/items            { mode:'append'|'replace', items:[{text}], source? }
 //   PATCH  /reply-lists/:id/items/:itemId    { text?, enabled? }
 //   DELETE /reply-lists/:id/items/:itemId
+//   POST   /reply-lists/:id/use              { vars?, targetTweetId?, targetHandle?, preview? }
 //
 // `humanizer` is stored normalized through the engine's parseHumanizerConfig, so
 // /use never re-validates: `null` in the body clears back to DEFAULT_HUMANIZER,
@@ -22,16 +24,27 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { replyListItems, replyLists } from '../db/schema.ts';
-import { MAX_REPLY_LENGTH, parseHumanizerConfig } from '../replyLists/engine.ts';
+import { replyListItems, replyListUses, replyLists } from '../db/schema.ts';
+import {
+  MAX_REPLY_LENGTH,
+  type ReplyVars,
+  availableVarsFor,
+  composeReply,
+  parseHumanizerConfig,
+  pickItem,
+  resolveHumanizer,
+} from '../replyLists/engine.ts';
 
 const MAX_NAME_LEN = 120;
 const MAX_DESCRIPTION_LEN = 2000;
 // Per call, not per list — a generated batch (RL.4 caps at 30) or a paste of an
 // existing swipe file both fit comfortably.
 const MAX_ITEMS_PER_CALL = 100;
+const MAX_VAR_LEN = 120;
 const ITEM_SOURCES = ['manual', 'ai'] as const;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TWEET_ID_RE = /^\d{1,32}$/;
+const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
 
 export const replyListsRouter = new Hono();
 
@@ -288,6 +301,97 @@ replyListsRouter.delete('/reply-lists/:id/items/:itemId', async (c) => {
   return c.json({ ok: true });
 });
 
+// The whole point of the feature: pick something the account hasn't used
+// recently, fill the target's name/handle in, jitter it just enough to not read
+// as a macro, and hand back text. Posting stays a manual paste (§7.28) — this
+// route never touches X, it only composes clipboard text.
+replyListsRouter.post('/reply-lists/:id/use', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  // A body-less POST is a legitimate "use with no target"; only a body that
+  // parses to something other than an object is a 400.
+  const raw = await c.req.json().catch(() => undefined);
+  if (raw !== undefined && (raw === null || typeof raw !== 'object' || Array.isArray(raw)))
+    return c.json({ error: 'invalid_body' }, 400);
+  const b = (raw ?? {}) as Record<string, unknown>;
+
+  const vars = parseVars(b.vars);
+  if (vars === 'invalid') return c.json({ error: 'invalid_vars' }, 400);
+
+  const targetTweetId = parsePattern(b.targetTweetId, TWEET_ID_RE);
+  if (targetTweetId === 'invalid') return c.json({ error: 'invalid_target_tweet_id' }, 400);
+
+  const targetHandle = parseTargetHandle(b.targetHandle);
+  if (targetHandle === 'invalid') return c.json({ error: 'invalid_target_handle' }, 400);
+
+  if (b.preview !== undefined && typeof b.preview !== 'boolean')
+    return c.json({ error: 'invalid_preview' }, 400);
+  const preview = b.preview === true;
+
+  const [list] = await db.select().from(replyLists).where(eq(replyLists.id, id));
+  if (!list) return c.json({ error: 'not_found' }, 404);
+
+  // Every item, enabled or not — pickItem owns the enabled/var-availability
+  // rules, so the filtering lives in exactly one place.
+  const items = await db
+    .select({
+      id: replyListItems.id,
+      text: replyListItems.text,
+      enabled: replyListItems.enabled,
+      lastUsedAt: replyListItems.lastUsedAt,
+    })
+    .from(replyListItems)
+    .where(eq(replyListItems.listId, id));
+
+  const item = pickItem(items, availableVarsFor(vars), Math.random);
+  if (!item) return c.json({ error: 'no_enabled_items' }, 409);
+
+  const { text, missingVars, applied } = composeReply(
+    item.text,
+    vars,
+    resolveHumanizer(list.humanizer),
+    Math.random,
+  );
+
+  if (!preview) {
+    db.transaction((tx) => {
+      // The anti-repeat window only holds while the item just used is STRICTLY
+      // the most recent one: two uses inside the same millisecond tie on
+      // last_used_at and pickItem's recency sort could then exclude the other
+      // item and hand back an immediate repeat. Same monotonic-stamp trick the
+      // items insert uses for created_at; the audit clock drifts by at most the
+      // number of uses that shared a millisecond.
+      const [newest] = tx
+        .select({ max: sql<number | null>`max(${replyListItems.lastUsedAt})` })
+        .from(replyListItems)
+        .where(eq(replyListItems.listId, id))
+        .all();
+      const usedAt = new Date(Math.max(Date.now(), Number(newest?.max ?? 0) + 1));
+
+      // updated_at deliberately untouched — it means "the text was edited".
+      tx.update(replyListItems)
+        .set({ lastUsedAt: usedAt, useCount: sql`${replyListItems.useCount} + 1` })
+        .where(eq(replyListItems.id, item.id))
+        .run();
+      // Stored typos and all: RL.7 attributes a published reply to the `canned`
+      // bucket by matching this text against what actually got posted.
+      tx.insert(replyListUses)
+        .values({
+          listId: id,
+          itemId: item.id,
+          renderedText: text,
+          targetTweetId,
+          targetHandle,
+          usedAt,
+        })
+        .run();
+    });
+  }
+
+  return c.json({ itemId: item.id, text, missingVars, applied });
+});
+
 // ---------------------------------------------------------------- helpers
 
 function parseDescription(value: unknown): string | null | 'invalid' {
@@ -305,6 +409,41 @@ function parseHumanizerField(value: unknown): ReturnType<typeof parseHumanizerCo
   if (value === undefined || value === null) return null;
   const parsed = parseHumanizerConfig(value);
   return parsed === null ? 'invalid' : parsed;
+}
+
+/** The render vars. Absent/empty fields simply stay unfilled — the engine
+ *  degrades the template and reports them in `missingVars` (Decision 7). */
+function parseVars(value: unknown): ReplyVars | 'invalid' {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) return 'invalid';
+  const v = value as Record<string, unknown>;
+  const out: ReplyVars = {};
+  for (const key of ['name', 'handle'] as const) {
+    const field = v[key];
+    if (field === undefined || field === null) continue;
+    if (typeof field !== 'string' || field.length > MAX_VAR_LEN) return 'invalid';
+    const trimmed = field.trim();
+    if (trimmed !== '') out[key] = trimmed;
+  }
+  return out;
+}
+
+function parsePattern(value: unknown, re: RegExp): string | null | 'invalid' {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return 'invalid';
+  const trimmed = value.trim();
+  if (trimmed === '') return null;
+  return re.test(trimmed) ? trimmed : 'invalid';
+}
+
+/** Audit metadata, normalized the way the rest of the repo stores handles
+ *  (no `@`, lowercased) so the use log joins against people/voice rows later. */
+function parseTargetHandle(value: unknown): string | null | 'invalid' {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== 'string') return 'invalid';
+  const h = value.trim().replace(/^@/, '').toLowerCase();
+  if (h === '') return null;
+  return USERNAME_RE.test(h) ? h : 'invalid';
 }
 
 function parseItemTexts(value: unknown): string[] | 'invalid' {
