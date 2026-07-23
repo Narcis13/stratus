@@ -21,12 +21,13 @@
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
 import { suggestChannels } from './channelSuggest.ts';
-import { initHarvest } from './harvester.ts';
+import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
 import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
 import type { TweetSignals } from './replyBand.ts';
 import { parseEarlyReplies } from './shared/earlyReplies.ts';
 import { GLANCE_TTL_MS, buildPersonChips } from './shared/glance.ts';
 import type { GlanceMap } from './shared/glance.ts';
+import type { HarvestIngestRow } from './shared/harvest.ts';
 import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
 import type {
   ApiRequest,
@@ -44,6 +45,14 @@ import type {
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
 import { parseNotificationCell } from './shared/notifications.ts';
 import type { EngagementKind } from './shared/notifications.ts';
+import {
+  PASSIVE_BATCH_MAX,
+  PASSIVE_FLUSH_MS,
+  PASSIVE_HARVEST_KEY,
+  isHomeTimelinePath,
+  shouldRecordPassive,
+  toPassiveIngestRow,
+} from './shared/passiveHarvest.ts';
 import { personTierFor } from './shared/radar.ts';
 import type { PersonTier, RadarBand, RadarSighting, RankMap } from './shared/radar.ts';
 import {
@@ -1436,6 +1445,9 @@ function applyBand(article: HTMLElement): void {
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
   if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+  // Every band, including skip — the opportunity funnel needs the denominator.
+  // A null sig is an ad/promoted row (no metrics label), which filters itself.
+  if (sig) recordPassiveHarvest(article);
 }
 
 // ----------------------------------------------------- person chips (AX.3, $0)
@@ -2125,6 +2137,97 @@ function flushSightings(): void {
   })();
 }
 
+// ------------------------------------------ passive timeline harvest (HV.2)
+//
+// Every tweet the algorithm puts in front of you on /home joins the same
+// harvest_rows longitudinal series a hand-run harvest fills, at $0 — the swipe
+// file and the band-calibration denominators grow from normal scrolling. The
+// row is built by the harvester's own DOM reader (§7.27: one reader, not two)
+// and shipped on the flushSightings transport. A failed flush warns and drops
+// and is never retried: a lost sighting is a missing point on a view curve,
+// never a lost user action. The server owns the per-day run, the recapture
+// gate, the 2,000/day cap and the 60-day prune (POST /x/harvest/passive).
+
+// Default ON (opt-out via Settings): absent key means enabled.
+let passiveHarvestEnabled = true;
+
+function initPassiveHarvestSetting(): void {
+  chrome.storage.local
+    .get(PASSIVE_HARVEST_KEY)
+    .then((out) => {
+      passiveHarvestEnabled = out[PASSIVE_HARVEST_KEY] !== false;
+    })
+    .catch(() => {
+      /* keep default */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[PASSIVE_HARVEST_KEY];
+    if (change) passiveHarvestEnabled = change.newValue !== false;
+  });
+}
+
+const pendingPassive = new Map<string, HarvestIngestRow>();
+const passiveSentAt = new Map<string, number>();
+let passiveFlushTimer: number | null = null;
+
+function recordPassiveHarvest(article: Element): void {
+  if (!passiveHarvestEnabled) return;
+  // Re-read per call, not once at start(): X navigates without reloading.
+  if (!isHomeTimelinePath(location.pathname)) return;
+  if (isHarvestActive()) return;
+
+  // Cheap gate first — applyBand re-runs on every mutation burst, so the
+  // throttle is settled off one querySelector before extractArticle's full read.
+  const permalink = findPermalink(article);
+  if (!permalink) return;
+  const tweetId = permalink.tweetId;
+  if (pendingPassive.has(tweetId)) return;
+  if (!shouldRecordPassive(passiveSentAt.get(tweetId), Date.now())) return;
+
+  const row = toPassiveIngestRow(extractArticle(article));
+  if (!row) return;
+  pendingPassive.set(tweetId, row);
+  if (passiveFlushTimer === null) {
+    passiveFlushTimer = window.setTimeout(flushPassiveHarvest, PASSIVE_FLUSH_MS);
+  }
+}
+
+function flushPassiveHarvest(): void {
+  passiveFlushTimer = null;
+  if (pendingPassive.size === 0) return;
+  const batch = [...pendingPassive.entries()].slice(0, PASSIVE_BATCH_MAX);
+  for (const [tweetId] of batch) pendingPassive.delete(tweetId);
+  if (pendingPassive.size > 0) {
+    // Overflow beyond one server batch waits for the next window.
+    passiveFlushTimer = window.setTimeout(flushPassiveHarvest, PASSIVE_FLUSH_MS);
+  }
+
+  // One entry per distinct tweet seen this session. A marathon scroll resets the
+  // map rather than pruning it — forgetting costs one early re-send per tweet,
+  // which the server's own recapture gate absorbs as skippedRecent.
+  if (passiveSentAt.size > 5000) passiveSentAt.clear();
+  const at = Date.now();
+  for (const [tweetId] of batch) passiveSentAt.set(tweetId, at);
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/harvest/passive',
+    body: { rows: batch.map(([, row]) => row) },
+  };
+  void (async () => {
+    try {
+      const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+      if (res && !res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] passive harvest failed', res.code);
+      }
+    } catch (err) {
+      console.warn('[stratus] passive harvest failed', err);
+    }
+  })();
+}
+
 // --------------------------------------------------------- launch room (C7)
 //
 // While a Launch Room is live and the user has the launched tweet open, the
@@ -2576,6 +2679,7 @@ function start(): void {
   initHarvest();
   initTypeFromClipboard();
   initPassiveCaptureSetting();
+  initPassiveHarvestSetting();
   initContextCollapsed();
   scan(document);
   const observer = new MutationObserver(scheduleScan);

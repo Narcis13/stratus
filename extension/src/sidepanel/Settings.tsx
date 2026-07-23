@@ -55,6 +55,7 @@ export function SettingsPanel(): JSX.Element {
   const [applyPillarsToReplies, setApplyPillarsToReplies] = useState(false);
   const [autoTypeReplyDraft, setAutoTypeReplyDraft] = useState(false);
   const [passiveCapture, setPassiveCapture] = useState(true);
+  const [passiveHarvest, setPassiveHarvest] = useState(true);
   const [theme, setTheme] = useState<ThemePref>(DEFAULT_THEME);
   const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
   const [uiScale, setUiScale] = useState<UiScale>(DEFAULT_UI_SCALE);
@@ -69,6 +70,7 @@ export function SettingsPanel(): JSX.Element {
       setApplyPillarsToReplies(s.applyPillarsToReplies);
       setAutoTypeReplyDraft(s.autoTypeReplyDraft);
       setPassiveCapture(s.passiveCapture);
+      setPassiveHarvest(s.passiveHarvest);
       setTheme(s.theme);
       setDensity(s.density);
       setUiScale(s.uiScale);
@@ -86,6 +88,7 @@ export function SettingsPanel(): JSX.Element {
       applyPillarsToReplies,
       autoTypeReplyDraft,
       passiveCapture,
+      passiveHarvest,
       theme,
       density,
       uiScale,
@@ -96,6 +99,7 @@ export function SettingsPanel(): JSX.Element {
       applyPillarsToReplies,
       autoTypeReplyDraft,
       passiveCapture,
+      passiveHarvest,
       theme,
       density,
       uiScale,
@@ -117,6 +121,7 @@ export function SettingsPanel(): JSX.Element {
       applyPillarsToReplies,
       autoTypeReplyDraft,
       passiveCapture,
+      passiveHarvest,
       theme,
       density,
       uiScale,
@@ -228,6 +233,19 @@ export function SettingsPanel(): JSX.Element {
                 }}
               />
               <span>Passive contact capture from hover cards (default on)</span>
+            </label>
+
+            <label className="row voice-toggle" style={{ marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={passiveHarvest}
+                onChange={(e) => {
+                  const v = e.target.checked;
+                  setPassiveHarvest(v);
+                  void patchSettings({ passiveHarvest: v });
+                }}
+              />
+              <span>Passive timeline harvest while browsing /home (default on, $0)</span>
             </label>
 
             <div className="row">

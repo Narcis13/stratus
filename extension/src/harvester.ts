@@ -119,7 +119,9 @@ interface MetricSet {
   views: number;
 }
 
-interface Extracted {
+// Exported for the passive home-timeline capture (HV.2), which reuses this
+// file's DOM reader rather than forking a second one.
+export interface Extracted {
   handle: string | null;
   id: string | null;
   url: string;
@@ -167,7 +169,7 @@ function idFrom(art: Element): { handle: string; id: string; url: string } | nul
   return { handle: m[1], id: m[2], url: `https://x.com/${m[1]}/status/${m[2]}` };
 }
 
-function extractArticle(art: Element): Extracted {
+export function extractArticle(art: Element): Extracted {
   const id = idFrom(art);
   const txtEl = art.querySelector('div[data-testid="tweetText"]');
   const time = art.querySelector('time');
@@ -750,6 +752,12 @@ async function runHarvest<R>(
 
 // --------------------------------------------------------------- port wiring
 let running = false;
+
+// A hand-run harvest owns the page's scroll while it runs; passive capture
+// (HV.2) suspends itself so the two never write the same articles twice.
+export function isHarvestActive(): boolean {
+  return running;
+}
 
 function currentContext(): HarvestContextResult {
   return {

@@ -47,6 +47,7 @@ describe('appearance settings (UI.9)', () => {
       applyPillarsToReplies: false,
       autoTypeReplyDraft: false,
       passiveCapture: true,
+      passiveHarvest: true,
       theme: 'light',
       density: 'compact',
       uiScale: 14,

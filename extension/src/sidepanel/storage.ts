@@ -13,6 +13,9 @@ const KEY_AUTOTYPE_REPLY = 'autoTypeReplyDraft';
 // C6 passive hover capture — default ON (opt-out): absent key means enabled,
 // only an explicit `false` disables. The content script reads this key directly.
 const KEY_PASSIVE_CAPTURE = 'passiveCapture';
+// HV.2 passive home-timeline harvest — also default ON (opt-out), also read
+// directly by the content script. Separate key: one is people, one is corpus.
+const KEY_PASSIVE_HARVEST = 'passiveHarvest';
 // UI.9 Appearance — panel-local look, stamped on <html> by main.tsx. `system`
 // resolves via matchMedia; density/scale drive [data-density]/[data-scale].
 const KEY_THEME = 'theme';
@@ -50,6 +53,7 @@ export interface Settings {
   applyPillarsToReplies: boolean;
   autoTypeReplyDraft: boolean;
   passiveCapture: boolean;
+  passiveHarvest: boolean;
   theme: ThemePref;
   density: Density;
   uiScale: UiScale;
@@ -61,6 +65,7 @@ export const EMPTY_SETTINGS: Settings = {
   applyPillarsToReplies: false,
   autoTypeReplyDraft: false,
   passiveCapture: true,
+  passiveHarvest: true,
   theme: DEFAULT_THEME,
   density: DEFAULT_DENSITY,
   uiScale: DEFAULT_UI_SCALE,
@@ -73,6 +78,7 @@ export async function getSettings(): Promise<Settings> {
     KEY_APPLY_PILLARS_REPLIES,
     KEY_AUTOTYPE_REPLY,
     KEY_PASSIVE_CAPTURE,
+    KEY_PASSIVE_HARVEST,
     KEY_THEME,
     KEY_DENSITY,
     KEY_UI_SCALE,
@@ -83,6 +89,7 @@ export async function getSettings(): Promise<Settings> {
     applyPillarsToReplies: out[KEY_APPLY_PILLARS_REPLIES] === true,
     autoTypeReplyDraft: out[KEY_AUTOTYPE_REPLY] === true,
     passiveCapture: out[KEY_PASSIVE_CAPTURE] !== false,
+    passiveHarvest: out[KEY_PASSIVE_HARVEST] !== false,
     theme: normalizeTheme(out[KEY_THEME]),
     density: normalizeDensity(out[KEY_DENSITY]),
     uiScale: normalizeScale(out[KEY_UI_SCALE]),
@@ -96,6 +103,7 @@ export async function saveSettings(s: Settings): Promise<void> {
     [KEY_APPLY_PILLARS_REPLIES]: s.applyPillarsToReplies === true,
     [KEY_AUTOTYPE_REPLY]: s.autoTypeReplyDraft === true,
     [KEY_PASSIVE_CAPTURE]: s.passiveCapture !== false,
+    [KEY_PASSIVE_HARVEST]: s.passiveHarvest !== false,
     [KEY_THEME]: normalizeTheme(s.theme),
     [KEY_DENSITY]: normalizeDensity(s.density),
     [KEY_UI_SCALE]: normalizeScale(s.uiScale),
@@ -115,6 +123,8 @@ export async function patchSettings(partial: Partial<Settings>): Promise<void> {
     out[KEY_AUTOTYPE_REPLY] = partial.autoTypeReplyDraft === true;
   if (partial.passiveCapture !== undefined)
     out[KEY_PASSIVE_CAPTURE] = partial.passiveCapture !== false;
+  if (partial.passiveHarvest !== undefined)
+    out[KEY_PASSIVE_HARVEST] = partial.passiveHarvest !== false;
   if (partial.theme !== undefined) out[KEY_THEME] = normalizeTheme(partial.theme);
   if (partial.density !== undefined) out[KEY_DENSITY] = normalizeDensity(partial.density);
   if (partial.uiScale !== undefined) out[KEY_UI_SCALE] = normalizeScale(partial.uiScale);
