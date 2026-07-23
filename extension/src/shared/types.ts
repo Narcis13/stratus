@@ -1206,7 +1206,11 @@ export type PersonEventType =
   | 'hover_sighting'
   | 'harvest_seen'
   | 'note'
-  | 'manual_dm_logged';
+  | 'manual_dm_logged'
+  // C10 notification harvest — timeline-only, never a stage or ranking input.
+  | 'their_like'
+  | 'their_repost'
+  | 'their_follow';
 
 export interface Person {
   handle: string;
@@ -1361,6 +1365,8 @@ export interface FanItem {
   stage: PersonStage | null;
   followersCount: number | null;
   inboundCount: number;
+  /** C10 likes/reposts/follows in the same window — display-only, never ranked. */
+  engagementCount: number;
   lastInboundAt: string;
   /** My last outbound to them — the "last acknowledged" reading. */
   lastOutboundAt: string | null;

@@ -2,6 +2,8 @@
 // mentions/replies ranked over a trailing 30/90d window, each with "last
 // acknowledged" (my last outbound to them). A top-10 fan I haven't answered
 // in >7d shows amber: attention already given, reciprocity owed. One $0 GET.
+// C10 adds a display-only engagement count (likes/reposts/follows harvested
+// from the notifications tab) — it never enters the ranking.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ApiError, type FansResponse, api } from './api.ts';
@@ -74,6 +76,11 @@ export function FansSection({
                   </button>
                   {f.stage && f.stage !== 'stranger' && (
                     <span className={`stage-chip stage-${f.stage}`}>{f.stage}</span>
+                  )}
+                  {f.engagementCount > 0 && (
+                    <span className="fan-engagements" title="Likes/reposts/follows in this window">
+                      · {f.engagementCount} engagements
+                    </span>
                   )}
                   <span className={`fan-ack${amber ? ' target-neglected' : ''}`}>
                     {f.lastOutboundAt === null

@@ -2243,6 +2243,12 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
+/* C10 notification harvest — quiet by design: engagement never ranks. */
+.fan-engagements {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 /* ------------------------------------------------------- launch room (C7) */
 
 .launch-room {

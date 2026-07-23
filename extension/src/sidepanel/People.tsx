@@ -30,6 +30,9 @@ const EVENT_ICONS: Record<PersonEvent['type'], string> = {
   harvest_seen: '🌾',
   note: '📝',
   manual_dm_logged: '✉',
+  their_like: '♥',
+  their_repost: '⟳',
+  their_follow: '✚',
 };
 
 interface Props {

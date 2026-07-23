@@ -31,6 +31,7 @@ import {
   voiceAuthors,
 } from '../db/schema.ts';
 import { loadDoctrine } from '../niche/store.ts';
+import { ENGAGEMENT_EVENT_TYPE } from '../people/engagements.ts';
 import {
   CHAIN_LIVE_MAX_AGE_MS,
   type ChainInbound,
@@ -385,6 +386,14 @@ followups.get('/people/fans', async (c) => {
     limit,
   );
 
+  // C10 decision 1: engagement is DISPLAY-ONLY. The count is read after
+  // rankFans has already fixed the order, over the ranked page only, so a like
+  // storm can never reorder the list — "top fans" keeps meaning "we talked".
+  const engagements = await loadFanEngagementCounts(
+    ranked.map((f) => f.handle),
+    cutoff,
+  );
+
   return c.json({
     days,
     count: ranked.length,
@@ -395,9 +404,32 @@ followups.get('/people/fans', async (c) => {
       stage: f.stage,
       followersCount: f.followersCount,
       inboundCount: f.inboundCount,
+      engagementCount: engagements.get(f.handle) ?? 0,
       lastInboundAt: f.lastInboundAt,
       lastOutboundAt: f.lastOutboundAt,
       unacknowledged: fanUnacknowledged(f, now),
     })),
   });
 });
+
+/** their_like/their_repost/their_follow inside the same window, per handle.
+ *  Deliberately a second query rather than a second aggregate on the fans
+ *  join: keeping it off the ranking input is the whole point (C10 decision 1). */
+async function loadFanEngagementCounts(
+  handles: string[],
+  cutoff: Date,
+): Promise<Map<string, number>> {
+  if (handles.length === 0) return new Map();
+  const rows = await db
+    .select({ handle: personEvents.handle, n: sql<number>`count(*)` })
+    .from(personEvents)
+    .where(
+      and(
+        inArray(personEvents.handle, handles),
+        inArray(personEvents.type, Object.values(ENGAGEMENT_EVENT_TYPE)),
+        gte(personEvents.at, cutoff),
+      ),
+    )
+    .groupBy(personEvents.handle);
+  return new Map(rows.map((r) => [r.handle, Number(r.n)]));
+}
