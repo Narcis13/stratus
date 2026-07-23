@@ -23,13 +23,16 @@ import {
   type MeEntry,
   type MeGoal,
   isEntryInWindow,
+  isFlowGoalKind,
   renderMeBrief,
   renderMeContext,
   resolveGoals,
   selectEntriesForPrompt,
 } from '../me/profile.ts';
+import { loadFlowCurrents, stampBaseline } from './goals.ts';
 
-const GOAL_STATUSES = ['active', 'achieved', 'dropped'] as const;
+// GR.7 added `missed` — the lazy deadline flip in routes/goals.ts writes it.
+const GOAL_STATUSES = ['active', 'achieved', 'missed', 'dropped'] as const;
 
 export const me = new Hono();
 
@@ -64,7 +67,11 @@ async function renderFor(mode: 'post' | 'reply'): Promise<string> {
     .select()
     .from(meEntries)
     .where(eq(meEntries.active, true))) as MeEntry[];
-  const goals = (await db.select().from(meGoals).where(eq(meGoals.status, 'active'))) as MeGoal[];
+  // Flow goals (posted_replies/originals) are accountability, not biography —
+  // they are deliberately not injected into a drafting prompt (GR.7).
+  const goals = (await db.select().from(meGoals).where(eq(meGoals.status, 'active'))).filter(
+    (g) => !isFlowGoalKind(g.kind),
+  );
   const latestFollowers = await loadLatestFollowers();
   const selection = selectEntriesForPrompt(entries, now);
   const renderGoals = resolveGoals(goals, latestFollowers, now);
@@ -98,9 +105,16 @@ me.get('/me', async (c) => {
   ) as MeEntry[];
   const entries = rows.map((e) => ({ ...e, inWindow: isEntryInWindow(e, now) }));
 
-  const goalRows = (await db.select().from(meGoals).orderBy(desc(meGoals.createdAt))) as MeGoal[];
+  const goalRows = await db.select().from(meGoals).orderBy(desc(meGoals.createdAt));
   const latestFollowers = await loadLatestFollowers();
-  const resolved = resolveGoals(goalRows, latestFollowers, now);
+  // The counted kinds get their value from the same loader `GET /x/goals` uses
+  // — the Me tab must never fork the counting (§7.12 spirit).
+  const resolved = resolveGoals(
+    goalRows,
+    latestFollowers,
+    now,
+    await loadFlowCurrents(goalRows, now),
+  );
   const goals = goalRows.map((g, i) => ({ ...g, progress: resolved[i]?.progress ?? null }));
 
   return c.json({ entries, goals });
@@ -202,9 +216,22 @@ me.post('/me/goals', async (c) => {
   const deadline = parseDate(b.deadline);
   if (!deadline.ok) return c.json({ error: 'invalid_deadline' }, 400);
 
+  // GR.7: stamp where this goal starts. Without a baseline the counted kinds
+  // would measure all of history and a followers goal could never say how far
+  // it has moved since I set it.
+  const baseline = await stampBaseline(kind, currentValue, new Date());
+
   const [row] = await db
     .insert(meGoals)
-    .values({ label, kind, target: b.target, unit, currentValue, deadline: deadline.value })
+    .values({
+      label,
+      kind,
+      target: b.target,
+      unit,
+      currentValue,
+      deadline: deadline.value,
+      ...baseline,
+    })
     .returning();
   return c.json(row, 201);
 });

@@ -154,6 +154,25 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
   );
 
   server.registerTool(
+    'x_goals',
+    {
+      title: 'Goals & commitments',
+      description:
+        'Active goals with live pacing (required-vs-actual daily rate, on-pace/behind verdict, projected date) plus my daily commitments and the debt of missed days. Reading this also settles goals whose target or deadline has passed. Free, local read — advisory only, stratus never blocks an action for being behind.',
+      inputSchema: {
+        tzOffsetMin: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            'JS getTimezoneOffset() minutes; commitment debt counts your local days. Default UTC.',
+          ),
+      },
+    },
+    async ({ tzOffsetMin }) => route(`/x/goals${qp('tzOffsetMin', tzOffsetMin)}`),
+  );
+
+  server.registerTool(
     'x_playbook',
     {
       title: 'The Playbook',

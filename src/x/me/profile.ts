@@ -12,8 +12,24 @@
 export const ME_KINDS = ['fact', 'event', 'emotion', 'note'] as const;
 export type MeKind = (typeof ME_KINDS)[number];
 
-export const GOAL_KINDS = ['followers', 'mrr', 'custom'] as const;
+export const GOAL_KINDS = ['followers', 'mrr', 'custom', 'posted_replies', 'originals'] as const;
 export type GoalKind = (typeof GOAL_KINDS)[number];
+
+/** Goals whose current value is COUNTED from stratus data since the goal's own
+ *  baseline, never typed in (GR.7). They are deliberately kept OUT of the
+ *  injected me-block: a reply quota is process, not biography, and the drafting
+ *  prompt is the wrong place to put a number I'm chasing. Their surfaces are
+ *  `GET /x/goals`, the brief and the weekly digest. */
+export const FLOW_GOAL_KINDS = ['posted_replies', 'originals'] as const;
+
+export function isFlowGoalKind(kind: string): boolean {
+  return (FLOW_GOAL_KINDS as readonly string[]).includes(kind);
+}
+
+/** Counted current value per goal id — flow goals only. This cannot be one
+ *  shared number like `latestFollowers` because each flow goal counts from its
+ *  own `baselineAt`. Absent id / absent entry = unknown (§7.11). */
+export type FlowCurrents = ReadonlyMap<string, number | null>;
 
 // Freshness windows are opening guesses (like the C1 stage thresholds) —
 // revisit after ~30 days of real use. Emotions decay fast, events slower;
@@ -135,14 +151,24 @@ export function selectEntriesForPrompt(entries: MeEntry[], now: Date): MeSelecti
 }
 
 /** Progress for one goal. followers reads the latest account_snapshots value
- *  (null until the first daily pass → null progress); mrr/custom use the manual
- *  currentValue. Caller filters to active goals (achieved/dropped excluded). */
+ *  (null until the first daily pass → null progress); the GR.7 flow kinds read
+ *  their counted value from `flowCurrents` (keyed by goal id); mrr/custom use
+ *  the manual currentValue. Caller filters to active goals (achieved/missed/
+ *  dropped excluded). */
 export function goalProgress(
   goal: MeGoal,
   latestFollowers: number | null,
   now: Date,
+  flowCurrents?: FlowCurrents,
 ): GoalProgress | null {
-  const current = goal.kind === 'followers' ? latestFollowers : goal.currentValue;
+  const current =
+    goal.kind === 'followers'
+      ? latestFollowers
+      : isFlowGoalKind(goal.kind)
+        ? goal.id === undefined
+          ? null
+          : (flowCurrents?.get(goal.id) ?? null)
+        : goal.currentValue;
   if (current === null || current === undefined) return null;
   const pct =
     goal.target > 0 ? Math.min(100, Math.max(0, Math.round((current / goal.target) * 100))) : 0;
@@ -157,12 +183,13 @@ export function resolveGoals(
   goals: MeGoal[],
   latestFollowers: number | null,
   now: Date,
+  flowCurrents?: FlowCurrents,
 ): RenderGoal[] {
   return goals.map((g) => ({
     label: g.label,
     unit: g.unit,
     target: g.target,
-    progress: goalProgress(g, latestFollowers, now),
+    progress: goalProgress(g, latestFollowers, now, flowCurrents),
   }));
 }
 

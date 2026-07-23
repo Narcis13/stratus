@@ -21,6 +21,7 @@ import { digest } from './routes/digest.ts';
 import { drafter } from './routes/drafter.ts';
 import { followingRouter } from './routes/following.ts';
 import { followups } from './routes/followups.ts';
+import { goalsRouter } from './routes/goals.ts';
 import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
 import { images } from './routes/images.ts';
@@ -89,6 +90,10 @@ export function mountX(app: Hono): void {
   // mounted, $0 (no X call, no LLM), static path only. Advisory by design:
   // it never blocks a post, a reply or an unfollow.
   app.route('/x', monitorRouter);
+  // GR.7: goals + daily commitments. Always mounted, $0. The goals themselves
+  // are written through `/x/me/goals` (D4 — one table, one writer); this router
+  // owns the pacing view, the lazy achieved/missed flip and the commitments.
+  app.route('/x', goalsRouter);
   // C0: radar draft reads/status flips are $0 and mount without an LLM key;
   // only the insert path (generate-batch, below) needs a configured provider.
   app.route('/x', radar);

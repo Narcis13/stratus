@@ -33,7 +33,12 @@ const GOAL_KIND_LABEL: Record<GoalKind, string> = {
   followers: 'Followers',
   mrr: 'MRR',
   custom: 'Custom',
+  posted_replies: 'Replies posted',
+  originals: 'Originals posted',
 };
+
+// Kinds stratus counts for you; the rest take a manual current value.
+const AUTO_TRACKED: GoalKind[] = ['followers', 'posted_replies', 'originals'];
 
 const ERR: Record<string, string> = {
   invalid_kind: 'Pick a valid kind.',
@@ -380,8 +385,12 @@ function AddGoal({ settings, onAdded, setError }: AddGoalProps): JSX.Element {
           <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
         </label>
       </div>
-      {kind === 'followers' && (
-        <small className="muted">Followers progress tracks itself from the daily snapshot.</small>
+      {AUTO_TRACKED.includes(kind) && (
+        <small className="muted">
+          {kind === 'followers'
+            ? 'Followers progress tracks itself from the daily snapshot.'
+            : 'Progress counts itself from the day you create the goal.'}
+        </small>
       )}
       <div className="row">
         <button type="button" className="primary" onClick={() => void create()} disabled={busy}>

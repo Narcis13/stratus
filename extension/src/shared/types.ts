@@ -326,8 +326,10 @@ export interface PillarDraftResult {
 // ------------------------------------------------------------ me / profile M1
 
 export type MeKind = 'fact' | 'event' | 'emotion' | 'note';
-export type GoalKind = 'followers' | 'mrr' | 'custom';
-export type GoalStatus = 'active' | 'achieved' | 'dropped';
+// GR.7 added the two counted kinds (stratus counts them itself, from the goal's
+// baseline) and the `missed` status the deadline flip writes.
+export type GoalKind = 'followers' | 'mrr' | 'custom' | 'posted_replies' | 'originals';
+export type GoalStatus = 'active' | 'achieved' | 'missed' | 'dropped';
 
 // Date columns serialize as ISO strings over the JSON transport. `inWindow` is
 // server-computed on GET /x/me (never re-derived client-side — §7.27).
@@ -350,7 +352,8 @@ export interface MeGoalProgress {
 }
 
 // `progress` is server-computed on GET /x/me (followers goals read the latest
-// account_snapshot; mrr/custom use currentValue).
+// account_snapshot; posted_replies/originals are counted from the goal's own
+// baseline; mrr/custom use currentValue).
 export interface MeGoal {
   id: string;
   label: string;
@@ -360,6 +363,9 @@ export interface MeGoal {
   currentValue: number | null;
   deadline: string | null;
   status: GoalStatus;
+  // GR.7: where the goal started. Null on goals created before it.
+  baselineValue?: number | null;
+  baselineAt?: string | null;
   createdAt: string;
   updatedAt: string;
   progress: MeGoalProgress | null;

@@ -34,11 +34,12 @@ import {
   parseDigestNarrative,
   weekBounds,
 } from '../digest.ts';
-import { type MeGoal, resolveGoals } from '../me/profile.ts';
+import { resolveGoals } from '../me/profile.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
 import { loadPromptSafe } from '../prompts/registry.ts';
+import { loadFlowCurrents } from './goals.ts';
 import {
   loadMediaRows,
   loadPostGuidanceSafe,
@@ -318,10 +319,13 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
 }
 
 /** M1 (ME.5) — active Me goals with computed progress. followers goals read the
- *  latest account snapshot (all-time latest, like the Me tab); mrr/custom use the
- *  manual currentValue. null when there are none, so the narration skips it. */
+ *  latest account snapshot (all-time latest, like the Me tab); the GR.7 counted
+ *  kinds read their value from the goals loader; mrr/custom use the manual
+ *  currentValue. null when there are none, so the narration skips it. Unlike the
+ *  injected me-block, the weekly digest DOES narrate the counted kinds — a reply
+ *  quota is exactly what a week in review is about. */
 async function loadGoals(now: Date): Promise<DigestGoal[] | null> {
-  const goals = (await db.select().from(meGoals).where(eq(meGoals.status, 'active'))) as MeGoal[];
+  const goals = await db.select().from(meGoals).where(eq(meGoals.status, 'active'));
   if (goals.length === 0) return null;
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
@@ -329,7 +333,8 @@ async function loadGoals(now: Date): Promise<DigestGoal[] | null> {
     .orderBy(desc(accountSnapshots.snapshotAt))
     .limit(1);
   const latestFollowers = acct ? acct.followersCount : null;
-  return resolveGoals(goals, latestFollowers, now).map((g) => ({
+  const flowCurrents = await loadFlowCurrents(goals, now);
+  return resolveGoals(goals, latestFollowers, now, flowCurrents).map((g) => ({
     label: g.label,
     unit: g.unit,
     target: g.target,

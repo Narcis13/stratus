@@ -103,8 +103,11 @@ describe.if(authed)('MCP transport', () => {
     expect(names.has('x_draft_post')).toBe(true);
     expect(names.has('x_add_idea')).toBe(true);
     expect(names.has('x_add_me_entry')).toBe(true);
-    // 3 schema + 13 curated (incl. x_niche, x_me, x_monitor) + 4 write (incl. x_add_me_entry).
-    expect(names.size).toBe(20);
+    expect(names.has('x_goals')).toBe(true);
+    // 3 schema + 14 curated (incl. x_niche, x_me, x_monitor, x_goals) + 4 write
+    // (incl. x_add_me_entry). Goal WRITES stay out by design (ME.6): a bad
+    // target steers every draft.
+    expect(names.size).toBe(21);
   });
 });
 
@@ -154,6 +157,16 @@ describe.if(authed)('MCP tool tiers', () => {
     expect(isError).toBe(false);
     const d = data as { alerts?: unknown; worst?: unknown; checkedAt?: string };
     expect(Array.isArray(d.alerts)).toBe(true);
+    expect(Number.isNaN(Date.parse(d.checkedAt ?? ''))).toBe(false);
+  });
+
+  test('curated tier: x_goals returns goals + commitments', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_goals', arguments: { tzOffsetMin: 0 } });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const d = data as { goals?: unknown; commitments?: unknown; checkedAt?: string };
+    expect(Array.isArray(d.goals)).toBe(true);
+    expect(Array.isArray(d.commitments)).toBe(true);
     expect(Number.isNaN(Date.parse(d.checkedAt ?? ''))).toBe(false);
   });
 

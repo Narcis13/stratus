@@ -732,7 +732,13 @@ export const meGoals = sqliteTable(
     unit: text('unit'),
     currentValue: real('current_value'),
     deadline: integer('deadline', { mode: 'timestamp_ms' }),
-    status: text('status').notNull().default('active'), // active | achieved | dropped
+    // GR.7 (D4): where this goal started, stamped at creation. followers/mrr/
+    // custom record the value at that moment; the counted kinds
+    // (posted_replies/originals) start at 0 and count forward from baseline_at.
+    // Both null on rows created before GR.7 — readers fall back to created_at.
+    baselineValue: real('baseline_value'),
+    baselineAt: integer('baseline_at', { mode: 'timestamp_ms' }),
+    status: text('status').notNull().default('active'), // active | achieved | missed | dropped
     createdAt: integer('created_at', { mode: 'timestamp_ms' })
       .default(sql`(unixepoch() * 1000)`)
       .notNull(),
@@ -742,6 +748,25 @@ export const meGoals = sqliteTable(
   },
   (t) => [index('me_goals_status_idx').on(t.status)],
 );
+
+// Daily commitments (GR.7, Guardrails §C): the minimum I hold myself to each
+// day. One row per key ('replies' | 'originals'); an ABSENT row means no
+// commitment, and the quest targets fall back to the doctrine defaults — which
+// is why there is no seed. `active_since` is stamped at creation and on a
+// re-activation but deliberately NOT touched by a target edit: debt is counted
+// from the day I made the promise, and raising the bar must not erase the days
+// I already missed.
+export const commitments = sqliteTable('commitments', {
+  key: text('key').primaryKey(),
+  dailyTarget: integer('daily_target').notNull(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  activeSince: integer('active_since', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
 
 // Prompt overrides (AI.3) — OVERRIDE ROWS ONLY, keyed by the registry's
 // PromptKey. Row absent = the shipped default in src/x/prompts/registry.ts
