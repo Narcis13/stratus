@@ -5,9 +5,10 @@
 //
 // Cost shape vs invariant #7: there is no retire step here — the inserted rows
 // ARE the checkpoint (since_id = newest stored mention id). A crash between
-// the billed read and the inserts re-bills at most one pull's worth next time,
-// capped by maxResults (default 50 ≈ $0.05 worst case) — bounded, daily-
-// cadence, nothing like the 60s-loop failure mode the invariant guards.
+// the billed read and the inserts re-bills at most one pull's worth next time
+// — bounded by the since_id floor and X's 800 hard cap (realistically one
+// day's inbound ≈ $0.05–0.09), daily-cadence, nothing like the 60s-loop
+// failure mode the invariant guards.
 
 import { isNotNull, sql } from 'drizzle-orm';
 import { db } from '../db/client.ts';
@@ -23,6 +24,10 @@ import {
 } from './people/store.ts';
 
 export const DEFAULT_PULL_MAX = 50;
+// X's hard pagination cap for /users/:id/mentions — the ceiling an incremental
+// pull pages to (CA.1). Bounded: since_id already floors the walk, so only
+// mentions that actually exist above the checkpoint are ever billed.
+export const MENTIONS_HARD_CAP = 800;
 
 export interface PullMentionsResult {
   /** Mentions returned by the X pull. */
@@ -62,8 +67,18 @@ export async function pullMentions(
     inReplyToTweetId: string | null;
   }> = [];
 
+  const pageMax = opts.maxResults ?? DEFAULT_PULL_MAX;
+  // CA.1: an incremental pull (live since_id) pages to X's 800 hard cap so a
+  // >50-mention day never strands its tail below the next pull's checkpoint —
+  // before this, prod dropped every mention past 50 permanently on busy days.
+  // A caller-supplied maxResults stays a TOTAL cap (caller intent, invariant
+  // #5), and a cold pull (no checkpoint) keeps the bounded default so the
+  // first pull ever never walks the full 800-mention history.
+  const maxTotal = opts.maxResults !== undefined || !sinceId ? pageMax : MENTIONS_HARD_CAP;
+
   for await (const m of getUserMentions(token, selfXUserId, {
-    maxResults: opts.maxResults ?? DEFAULT_PULL_MAX,
+    maxResults: pageMax,
+    maxTotal,
     ...(sinceId ? { sinceId } : {}),
   })) {
     result.scanned++;

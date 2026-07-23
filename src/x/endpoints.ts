@@ -177,6 +177,11 @@ export async function* getUserTweets(
 export interface GetUserMentionsOptions {
   /** Max mentions returned across pages. Also clamps per-request page size for cost. Default 50. */
   maxResults?: number;
+  /** Total ceiling across pages (CA.1). Raises completeness by walking MORE
+   *  pages under the since_id boundary — never by widening the per-request
+   *  `max_results`, which stays clamped by `maxResults` (invariant #5).
+   *  Default: `maxResults`, i.e. the old single-page-ish behavior. */
+  maxTotal?: number;
   /** Only return mentions newer than this tweet id (incremental inbox pull). */
   sinceId?: string;
 }
@@ -191,7 +196,9 @@ export interface XMention extends XTweet {
  * Mentions of the authenticated user — owned reads, $0.001/result (§7.5
  * mention inbox). Hard pagination cap of 800 mentions per X. The default
  * maxResults is a deliberate 50: a first pull with no since_id checkpoint
- * would otherwise walk the whole 800-mention history.
+ * would otherwise walk the whole 800-mention history. Incremental pulls pass
+ * `maxTotal` to page past 50 under the since_id boundary (CA.1) — the
+ * per-request page size never widens.
  */
 export async function* getUserMentions(
   token: string,
@@ -223,7 +230,7 @@ export async function* getUserMentions(
     }
     return page;
   };
-  for await (const tweet of paginate(fetchPage, { maxItems: maxResults })) {
+  for await (const tweet of paginate(fetchPage, { maxItems: opts.maxTotal ?? maxResults })) {
     const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
     yield {
       ...tweet,
