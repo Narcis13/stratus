@@ -161,6 +161,7 @@ const origin = classifyReplyOrigin(
   { tweetId: POSTED, inReplyToTweetId: SRC, text: EDITED },
   sourceMap,
   new Map(),
+  new Set(), // no canned uses either — the source map is the only evidence
 );
 if (origin !== 'radar') fail(`classifyReplyOrigin returned ${origin} (want 'radar')`);
 ok('classifyReplyOrigin: posted radar reply attributes to radar by source (RU.9)');

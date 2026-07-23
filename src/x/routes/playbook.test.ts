@@ -16,6 +16,7 @@ import {
   postsPublished,
   radarDrafts,
   replyDrafts,
+  replyListUses,
   scheduledPosts,
 } from '../db/schema.ts';
 import { buildIdeaEffectiveness } from '../playbook.ts';
@@ -652,5 +653,72 @@ describe('radar source-exact attribution (RU.9)', () => {
     // pb_r1, pb_r2 stay single; pb_r3 (legacy fallback) + pb_ru9 (source) = radar.
     expect(body.batchVsSingle.single.n).toBe(2);
     expect(body.batchVsSingle.radar.n).toBe(2);
+  });
+});
+
+describe('canned attribution (RL.7)', () => {
+  // A canned reply leaves NO reply_drafts row — only a reply_list_uses row with
+  // the rendered text. reply_list_uses is FK-free (D79i) so this seed carries no
+  // list/item rows, and other suites may leave strays behind: assert the delta
+  // this describe causes, never an absolute count.
+  const TEXT = 'thanks for the early read, this one lands';
+  const USE_ID = 'c0000000-0000-4000-8000-0000000000c1';
+
+  let before = { canned: 0, unattributed: 0 };
+
+  async function batchVsSingle(): Promise<{
+    canned: { n: number; medianViews: number | null };
+    unattributed: number;
+  }> {
+    const res = await app.request('/x/playbook');
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+    const body = (await res.json()) as any;
+    return body.batchVsSingle;
+  }
+
+  beforeAll(async () => {
+    // The published reply exists first and is unattributed — the use row is
+    // what moves it, which is exactly what the delta proves.
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: 'pb_canned1',
+        text: `${TEXT}\n`, // trailing whitespace: the match is normalized, not literal
+        postedAt: at(150),
+        isReply: true,
+        inReplyToTweetId: '4242',
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db.insert(metricsSnapshots).values({
+      tweetId: 'pb_canned1',
+      publicMetrics: { impression_count: 120, like_count: 1, reply_count: 0 },
+      nonPublicMetrics: { user_profile_clicks: 3 },
+    });
+    const b = await batchVsSingle();
+    before = { canned: b.canned.n, unattributed: b.unattributed };
+
+    await db.insert(replyListUses).values({
+      id: USE_ID,
+      listId: 'c0000000-0000-4000-8000-0000000000a1',
+      itemId: 'c0000000-0000-4000-8000-0000000000b1',
+      renderedText: TEXT,
+      targetTweetId: '4242',
+      targetHandle: 'pb_author',
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(replyListUses).where(eq(replyListUses.id, USE_ID));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, 'pb_canned1'));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, 'pb_canned1'));
+  });
+
+  test('a published reply matching a use rendered text moves to the canned cell', async () => {
+    const b = await batchVsSingle();
+    expect(b.canned.n).toBe(before.canned + 1);
+    expect(b.unattributed).toBe(before.unattributed - 1);
+    // Only a clean run (no stray use rows) can pin the median to our seed.
+    if (before.canned === 0) expect(b.canned.medianViews).toBe(120);
   });
 });

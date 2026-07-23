@@ -33,6 +33,7 @@ import {
   postsPublished,
   radarDrafts,
   replyDrafts,
+  replyListUses,
   scheduledPosts,
   voiceAuthors,
 } from '../db/schema.ts';
@@ -62,6 +63,7 @@ import {
   buildRosterCoverage,
   buildStructureEffectiveness,
   classifyReplyOrigin,
+  normalizeReplyText,
   resolveAgeMin,
   scoreReplyOutcome,
   topAngles,
@@ -421,10 +423,21 @@ async function loadOriginRows(): Promise<{
     radarByTarget.set(r.tweetId, list);
   }
 
+  // RL.7: every canned reply the user ever composed, as its rendered text
+  // (typos and all). Unwindowed like radarRows — the published side is what
+  // bounds the population. A use row outlives its list/item on purpose (the
+  // table is FK-free), so a deleted list never erases its own attribution.
+  const useRows = await db.select({ renderedText: replyListUses.renderedText }).from(replyListUses);
+  const cannedTexts = new Set<string>();
+  for (const u of useRows) {
+    const t = normalizeReplyText(u.renderedText);
+    if (t !== '') cannedTexts.add(t);
+  }
+
   const classified: Array<{ origin: ReplyOrigin; tweetId: string }> = [];
   let unattributed = 0;
   for (const p of published) {
-    const origin = classifyReplyOrigin(p, draftSourceByPostedId, radarByTarget);
+    const origin = classifyReplyOrigin(p, draftSourceByPostedId, radarByTarget, cannedTexts);
     if (origin === null) {
       unattributed++;
       continue;

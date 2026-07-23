@@ -142,6 +142,9 @@ describe('classifyReplyOrigin', () => {
     ['905', 'radar'],
   ]);
   const radar = new Map([['777', ['Ship it.\n\nThen fix it.']]]);
+  // reply_list_uses.renderedText, normalized (RL.7). 'Ship it. Then fix it.'
+  // is deliberately BOTH a radar draft and a canned use here.
+  const canned = new Set(['thanks for the early read, Ana!', 'Ship it. Then fix it.']);
 
   test('draft link wins even when a radar match also exists', () => {
     expect(
@@ -149,6 +152,7 @@ describe('classifyReplyOrigin', () => {
         { tweetId: '901', inReplyToTweetId: '777', text: 'Ship it. Then fix it.' },
         draftSource,
         radar,
+        canned,
       ),
     ).toBe('single');
   });
@@ -159,6 +163,7 @@ describe('classifyReplyOrigin', () => {
         { tweetId: '905', inReplyToTweetId: null, text: 'nothing like any radar draft' },
         draftSource,
         radar,
+        canned,
       ),
     ).toBe('radar');
   });
@@ -169,6 +174,7 @@ describe('classifyReplyOrigin', () => {
         { tweetId: '902', inReplyToTweetId: '777', text: 'Ship it.  Then fix it.' },
         draftSource,
         radar,
+        canned,
       ),
     ).toBe('radar');
     expect(
@@ -176,6 +182,7 @@ describe('classifyReplyOrigin', () => {
         { tweetId: '903', inReplyToTweetId: '777', text: 'Something I typed myself' },
         draftSource,
         radar,
+        canned,
       ),
     ).toBeNull();
     expect(
@@ -183,6 +190,44 @@ describe('classifyReplyOrigin', () => {
         { tweetId: '904', inReplyToTweetId: '778', text: 'Ship it. Then fix it.' },
         draftSource,
         radar,
+        canned,
+      ),
+    ).toBe('canned'); // right text, wrong radar target — falls through to the use log
+  });
+
+  test('a rendered-text match with no draft link classifies canned', () => {
+    expect(
+      classifyReplyOrigin(
+        {
+          tweetId: '906',
+          inReplyToTweetId: '888',
+          text: 'thanks for the early read,  Ana!\n',
+        },
+        draftSource,
+        radar,
+        canned,
+      ),
+    ).toBe('canned');
+  });
+
+  test('canned is checked last: a posted draft that also matches a use counts single', () => {
+    expect(
+      classifyReplyOrigin(
+        { tweetId: '901', inReplyToTweetId: null, text: 'thanks for the early read, Ana!' },
+        draftSource,
+        radar,
+        canned,
+      ),
+    ).toBe('single');
+  });
+
+  test('no match anywhere stays unattributed', () => {
+    expect(
+      classifyReplyOrigin(
+        { tweetId: '907', inReplyToTweetId: '888', text: 'wrote this one myself' },
+        draftSource,
+        radar,
+        canned,
       ),
     ).toBeNull();
   });
@@ -199,11 +244,19 @@ describe('buildBatchVsSingle', () => {
         { origin: 'single', outcome: out(100, 2) },
         { origin: 'single', outcome: out(200, 4) },
         { origin: 'radar', outcome: out(50, 1) },
+        { origin: 'canned', outcome: out(30, 0) },
+        { origin: 'canned', outcome: out(70, 2) },
       ],
       2,
     );
     expect(r.single).toMatchObject({ n: 2, medianViews: 150, sufficient: true });
     expect(r.radar).toMatchObject({ n: 1, sufficient: false });
+    expect(r.canned).toMatchObject({ n: 2, medianViews: 50, sufficient: true });
+  });
+
+  test('an empty canned bucket is a zero cell, not a missing key', () => {
+    const r = buildBatchVsSingle([{ origin: 'single', outcome: out(100, 2) }], 2);
+    expect(r.canned).toMatchObject({ n: 0, medianViews: null, sufficient: false });
   });
 });
 

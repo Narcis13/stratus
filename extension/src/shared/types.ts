@@ -1457,6 +1457,7 @@ export interface Playbook {
   batchVsSingle: {
     single: PlaybookCell;
     radar: PlaybookCell;
+    canned: PlaybookCell;
     unattributed: number;
   };
   bandCalibration: {

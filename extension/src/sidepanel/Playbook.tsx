@@ -179,12 +179,17 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                   <td>Radar (batch)</td>
                   <td>{cellSummary(data.batchVsSingle.radar, data.minN)}</td>
                 </tr>
+                <tr>
+                  <td>Canned (reply lists)</td>
+                  <td>{cellSummary(data.batchVsSingle.canned, data.minN)}</td>
+                </tr>
               </tbody>
             </table>
             <div className="status-line">
-              Radar rows are confirmed drafts (attributed by reply source, not text match).{' '}
-              {data.batchVsSingle.unattributed} published replies unattributed (hand-written or
-              pre-tooling).
+              Radar rows are confirmed drafts (attributed by reply source, not text match); canned
+              rows are matched on the text a list actually rendered. A reply that is both counts as
+              the draft, never twice. {data.batchVsSingle.unattributed} published replies
+              unattributed (hand-written or pre-tooling).
             </div>
           </section>
 
