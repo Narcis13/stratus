@@ -21,6 +21,7 @@ import {
   launchIsLive,
 } from '../shared/launch.ts';
 import type { LaunchDismiss, LaunchSync } from '../shared/messages.ts';
+import { QuickReplyPicker } from './QuickReplyPicker.tsx';
 import { ApiError, type PostContext, type ReplyDraft, api } from './api.ts';
 import type { Settings } from './storage.ts';
 
@@ -255,6 +256,12 @@ function EarlyReplierRow({
             {copied ? 'Copied ✓' : 'Copy'}
           </button>
         )}
+        <QuickReplyPicker
+          settings={settings}
+          vars={{ name: r.author ?? undefined, handle: r.handle }}
+          targetTweetId={r.tweetId}
+          targetHandle={r.handle}
+        />
       </div>
       <div className="launch-reply-text">{r.text || '(media reply)'}</div>
       {draftText && <div className="launch-reply-draft">{draftText}</div>}

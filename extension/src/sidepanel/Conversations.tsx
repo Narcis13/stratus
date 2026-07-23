@@ -8,6 +8,7 @@
 // Posting stays MANUAL PASTE: Copy → open the tweet → paste → Done.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { QuickReplyPicker } from './QuickReplyPicker.tsx';
 import {
   ApiError,
   type ConversationItem,
@@ -453,6 +454,15 @@ function OpenLoopActions({
             {copied ? 'Copied ✓' : 'Copy'}
           </button>
         )}
+        <QuickReplyPicker
+          settings={settings}
+          vars={{
+            name: t.counterpartName ?? t.person?.displayName ?? undefined,
+            handle: t.counterpartHandle ?? undefined,
+          }}
+          targetTweetId={owed.tweetId}
+          targetHandle={t.counterpartHandle ?? undefined}
+        />
         <button
           type="button"
           disabled={busy}

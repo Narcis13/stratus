@@ -8,6 +8,7 @@
 // stays an explicit human click.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { invalidateReplyListsCache } from './QuickReplyPicker.tsx';
 import {
   ApiError,
   type GenerateItemsResponse,
@@ -85,6 +86,11 @@ export function ReplyListsPanel({ settings }: Props): JSX.Element {
   useEffect(() => {
     void loadLists();
   }, [loadLists]);
+
+  // This panel is the only place lists are mutated, so dropping the pickers'
+  // 60 s cache on the way out covers every edit with one line — no invalidate
+  // call sprinkled through the child components.
+  useEffect(() => invalidateReplyListsCache, []);
 
   // Keep the current selection while it still exists; otherwise fall to the
   // first list (and to nothing when there are none).

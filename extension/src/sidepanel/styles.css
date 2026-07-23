@@ -3398,3 +3398,89 @@ button.danger:hover:not(:disabled) {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* --- Quick canned-reply picker (RL.6): rides Launch Room early-replier rows
+   and Conversations open loops. One click = one server-side pick (rendered,
+   humanized) straight onto the clipboard; the popover keeps the text visible
+   so a clipboard refusal is still recoverable by hand. --- */
+.quick-reply {
+  position: relative;
+  display: inline-flex;
+}
+.quick-reply-btn {
+  font-size: var(--strat-text-xs);
+  padding: 2px 8px;
+}
+.quick-reply-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 210px;
+  max-width: 290px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-3);
+  padding: var(--strat-space-4);
+  background: var(--strat-bg-elev);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-lg);
+  box-shadow: var(--strat-shadow-modal);
+}
+.quick-reply-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-1);
+}
+.quick-reply-item {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--strat-space-4);
+  padding: var(--strat-space-2) var(--strat-space-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--strat-radius-sm);
+  color: var(--strat-text);
+  text-align: left;
+}
+.quick-reply-item:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+}
+.quick-reply-name {
+  font-size: var(--strat-text-sm);
+  font-weight: var(--strat-weight-semibold);
+}
+.quick-reply-meta {
+  font-size: var(--strat-text-2xs);
+  color: var(--strat-muted);
+  font-variant-numeric: tabular-nums;
+}
+.quick-reply-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--strat-space-3);
+}
+.quick-reply-status {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-ok);
+}
+.quick-reply-status.quick-reply-status-warn {
+  color: var(--strat-warn);
+}
+.quick-reply-text {
+  font-size: var(--strat-text-sm);
+  line-height: var(--strat-leading-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.quick-reply-err {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-danger);
+}
