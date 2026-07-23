@@ -30,7 +30,13 @@ const MIN_TARGET_SNIPPET_CHARS = 20;
 
 /** What crosses the wire. The parser's `'other'` kind is dropped client-side
  *  and is deliberately not representable here. */
-export type EngagementKind = 'like' | 'repost' | 'follow';
+export const ENGAGEMENT_KINDS = ['like', 'repost', 'follow'] as const;
+
+export type EngagementKind = (typeof ENGAGEMENT_KINDS)[number];
+
+export function isEngagementKind(v: unknown): v is EngagementKind {
+  return typeof v === 'string' && (ENGAGEMENT_KINDS as readonly string[]).includes(v);
+}
 
 export const ENGAGEMENT_EVENT_TYPE = {
   like: 'their_like',

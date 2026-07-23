@@ -8,17 +8,23 @@
 
 import { afterAll, describe, expect, test } from 'bun:test';
 import { eq, inArray } from 'drizzle-orm';
+import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { people, personEvents, postsPublished } from '../db/schema.ts';
+import { peopleRouter } from '../routes/people.ts';
 import {
   type EngagementInput,
   dedupeEngagements,
   engagementEventId,
   engagementSummary,
+  isEngagementKind,
   matchTargetTweetId,
   recordEngagements,
   resolveTargetTweetId,
 } from './engagements.ts';
+
+const app = new Hono();
+app.route('/x', peopleRouter);
 
 const at = (iso: string) => new Date(iso);
 
@@ -102,6 +108,16 @@ describe('matchTargetTweetId', () => {
   test('no prefix hit and null input resolve to null', () => {
     expect(matchTargetTweetId('Something else entirely here', posts)).toBeNull();
     expect(matchTargetTweetId(null, posts)).toBeNull();
+  });
+});
+
+describe('isEngagementKind', () => {
+  test("accepts the three wire kinds and refuses the parser's 'other'", () => {
+    expect(isEngagementKind('like')).toBe(true);
+    expect(isEngagementKind('repost')).toBe(true);
+    expect(isEngagementKind('follow')).toBe(true);
+    expect(isEngagementKind('other')).toBe(false);
+    expect(isEngagementKind(undefined)).toBe(false);
   });
 });
 
@@ -263,5 +279,122 @@ describe('recordEngagements', () => {
       skipped: 0,
       events: 0,
     });
+  });
+});
+
+describe('POST /x/people/engagements', () => {
+  // ≤15 chars or normalizePersonHandle skips it and the assertions go vacuous.
+  const H = 'nt3_route_eng';
+
+  const send = async (body: unknown) => {
+    const res = await app.request('/x/people/engagements', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+  };
+
+  const at = new Date('2026-07-20T10:00:00Z').toISOString();
+
+  const cleanup = async () => {
+    await db.delete(personEvents).where(eq(personEvents.handle, H));
+    await db.delete(people).where(eq(people.handle, H));
+  };
+
+  afterAll(cleanup);
+
+  test('ingests a batch, creates the normalized person, reports counts', async () => {
+    await cleanup();
+    const { status, body } = await send({
+      engagements: [
+        { kind: 'like', handle: `@${H}`, targetText: 'a post stratus never published', seenAt: at },
+        { kind: 'follow', handle: H, targetText: null, seenAt: at },
+      ],
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ received: 2, processed: 2, skipped: 0, events: 2 });
+
+    const [person] = await db.select().from(people).where(eq(people.handle, H));
+    expect(person?.source).toBe('notification');
+    expect(person?.stage).toBe('stranger');
+
+    // Re-posting the same batch (a re-scroll) logs nothing new.
+    expect(
+      (await send({ engagements: [{ kind: 'follow', handle: H, seenAt: at }] })).body,
+    ).toMatchObject({
+      processed: 1,
+      events: 0,
+    });
+
+    await cleanup();
+  });
+
+  test('an invalid handle is skipped, not fatal', async () => {
+    await cleanup();
+    const { status, body } = await send({
+      engagements: [
+        { kind: 'like', handle: 'not!a!handle', seenAt: at },
+        { kind: 'like', handle: H, seenAt: at },
+      ],
+    });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ received: 2, processed: 1, skipped: 1 });
+    await cleanup();
+  });
+
+  test('targetText is forced null on a follow, so two follow cells collapse to one', async () => {
+    await cleanup();
+    const { body } = await send({
+      engagements: [
+        {
+          kind: 'follow',
+          handle: H,
+          targetText: 'their bio, which X sometimes renders',
+          seenAt: at,
+        },
+        { kind: 'follow', handle: H, targetText: null, seenAt: at },
+      ],
+    });
+    expect(body).toMatchObject({ received: 2, processed: 1, events: 1 });
+    await cleanup();
+  });
+
+  test('validation: body, empty/oversize batch, bad kind, handle, targetText, seenAt', async () => {
+    expect((await send([])).status).toBe(400);
+    expect((await send({})).status).toBe(400);
+    expect((await send({ engagements: [] })).status).toBe(400);
+
+    const oversize = await send({
+      engagements: Array.from({ length: 51 }, (_, i) => ({
+        kind: 'like',
+        handle: `h${i}`,
+        seenAt: at,
+      })),
+    });
+    expect(oversize.status).toBe(400);
+    expect(oversize.body.error).toBe('too_many_engagements');
+
+    // The parser's 'other' kind is dropped client-side; the server refuses it.
+    const badKind = await send({ engagements: [{ kind: 'other', handle: H, seenAt: at }] });
+    expect(badKind.status).toBe(400);
+    expect(badKind.body.error).toBe('invalid_engagement_kind_0');
+
+    expect((await send({ engagements: [null] })).status).toBe(400);
+    expect((await send({ engagements: [{ kind: 'like', handle: 42, seenAt: at }] })).status).toBe(
+      400,
+    );
+    expect(
+      (await send({ engagements: [{ kind: 'like', handle: H, targetText: 7, seenAt: at }] }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await send({ engagements: [{ kind: 'like', handle: H, seenAt: 'not-a-date' }] })).status,
+    ).toBe(400);
+    expect((await send({ engagements: [{ kind: 'like', handle: H }] })).status).toBe(400);
+
+    // Every guard fires pre-DB — nothing was written.
+    const rows = await db.select().from(people).where(eq(people.handle, H));
+    expect(rows.length).toBe(0);
   });
 });

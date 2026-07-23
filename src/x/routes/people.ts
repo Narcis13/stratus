@@ -29,6 +29,13 @@ import {
 } from '../db/schema.ts';
 import { buildAngleCrosstab } from '../people/angles.ts';
 import {
+  ENGAGEMENT_KINDS,
+  type EngagementInput,
+  MAX_ENGAGEMENTS_PER_BATCH,
+  isEngagementKind,
+  recordEngagements,
+} from '../people/engagements.ts';
+import {
   ICEBREAKER_SCHEMA,
   MAX_GROUNDING_EXCHANGES,
   MAX_GROUNDING_TWEETS,
@@ -543,6 +550,66 @@ function parseHoverCard(value: unknown): HoverCard | null {
   }
   return { displayName, bio, followersCount, followingCount, xUserId };
 }
+
+// ------------------------------------------------------------ engagements
+
+// Notification-surface harvest (C10): likes, reposts and follows scraped from
+// x.com/notifications cells. $0 — pure DOM data, no X read. Like the sightings
+// route this is a POST, so the §7.20 static-path-vs-`:handle` trap doesn't bite
+// (only `GET /people/:handle` exists). The deterministic-id and fill-only gates
+// live in ../people/engagements.ts.
+peopleRouter.post('/people/engagements', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!Array.isArray(body.engagements) || body.engagements.length === 0) {
+    return c.json({ error: 'invalid_engagements' }, 400);
+  }
+  if (body.engagements.length > MAX_ENGAGEMENTS_PER_BATCH) {
+    return c.json({ error: 'too_many_engagements', max: MAX_ENGAGEMENTS_PER_BATCH }, 400);
+  }
+
+  const inputs: EngagementInput[] = [];
+  for (let i = 0; i < body.engagements.length; i++) {
+    const e = body.engagements[i];
+    if (!e || typeof e !== 'object' || Array.isArray(e)) {
+      return c.json({ error: `invalid_engagement_${i}` }, 400);
+    }
+    const r = e as Record<string, unknown>;
+    // This whitelist is where the parser's `'other'` kind dies: EngagementKind
+    // deliberately can't represent it, so a cell that escaped the client's own
+    // drop is refused here rather than written as a bogus event type.
+    if (!isEngagementKind(r.kind)) {
+      return c.json({ error: `invalid_engagement_kind_${i}`, allowed: ENGAGEMENT_KINDS }, 400);
+    }
+    if (typeof r.handle !== 'string') {
+      return c.json({ error: `invalid_engagement_handle_${i}` }, 400);
+    }
+    if (r.targetText !== undefined && r.targetText !== null && typeof r.targetText !== 'string') {
+      return c.json({ error: `invalid_engagement_target_text_${i}` }, 400);
+    }
+    const seenAt = typeof r.seenAt === 'string' ? new Date(r.seenAt) : null;
+    if (!seenAt || Number.isNaN(seenAt.getTime())) {
+      return c.json({ error: `invalid_engagement_seen_at_${i}` }, 400);
+    }
+    inputs.push({
+      kind: r.kind,
+      handle: r.handle,
+      // A follow cell carries no post; X sometimes renders the new follower's
+      // bio there. The parser already forces null, but recomputing it here
+      // means a stale extension build can't feed a bio to the target matcher.
+      targetText: r.kind === 'follow' ? null : ((r.targetText as string | undefined) ?? null),
+      seenAt,
+    });
+  }
+
+  // An invalid handle is skipped, never fatal — it surfaces in `skipped`.
+  const result = await recordEngagements(inputs);
+  return c.json(result);
+});
 
 // ----------------------------------------------------------- manual events
 
