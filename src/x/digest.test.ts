@@ -51,7 +51,25 @@ const BASE_INPUTS = {
   rosterCoverage: buildRosterCoverage([], null),
   imageSpendUsd: 0,
   mediaVsText: buildMediaEffectiveness([]),
+  // GR.9: a week nobody tracked — the gate keeps the scorecard null unless a
+  // test says otherwise.
+  scorecardInputs: {
+    daysWithOriginal: 0,
+    daysInWeek: 7,
+    repliesTargetWeek: 0,
+    targetReplyPct: 70,
+    goalVerdicts: [],
+    prevScore: null,
+  },
 };
+
+/** Four tracked days = the minimum gradeable week (SCORECARD_MIN_DAYS). */
+const FOUR_TRACKED_DAYS = [
+  { day: '2026-06-29', allDone: true },
+  { day: '2026-06-30', allDone: true },
+  { day: '2026-07-01', allDone: false },
+  { day: '2026-07-02', allDone: false },
+];
 
 describe('buildDigestFacts', () => {
   test('empty week produces nulls and zeros, never fabricated numbers', () => {
@@ -165,6 +183,68 @@ describe('buildDigestFacts', () => {
       ],
     });
     expect(f.quests).toEqual({ daysAllDone: 2, daysTracked: 3 });
+  });
+
+  test('GR.9: the scorecard is null under the tracked-days gate, an object above it', () => {
+    expect(buildDigestFacts(BASE_INPUTS).scorecard).toBeNull();
+    // Three tracked days is still an ungradeable week…
+    expect(
+      buildDigestFacts({ ...BASE_INPUTS, streakDays: FOUR_TRACKED_DAYS.slice(0, 3) }).scorecard,
+    ).toBeNull();
+    // …the fourth day opens the gate.
+    const f = buildDigestFacts({ ...BASE_INPUTS, streakDays: FOUR_TRACKED_DAYS });
+    expect(f.scorecard?.sufficient).toBe(true);
+    expect(f.scorecard?.daysTracked).toBe(4);
+    expect(typeof f.scorecard?.score).toBe('number');
+  });
+
+  test('GR.9: the grade is computed from the facts it grades, never a second count', () => {
+    const f = buildDigestFacts({
+      ...BASE_INPUTS,
+      streakDays: FOUR_TRACKED_DAYS,
+      tweets: [
+        { text: 'a', isReply: true, views: 10, profileVisits: 0 },
+        { text: 'b', isReply: true, views: 10, profileVisits: 0 },
+        { text: 'c', isReply: true, views: 10, profileVisits: 0 },
+        { text: 'd', isReply: false, views: 10, profileVisits: 0 },
+      ],
+      scorecardInputs: {
+        ...BASE_INPUTS.scorecardInputs,
+        daysWithOriginal: 2,
+        daysInWeek: 4,
+        repliesTargetWeek: 4,
+        targetReplyPct: 70,
+        goalVerdicts: ['on_pace', 'behind'],
+      },
+    });
+    // quests 2/4 · cadence 2/4 · replies 3/4 (the same `activity.replies` the
+    // facts carry) · goals mean(80,40) · ratio 75% vs 70 → 100 − 5×2.
+    expect(f.activity).toEqual({ posts: 1, replies: 3, replyPct: 75 });
+    expect(f.scorecard?.components).toEqual({
+      questAdherence: 50,
+      cadenceConsistency: 50,
+      replyQuota: 75,
+      goalPacing: 60,
+      ratioAdherence: 90,
+    });
+    // Weighted by SCORECARD_WEIGHTS (all five present → /100).
+    expect(f.scorecard?.score).toBe(
+      Math.round((50 * 30 + 50 * 20 + 75 * 25 + 60 * 15 + 90 * 10) / 100),
+    );
+  });
+
+  test('GR.9: the previous-week delta exists only when last week was graded', () => {
+    const graded = { ...BASE_INPUTS, streakDays: FOUR_TRACKED_DAYS };
+    const alone = buildDigestFacts(graded);
+    expect(alone.scorecard?.prevScore).toBeNull();
+    expect(alone.scorecard?.delta).toBeNull();
+
+    const compared = buildDigestFacts({
+      ...graded,
+      scorecardInputs: { ...BASE_INPUTS.scorecardInputs, prevScore: 40 },
+    });
+    expect(compared.scorecard?.prevScore).toBe(40);
+    expect(compared.scorecard?.delta).toBe((compared.scorecard?.score ?? 0) - 40);
   });
 });
 

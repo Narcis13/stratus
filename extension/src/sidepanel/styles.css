@@ -2661,6 +2661,26 @@ button.danger:hover:not(:disabled) {
   line-height: 1.5;
 }
 
+/* GR.9: the weekly grade — renders only when the server shipped a score. */
+.digest-grade {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.digest-grade-score {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.digest-grade-score .muted {
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .digest-facts {
   display: flex;
   flex-wrap: wrap;

@@ -6,6 +6,7 @@
 
 import type { GrokMessage } from '../grok/index.ts';
 import { conversionRate } from './conversion.ts';
+import { type GoalVerdict, type Scorecard, computeScorecard } from './goals.ts';
 import type { MediaEffectiveness, RosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -60,6 +61,37 @@ export interface DigestGoal {
   pct: number | null;
 }
 
+/** GR.9 — the week's 0–100 grade as it rides in the facts. `sufficient`/
+ *  `daysTracked` come straight from `computeScorecard`; the two delta fields are
+ *  the only thing this layer adds. */
+export interface DigestScorecard extends Scorecard {
+  /** The previous week's score, from that week's cached digest. null = there is
+   *  nothing comparable (no digest, or one generated before GR.9) — never 0. */
+  prevScore: number | null;
+  /** score − prevScore, null when either side is missing. */
+  delta: number | null;
+}
+
+/** GR.9 — what the scorecard needs that the week's rows can't say. The quest and
+ *  activity halves are deliberately NOT here: `buildDigestFacts` derives them
+ *  and feeds them to `computeScorecard` itself, so the grade can never disagree
+ *  with the facts it is a grade of (the `conversionRate` precedent below). */
+export interface ScorecardFactInputs {
+  /** Days of the week with ≥1 own original — bucketed in the viewer's local
+   *  days, the same boundary the C9 streak diary is written in. */
+  daysWithOriginal: number;
+  /** Days the week covers: 7 once it is over, the elapsed days while it runs. */
+  daysInWeek: number;
+  /** Daily reply target × daysInWeek — an ACTIVE `replies` commitment, else
+   *  doctrine's floor (the same resolution the brief's quests use, GR.8). */
+  repliesTargetWeek: number;
+  /** Doctrine's target reply share of the week's tweets. */
+  targetReplyPct: number;
+  /** Verdicts of the ACTIVE goals; empty drops the component. */
+  goalVerdicts: GoalVerdict[];
+  prevScore: number | null;
+}
+
 export interface DigestFactInputs {
   weekKey: string;
   start: Date;
@@ -90,6 +122,8 @@ export interface DigestFactInputs {
    *  studio's whole job is to earn this lift). Numbers only when both sides
    *  clear n≥20; below the gate the cells read insufficient. */
   mediaVsText: MediaEffectiveness;
+  /** §GR.9 — the half of the scorecard the route must supply. */
+  scorecardInputs: ScorecardFactInputs;
 }
 
 export interface DigestFacts {
@@ -115,6 +149,13 @@ export interface DigestFacts {
   // S4: the week's AI image spend + the media-vs-text lift the studio earns.
   imageSpendUsd: number;
   mediaVsText: MediaEffectiveness;
+  // GR.9: the week graded 0–100. **null whenever the week can't honestly be
+  // graded** — under the tracked-days gate, or on digests cached before this
+  // landed (the rosterCoverage/S4 contract). Nulling the whole card rather than
+  // just the score is deliberate: the narration is told to skip nulls, and a
+  // card carrying component scores over a two-day week is exactly the confident
+  // grade the gate exists to prevent.
+  scorecard: DigestScorecard | null;
 }
 
 export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
@@ -144,6 +185,37 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
 
   const totalUsd = Math.round(i.spendByPlatform.reduce((s, p) => s + p.costUsd, 0) * 1e5) / 1e5;
 
+  const quests = {
+    daysAllDone: i.streakDays.filter((d) => d.allDone).length,
+    daysTracked: i.streakDays.length,
+  };
+  const replyPct = i.tweets.length === 0 ? null : Math.round((replies / i.tweets.length) * 100);
+
+  // GR.9: graded from the numbers just derived, never from a second count of
+  // the same rows (the conversionRate precedent) — the grade and the facts it
+  // grades come out of one pass. `sufficient` alone isn't enough to publish:
+  // a week where every component dropped out has a null score and nothing to say.
+  const s = i.scorecardInputs;
+  const card = computeScorecard({
+    daysTracked: quests.daysTracked,
+    daysAllDone: quests.daysAllDone,
+    daysWithOriginal: s.daysWithOriginal,
+    daysInWeek: s.daysInWeek,
+    repliesPosted: replies,
+    repliesTargetWeek: s.repliesTargetWeek,
+    replyPct,
+    targetReplyPct: s.targetReplyPct,
+    goalVerdicts: s.goalVerdicts,
+  });
+  const scorecard: DigestScorecard | null =
+    card.sufficient && card.score !== null
+      ? {
+          ...card,
+          prevScore: s.prevScore,
+          delta: s.prevScore === null ? null : card.score - s.prevScore,
+        }
+      : null;
+
   return {
     weekKey: i.weekKey,
     from: i.start.toISOString(),
@@ -158,25 +230,19 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
       followerDelta,
       rate: conversionRate(profileClicks, followerDelta),
     },
-    activity: {
-      posts,
-      replies,
-      replyPct: i.tweets.length === 0 ? null : Math.round((replies / i.tweets.length) * 100),
-    },
+    activity: { posts, replies, replyPct },
     topTweets,
     stageTransitions: i.stageTransitions.map((s) => ({ handle: s.handle, stage: s.stage })),
     topFans,
     neglected: { targets: i.neglectedTargets, allies: i.neglectedAllies },
     spend: { totalUsd, byPlatform: i.spendByPlatform },
-    quests: {
-      daysAllDone: i.streakDays.filter((d) => d.allDone).length,
-      daysTracked: i.streakDays.length,
-    },
+    quests,
     goals: i.goals,
     guidance: i.guidance,
     rosterCoverage: i.rosterCoverage,
     imageSpendUsd: i.imageSpendUsd,
     mediaVsText: i.mediaVsText,
+    scorecard,
   };
 }
 

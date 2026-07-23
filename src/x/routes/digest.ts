@@ -34,12 +34,14 @@ import {
   parseDigestNarrative,
   weekBounds,
 } from '../digest.ts';
+import type { GoalVerdict } from '../goals.ts';
 import { resolveGoals } from '../me/profile.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
 import { loadPromptSafe } from '../prompts/registry.ts';
-import { loadFlowCurrents } from './goals.ts';
+import { localDayKey } from '../quests.ts';
+import { loadCommitmentsWithDebt, loadFlowCurrents, loadGoalsWithPacing } from './goals.ts';
 import {
   loadMediaRows,
   loadPostGuidanceSafe,
@@ -101,7 +103,7 @@ digest.get('/digest', async (c) => {
     }
   }
 
-  const facts = await loadFacts(start, end, weekKey);
+  const facts = await loadFacts(start, end, weekKey, tzOffsetMin, now);
 
   if (factsOnly) {
     return c.json({ weekKey, from: start, to: end, facts, narrative: null, cached: false });
@@ -187,7 +189,13 @@ digest.get('/digest', async (c) => {
 
 // ------------------------------------------------------------ fact loading
 
-async function loadFacts(start: Date, end: Date, weekKey: string): Promise<DigestFacts> {
+async function loadFacts(
+  start: Date,
+  end: Date,
+  weekKey: string,
+  tzOffsetMin: number,
+  now: Date,
+): Promise<DigestFacts> {
   const prevStart = new Date(start.getTime() - 7 * DAY_MS);
 
   const [snaps, published, transitions, costRows, streakRows] = await Promise.all([
@@ -204,6 +212,9 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
         tweetId: postsPublished.tweetId,
         text: postsPublished.text,
         isReply: postsPublished.isReply,
+        // GR.9: the scorecard's cadence component needs the local day each
+        // original landed on; it never reaches the facts JSON.
+        postedAt: postsPublished.postedAt,
       })
       .from(postsPublished)
       .where(and(gte(postsPublished.postedAt, start), lt(postsPublished.postedAt, end))),
@@ -286,6 +297,39 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
     Math.round(Number(costRows.find((r) => r.platform === 'xai')?.costUsd ?? 0) * 1e5) / 1e5;
   const mediaVsText = buildMediaEffectiveness(await loadMediaRows());
 
+  // §GR.9 — the scorecard's own inputs (everything else it needs is derived
+  // inside buildDigestFacts from the rows above).
+  //
+  // `loadGoalsWithPacing` is the SAME loader the brief and `GET /x/goals` use —
+  // one reading of "on pace" across every surface (the loadMonitorInputs rule).
+  // It applies GR.7's lazy `active→achieved|missed` flip, so **generating a
+  // digest settles finished goals**; it is idempotent and only advances, but
+  // nothing may poll this route expecting a pure read. The cached path returns
+  // long before here, so re-opening Sunday's digest does not re-flip.
+  const [commitmentViews, goalViews, prevScore] = await Promise.all([
+    loadCommitmentsWithDebt(now, tzOffsetMin),
+    loadGoalsWithPacing(now),
+    loadPrevScore(weekKey),
+  ]);
+  const doctrine = loadDoctrine();
+  // The debt half of the commitment view is unused here; the loader is imported
+  // anyway so "which commitment is active" has exactly one reading (GR.8).
+  const repliesDailyTarget =
+    commitmentViews.find((c) => c.key === 'replies' && c.active)?.dailyTarget ??
+    doctrine.replyTargetMin;
+  // 7 once the week is over, the elapsed days while it is still running — a
+  // Wednesday read is graded against three days of target, not seven.
+  const daysInWeek = Math.max(
+    1,
+    Math.min(7, Math.ceil((Math.min(now.getTime(), end.getTime()) - start.getTime()) / DAY_MS)),
+  );
+  const daysWithOriginal = new Set(
+    published.filter((p) => !p.isReply).map((p) => localDayKey(p.postedAt, tzOffsetMin)),
+  ).size;
+  const goalVerdicts: GoalVerdict[] = goalViews
+    .filter((g) => g.status === 'active')
+    .map((g) => g.pacing.verdict);
+
   return buildDigestFacts({
     weekKey,
     start,
@@ -315,7 +359,27 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
     rosterCoverage,
     imageSpendUsd,
     mediaVsText,
+    scorecardInputs: {
+      daysWithOriginal,
+      daysInWeek,
+      repliesTargetWeek: repliesDailyTarget * daysInWeek,
+      targetReplyPct: doctrine.weekReplyTargetPct,
+      goalVerdicts,
+      prevScore,
+    },
   });
+}
+
+/** GR.9 — last week's grade, read off last week's cached digest. A week that was
+ *  never generated, or one generated before the scorecard existed, has none, and
+ *  the delta stays null rather than becoming a comparison against zero. */
+async function loadPrevScore(weekKey: string): Promise<number | null> {
+  const [row] = await db
+    .select({ facts: digests.facts })
+    .from(digests)
+    .where(eq(digests.weekKey, dayKeyPlus(weekKey, -7)));
+  if (!row) return null;
+  return (row.facts as Partial<DigestFacts> | null)?.scorecard?.score ?? null;
 }
 
 /** M1 (ME.5) — active Me goals with computed progress. followers goals read the

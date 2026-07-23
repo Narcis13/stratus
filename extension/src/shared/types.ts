@@ -1245,6 +1245,28 @@ export interface DigestFacts {
   // exists to earn. Optional — digests cached before S4 landed lack them.
   imageSpendUsd?: number;
   mediaVsText?: MediaEffectiveness;
+  // GR.9: the week graded 0–100. Optional/nullable on the same contract —
+  // absent on digests cached before GR.9, null whenever the week was tracked
+  // for fewer than 4 days (the server never ships a card it can't stand behind,
+  // so the panel renders the grade or nothing).
+  scorecard?: DigestScorecard | null;
+}
+
+/** GR.9 — mirrors the server's `DigestScorecard`. Components are 0–100 with
+ *  null for "no data this week"; `delta` is null when last week wasn't graded. */
+export interface DigestScorecard {
+  score: number | null;
+  components: {
+    questAdherence: number | null;
+    cadenceConsistency: number | null;
+    replyQuota: number | null;
+    goalPacing: number | null;
+    ratioAdherence: number | null;
+  };
+  sufficient: boolean;
+  daysTracked: number;
+  prevScore: number | null;
+  delta: number | null;
 }
 
 // §S4/§S0.2 — media vs text-only own-originals; the shape the digest and the
