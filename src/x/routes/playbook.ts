@@ -26,6 +26,7 @@ import {
 import { OpenRouterApiError } from '../../openrouter/index.ts';
 import {
   accountSnapshots,
+  harvestRows,
   ideas,
   metricsSnapshots,
   people,
@@ -50,6 +51,7 @@ import {
   type ReplyOrigin,
   type RosterCoverage,
   type StructureRow,
+  type TimelineFunnel,
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
@@ -62,6 +64,7 @@ import {
   buildRelationshipLift,
   buildRosterCoverage,
   buildStructureEffectiveness,
+  buildTimelineFunnel,
   classifyReplyOrigin,
   normalizeReplyText,
   resolveAgeMin,
@@ -385,6 +388,60 @@ export async function loadIdeaRows(): Promise<IdeaRow[]> {
   ];
 }
 
+// ------------------------------------- timeline opportunity funnel (HV.5)
+
+/** Shorter than the 60-day passive retention on purpose: what I failed to reply
+ *  to two months ago is history, not a decision I can still change. */
+const TIMELINE_FUNNEL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/** `mode` is the ONLY thing separating the ambient home-timeline corpus from
+ *  the user's hand-run harvests (HV.1) — every reader carries this filter or it
+ *  silently mixes two corpora. */
+const PASSIVE_HARVEST_MODE = 'timeline';
+
+/** Seen-vs-replied over the passive corpus. `min(captured_at)` with bare columns
+ *  is SQLite's documented first-sighting-per-tweet form (with exactly one
+ *  min/max aggregate, every bare column comes from the matching input row) — the
+ *  band that mattered is the one at first sighting, not at the tenth re-scroll.
+ *  Unwindowed row volume is structurally bounded (HV.1's 2,000-rows/day cap ×
+ *  the 30-day window), so no extra limit is worth a truncated denominator.
+ *  $0: nothing on this path can reach xFetch. */
+export async function loadTimelineFunnel(minN = DEFAULT_MIN_CELL_N): Promise<TimelineFunnel> {
+  const since = new Date(Date.now() - TIMELINE_FUNNEL_WINDOW_MS);
+  const seen = await db
+    .select({
+      tweetId: harvestRows.tweetId,
+      capturedAt: sql<number>`min(${harvestRows.capturedAt})`,
+      views: harvestRows.views,
+      comments: harvestRows.comments,
+      text: harvestRows.text,
+      tweetTime: harvestRows.tweetTime,
+    })
+    .from(harvestRows)
+    .where(and(eq(harvestRows.mode, PASSIVE_HARVEST_MODE), gte(harvestRows.capturedAt, since)))
+    .groupBy(harvestRows.tweetId);
+  if (seen.length === 0) return buildTimelineFunnel([], new Set(), minN);
+
+  // Posted drafts only — the paste-time reading every other cell uses. The set
+  // is unwindowed; intersecting it with `seen` is what bounds it.
+  const replied = await db
+    .select({ sourceTweetId: replyDrafts.sourceTweetId })
+    .from(replyDrafts)
+    .where(eq(replyDrafts.status, 'posted'));
+
+  return buildTimelineFunnel(
+    seen.map((r) => ({
+      tweetId: r.tweetId,
+      views: r.views,
+      comments: r.comments,
+      text: r.text,
+      tweetTimeMs: r.tweetTime === null ? null : r.tweetTime.getTime(),
+      capturedAtMs: Number(r.capturedAt),
+    })),
+    new Set(replied.map((r) => r.sourceTweetId)),
+    minN,
+  );
+}
+
 // ---------------------------------------------------- batch vs single rows
 
 async function loadOriginRows(): Promise<{
@@ -551,6 +608,7 @@ playbook.get('/playbook', async (c) => {
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
+    timelineFunnel: await loadTimelineFunnel(minN),
     rosterCoverage: await loadRosterCoverage(
       new Date(Date.now() - ROSTER_WINDOW_MS),
       new Date(),

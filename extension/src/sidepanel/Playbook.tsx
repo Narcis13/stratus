@@ -348,6 +348,49 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
             </div>
           </section>
 
+          <section className="brief-section">
+            <h3>
+              Timeline funnel ({data.timelineFunnel.totalReplied}/{data.timelineFunnel.totalSeen}{' '}
+              replied)
+            </h3>
+            {data.timelineFunnel.cells.length === 0 ? (
+              <div className="muted">
+                Nothing captured yet — passive harvest fills this while you scroll x.com/home.
+              </div>
+            ) : (
+              <table className="pb-table">
+                <thead>
+                  <tr>
+                    <th>band when seen</th>
+                    <th>seen</th>
+                    <th>replied</th>
+                    <th>capture</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.timelineFunnel.cells.map((c) => (
+                    <tr
+                      key={String(c.band)}
+                      className={c.band === 'hot' || c.band === 'warm' ? '' : 'pb-thin'}
+                    >
+                      <td>{c.band === null ? 'no band' : c.band}</td>
+                      <td>{c.seen}</td>
+                      <td>{c.replied}</td>
+                      <td>
+                        {c.rate === null ? `insufficient data (n=${c.seen})` : fmtPct(c.rate)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div className="muted pb-note">
+              of the tweets the algorithm actually put in front of you, how many you replied to —
+              banded at first sighting, 30-day window. A cell stays silent until n≥{data.minN} seen;
+              "unknown" means the tweet's time never rendered, not a verdict.
+            </div>
+          </section>
+
           <RosterCoverageSection rc={data.rosterCoverage} minN={data.minN} />
 
           <section className="brief-section">

@@ -9,6 +9,8 @@ import {
   type MeasuredOutcome,
   type ModelRow,
   type ScoredReply,
+  type TimelineBand,
+  type TimelineSeenRow,
   authorSizeBucket,
   buildAngleEffectiveness,
   buildBandCalibration,
@@ -22,8 +24,10 @@ import {
   buildRelationshipLift,
   buildRosterCoverage,
   buildStructureEffectiveness,
+  buildTimelineFunnel,
   classifyReplyOrigin,
   classifyRosterBand,
+  deriveTimelineBand,
   latencyBucket,
   median,
   normalizeReplyText,
@@ -619,6 +623,88 @@ describe('buildModelEffectiveness', () => {
   test('default gate is 20 — silent on a thin sample', () => {
     const r = buildModelEffectiveness(rows);
     expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+  });
+});
+
+describe('buildTimelineFunnel (HV.5)', () => {
+  const NOW = 1_800_000_000_000;
+  const seenRow = (id: string, o: Partial<TimelineSeenRow> = {}): TimelineSeenRow => ({
+    tweetId: id,
+    views: 5000,
+    comments: 3,
+    text: 'a plain statement about shipping',
+    tweetTimeMs: NOW - 30 * 60_000,
+    capturedAtMs: NOW,
+    ...o,
+  });
+  const bandOf = (o: Partial<TimelineSeenRow>): TimelineBand => deriveTimelineBand(seenRow('t', o));
+
+  test('a row without a tweet time is unknown, never the null band', () => {
+    expect(bandOf({ tweetTimeMs: null })).toBe('unknown');
+    // Same metrics WITH a time classify as a real band — unknown is only ever
+    // about the missing timestamp.
+    expect(bandOf({})).toBe('hot');
+  });
+
+  test('bait text flips a would-be-null row into a band', () => {
+    const small = { views: 200, comments: 2, capturedAtMs: NOW, tweetTimeMs: NOW - 60 * 60_000 };
+    expect(bandOf({ ...small, text: 'shipped the thing today.' })).toBeNull();
+    expect(bandOf({ ...small, text: 'shipped the thing today. am i wrong?' })).toBe('hot');
+  });
+
+  test('first sighting bands the tweet; re-sightings never re-band or double-count', () => {
+    const r = buildTimelineFunnel(
+      [
+        // Later re-scroll first in the array on purpose: order must not matter.
+        seenRow('a', { views: 300_000, comments: 900, capturedAtMs: NOW + 3 * 3600_000 }),
+        seenRow('a'),
+      ],
+      new Set(),
+      1,
+    );
+    expect(r.totalSeen).toBe(1);
+    expect(r.cells).toHaveLength(1);
+    expect(r.cells[0]?.band).toBe('hot'); // not 'skip' from the 900-reply re-sighting
+    expect(r.cells[0]?.seen).toBe(1);
+  });
+
+  test('replied counts distinct seen tweets; ids never seen are not credited', () => {
+    const r = buildTimelineFunnel(
+      [seenRow('a'), seenRow('a', { capturedAtMs: NOW + 60_000 }), seenRow('b')],
+      new Set(['a', 'ghost']),
+      1,
+    );
+    expect(r.totalSeen).toBe(2);
+    expect(r.totalReplied).toBe(1);
+    expect(r.cells[0]?.replied).toBe(1);
+    expect(r.cells[0]?.rate).toBe(0.5);
+  });
+
+  test('gate: 19 seen is silent, 20 quotes the capture rate', () => {
+    const rows = Array.from({ length: 19 }, (_, i) => seenRow(`t${i}`));
+    const thin = buildTimelineFunnel(rows, new Set(['t0']), 20);
+    expect(thin.cells[0]?.sufficient).toBe(false);
+    expect(thin.cells[0]?.rate).toBeNull();
+
+    const full = buildTimelineFunnel([...rows, seenRow('t19')], new Set(['t0']), 20);
+    expect(full.cells[0]?.sufficient).toBe(true);
+    expect(full.cells[0]?.rate).toBe(0.05);
+  });
+
+  test('cells stay in band order and the gate is per band', () => {
+    const r = buildTimelineFunnel(
+      [
+        seenRow('a'),
+        seenRow('b'),
+        seenRow('c', { comments: 300 }), // deep thread → skip
+        seenRow('d', { tweetTimeMs: null }),
+      ],
+      new Set(),
+      2,
+    );
+    expect(r.cells.map((c) => c.band)).toEqual(['hot', 'skip', 'unknown']);
+    expect(r.cells[0]?.sufficient).toBe(true);
+    expect(r.cells[1]?.sufficient).toBe(false);
   });
 });
 

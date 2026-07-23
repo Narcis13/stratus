@@ -9,6 +9,8 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
   accountSnapshots,
+  harvestRows,
+  harvestRuns,
   ideas,
   metricsSnapshots,
   people,
@@ -720,5 +722,110 @@ describe('canned attribution (RL.7)', () => {
     expect(b.unattributed).toBe(before.unattributed - 1);
     // Only a clean run (no stray use rows) can pin the median to our seed.
     if (before.canned === 0) expect(b.canned.medianViews).toBe(120);
+  });
+});
+
+// HV.5 opportunity funnel. Rows are seeded DIRECTLY (a multi-sighting history is
+// unbuildable through POST /harvest/passive's 30-min recapture gate) under this
+// suite's own mode='timeline' run, and everything is deleted in afterAll — the
+// in-memory DB is shared, harvest.test.ts asserts that NO timeline run exists,
+// and a stray posted reply_drafts row would move other suites' cells. Kept LAST
+// in the file for the same reason.
+describe('loadTimelineFunnel (HV.5)', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000f1';
+  const DRAFT_ID = 'd0000000-0000-4000-8000-0000000000f2';
+
+  async function funnel(minN?: number): Promise<{
+    cells: Array<{ band: string | null; seen: number; replied: number; rate: number | null }>;
+    totalSeen: number;
+    totalReplied: number;
+  }> {
+    const res = await app.request(`/x/playbook${minN === undefined ? '' : `?minN=${minN}`}`);
+    expect(res.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+    const body = (await res.json()) as any;
+    return body.timelineFunnel;
+  }
+
+  beforeAll(async () => {
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: 'timeline', mode: 'timeline', scope: 'passive' })
+      .onConflictDoNothing();
+    const row = (o: {
+      tweetId: string;
+      views?: number;
+      comments?: number;
+      tweetTime?: Date | null;
+      capturedAt: Date;
+    }) => ({
+      runId: RUN_ID,
+      tweetId: o.tweetId,
+      handle: 'hv5_author',
+      mode: 'timeline',
+      text: 'a plain statement about shipping',
+      views: o.views ?? 5000,
+      comments: o.comments ?? 3,
+      tweetTime:
+        o.tweetTime === undefined ? new Date(o.capturedAt.getTime() - 30 * 60_000) : o.tweetTime,
+      capturedAt: o.capturedAt,
+    });
+    await db.insert(harvestRows).values([
+      // hv5_a: hot at first sighting, re-scrolled 3h later as a buried thread.
+      row({ tweetId: 'hv5_a', capturedAt: at(300) }),
+      row({ tweetId: 'hv5_a', views: 300_000, comments: 900, capturedAt: at(120) }),
+      // hv5_b: hot, and the one I actually replied to.
+      row({ tweetId: 'hv5_b', capturedAt: at(240) }),
+      // hv5_c: no tweet time → unknown, never the null band.
+      row({ tweetId: 'hv5_c', tweetTime: null, capturedAt: at(200) }),
+      // Outside the 30-day window.
+      row({ tweetId: 'hv5_old', capturedAt: at(40 * 24 * 60) }),
+    ]);
+
+    await db
+      .insert(replyDrafts)
+      .values({
+        id: DRAFT_ID,
+        sourceTweetId: 'hv5_b',
+        sourceAuthorUsername: 'hv5_author',
+        sourceText: 'a plain statement about shipping',
+        sourceUrl: 'https://x.com/hv5_author/status/hv5_b',
+        contextSnapshot: {},
+        replyText: 'shipped mine last week',
+        model: 'test',
+        status: 'posted',
+        createdAt: at(230),
+      })
+      .onConflictDoNothing();
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+    await db.delete(replyDrafts).where(eq(replyDrafts.id, DRAFT_ID));
+  });
+
+  test('bands at first sighting, counts distinct tweets, windows at 30 days', async () => {
+    const f = await funnel(1);
+    expect(f.totalSeen).toBe(3); // hv5_a (twice) + hv5_b + hv5_c, hv5_old excluded
+    expect(f.totalReplied).toBe(1);
+    // The 900-reply re-sighting of hv5_a must not re-band it into 'skip'.
+    expect(f.cells.map((c) => c.band)).toEqual(['hot', 'unknown']);
+    const hot = f.cells.find((c) => c.band === 'hot');
+    expect(hot?.seen).toBe(2);
+    expect(hot?.replied).toBe(1);
+    expect(hot?.rate).toBe(0.5);
+  });
+
+  test('a posted draft on a tweet I never saw is not credited', async () => {
+    const f = await funnel(1);
+    // The main describe's posted drafts all target 4242, which is not in the
+    // ambient corpus — the intersection is what counts, not the draft count.
+    expect(f.totalReplied).toBe(1);
+  });
+
+  test('the default gate keeps a thin cell silent', async () => {
+    const f = await funnel();
+    expect(f.cells.every((c) => c.rate === null)).toBe(true);
   });
 });

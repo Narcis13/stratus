@@ -1440,6 +1440,17 @@ export interface PlaybookModelCell extends PlaybookCell {
   model: string;
 }
 
+// Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
+// no tweet time, so no age and no velocity to classify with; it never folds
+// into the null band, which does mean "judged not worth replying to".
+export interface PlaybookFunnelCell {
+  band: 'hot' | 'warm' | 'skip' | null | 'unknown';
+  seen: number;
+  replied: number;
+  rate: number | null;
+  sufficient: boolean;
+}
+
 export interface PlaybookBandCell {
   band: 'hot' | 'warm' | 'skip' | null;
   n: number;
@@ -1551,6 +1562,14 @@ export interface Playbook {
   modelEffectiveness: {
     cells: PlaybookModelCell[];
     totalMeasured: number;
+  };
+  // Timeline opportunity-capture funnel (HV.5): of the tweets the algorithm
+  // actually put in front of me (the passive home-timeline corpus), how many did
+  // I reply to, per band at first sighting. Rate is null under the per-cell gate.
+  timelineFunnel: {
+    cells: PlaybookFunnelCell[];
+    totalSeen: number;
+    totalReplied: number;
   };
   // Roster coverage (§S0.7): of the last 7 days' posted replies, how many went
   // to in-band (2–10x) vs above/below/unknown-size authors.

@@ -878,6 +878,101 @@ export function buildModelEffectiveness(
   };
 }
 
+// -------------------------- 12. timeline opportunity-capture funnel (HV.5)
+
+/** One tweet the algorithm put in front of me, from the ambient home-timeline
+ *  corpus (`harvest_rows` mode='timeline', HV.1). Metrics are DOM-scraped at
+ *  sighting time; the band is derived here and never stored (§7.12). */
+export interface TimelineSeenRow {
+  tweetId: string;
+  views: number;
+  comments: number;
+  text: string;
+  /** null when the article's `<time>` never rendered — see TimelineBand. */
+  tweetTimeMs: number | null;
+  capturedAtMs: number;
+}
+
+/** `unknown` is NOT a classifier verdict: a row with no tweet time has no
+ *  derivable age, therefore no velocity, therefore nothing to ask classifyBand.
+ *  It stays its own bucket (same discipline as LATENCY_BUCKETS' `unknown`) so it
+ *  can never be folded into the real `null` band, which DOES mean "judged not
+ *  worth replying to". */
+export type TimelineBand = Band | 'unknown';
+
+const TIMELINE_BAND_ORDER: TimelineBand[] = ['hot', 'warm', 'skip', null, 'unknown'];
+
+export function deriveTimelineBand(row: TimelineSeenRow): TimelineBand {
+  if (row.tweetTimeMs === null || !Number.isFinite(row.tweetTimeMs)) return 'unknown';
+  const ageMin = Math.max(0, (row.capturedAtMs - row.tweetTimeMs) / 60_000);
+  return classifyBand({
+    views: row.views,
+    replies: row.comments,
+    ageMin,
+    vpm: row.views / Math.max(ageMin, 1),
+    bait: textLooksLikeReplyBait(row.text),
+  });
+}
+
+export interface FunnelCell {
+  band: TimelineBand;
+  /** Distinct tweets in this band (rows are deduped to their first sighting). */
+  seen: number;
+  replied: number;
+  /** replied/seen, null under the gate — "33% capture" off 3 tweets is a lie. */
+  rate: number | null;
+  sufficient: boolean;
+}
+
+export interface TimelineFunnel {
+  /** One cell per non-empty band, in TIMELINE_BAND_ORDER. */
+  cells: FunnelCell[];
+  totalSeen: number;
+  totalReplied: number;
+}
+
+/** Of the tweets the algorithm actually showed me, how many did I reply to?
+ *  The denominator only exists because passive capture records EVERY parseable
+ *  article including band 'skip' — a funnel over the hot cell alone would be a
+ *  tautology.
+ *
+ *  First sighting per tweet is the band that mattered (the moment it was still
+ *  replyable); later re-sightings of the same id are the longitudinal view curve
+ *  and must never re-band it, so rows are deduped by earliest capture here as
+ *  well as in the loader's SQL. */
+export function buildTimelineFunnel(
+  rows: TimelineSeenRow[],
+  repliedTweetIds: Set<string>,
+  minN = DEFAULT_MIN_CELL_N,
+): TimelineFunnel {
+  const firstByTweet = new Map<string, TimelineSeenRow>();
+  for (const r of rows) {
+    const prev = firstByTweet.get(r.tweetId);
+    if (!prev || r.capturedAtMs < prev.capturedAtMs) firstByTweet.set(r.tweetId, r);
+  }
+
+  const byBand = new Map<TimelineBand, { seen: number; replied: number }>();
+  let totalReplied = 0;
+  for (const [tweetId, row] of firstByTweet) {
+    const band = deriveTimelineBand(row);
+    const cell = byBand.get(band) ?? { seen: 0, replied: 0 };
+    cell.seen++;
+    if (repliedTweetIds.has(tweetId)) {
+      cell.replied++;
+      totalReplied++;
+    }
+    byBand.set(band, cell);
+  }
+
+  const cells: FunnelCell[] = TIMELINE_BAND_ORDER.filter((b) => byBand.has(b)).map((band) => {
+    const { seen, replied } = byBand.get(band) as { seen: number; replied: number };
+    const sufficient = seen >= minN;
+    return { band, seen, replied, rate: sufficient ? round2(replied / seen) : null, sufficient };
+  });
+
+  return { cells, totalSeen: firstByTweet.size, totalReplied };
+}
+
 // ------------------------------------------------ feedback into generation
 
 /** Gated guidance line for the reply prompts. Null unless the best angle's
