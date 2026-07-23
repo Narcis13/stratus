@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type NotifContextGet,
   type RadarConfirm,
   type RadarVariantPasted,
   type RadarVariantsGet,
+  isNotifContextGet,
   isRadarConfirm,
   isRadarVariantPasted,
   isRadarVariantsGet,
@@ -58,5 +60,21 @@ describe('isRadarVariantPasted', () => {
       isRadarVariantPasted({ type: 'stratus/radar-variants-get', tweetId: '1', text: 'x' }),
     ).toBe(false);
     expect(isRadarVariantPasted(null)).toBe(false);
+  });
+});
+
+describe('isNotifContextGet', () => {
+  test('accepts the bare message and the forced variant', () => {
+    const bare: NotifContextGet = { type: 'stratus/notif-context' };
+    const forced: NotifContextGet = { type: 'stratus/notif-context', force: true };
+    expect(isNotifContextGet(bare)).toBe(true);
+    expect(isNotifContextGet(forced)).toBe(true);
+  });
+
+  test('rejects the wrong type and junk', () => {
+    expect(isNotifContextGet({ type: 'stratus/radar-confirm' })).toBe(false);
+    expect(isNotifContextGet({ force: true })).toBe(false);
+    expect(isNotifContextGet(null)).toBe(false);
+    expect(isNotifContextGet('stratus/notif-context')).toBe(false);
   });
 });

@@ -28,11 +28,14 @@ import {
 import {
   type ApiRequest,
   type ApiResponse,
+  type NotifContextMap,
+  type NotifContextResponse,
   isApiRequest,
   isLaunchDismiss,
   isLaunchGet,
   isLaunchReport,
   isLaunchSync,
+  isNotifContextGet,
   isOpenPerson,
   isOpenPersonClear,
   isRadarClick,
@@ -56,7 +59,12 @@ import {
   mergeSightings,
   stampTiers,
 } from './shared/radar.ts';
-import type { ReplyVariant, ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
+import type {
+  MentionsResponse,
+  ReplyVariant,
+  ScheduledPost,
+  ScheduledPostWithThread,
+} from './shared/types.ts';
 import { isReplyVariants } from './shared/variantChips.ts';
 
 chrome.sidePanel
@@ -632,6 +640,65 @@ chrome.notifications.onClicked.addListener((id) => {
   });
 });
 
+// ------------------------------------------------ notifications ctx (C10)
+//
+// Augmenting x.com/notifications needs two lookups per cell: "which of my
+// posts is this reply on, and did the inbox already settle it?" (the mention
+// rows a daily pull already billed) and "does this handle matter?" (the S0.3
+// rank map). Both are cached here rather than fetched per cell — a long
+// notifications scroll would otherwise fan out hundreds of requests — and both
+// refreshes are TTL-guarded no-ops in the common case.
+//
+// Mentions get a shorter TTL than the rank map because they move on a human
+// sync click; that click sends `force` so its freshly pulled rows land at once.
+const NOTIF_CONTEXT_TTL_MS = 5 * 60 * 1000;
+const NOTIF_CONTEXT_LIMIT = '200';
+let notifContext: NotifContextMap = {};
+let notifContextAt = 0;
+let notifContextInflight: Promise<void> | null = null;
+
+async function refreshNotifContext(): Promise<void> {
+  if (Date.now() - notifContextAt < NOTIF_CONTEXT_TTL_MS) return;
+  if (notifContextInflight) return notifContextInflight;
+  notifContextInflight = (async () => {
+    const res = await handleApiRequest({
+      type: 'stratus/api',
+      method: 'GET',
+      path: '/x/mentions',
+      query: { limit: NOTIF_CONTEXT_LIMIT },
+    });
+    if (!res.ok) return;
+    const rows = (res.data as MentionsResponse | undefined)?.mentions;
+    if (!Array.isArray(rows)) return;
+    const map: NotifContextMap = {};
+    for (const row of rows) {
+      if (typeof row?.tweetId !== 'string') continue;
+      map[row.tweetId] = { parentText: row.parentText ?? null, status: row.status };
+    }
+    // Only a successful pull advances the stamp — a failed one keeps the last
+    // good map and retries on the next ask instead of going quiet for 5 min.
+    notifContext = map;
+    notifContextAt = Date.now();
+  })().finally(() => {
+    notifContextInflight = null;
+  });
+  return notifContextInflight;
+}
+
+async function notifContextPayload(force: boolean): Promise<NotifContextResponse> {
+  if (force) {
+    // A sync click must not be answered by a pull that started before it: let
+    // any in-flight refresh settle, then invalidate and fetch again.
+    if (notifContextInflight) await notifContextInflight.catch(() => {});
+    notifContextAt = 0;
+  }
+  await Promise.all([
+    refreshNotifContext().catch((err) => console.warn('[stratus] mentions context failed', err)),
+    refreshRankMap().catch((err) => console.warn('[stratus] rankmap refresh failed', err)),
+  ]);
+  return { ok: true, mentions: notifContext, rankMap };
+}
+
 // --- People dossier click-through (AX.6). The handoff session key is written
 // only here so the background stays the single chrome.storage.session writer;
 // App.tsx reads it (mount + onChanged) and clears it via OpenPersonClear.
@@ -781,6 +848,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isNotifContextGet(msg)) {
+    void notifContextPayload(msg.force === true).then(
+      (payload) => sendResponse(payload),
+      (err) => {
+        // Never let the notifications page see a failure — it augments, it
+        // doesn't own the page.
+        console.warn('[stratus] notif-context failed', err);
+        sendResponse({ ok: true, mentions: {}, rankMap } satisfies NotifContextResponse);
+      },
     );
     return true;
   }

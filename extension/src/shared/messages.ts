@@ -3,8 +3,8 @@
 // reads the bearer token and attaches the Authorization header.
 
 import type { EarlyReply } from './launch.ts';
-import type { RadarSighting } from './radar.ts';
-import type { ReplyVariant } from './types.ts';
+import type { RadarSighting, RankMap } from './radar.ts';
+import type { MentionStatus, ReplyVariant } from './types.ts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -239,4 +239,44 @@ export function isLaunchReport(msg: unknown): msg is LaunchReport {
 export function isLaunchDismiss(msg: unknown): msg is LaunchDismiss {
   if (typeof msg !== 'object' || msg === null) return false;
   return (msg as Record<string, unknown>).type === 'stratus/launch-dismiss';
+}
+
+// --- Notifications surface (C10) — content script → background, the whole
+// augmentation payload for x.com/notifications in one round trip: the mention
+// rows stratus already pulled (keyed by the REPLY's tweet id, carrying my
+// parent post's text + the inbox status) plus the S0.3 roster rank map for
+// tier chips. Both are background-cached (mentions 5 min, rank map 10 min) so
+// scrolling a long notifications page never fans out requests, and the
+// background stays the only Authorization owner.
+//
+// `force: true` rides on the click of the injected sync-replies chip, which
+// has just spent a capped `POST /x/mentions/refresh` — it drops the mentions
+// cache so the freshly pulled rows show up immediately instead of up to 5 min
+// later. Nothing else should send it: a page visit is not consent to spend.
+
+export interface NotifContextEntry {
+  /** My published post the mention replies to — null when it isn't one of mine. */
+  parentText: string | null;
+  status: MentionStatus;
+}
+
+/** Reply tweet id → what stratus knows about it. */
+export type NotifContextMap = Record<string, NotifContextEntry>;
+
+export interface NotifContextGet {
+  type: 'stratus/notif-context';
+  force?: boolean;
+}
+
+/** Always `ok: true` — augmentation degrades to empty maps, it never errors
+ *  the page (a failed fetch just keeps the last good, or empty, context). */
+export interface NotifContextResponse {
+  ok: true;
+  mentions: NotifContextMap;
+  rankMap: RankMap;
+}
+
+export function isNotifContextGet(msg: unknown): msg is NotifContextGet {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/notif-context';
 }
