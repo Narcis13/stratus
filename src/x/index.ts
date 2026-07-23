@@ -28,6 +28,7 @@ import { launch } from './routes/launch.ts';
 import { me } from './routes/me.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
+import { monitorRouter } from './routes/monitor.ts';
 import { nicheRouter } from './routes/niche.ts';
 import { peopleRouter } from './routes/people.ts';
 import { pillars } from './routes/pillars.ts';
@@ -83,6 +84,11 @@ export function mountX(app: Hono): void {
   // can reach the X API, and unfollowing stays a manual act in the X app.
   // `/following/queue` (GR.3) registers above `/following/:handle` (§7.20).
   app.route('/x', followingRouter);
+  // GR: the activity monitor — read-time rules over posts/replies/following/
+  // calendar rows that flag the patterns X's spam heuristics punish. Always
+  // mounted, $0 (no X call, no LLM), static path only. Advisory by design:
+  // it never blocks a post, a reply or an unfollow.
+  app.route('/x', monitorRouter);
   // C0: radar draft reads/status flips are $0 and mount without an LLM key;
   // only the insert path (generate-batch, below) needs a configured provider.
   app.route('/x', radar);

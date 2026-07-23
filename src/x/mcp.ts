@@ -143,6 +143,17 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
   );
 
   server.registerTool(
+    'x_monitor',
+    {
+      title: 'Account health monitor',
+      description:
+        'Activity-pattern alerts over my own actions: posting bursts, near-duplicate originals, unfollow churn above the safe daily ceiling, and clustered pending slots. Empty `alerts` means nothing looks risky. Free, local read — advisory only, stratus never blocks a post.',
+      inputSchema: {},
+    },
+    async () => route('/x/monitor'),
+  );
+
+  server.registerTool(
     'x_playbook',
     {
       title: 'The Playbook',

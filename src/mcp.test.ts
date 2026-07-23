@@ -99,11 +99,12 @@ describe.if(authed)('MCP transport', () => {
     expect(names.has('x_brief')).toBe(true);
     expect(names.has('x_niche')).toBe(true);
     expect(names.has('x_me')).toBe(true);
+    expect(names.has('x_monitor')).toBe(true);
     expect(names.has('x_draft_post')).toBe(true);
     expect(names.has('x_add_idea')).toBe(true);
     expect(names.has('x_add_me_entry')).toBe(true);
-    // 3 schema + 12 curated (incl. x_niche, x_me) + 4 write (incl. x_add_me_entry).
-    expect(names.size).toBe(19);
+    // 3 schema + 13 curated (incl. x_niche, x_me, x_monitor) + 4 write (incl. x_add_me_entry).
+    expect(names.size).toBe(20);
   });
 });
 
@@ -143,6 +144,17 @@ describe.if(authed)('MCP tool tiers', () => {
     expect(typeof d.niche?.slug).toBe('string');
     expect((d.niche?.slug ?? '').length).toBeGreaterThan(0);
     expect(typeof d.doctrine?.replyTargetMin).toBe('number');
+  });
+
+  // Runs against the real composed app, so this also proves monitorRouter is
+  // mounted — a curated tool is only as callable as its route.
+  test('curated tier: x_monitor returns the alert envelope', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_monitor', arguments: {} });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const d = data as { alerts?: unknown; worst?: unknown; checkedAt?: string };
+    expect(Array.isArray(d.alerts)).toBe(true);
+    expect(Number.isNaN(Date.parse(d.checkedAt ?? ''))).toBe(false);
   });
 
   test('write tier: x_add_idea creates an open idea', async () => {
