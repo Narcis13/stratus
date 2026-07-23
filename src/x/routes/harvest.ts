@@ -3,9 +3,10 @@
 // in this file — rows arrive pre-scraped from the content script.
 //
 // Routes:
-//   POST /harvest/runs   { handle, mode, scope }      create a run, returns the row
-//   POST /harvest/rows   { runId, rows: [...] }       batched insert (≤500/call)
-//   GET  /harvest/runs   ?limit=                      recent runs, newest first
+//   POST /harvest/runs     { handle, mode, scope }    create a run, returns the row
+//   POST /harvest/rows     { runId, rows: [...] }     batched insert (≤500/call)
+//   POST /harvest/passive  { rows: [...] }            ambient timeline ingest (≤100/call)
+//   GET  /harvest/runs     ?limit=                    recent runs, newest first
 //
 // Repeated harvests of the same tweet create new rows on purpose — that is the
 // longitudinal curve. Replies-mode batches also reconcile against reply_drafts:
@@ -13,8 +14,14 @@
 // without a link fall back to a text+time match against posted-but-unlinked
 // drafts and, on a unique match, backfill the draft's missing postedTweetId —
 // the systematic fix for drafts whose PATCH-after-paste never happened.
+//
+// HV.1 passive capture: what the algorithm fed the home timeline, shipped by the
+// content script while browsing. Same table, discriminated by mode='timeline',
+// hung off one server-created run per UTC day — clients cannot forge those runs
+// (POST /harvest/runs still rejects the mode). Band is never stored: it stays
+// recomputable from views/comments/tweetTime/capturedAt/text (§7.12).
 
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNull, lt } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { harvestRows, harvestRuns, replyDrafts } from '../db/schema.ts';
@@ -37,6 +44,16 @@ type Scope = (typeof SCOPES)[number];
 const MAX_ROWS_PER_BATCH = 500;
 const DEFAULT_RUNS_LIMIT = 20;
 const MAX_RUNS_LIMIT = 100;
+
+// Passive timeline capture (HV.1). All four numbers are opening guesses sized
+// for natural browsing — revisit after ~30 days of real volume.
+const PASSIVE_MODE = 'timeline';
+const PASSIVE_SCOPE = 'passive';
+const PASSIVE_HANDLE = 'timeline';
+const MAX_PASSIVE_BATCH = 100;
+const PASSIVE_DAILY_CAP = 2000;
+const PASSIVE_RECAPTURE_MS = 30 * 60 * 1000;
+const PASSIVE_RETENTION_DAYS = 60;
 
 // Fallback-match sanity window: the harvested reply must have been posted
 // after its draft was generated (small slack for clock skew) and within a week
@@ -214,6 +231,113 @@ harvest.post('/harvest/rows', async (c) => {
   );
 });
 
+harvest.post('/harvest/passive', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!Array.isArray(body.rows) || body.rows.length === 0) {
+    return c.json({ error: 'rows_required' }, 400);
+  }
+  if (body.rows.length > MAX_PASSIVE_BATCH) {
+    return c.json({ error: 'too_many_rows', max: MAX_PASSIVE_BATCH }, 400);
+  }
+
+  const rows: IngestRow[] = [];
+  for (let i = 0; i < body.rows.length; i++) {
+    const parsed = parseIngestRow(body.rows[i]);
+    if ('error' in parsed) return c.json({ error: parsed.error, index: i }, 400);
+    rows.push(parsed);
+  }
+
+  const now = new Date();
+  await prunePassiveRuns(now);
+  const run = await findOrCreatePassiveRun(now);
+
+  let skippedRecent = 0;
+
+  // A tweet scrolled past twice in the same flush window is one sighting.
+  const batchSeen = new Set<string>();
+  const unique: IngestRow[] = [];
+  for (const r of rows) {
+    if (batchSeen.has(r.tweetId)) {
+      skippedRecent++;
+      continue;
+    }
+    batchSeen.add(r.tweetId);
+    unique.push(r);
+  }
+
+  // Re-seeing the same tweet is only worth a row once the metrics have had time
+  // to move — that gap IS the longitudinal curve. Indexed by (tweet_id, captured_at).
+  const recent = await db
+    .select({ tweetId: harvestRows.tweetId })
+    .from(harvestRows)
+    .where(
+      and(
+        eq(harvestRows.mode, PASSIVE_MODE),
+        inArray(
+          harvestRows.tweetId,
+          unique.map((r) => r.tweetId),
+        ),
+        gt(harvestRows.capturedAt, new Date(now.getTime() - PASSIVE_RECAPTURE_MS)),
+      ),
+    );
+  const recentIds = new Set(recent.map((r) => r.tweetId));
+
+  const fresh: IngestRow[] = [];
+  for (const r of unique) {
+    if (recentIds.has(r.tweetId)) {
+      skippedRecent++;
+      continue;
+    }
+    fresh.push(r);
+  }
+
+  // Volume guard, not an invariant: concurrent tabs can overshoot by a batch.
+  const room = Math.max(0, PASSIVE_DAILY_CAP - run.rowCount);
+  const accepted = fresh.slice(0, room);
+  const skippedCap = fresh.length - accepted.length;
+
+  if (accepted.length > 0) {
+    db.transaction((tx) => {
+      tx.insert(harvestRows)
+        .values(
+          // orig*/groupPosition/matchedDraftId stay null — passive rows carry no
+          // reply pairing, and decision 6 keeps them out of the people layer.
+          accepted.map((r) => ({
+            runId: run.id,
+            tweetId: r.tweetId,
+            handle: r.handle,
+            mode: PASSIVE_MODE,
+            text: r.text,
+            comments: r.comments,
+            reposts: r.reposts,
+            likes: r.likes,
+            bookmarks: r.bookmarks,
+            views: r.views,
+            tweetTime: r.tweetTime,
+            capturedAt: now,
+            hasPhoto: r.hasPhoto,
+            hasVideo: r.hasVideo,
+            isQuote: r.isQuote,
+            textLen: r.textLen,
+            lineBreaks: r.lineBreaks,
+          })),
+        )
+        .run();
+      tx.update(harvestRuns)
+        .set({ rowCount: run.rowCount + accepted.length })
+        .where(eq(harvestRuns.id, run.id))
+        .run();
+    });
+  }
+
+  return c.json({ runId: run.id, inserted: accepted.length, skippedRecent, skippedCap }, 201);
+});
+
 harvest.get('/harvest/runs', async (c) => {
   const limitStr = c.req.query('limit');
   let limit = DEFAULT_RUNS_LIMIT;
@@ -231,6 +355,47 @@ harvest.get('/harvest/runs', async (c) => {
 
   return c.json(runs);
 });
+
+// ----------------------------------------------------------------- passive
+
+// Exported for unit tests (pure).
+export function utcDayStart(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+// Retention is lazy — no worker for a job that only matters while rows arrive.
+// Scoped to mode='timeline': a hand-run harvest is the user's, kept forever.
+async function prunePassiveRuns(now: Date): Promise<void> {
+  const cutoff = new Date(now.getTime() - PASSIVE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const stale = await db
+    .select({ id: harvestRuns.id })
+    .from(harvestRuns)
+    .where(and(eq(harvestRuns.mode, PASSIVE_MODE), lt(harvestRuns.createdAt, cutoff)));
+  if (stale.length === 0) return;
+
+  const ids = stale.map((r) => r.id);
+  db.transaction((tx) => {
+    tx.delete(harvestRows).where(inArray(harvestRows.runId, ids)).run();
+    tx.delete(harvestRuns).where(inArray(harvestRuns.id, ids)).run();
+  });
+}
+
+async function findOrCreatePassiveRun(now: Date): Promise<typeof harvestRuns.$inferSelect> {
+  const [existing] = await db
+    .select()
+    .from(harvestRuns)
+    .where(and(eq(harvestRuns.mode, PASSIVE_MODE), gte(harvestRuns.createdAt, utcDayStart(now))))
+    .orderBy(desc(harvestRuns.createdAt))
+    .limit(1);
+  if (existing) return existing;
+
+  const [created] = await db
+    .insert(harvestRuns)
+    .values({ handle: PASSIVE_HANDLE, mode: PASSIVE_MODE, scope: PASSIVE_SCOPE })
+    .returning();
+  if (!created) throw new Error('passive_run_insert_failed');
+  return created;
+}
 
 // --------------------------------------------------------------- validation
 
