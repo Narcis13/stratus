@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_HARVEST_FORM,
   type HarvestForm,
+  harvestTargetUrl,
+  isAtTarget,
+  isFollowingPath,
   parseHarvestForm,
   passesMinViews,
   passiveRowsToday,
@@ -72,6 +75,48 @@ describe('parseHarvestForm (HV.3)', () => {
 
   test('the default form is CSV-on, so an older build restores unchanged behaviour', () => {
     expect(parseHarvestForm({ mode: 'replies' }).downloadCsv).toBe(true);
+  });
+
+  test('following mode round-trips (GR.2)', () => {
+    expect(parseHarvestForm({ mode: 'following' }).mode).toBe('following');
+  });
+});
+
+describe('following-mode URLs (GR.2)', () => {
+  test('isFollowingPath accepts a profile following page, with or without the slash', () => {
+    expect(isFollowingPath('https://x.com/narcis/following')).toBe(true);
+    expect(isFollowingPath('https://x.com/narcis/following/')).toBe(true);
+    expect(isFollowingPath('/narcis/following')).toBe(true);
+  });
+
+  test('it rejects the neighbouring list pages', () => {
+    expect(isFollowingPath('https://x.com/narcis/followers')).toBe(false);
+    expect(isFollowingPath('https://x.com/narcis/verified_followers')).toBe(false);
+    expect(isFollowingPath('https://x.com/narcis')).toBe(false);
+    expect(isFollowingPath('https://x.com/narcis/following/extra')).toBe(false);
+  });
+
+  // /i/ is an app route, not a handle — scraping it would file X's own UI as
+  // people I follow.
+  test('it rejects reserved first segments', () => {
+    expect(isFollowingPath('https://x.com/i/following')).toBe(false);
+    expect(isFollowingPath('https://x.com/settings/following')).toBe(false);
+  });
+
+  test('harvestTargetUrl and isAtTarget agree for every mode', () => {
+    expect(harvestTargetUrl('narcis', 'following')).toBe('https://x.com/narcis/following');
+    expect(harvestTargetUrl('narcis', 'replies')).toBe('https://x.com/narcis/with_replies');
+    expect(harvestTargetUrl('narcis', 'posts')).toBe('https://x.com/narcis');
+    for (const mode of ['posts', 'replies', 'following'] as const) {
+      expect(isAtTarget(harvestTargetUrl('narcis', mode), 'narcis', mode)).toBe(true);
+    }
+  });
+
+  test('isAtTarget is case-insensitive but mode-exact', () => {
+    expect(isAtTarget('https://x.com/Narcis/Following', 'narcis', 'following')).toBe(true);
+    expect(isAtTarget('https://x.com/narcis/following/', 'narcis', 'following')).toBe(true);
+    expect(isAtTarget('https://x.com/narcis', 'narcis', 'following')).toBe(false);
+    expect(isAtTarget('https://x.com/narcis/following', 'narcis', 'posts')).toBe(false);
   });
 });
 

@@ -12,6 +12,7 @@ import {
   type HarvestOptions,
   harvestTargetUrl,
   isAtTarget,
+  isFollowingPath,
   isXUrl,
   profileHandleFromUrl,
 } from '../shared/harvest.ts';
@@ -23,6 +24,10 @@ export interface ActiveContext {
   url: string | null;
   onX: boolean;
   handle: string | null; // profile handle detected on the active tab
+  // GR.2 — the active tab is a `/<handle>/following` list page. Following mode
+  // is offered only there, and it scrapes THAT page's owner: the ledger is "who
+  // I follow", so a stray handle in the input must not redirect it elsewhere.
+  onFollowing: boolean;
 }
 
 const CONTEXT_REQUEST: HarvestContextRequest = { type: 'stratus/harvest-context' };
@@ -36,6 +41,7 @@ export async function readActiveContext(): Promise<ActiveContext> {
     url,
     onX,
     handle: onX && url ? profileHandleFromUrl(url) : null,
+    onFollowing: onX && url ? isFollowingPath(url) : false,
   };
 }
 

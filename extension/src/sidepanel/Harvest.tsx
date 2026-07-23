@@ -26,7 +26,15 @@ const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 const MODES: { id: HarvestMode; label: string }[] = [
   { id: 'posts', label: 'Posts' },
   { id: 'replies', label: 'Replies' },
+  { id: 'following', label: 'Following' },
 ];
+
+// What a run of each mode collects, for the "nothing found" line.
+const MODE_NOUN: Record<HarvestMode, string> = {
+  posts: 'posts',
+  replies: 'replies',
+  following: 'accounts',
+};
 
 const SCOPES: { id: HarvestScope; label: string }[] = [
   { id: 'all', label: 'All' },
@@ -70,10 +78,26 @@ const ERROR_TEXT: Record<string, string> = {
   disconnected: 'Lost the connection to the page (did the tab navigate or close?).',
   crashed: 'The harvest crashed — check the page console for details.',
   tab_create_failed: "Couldn't open an X tab to harvest.",
+  not_own_following:
+    "That's someone else's following list — the ledger only tracks who you follow. Open your own.",
 };
 
 function errorText(code: string): string {
   return ERROR_TEXT[code] ?? `Harvest failed: ${code}`;
+}
+
+function startLabel(mode: HarvestMode, targetHandle: string | null): string {
+  if (targetHandle === null) {
+    return mode === 'following' ? 'Open a following page' : 'Enter a handle';
+  }
+  return mode === 'following' ? `Harvest @${targetHandle}'s following` : `Harvest @${targetHandle}`;
+}
+
+function detectionText(ctx: ActiveContext | null): string {
+  if (!ctx?.onX) return 'The active tab isn’t X — a new X tab will open when you harvest.';
+  if (ctx.onFollowing && ctx.handle) return `On @${ctx.handle}’s following list in the active tab.`;
+  if (ctx.handle) return `On profile @${ctx.handle} in the active tab.`;
+  return 'The active X tab isn’t a profile — enter a handle to harvest.';
 }
 
 function fmtDate(iso: string | null): string {
@@ -184,6 +208,13 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
   // Both sinks off = a scrape that scrolls for minutes and saves nothing.
   const noOutput = !downloadCsv && !sendToStratus;
 
+  // Following mode always targets the list page that is already open, never the
+  // handle input: navigating to a handle typed for an earlier posts harvest
+  // would scrape a stranger's followees into a ledger that means "who I follow".
+  const following = mode === 'following';
+  const followingHandle = ctx?.onFollowing ? ctx.handle : null;
+  const targetHandle = following ? followingHandle : handleValid ? cleanHandle : null;
+
   const onEvent = useCallback((e: HarvestEvent) => {
     switch (e.type) {
       case 'started':
@@ -218,7 +249,7 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
   }, []);
 
   const start = async (): Promise<void> => {
-    if (!handleValid || running || noOutput) return;
+    if (targetHandle === null || running || noOutput) return;
     setError(null);
     setResult(null);
     setProgress(null);
@@ -229,16 +260,18 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
     const minViews = Number.parseInt(minViewsStr, 10);
     const options: HarvestOptions = {
       mode,
-      scope,
+      // A list page has no date axis and no view counts — the engine forces the
+      // same scope, this keeps the wire honest about what was asked for.
+      scope: following ? 'all' : scope,
       pace,
       sendToStratus,
       downloadCsv,
       ...(Number.isFinite(max) && max > 0 ? { max } : {}),
-      ...(Number.isFinite(minViews) && minViews > 0 ? { minViews } : {}),
+      ...(!following && Number.isFinite(minViews) && minViews > 0 ? { minViews } : {}),
     };
 
     try {
-      controllerRef.current = await startHarvest(cleanHandle, options, onEvent);
+      controllerRef.current = await startHarvest(targetHandle, options, onEvent);
     } catch (e) {
       setRunning(false);
       setStatus(null);
@@ -251,11 +284,7 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
     setStatus('Stopping — saving what was gathered…');
   };
 
-  const detection = ctx?.onX
-    ? ctx.handle
-      ? `On profile @${ctx.handle} in the active tab.`
-      : 'The active X tab isn’t a profile — enter a handle to harvest.'
-    : 'The active tab isn’t X — a new X tab will open when you harvest.';
+  const detection = detectionText(ctx);
 
   return (
     <div className="panel">
@@ -273,11 +302,11 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         <input
           type="text"
           placeholder="elonmusk"
-          value={handle}
+          value={following ? (followingHandle ?? '') : handle}
           spellCheck={false}
           autoCapitalize="none"
           autoCorrect="off"
-          disabled={running}
+          disabled={running || following}
           onChange={(e) => {
             setTouched(true);
             setHandle(e.target.value);
@@ -302,22 +331,24 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         </div>
       </div>
 
-      <div className="seg-group">
-        <span>Date range</span>
-        <div className="seg-row">
-          {SCOPES.map((s) => (
-            <button
-              key={s.id}
-              type="button"
-              className={scope === s.id ? 'primary' : ''}
-              disabled={running}
-              onClick={() => setScope(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
+      {!following && (
+        <div className="seg-group">
+          <span>Date range</span>
+          <div className="seg-row">
+            {SCOPES.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={scope === s.id ? 'primary' : ''}
+                disabled={running}
+                onClick={() => setScope(s.id)}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="row harvest-tuning">
         <label className="field">
@@ -345,17 +376,21 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
             onChange={(e) => setMaxStr(e.target.value)}
           />
         </label>
-        <label className="field">
-          <span>Min views</span>
-          <input
-            type="number"
-            min={1}
-            placeholder="any"
-            value={minViewsStr}
-            disabled={running}
-            onChange={(e) => setMinViewsStr(e.target.value)}
-          />
-        </label>
+        {/* A list page carries no metrics — a view floor would silently drop
+            everyone. */}
+        {!following && (
+          <label className="field">
+            <span>Min views</span>
+            <input
+              type="number"
+              min={1}
+              placeholder="any"
+              value={minViewsStr}
+              disabled={running}
+              onChange={(e) => setMinViewsStr(e.target.value)}
+            />
+          </label>
+        )}
       </div>
 
       <label className="row harvest-toggle">
@@ -384,6 +419,20 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         </div>
       )}
 
+      {following && followingHandle === null && (
+        <div className="warn">
+          Open your own <code>x.com/&lt;you&gt;/following</code> page in the active tab, then start
+          — following mode scrapes the list that's open, so it can only ever record who you follow.
+        </div>
+      )}
+
+      {following && followingHandle !== null && (
+        <p className="muted harvest-hint">
+          A full scroll to the bottom is what lets stratus mark people you no longer follow — stop
+          early and it only refreshes what it saw.
+        </p>
+      )}
+
       {error && <div className="error">{error}</div>}
 
       {running ? (
@@ -395,7 +444,9 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
             <p className="status-line">{status ?? 'Working…'}</p>
             {progress && (
               <p className="status-line">
-                <strong>{progress.rows}</strong> rows · oldest {fmtDate(progress.oldest)} ·{' '}
+                <strong>{progress.rows}</strong> rows ·{' '}
+                {/* A list page has no timestamps, so there is no "oldest" to show. */}
+                {progress.oldest ? <>oldest {fmtDate(progress.oldest)} · </> : null}
                 {progress.steps} scrolls
               </p>
             )}
@@ -408,10 +459,10 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         <button
           type="button"
           className="primary"
-          disabled={!handleValid || noOutput}
+          disabled={targetHandle === null || noOutput}
           onClick={() => void start()}
         >
-          {handleValid ? `Harvest @${cleanHandle}` : 'Enter a handle'}
+          {startLabel(mode, targetHandle)}
         </button>
       )}
 
@@ -428,20 +479,35 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
               ) : (
                 'to stratus only (no CSV).'
               )}
-              <br />
-              Range {fmtDate(result.lastTime)} … {fmtDate(result.firstTime)}.
+              {(result.firstTime || result.lastTime) && (
+                <>
+                  <br />
+                  Range {fmtDate(result.lastTime)} … {fmtDate(result.firstTime)}.
+                </>
+              )}
               {result.ingest?.sent && (
                 <>
                   <br />
                   Sent <strong>{result.ingest.rows}</strong> rows to stratus
+                  {result.ingest.followsBack !== undefined && (
+                    <> · {result.ingest.followsBack} follow you back</>
+                  )}
                   {result.ingest.matched > 0 && <> · {result.ingest.matched} matched drafts</>}
                   {result.ingest.backfilled > 0 && <> ({result.ingest.backfilled} backfilled)</>}.
+                  {result.ingest.complete === false && (
+                    <>
+                      <br />
+                      Partial pass — the scroll never reached the end (stopped early, or the row
+                      cap), so the ledger kept everyone it didn't see.
+                    </>
+                  )}
                 </>
               )}
             </>
           ) : (
             <>
-              No matching {mode} found{scope === 'all' ? '' : ` for ${scope}`}.
+              No matching {MODE_NOUN[mode]} found
+              {mode === 'following' || scope === 'all' ? '' : ` for ${scope}`}.
             </>
           )}
         </div>

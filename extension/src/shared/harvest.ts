@@ -5,7 +5,10 @@
 
 import type { HarvestRun } from './types.ts';
 
-export type HarvestMode = 'posts' | 'replies';
+// 'following' (GR.2) scrapes a `/<handle>/following` list page instead of a
+// timeline: no metrics, no dates, and it ships to the ledger routes rather than
+// the harvest ones. Scope is forced 'all' for it — the page has no date axis.
+export type HarvestMode = 'posts' | 'replies' | 'following';
 // 'all' scrapes the whole timeline (until bottom / max). 'today'/'yesterday'
 // keep only items whose timestamp falls on that local calendar day.
 // 'since-last' (§9.4) is the per-handle incremental cursor: keep only items
@@ -74,6 +77,18 @@ export interface HarvestIngestRow {
   orig?: HarvestIngestOrig;
 }
 
+// One scraped row of a `/following` list page, as shipped to
+// POST /x/following/rows. Mirrors the server's exported `FollowingIngestRow`
+// field for field — `followsBack` is REQUIRED there, so a build that can't read
+// the badge gets an indexed 400 rather than silently writing off the whole
+// roster as non-reciprocating.
+export interface FollowingIngestRow {
+  handle: string;
+  displayName: string | null;
+  followsBack: boolean;
+  listPosition: number | null;
+}
+
 // Per-handle incremental cursor (§9.4), stored in chrome.storage.local.
 export function harvestCursorKey(handle: string, mode: HarvestMode): string {
   return `harvest:cursor:${handle.toLowerCase()}:${mode}`;
@@ -107,7 +122,7 @@ export const DEFAULT_HARVEST_FORM: HarvestForm = {
 };
 
 function isHarvestMode(v: unknown): v is HarvestMode {
-  return v === 'posts' || v === 'replies';
+  return v === 'posts' || v === 'replies' || v === 'following';
 }
 
 function isHarvestScope(v: unknown): v is HarvestScope {
@@ -166,8 +181,20 @@ export function passiveRowsToday(runs: readonly HarvestRun[], nowMs: number): nu
 
 // Outcome of the upload, attached to the final 'done' event. The CSV download
 // happens regardless — a failed upload only loses the Postgres copy.
+// `followsBack`/`complete` are following-mode only (GR.2) and absent everywhere
+// else, so an older panel reading a newer engine just renders less.
 export type HarvestIngest =
-  | { sent: true; rows: number; runId: string; matched: number; backfilled: number }
+  | {
+      sent: true;
+      rows: number;
+      runId: string;
+      matched: number;
+      backfilled: number;
+      followsBack?: number;
+      // Whether the run was closed `done: true` — i.e. the scroll actually
+      // reached the bottom, so the server was allowed to reconcile.
+      complete?: boolean;
+    }
   | { sent: false; error: string };
 
 // Port name used by chrome.tabs.connect (side panel) / chrome.runtime.onConnect
@@ -204,6 +231,7 @@ export interface HarvestContextResult {
   url: string;
   handle: string | null; // profile handle if the page is a profile
   onReplies: boolean; // currently on the /with_replies sub-tab
+  onFollowing: boolean; // currently on the /<handle>/following list page
   loggedIn: boolean; // best-effort
 }
 
@@ -270,19 +298,35 @@ export function isRepliesPath(url: string): boolean {
   return path !== null && /\/with_replies\/?$/.test(path);
 }
 
+// True only for a real profile's following list — `/i/following` and friends are
+// app routes, and profileHandleFromUrl already owns that reserved-word list.
+export function isFollowingPath(url: string): boolean {
+  const path = pathnameOf(url);
+  if (path === null) return false;
+  const seg = path.split('/').filter(Boolean);
+  return seg.length === 2 && seg[1] === 'following' && profileHandleFromUrl(path) !== null;
+}
+
+// The one place a mode's page path is spelled out; harvestTargetUrl and
+// isAtTarget both read it, so a new mode can't navigate somewhere its
+// already-there check disagrees with.
+function targetPath(handle: string, mode: HarvestMode): string {
+  if (mode === 'replies') return `/${handle}/with_replies`;
+  if (mode === 'following') return `/${handle}/following`;
+  return `/${handle}`;
+}
+
 // Where a given handle+mode should be scraped from.
 export function harvestTargetUrl(handle: string, mode: HarvestMode): string {
-  const base = `https://x.com/${handle}`;
-  return mode === 'replies' ? `${base}/with_replies` : base;
+  return `https://x.com${targetPath(handle, mode)}`;
 }
 
 // True when `url` is already exactly the page we'd scrape for handle+mode — used
 // to skip a navigation. Posts mode requires the bare profile (not /media,
-// /highlights, …), replies mode requires /with_replies.
+// /highlights, …), replies mode requires /with_replies, following mode the
+// /following list.
 export function isAtTarget(url: string, handle: string, mode: HarvestMode): boolean {
   const path = pathnameOf(url);
   if (path === null) return false;
-  const norm = path.replace(/\/$/, '').toLowerCase();
-  const want = (mode === 'replies' ? `/${handle}/with_replies` : `/${handle}`).toLowerCase();
-  return norm === want;
+  return path.replace(/\/$/, '').toLowerCase() === targetPath(handle, mode).toLowerCase();
 }

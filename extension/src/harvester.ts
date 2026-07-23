@@ -14,6 +14,7 @@
 // stop test so an old pin can't end the run early).
 
 import {
+  type FollowingIngestRow,
   HARVEST_PORT,
   type HarvestCommand,
   type HarvestContextResult,
@@ -24,6 +25,7 @@ import {
   type HarvestOptions,
   type HarvestScope,
   harvestCursorKey,
+  isFollowingPath,
   isHarvestContextRequest,
   isRepliesPath,
   passesMinViews,
@@ -31,6 +33,7 @@ import {
 } from './shared/harvest.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
+import { handleFromAvatarTestid, parseUserCell } from './shared/userCell.ts';
 
 // ----------------------------------------------------------------- randomness
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, ms)));
@@ -327,6 +330,17 @@ interface ReplyRow {
   lineBreaks: number;
 }
 
+// One row of a /following list page. `listPosition` is assigned on FIRST
+// sighting: the list virtualizes, so a cell's index in the current DOM restarts
+// every screen — only the order in which handles first appear tracks the page's
+// top-down order (which on X is roughly follow recency).
+interface FollowRow {
+  handle: string;
+  displayName: string | null;
+  followsBack: boolean;
+  listPosition: number;
+}
+
 interface HarvestCtx<R> {
   store: Record<string, R>;
   profile: string;
@@ -419,6 +433,29 @@ function harvestReplies(ctx: HarvestCtx<ReplyRow>): number {
   return added;
 }
 
+function harvestFollowing(ctx: HarvestCtx<FollowRow>): number {
+  let added = 0;
+  for (const cell of Array.from(document.querySelectorAll('[data-testid="UserCell"]'))) {
+    const parsed = parseUserCell(cell);
+    if (!parsed) continue; // skeleton or renamed testid — let a later sweep retry
+    if (parsed.handle === ctx.profile) continue; // never ingest the list's owner
+    const prev = ctx.store[parsed.handle];
+    if (!prev) {
+      const listPosition = Object.keys(ctx.store).length;
+      ctx.store[parsed.handle] = { ...parsed, listPosition };
+      added++;
+      continue;
+    }
+    // Re-sighting on a later screen: GR.1's rule at DOM scale — the badge is
+    // presence evidence, so a half-painted cell must not be able to un-say
+    // "follows you". Across runs the server always takes the newest value, so a
+    // real unfollow still lands on the next scrape.
+    prev.followsBack = prev.followsBack || parsed.followsBack;
+    prev.displayName = prev.displayName ?? parsed.displayName;
+  }
+  return added;
+}
+
 // ----------------------------------------------------------------- CSV build
 // Formula-escape (§9.4): a scraped tweet starting with =, +, - or @ would
 // execute as a formula when the CSV opens in Excel/Sheets. Prefix with ' —
@@ -497,6 +534,21 @@ function repliesCSV(store: Record<string, ReplyRow>): string {
   return `﻿${lines.join('\r\n')}`;
 }
 
+function followingRows(store: Record<string, FollowRow>): FollowRow[] {
+  return Object.values(store).sort((a, b) => a.listPosition - b.listPosition);
+}
+
+function followingCSV(store: Record<string, FollowRow>): string {
+  const header = ['Handle @...', 'Name', 'Follows you'];
+  const lines = [header.map(esc).join(',')];
+  for (const r of followingRows(store)) {
+    lines.push(
+      [esc(`@${r.handle}`), esc(r.displayName ?? ''), esc(r.followsBack ? 'yes' : 'no')].join(','),
+    );
+  }
+  return `﻿${lines.join('\r\n')}`;
+}
+
 // -------------------------------------------------------------- stratus ship
 // Rows go through the existing background ApiRequest path (the background
 // worker owns the bearer token), in batches, alongside the CSV download.
@@ -560,6 +612,15 @@ async function apiSend<T>(method: 'GET' | 'POST', path: string, body?: unknown):
   return res.data;
 }
 
+// How a run ended, handed to the ship step. `complete` means the scroll reached
+// the natural bottom of the list — for the following ledger that is the whole
+// ballgame (only a complete run may reconcile), so it is computed from the loop's
+// exit reason, never assumed.
+interface RunOutcome {
+  cancelled: boolean;
+  complete: boolean;
+}
+
 async function shipToStratus(
   handle: string,
   mode: HarvestMode,
@@ -580,6 +641,48 @@ async function shipToStratus(
       backfilled += batch.backfilled;
     }
     return { sent: true, rows: rows.length, runId: run.id, matched, backfilled };
+  } catch (err) {
+    return { sent: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+// The server caps a batch at 500; 200 keeps the payloads small and matches the
+// harvest ingest's own chunk.
+const FOLLOWING_CHUNK = 200;
+
+async function shipFollowing(
+  store: Record<string, FollowRow>,
+  outcome: RunOutcome,
+): Promise<HarvestIngest> {
+  const rows: FollowingIngestRow[] = followingRows(store).map((r) => ({
+    handle: r.handle,
+    displayName: r.displayName,
+    followsBack: r.followsBack,
+    listPosition: r.listPosition,
+  }));
+  try {
+    const run = await apiSend<{ id: string }>('POST', '/x/following/runs', {});
+    for (let i = 0; i < rows.length; i += FOLLOWING_CHUNK) {
+      const last = i + FOLLOWING_CHUNK >= rows.length;
+      await apiSend('POST', '/x/following/rows', {
+        runId: run.id,
+        rows: rows.slice(i, i + FOLLOWING_CHUNK),
+        // Only a scroll that reached the bottom may close the run: the server
+        // marks every handle it never saw as `gone` off this one flag, and a
+        // cancelled or row-capped pass proves nothing about what it never
+        // reached. A mid-batch failure leaves the run open for the same reason.
+        ...(last && outcome.complete ? { done: true } : {}),
+      });
+    }
+    return {
+      sent: true,
+      rows: rows.length,
+      runId: run.id,
+      matched: 0,
+      backfilled: 0,
+      followsBack: rows.filter((r) => r.followsBack).length,
+      complete: outcome.complete,
+    };
   } catch (err) {
     return { sent: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -646,7 +749,7 @@ async function runHarvest<R>(
   options: HarvestOptions,
   harvest: Harvester<R>,
   buildCsv: (store: Record<string, R>) => string,
-  toIngest: (profile: string, store: Record<string, R>) => HarvestIngestRow[],
+  ship: (profile: string, store: Record<string, R>, outcome: RunOutcome) => Promise<HarvestIngest>,
   rowTime: (r: R) => string,
   emit: (e: HarvestEvent) => void,
   shouldCancel: () => boolean,
@@ -682,6 +785,7 @@ async function runHarvest<R>(
   let stable = 0;
   let steps = 0;
   let cancelled = false;
+  let reachedBottom = false;
   let lastCount = -1;
   let lastEmitStep = 0;
 
@@ -713,7 +817,12 @@ async function runHarvest<R>(
     if (atBottom) {
       if (se.scrollHeight === lastH) {
         stable++;
-        if (stable >= cfg.stableNeeded) break; // bottom reached, no new content
+        if (stable >= cfg.stableNeeded) {
+          // The ONLY exit that means "I saw everything" — a cancel, the row cap,
+          // the day window and the hard step cap all leave the tail unread.
+          reachedBottom = true;
+          break;
+        }
       } else stable = 0;
       lastH = se.scrollHeight;
       await sleep(gauss(cfg.loadMin, cfg.loadMax)); // wait for lazy-load
@@ -745,7 +854,7 @@ async function runHarvest<R>(
   let ingest: HarvestIngest | undefined;
   if (rows.length > 0 && options.sendToStratus !== false) {
     emit({ type: 'sending', rows: rows.length });
-    ingest = await shipToStratus(profile, mode, options.scope, toIngest(profile, ctx.store));
+    ingest = await ship(profile, ctx.store, { cancelled, complete: reachedBottom && !cancelled });
   }
 
   // Advance the per-handle cursor only on a COMPLETED run (§9.4) — a cancelled
@@ -776,14 +885,80 @@ export function isHarvestActive(): boolean {
   return running;
 }
 
+// The logged-in account, read off the left-nav account switcher's avatar. Null
+// whenever the nav isn't rendered — treat that as "unknown", never as a mismatch
+// (§7.11): the only thing this guards is the following scrape, and refusing a
+// legitimate run over a collapsed sidebar would be worse than the risk.
+function loggedInHandle(): string | null {
+  const avatar = document.querySelector(
+    '[data-testid="SideNav_AccountSwitcher_Button"] [data-testid^="UserAvatar-Container-"]',
+  );
+  return handleFromAvatarTestid(avatar?.getAttribute('data-testid'));
+}
+
 function currentContext(): HarvestContextResult {
   return {
     ok: true,
     url: location.href,
     handle: profileHandleFromUrl(location.href),
     onReplies: isRepliesPath(location.href),
+    onFollowing: isFollowingPath(location.href),
     loggedIn: document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]') !== null,
   };
+}
+
+function startRun(
+  opts: HarvestOptions,
+  emit: (e: HarvestEvent) => void,
+  shouldCancel: () => boolean,
+): Promise<void> {
+  if (opts.mode === 'following') {
+    // Scraping SOMEONE ELSE's following list into the ledger would insert their
+    // followees as mine and, on a complete run, mark my real follows `gone`. The
+    // panel only offers the mode on a /following page; this is the check that
+    // actually holds, and it only fires on a POSITIVE mismatch.
+    const self = loggedInHandle();
+    const page = profileHandle();
+    if (self !== null && page !== null && self !== page) {
+      emit({ type: 'error', code: 'not_own_following' });
+      return Promise.resolve();
+    }
+    return runHarvest<FollowRow>(
+      'following',
+      // No date axis and no metrics on a list page: scope is forced 'all' (which
+      // also leaves the since-last cursor untouched, since rowTime is empty).
+      { ...opts, scope: 'all' },
+      harvestFollowing,
+      followingCSV,
+      (_profile, store, outcome) => shipFollowing(store, outcome),
+      () => '',
+      emit,
+      shouldCancel,
+    );
+  }
+  if (opts.mode === 'replies') {
+    return runHarvest<ReplyRow>(
+      'replies',
+      opts,
+      harvestReplies,
+      repliesCSV,
+      (profile, store) =>
+        shipToStratus(profile, 'replies', opts.scope, repliesIngestRows(profile, store)),
+      (r) => r.r_time,
+      emit,
+      shouldCancel,
+    );
+  }
+  return runHarvest<PostRow>(
+    'posts',
+    opts,
+    harvestPosts,
+    postsCSV,
+    (profile, store) => shipToStratus(profile, 'posts', opts.scope, postsIngestRows(store)),
+    (r) => r.time,
+    emit,
+    shouldCancel,
+  );
 }
 
 export function initHarvest(): void {
@@ -820,31 +995,8 @@ export function initHarvest(): void {
       running = true;
 
       const emit = (e: HarvestEvent): void => postEvent(port, e);
-      const opts = cmd.options;
-      const run =
-        opts.mode === 'replies'
-          ? runHarvest<ReplyRow>(
-              'replies',
-              opts,
-              harvestReplies,
-              repliesCSV,
-              (profile, store) => repliesIngestRows(profile, store),
-              (r) => r.r_time,
-              emit,
-              shouldCancel,
-            )
-          : runHarvest<PostRow>(
-              'posts',
-              opts,
-              harvestPosts,
-              postsCSV,
-              (_profile, store) => postsIngestRows(store),
-              (r) => r.time,
-              emit,
-              shouldCancel,
-            );
 
-      void run
+      void startRun(cmd.options, emit, shouldCancel)
         .catch((err: unknown) => {
           emit({ type: 'error', code: 'crashed', message: String(err) });
         })
