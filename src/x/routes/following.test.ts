@@ -3,11 +3,12 @@
 // a follow ended, so a partial run must be provably inert and an empty run must
 // not even count as complete.
 
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { following, followingRuns } from '../db/schema.ts';
+import { WINDOW_CAP_MAX, WINDOW_CAP_MIN } from '../connections.ts';
+import { following, followingRuns, people } from '../db/schema.ts';
 import { type FollowingIngestRow, followingRouter, parseFollowingRow } from './following.ts';
 
 const app = new Hono();
@@ -420,5 +421,147 @@ describe('GET /x/following', () => {
     expect((await list('?status=banana')).status).toBe(400);
     expect((await list('?limit=0')).status).toBe(400);
     expect((await list('?limit=abc')).status).toBe(400);
+  });
+});
+
+// The queue owns a clean slate: `releaseBudget` reads `unfollow_marked_at` across
+// the WHOLE table, so the lifecycle fixture's marks would perturb the budget.
+// Deleting following here is safe — every describe above has already asserted.
+describe('GET /x/following/queue', () => {
+  const OLDER = 'gr3_older';
+  const OLD = 'gr3_old';
+  const FOLLOWER = 'gr3_follower';
+  const FRESH = 'gr3_fresh';
+  const KEPT = 'gr3_kept';
+  const MUTUAL = 'gr3_mutual';
+  const G3 = [OLDER, OLD, FOLLOWER, FRESH, KEPT, MUTUAL];
+  const now = Date.now();
+  const days = (n: number) => new Date(now - n * 24 * 60 * 60 * 1000);
+
+  interface QueueBody {
+    batch: Array<{ handle: string; displayName: string | null; firstSeenAt: string; url: string }>;
+    eligibleTotal: number;
+    releasedNow: number;
+    windowUsed: number;
+    windowCap: number;
+    dailyUsed: number;
+    dailyCeiling: number;
+    lastCompleteRunAt: string | null;
+  }
+
+  async function queue(): Promise<{ status: number; body: QueueBody }> {
+    const res = await app.request('/x/following/queue');
+    return { status: res.status, body: (await res.json()) as QueueBody };
+  }
+
+  beforeAll(async () => {
+    await db.delete(following);
+    const runId = await newRun();
+    await db.insert(following).values([
+      {
+        handle: OLDER,
+        followsBack: false,
+        firstSeenAt: days(40),
+        lastSeenAt: days(1),
+        lastRunId: runId,
+        status: 'active',
+        listPosition: 5,
+      },
+      {
+        handle: OLD,
+        followsBack: false,
+        firstSeenAt: days(30),
+        lastSeenAt: days(1),
+        lastRunId: runId,
+        status: 'active',
+        listPosition: 10,
+      },
+      {
+        handle: FOLLOWER,
+        followsBack: true,
+        firstSeenAt: days(40),
+        lastSeenAt: days(1),
+        lastRunId: runId,
+        status: 'active',
+      },
+      {
+        handle: FRESH,
+        followsBack: false,
+        firstSeenAt: days(1),
+        lastSeenAt: days(1),
+        lastRunId: runId,
+        status: 'active',
+      },
+      {
+        handle: KEPT,
+        followsBack: false,
+        firstSeenAt: days(40),
+        lastSeenAt: days(1),
+        lastRunId: runId,
+        status: 'active',
+        keep: true,
+      },
+      {
+        handle: MUTUAL,
+        followsBack: false,
+        firstSeenAt: days(40),
+        lastSeenAt: days(1),
+        lastRunId: runId,
+        status: 'active',
+      },
+    ]);
+    // MUTUAL is a real relationship in the CRM — it must never surface for
+    // unfollow even though it doesn't follow back and is well past grace.
+    await db.insert(people).values({ handle: MUTUAL, stage: 'mutual', retired: false });
+  });
+
+  afterAll(async () => {
+    await db.delete(following).where(inArray(following.handle, G3));
+    await db.delete(people).where(inArray(people.handle, [MUTUAL, OLD]));
+  });
+
+  test('releases eligible non-followers oldest first, skipping followers/fresh/kept/whitelisted', async () => {
+    const { status, body } = await queue();
+    expect(status).toBe(200);
+    expect(body.batch.map((r) => r.handle)).toEqual([OLDER, OLD]);
+    expect(body.batch[0]?.url).toBe(`https://x.com/${OLDER}`);
+    expect(body.releasedNow).toBe(2);
+    expect(body.eligibleTotal).toBe(2);
+    expect(body.windowUsed).toBe(0);
+    expect(body.dailyUsed).toBe(0);
+    expect(body.windowCap).toBeGreaterThanOrEqual(WINDOW_CAP_MIN);
+    expect(body.windowCap).toBeLessThanOrEqual(WINDOW_CAP_MAX);
+
+    // The release is persisted so it survives the page reload.
+    for (const h of [OLDER, OLD]) {
+      const [row] = await db.select().from(following).where(eq(following.handle, h));
+      expect(row?.status).toBe('queued');
+    }
+    // Everyone excluded stays active and un-touched.
+    for (const h of [FOLLOWER, FRESH, KEPT, MUTUAL]) {
+      const [row] = await db.select().from(following).where(eq(following.handle, h));
+      expect(row?.status).toBe('active');
+    }
+  });
+
+  test('re-read returns the same batch and releases nothing new', async () => {
+    const { body } = await queue();
+    expect(body.batch.map((r) => r.handle)).toEqual([OLDER, OLD]);
+    expect(body.releasedNow).toBe(0);
+    expect(body.eligibleTotal).toBe(2);
+  });
+
+  test('a person who becomes mutual after release is revoked back to active', async () => {
+    await db.insert(people).values({ handle: OLD, stage: 'mutual', retired: false });
+    const { body } = await queue();
+
+    expect(body.batch.map((r) => r.handle)).toEqual([OLDER]);
+    expect(body.releasedNow).toBe(0);
+    expect(body.eligibleTotal).toBe(1);
+
+    const [old] = await db.select().from(following).where(eq(following.handle, OLD));
+    expect(old?.status).toBe('active');
+    const [older] = await db.select().from(following).where(eq(following.handle, OLDER));
+    expect(older?.status).toBe('queued');
   });
 });

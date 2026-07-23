@@ -7,6 +7,7 @@
 //   POST  /following/runs    {}                             create a run
 //   POST  /following/rows    { runId, rows, done? }         batched upsert (≤500)
 //   GET   /following         ?status=&q=&limit=             ledger view
+//   GET   /following/queue                                  capped unfollow batch (GR.3)
 //   PATCH /following/:handle { status:'done' } | { keep }   the user's ratchet
 //
 // The whole design turns on one asymmetry: a handle's PRESENCE in any scrape is
@@ -15,15 +16,23 @@
 // and nothing else; only a run closed with `done: true` — and only one that saw
 // at least one row — reconciles the handles it never saw.
 //
-// GET /following/queue (the capped unfollow batch) lands in GR.3. It must be
-// registered ABOVE the `:handle` param route (§7.20) — the ordering below is
-// already the safe one, keep it that way.
+// GET /following/queue is registered ABOVE the `:handle` param route (§7.20) —
+// 'queue' would otherwise be a legal handle. Keep that ordering.
 
-import { type SQL, and, asc, desc, eq, inArray, ne, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, gte, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { following, followingRuns } from '../db/schema.ts';
+import {
+  type CurationRow,
+  MARK_LOOKBACK_MS,
+  eligibleForUnfollow,
+  rankForUnfollow,
+  releaseBudget,
+  reviewQueued,
+} from '../connections.ts';
+import { following, followingRuns, people } from '../db/schema.ts';
 import { normalizePersonHandle } from '../people/store.ts';
+import { loadTargetHandles } from './voice.ts';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -259,10 +268,125 @@ followingRouter.get('/following', async (c) => {
   });
 });
 
+// The capped unfollow batch (§A). Everything is read-time (§7.12): the whitelist
+// of protected people, eligibility, and the cadence budget are recomputed on
+// each read from Circles data + the ledger — no whitelist table, no stored
+// batch. Releasing an eligible row flips it active→queued in the same read so it
+// survives a page reload; the flip is idempotent because an already-queued row
+// is re-listed until the user ticks it done and consumes no fresh budget (budget
+// counts completed unfollow marks, never releases). Nothing here unfollows: the
+// batch only nudges, and `keep` silences it for a person in one click.
+//
+// Registered ABOVE PATCH /:handle (§7.20) — the ordering rule is load-bearing
+// for this file even though 'queue' can't collide with the PATCH verb.
+followingRouter.get('/following/queue', async (c) => {
+  const now = new Date();
+
+  // The candidate pool: everyone I currently follow (active) plus everyone
+  // already released and awaiting a tick (queued). done/confirmed/gone rows have
+  // left the curation loop.
+  const rows = (await db
+    .select()
+    .from(following)
+    .where(inArray(following.status, ['active', 'queued']))) as CurationRow[];
+
+  // Whitelist assembled read-time (§7.12): a real relationship must never be
+  // offered for unfollow. `keep` is a column on the row itself, enforced inside
+  // the pure fns, so it stays out of this set.
+  const [allies, targetHandles] = await Promise.all([
+    db
+      .select({ handle: people.handle })
+      .from(people)
+      .where(and(eq(people.retired, false), inArray(people.stage, ['mutual', 'ally']))),
+    loadTargetHandles(),
+  ]);
+  const whitelist = new Set<string>([...allies.map((r) => r.handle), ...targetHandles]);
+
+  // Marks in the trailing 24h drive the cadence budget. The mark is never
+  // cleared (D99), so a re-followed or failed-tick row still counts against the
+  // window — churn is churn to X's heuristics whatever happened afterward.
+  const dayStart = new Date(now.getTime() - MARK_LOOKBACK_MS);
+  const markRows = await db
+    .select({ at: following.unfollowMarkedAt })
+    .from(following)
+    .where(and(isNotNull(following.unfollowMarkedAt), gte(following.unfollowMarkedAt, dayStart)));
+  const budget = releaseBudget(
+    markRows.map((r) => r.at as Date),
+    now,
+    Math.random,
+  );
+
+  const { held, revoked } = reviewQueued(rows, whitelist);
+  const eligible = eligibleForUnfollow(rows, whitelist, now);
+
+  // Top the batch up to the budget: held rows already occupy slots, so only
+  // enough fresh rows are released to reach `budget` total. Held ≥ budget → no
+  // new release, so a re-read hands back the same batch.
+  const slots = Math.max(0, budget.budget - held.length);
+  const released = eligible.slice(0, slots);
+
+  if (released.length > 0 || revoked.length > 0) {
+    db.transaction((tx) => {
+      if (released.length > 0) {
+        tx.update(following)
+          .set({ status: 'queued' })
+          .where(
+            inArray(
+              following.handle,
+              released.map((r) => r.handle),
+            ),
+          )
+          .run();
+      }
+      // A person who became mutual/ally/kept after being released must not sit in
+      // an unfollow batch: send them back to active in the same read.
+      if (revoked.length > 0) {
+        tx.update(following)
+          .set({ status: 'active' })
+          .where(
+            inArray(
+              following.handle,
+              revoked.map((r) => r.handle),
+            ),
+          )
+          .run();
+      }
+    });
+  }
+
+  const [lastComplete] = await db
+    .select({ completedAt: followingRuns.completedAt })
+    .from(followingRuns)
+    .where(eq(followingRuns.complete, true))
+    .orderBy(desc(followingRuns.completedAt))
+    .limit(1);
+
+  const batch = rankForUnfollow([...held, ...released]).map((r) => ({
+    handle: r.handle,
+    displayName: r.displayName,
+    firstSeenAt: r.firstSeenAt.toISOString(),
+    url: `https://x.com/${r.handle}`,
+  }));
+
+  return c.json({
+    batch,
+    // The full backlog needing a manual unfollow: everyone already released plus
+    // everyone still eligible. Stable across reads — a released row just moves
+    // from `eligible` to `held`.
+    eligibleTotal: held.length + eligible.length,
+    releasedNow: released.length,
+    windowUsed: budget.windowUsed,
+    windowCap: budget.windowCap,
+    dailyUsed: budget.dailyUsed,
+    dailyCeiling: budget.dailyCeiling,
+    lastCompleteRunAt: lastComplete?.completedAt?.toISOString() ?? null,
+  });
+});
+
 // The user's half of the ratchet. `done` is the ONLY status a client may set,
 // and only out of `queued` — every other edge belongs to the complete-run
-// reconcile (§7.10). `keep` is an independent pin and moves no status: GR.3's
-// queue filters kept rows out of the batch instead.
+// reconcile (§7.10). `keep` is an independent pin and moves no status: the queue
+// above filters kept rows out of the batch instead.
 followingRouter.patch('/following/:handle', async (c) => {
   const handle = normalizePersonHandle(c.req.param('handle'));
   if (!handle) return c.json({ error: 'invalid_handle' }, 400);
