@@ -16,7 +16,8 @@ needs to know that isn't in the code must land in STATE.md before you finish.
 
 Files you own:
 - **Plan (static):** `plans/MASTERPLAN.md` — order, reasoning levels, waves, adaptations D1–D10. Never edit except to fix a discovered planning error (record why in STATE.md).
-- **State (dynamic):** `.claude/skills/masterplan/STATE.md` — status ledger, deviations register, gotchas log, hot-file locks.
+- **State (dynamic):** `.claude/skills/masterplan/STATE.md` — status ledger, deviations register, gotchas log, hot-file locks. Kept small on purpose (see Step 6's archive rule).
+- **Archive (frozen):** `.claude/skills/masterplan/STATE-ARCHIVE.md` — closed-wave deviations + gotchas, verbatim. Never read whole (it is bigger than one `Read`); grep it by task id or filename when a task touches something a closed lane built.
 - **Codemap:** `.claude/skills/plan-feature/references/codemap.md` — the repo index every task reads INSTEAD of scanning the repo. You update it after every task.
 
 ## Modes
@@ -28,9 +29,9 @@ Files you own:
 
 ## Step 0 — Load state (cheap, always)
 
-1. Read `.claude/skills/masterplan/STATE.md` fully (it is deliberately small).
+1. Read `.claude/skills/masterplan/STATE.md` fully (it is kept small on purpose — one `Read`). Closed-wave history is NOT in it; reach for `STATE-ARCHIVE.md` with a targeted grep only when the task touches a file a closed lane built.
 2. Read the codemap **header + §-sections listed by the target task's source plan** ("Codemap sections relevant" in the plan header, plus the task block's "Read first"). Do NOT read the whole codemap unless orientation genuinely requires it, and do NOT re-scan the repo — no tree walks, no broad greps for orientation. Targeted reads of the files the task block names are the norm.
-3. Staleness guard: if STATE.md's `last-commit` doesn't match `git log -1 --format=%h`, someone worked outside the skill — run the `sync` reconciliation before proceeding.
+3. Staleness guard: run `git log -1 --format='%h %s'` and compare the **subject line** against STATE.md's `last-commit` — shas are no longer recorded (D97: an amended commit orphans its sha and three sessions burned Step 0 reconciling one; the subject survives amends). If the subject doesn't name the last ticked task, someone worked outside the skill — run the `sync` reconciliation before proceeding.
 
 ## Step 1 — Select the task
 
@@ -99,7 +100,11 @@ next session.
   worth revisiting).
 - Hot-file locks: release the files this task held; leave a lock only if the very next
   task in the same lane continues immediately.
-- Update `last-commit` and `next-up` hints.
+- Update `last-commit` (subject line, no sha — D97) and `next-up` hints.
+- **Archive rule (a sub-plan's docs-sync task owns this):** when a lane closes, move its
+  D-entries and gotchas verbatim into `STATE-ARCHIVE.md` and leave only what still binds
+  an open task. STATE.md must stay loadable in one `Read`; when it stops being, the next
+  task pays for it before doing anything else.
 
 ## Step 7 — Commit
 
