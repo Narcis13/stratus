@@ -444,6 +444,58 @@ the `routes/people.test.ts` glance describe; `scripts/smoke-glance.ts` ($0, real
 
 ---
 
+## 5d. Phase S7 — Reply lists: premade, templated, humanized canned replies — SHIPPED 2026-07-23
+
+> **Status: done.** Full build plan in **`plans/2026-07-16-reply-lists.md`** (tasks
+> RL.1–RL.8); see CLAUDE.md §"Surfaces S7", **[docs/replies-tab.md](./docs/replies-tab.md)**
+> (Lists subtab) and **[docs/today-tab.md](./docs/today-tab.md)** (the pickers). (The plan
+> text said "(S5)" — stale: S5 is Studio 2.0 and S6 the Augmented X UI, so this shipped
+> as **S7**.)
+
+**Job:** fast, human-sounding acknowledgment replies for the exact moments the machinery
+already surfaces — Launch Room early commenters and Conversations open loops — at **$0
+per use** (deterministic, no AI at use time). Posting stays a manual paste.
+
+- **Three tables** (migration `0018`, DDL-only): `reply_lists` (per-list `humanizer`
+  JSON, null = engine defaults) → `reply_list_items` (cascade; `last_used_at`/`use_count`
+  = the anti-repeat state) → `reply_list_uses` (**FK-free on purpose** — audit log +
+  measurement hook, outlives a deleted list).
+- **Pure engine** `src/x/replyLists/engine.ts` (injected `rng`, bun-tested): missing-var
+  degradation with adjacent-punctuation cleanup; the anti-repeat pick (exclude the
+  `min(n-1, floor(n/2))` most recent, then **uniform random** among the rest); the
+  humanizer (prefix .25 / suffix .20 / lowercase .15 / drop-period .10 / **typo .05**,
+  ≤280 enforced each step, **never inside a name/handle/URL**).
+- **Routes** `src/x/routes/replyLists.ts` (always mounted, all $0 but `/generate`): list +
+  item CRUD, `/items` append|replace in one sync txn, and `POST /:id/use` — pick, compose,
+  stamp (`preview:true` writes nothing; `409 no_enabled_items`). **Shuffle state lives
+  server-side**, so it survives browser restarts and the panel never picks locally.
+- **AI generator** `POST /:id/generate` — one `askLLM` structured-outputs call filling a
+  list from a category prompt (~$0.003–$0.01), **proposal-only**: nothing persists until
+  the human clicks Append/Overwrite through the plain `/items` CRUD. Prompt is the
+  editable registry key `reply-list`; no key → 503, unknown list → 404 before any spend.
+- **Extension** — a `Reply Master | Lists` subtab (`ReplyLists.tsx`: items, humanizer,
+  Test render, generate) plus the shared **`canned ▾` QuickReplyPicker** on every Launch
+  Room early-replier row and Conversations open loop: one click = one real `/use`, copied
+  in the same handler, text kept visible if the clipboard refuses.
+- **Measurement** — the Playbook's batch-vs-single gained a **`canned`** cell, attributed
+  by matching a published reply against `reply_list_uses.renderedText` (stored typos and
+  all). Text-match only ⇒ an edited-after-paste reply falls back to `unattributed` —
+  **undercount, never overcount**.
+
+**Cost:** $0 recurring, $0 X API; the only spend is the optional generate click. **Done
+when:** 10 consecutive uses show no immediate repeats with vars filled; one click in the
+Launch Room puts a humanized reply on the clipboard; generate previews then persists only
+on an explicit click; the Playbook shows a `canned` bucket;
+`scripts/smoke-reply-lists.ts` passes $0 and cleans up. **Live tails:** the first real
+paste (watch X's paste normalization vs the doubled-space typo variant) and the first
+`canned` count the morning after.
+
+**Tests:** `replyLists/{engine,generate}.test.ts`, `routes/replyLists.test.ts`, the
+`canned` describes in `{playbook,routes/playbook}.test.ts`; `scripts/smoke-reply-lists.ts`
+($0, real DB, `--live` = one generate call).
+
+---
+
 ## 6. Explicitly NOT doing (this plan)
 
 - **OAuth 1.0a media upload** — no API-attached images, no auto-posted visuals. The

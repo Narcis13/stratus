@@ -1,6 +1,6 @@
 # Replies Tab (Reply Master)
 
-The **Replies** tab — nicknamed **Reply Master** — is where stratus drafts strong, on-brand replies *for* you and then gets out of the way. You point it at a tweet worth replying to, it asks Grok (the xAI model) to write two ready-to-post replies, you pick one and tweak it if you like, then you **copy it and paste it into X yourself**. stratus never posts on your behalf — it does the hard part (writing something sharp, fast) and leaves the posting to you. It also quietly checks that the tweet is actually *worth* replying to before spending a single cent, and afterward tracks how each reply performed so you learn what works.
+The **Replies** tab — nicknamed **Reply Master** — is where stratus drafts strong, on-brand replies *for* you and then gets out of the way. You point it at a tweet worth replying to, it asks Grok (the xAI model) to write three ready-to-post replies, you pick one and tweak it if you like, then you **copy it and paste it into X yourself**. stratus never posts on your behalf — it does the hard part (writing something sharp, fast) and leaves the posting to you. It also quietly checks that the tweet is actually *worth* replying to before spending a single cent, and afterward tracks how each reply performed so you learn what works.
 
 ---
 
@@ -11,7 +11,9 @@ stratus is a side panel for growing on X/Twitter. The guiding doctrine behind it
 Replying well, many times a day, is exhausting to do by hand: you have to find the right tweets (big enough to matter, early enough that you're not buried), then write something that isn't a generic "Great post!". Reply Master automates both halves:
 
 - It **scores tweets** so you spend effort only where a reply can actually be seen (the *band gate*, below).
-- It **drafts the reply** in your voice, giving you two distinct angles to choose from.
+- It **drafts the reply** in your voice, giving you three distinct angles to choose from.
+
+The tab has **two subtabs**: **Reply Master** (everything below, up to "Relationship-aware drafting") and **Lists** — your premade canned replies, documented in its own section further down. Reply Master is for the replies worth writing fresh; Lists is for the fast, warm acknowledgments you send over and over.
 
 Everything Reply Master does also feeds the rest of stratus. Every reply you mark as posted becomes a tracked data point: it shows up in the **People** tab (as an interaction with that person), in your reply **outcomes** (views, likes, profile visits), and in the **Playbook** (which reply styles actually earn attention). So the Replies tab isn't just a drafting box — it's the front door to a feedback loop that keeps getting smarter about what to say and to whom.
 
@@ -204,7 +206,93 @@ It's a single global toggle — flip it once and it rides along on every generat
 
 ---
 
+## The Lists subtab — premade canned replies
+
+Not every reply deserves a fresh Grok draft. "Thanks for the early read," "this one's going in the swipe file," "congrats, well earned" — you send these constantly, and writing them by hand each time is a tax, while pasting the *identical* string every time reads like a bot. The **Lists** subtab is the middle path: you keep small lists of premade replies, and stratus picks one, fills in the person's name, and roughs it up just enough to sound like a human typed it. **It costs $0 per use** (no AI at use time) and, like everything else here, ends with you pasting into X yourself.
+
+### What a list is
+
+A list is a name, an optional description, and a set of **items**. An item is a short template — plain text, optionally with placeholders:
+
+| Placeholder | Fills with |
+|---|---|
+| `{name}` | the person's display name (emoji stripped) |
+| `{first_name}` | just their first word — "Ana" out of "Ana Pop" |
+| `{handle}` | their username, no `@` (write `@{handle}` if you want the mention) |
+
+Example items: `Thanks for the early read, {name}!` · `appreciate the signal boost, @{handle}` · `this one's going in the swipe file`.
+
+If a placeholder can't be filled (no display name on that row, say), stratus **doesn't leave a hole** — it removes the placeholder *and* the comma or space next to it, so "Thank you, {name}!" becomes "Thank you!" and the picker tells you which var was missing. A use is never blocked over a missing name.
+
+### Managing lists
+
+The subtab shows a rail of your lists (each with `n items · m on`) and, for the selected list:
+
+- **Items** — add several at once by pasting one per line; edit any item inline; toggle one **off** to keep it in the list but out of the rotation; delete it. Each row shows its own history: `never used`, or `used 4× · last yesterday`.
+- **Settings** — rename, describe, reorder, and an **active** switch. An inactive list stays fully usable by id but is no longer *offered* in the quick pickers — the way to park a seasonal list without deleting it.
+- **Humanizer** — see below.
+- **Test render** — renders a sample pick with fake vars so you can see what comes out. It's a **preview**: nothing is marked used, and your rotation is untouched.
+- **Generate with AI** — see below.
+- **Delete** — removes the list and its items. The *use history* survives on purpose, so past replies keep their attribution in the Playbook.
+
+### How the pick works (the anti-repeat shuffle)
+
+When a list is used, stratus:
+
+1. Considers only **enabled** items, preferring the ones whose placeholders it can actually fill.
+2. **Excludes the most recently used ones** — roughly the most recent half of the list.
+3. Picks **at random** among what's left.
+
+That combination matters: always cycling in strict order would itself be a detectable pattern, so the randomness inside the "not recently used" half is the point. With two or more items you will **never** get the same one twice in a row. The rotation lives on the server (in the list itself), so it survives browser restarts, reinstalls, and switching machines — there's exactly one copy of it.
+
+### The humanizer
+
+Before handing the text back, stratus applies small, independent jitters so consecutive uses don't look stamped out:
+
+| Jitter | Default chance |
+|---|---|
+| A neutral prefix from a pool ("honestly," "ngl," "tbh") | 25% |
+| A neutral suffix ("well said," "good stuff") | 20% |
+| Lowercase the first letter | 15% |
+| Drop the final period | 10% |
+| **One deliberate typo** (dropped letter, swapped letters, neighbour key, doubled space) | 5% |
+
+Two guarantees: the result is **never longer than 280 characters** (a prefix that would overflow is skipped, never truncated mid-word), and a typo **never lands inside a name, a handle, or a URL** — a typo'd `@mention` breaks the mention, and a misspelled name reads as disrespect. Both are worse than sounding slightly robotic.
+
+Each list keeps its own humanizer. By default it uses the engine's numbers (the panel shows a `defaults` badge). Click **Customize for this list** and you get the pools as one-per-line textareas and the five chances as sliders — a "thanks" list can run calm while a "banter" list jitters harder. **Reset to defaults** puts it back.
+
+### Generating a list with AI
+
+**Generate with AI** describes what you want ("short congratulation replies, some using {name}, no emoji") and how many, then makes **one** LLM call (~$0.003–$0.01) and shows you the proposal. Nothing is saved yet — you review the items, drop the ones you don't like, then click **Append** (add to the list) or **Overwrite list** (replace everything, confirmation required). Without an AI key configured the button surfaces a clean "not configured" error and every other part of the subtab keeps working.
+
+The wording of that generator prompt is editable like all the others, in **Settings → Prompts** (the `reply-list` entry).
+
+### Using a list (the `canned ▾` button)
+
+Lists are managed here but **used elsewhere** — wherever stratus already knows who you're replying to:
+
+- Every **early-replier row in the Launch Room** (Today tab).
+- Every **open loop in Conversations** (Today tab).
+
+Click **canned ▾**, pick a list, and in one click stratus picks the item, fills the name/handle, humanizes it, **copies it to your clipboard**, and logs the use. Paste it into X. If the clipboard is refused for any reason the finished text stays on screen so you can copy it by hand — the item is already spent, so it's never silently lost.
+
+### How canned replies get measured
+
+Every use is logged with its **exact final text**, typos and all. When the daily 03:00 UTC pass discovers the reply you actually posted, stratus matches that text and files it under **`canned`** in the Playbook's batch-vs-single table — so premade replies are measured next to Grok-drafted and hand-written ones.
+
+Two honest caveats: the bucket stays at zero until that daily pass runs (a canned reply pasted this morning shows up tomorrow), and matching is **text-exact** — if you edit the reply after pasting, it counts as hand-written instead. It can undercount canned replies; it will never claim one that wasn't.
+
+---
+
 ## Common workflows
+
+### Thank the early commenters on a fresh post
+
+1. Your scheduled post goes live and the **Launch Room** opens (Today tab, first 30 minutes).
+2. Early repliers stream in as you scroll your tweet on X.
+3. On a row, click **canned ▾** → pick your thanks list. The filled, humanized reply is on your clipboard.
+4. Paste it in X under their reply. Repeat down the list — each click gives you something different.
+5. For the replies that deserve more than an acknowledgment, use **Draft reply** (Grok) on that same row instead.
 
 ### Work a Radar opportunity into a posted reply
 
@@ -243,8 +331,9 @@ It's a single global toggle — flip it once and it rides along on every generat
 - **Posting is always manual.** stratus drafts and copies; you paste and post. It will never tweet for you. This is by design — it keeps you in control of everything that goes out under your name.
 - **The band gate saves real money and attention.** Trust it. If it refuses a tweet, that tweet probably wasn't going to earn you views. Force it only when you have a specific reason.
 - **Drafts are cheap (~$0.002–$0.004), but not free.** They run on Grok, separate from your X spend. The cost shows on every draft.
-- **Two variants, three angles.** Always glance at both chips before you post — the *contrarian* or *debate* take often out-performs the safe *extends* one.
+- **Three variants, three angles.** Always glance at the other chips before you post — the *contrarian* or *debate* take often out-performs the safe *extends* one.
 - **Idea steers are one-shot.** They aim a single draft, then vanish. Re-type to reuse.
+- **Canned replies are free.** A `canned ▾` pick costs nothing (no AI at use time) — keep one list of warm acknowledgments and spend your Grok budget on the replies that actually need thinking.
 - **Mark posted, and paste the link.** Outcomes only appear for replies you mark posted — and the *rich* numbers (views, profile visits) only appear once you've given stratus the posted tweet's URL or id. This one small habit is what powers your whole reply feedback loop.
 - **The 🪄 button lives on the tweet's own page.** If you can't find it, click into the tweet so it's focused.
 - **Known people get better drafts automatically.** The more you use stratus (replying, saving tweets, logging notes in the People tab), the more your relationship history sharpens future replies to those same people — at no extra effort.

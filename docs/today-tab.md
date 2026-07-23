@@ -80,6 +80,7 @@ Sections are described in the order they appear on screen (top to bottom). Many 
   - Their **name/handle** is a link to their **dossier** in the People tab.
   - **open** — opens their reply on X in a new tab.
   - **Draft reply** — makes one Grok AI call (roughly **$0.002–$0.004**) to write a reply in your voice, using your original post as context. Once drafted, the button becomes **Copy** — click it to copy the draft to your clipboard, then paste it into X. (The draft is marked "copied" in the background.)
+  - **canned ▾** — your premade reply lists (**$0**, no AI): pick a list and stratus chooses an item you haven't used recently, fills in their name/handle, roughs it up slightly so it doesn't read as a macro, and copies it to your clipboard. Ideal for the "thanks for the early read" tier of acknowledgment. Manage the lists in **Replies → Lists** ([docs/replies-tab.md](./replies-tab.md)).
 
 Posting the reply itself always happens by you pasting into X. stratus never auto-replies.
 
@@ -149,6 +150,7 @@ When a thread is an open loop, expanding it reveals the reply workflow:
 - **Draft reply** — one Grok call drafts a reply in your voice (uses your original post as context). It may produce a couple of **variants** you can switch between with the small angle chips.
 - **Copy** — copies the chosen draft to your clipboard. Paste it into X.
 - **Done** — marks the loop settled (once you've actually pasted your reply into X). This clears the "owed" flag immediately.
+- **canned ▾** — a **$0** premade reply instead of a Grok draft: pick one of your reply lists and stratus picks an item you haven't used recently, fills their name/handle in, humanizes it and copies it. Good for loops that just need a warm acknowledgment. Lists are managed in **Replies → Lists**.
 
 Empty state: *"No conversations yet. Refresh pulls new mentions (~$0.001 each)."*
 
@@ -313,7 +315,7 @@ This is the coach's weekly note. It makes one Grok call (roughly **$0.01**) to n
 ## Tips and good to know
 
 - **Posting and DMs are always manual.** Every "Draft" / "Copy" flow ends with you pasting into X yourself. stratus never publishes, replies, or messages on your behalf. This is deliberate — the words stay yours.
-- **Which clicks cost real money.** Most of the tab is free ($0): reading the Brief, Do Next, Conversations list, Radar rendering, Targets, Top Fans, and the digest *facts*. The buttons that spend are:
+- **Which clicks cost real money.** Most of the tab is free ($0): reading the Brief, Do Next, Conversations list, Radar rendering, Targets, Top Fans, the digest *facts*, and every **canned ▾** pick (premade replies use no AI at all). The buttons that spend are:
 
   | Action | Where | Rough cost |
   |---|---|---|
