@@ -24,12 +24,25 @@ export interface ParsedNotification {
 
 // Leading-glyph `d` prefixes in X's 24×24 icon viewbox. Prefixes rather than
 // whole paths: X ships minor path revisions without changing the shape.
-// NOT YET VERIFIED against the live DOM — NT.5's browser walk confirms them;
-// until then the keyword fallback carries classification, which is why an
-// unrecognised glyph must degrade silently instead of forcing 'other'.
+//
+// VERIFIED against live x.com/notifications during NT.5 (2026-07-23):
+//  - like: the FILLED heart `M20.884 13.19` is what notification cells render
+//    (confirmed on 191 live cells); `M16.697 5.5` is the outline heart X uses
+//    for the not-yet-liked action-row button. Both are genuine heart assets, so
+//    both stay.
+//  - repost: `M4.5 3.88` matches the live action-row retweet icon. No repost
+//    notification was in the loaded window, and X reuses these assets between
+//    the action row and the notification cell (proven by the like pair above) —
+//    so this is verified by asset identity, not by a live repost cell.
+//  - follow: the original `M12 11.816` guess was WRONG. `M17.863 13.44` is the
+//    real glyph, confirmed on 14 live follow cells (single and aggregated).
+//
+// The bell glyph `M11.996 2c` ("New post notifications for X and 6 others") is
+// deliberately absent: those cells must fall through to 'other' and be dropped,
+// which they do — no verb keyword matches their header either.
 export const LIKE_ICON_PREFIXES = ['M16.697 5.5', 'M20.884 13.19'];
 export const REPOST_ICON_PREFIXES = ['M4.5 3.88'];
-export const FOLLOW_ICON_PREFIXES = ['M12 11.816'];
+export const FOLLOW_ICON_PREFIXES = ['M17.863 13.44'];
 
 // Verb stems, lowercased. Order of the three checks is load-bearing: a follow
 // cell never carries post text, so the loose `urmăre` stem is only reachable

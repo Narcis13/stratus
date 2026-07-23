@@ -33,13 +33,19 @@ import type {
   ApiResponse,
   LaunchGet,
   LaunchReport,
+  NotifContextGet,
+  NotifContextMap,
+  NotifContextResponse,
   OpenPerson,
   RadarReport,
   RadarVariantPasted,
   RadarVariantsGet,
 } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
-import type { RadarBand, RadarSighting } from './shared/radar.ts';
+import { parseNotificationCell } from './shared/notifications.ts';
+import type { EngagementKind } from './shared/notifications.ts';
+import { personTierFor } from './shared/radar.ts';
+import type { PersonTier, RadarBand, RadarSighting, RankMap } from './shared/radar.ts';
 import {
   type HoverCardData,
   type PersonSighting,
@@ -265,6 +271,85 @@ function injectStyles(): void {
     .${PERSON_CHIP_CLASS}[data-tone="target"]    { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
     .${PERSON_CHIP_CLASS}[data-tone="warn"]      { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
     .${PERSON_CHIP_CLASS}:hover { filter: brightness(1.15); }
+    /* Notifications surface (C10). Muted gray reads on both X themes, same as
+       every other injected control here. */
+    .${NOTIF_CTX_CLASS} {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+      font: 400 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      color: rgb(113, 118, 123);
+    }
+    .stratus-notif-ctx-quote { font-style: italic; }
+    .stratus-notif-answered {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      font-weight: 600;
+      color: rgb(0, 186, 124);
+      border: 1px solid rgba(0, 186, 124, 0.5);
+      background: rgba(0, 186, 124, 0.10);
+    }
+    .${NOTIF_TIERS_CLASS} {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .${NOTIF_TIER_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .${NOTIF_TIER_CLASS}[data-tone="ally"]   { color: rgb(0, 186, 124);  border-color: rgba(0, 186, 124, 0.5);  background: rgba(0, 186, 124, 0.10); }
+    .${NOTIF_TIER_CLASS}[data-tone="mutual"] { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
+    .${NOTIF_TIER_CLASS}[data-tone="target"] { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${NOTIF_TIER_CLASS}:hover { filter: brightness(1.15); }
+    .${NOTIF_SYNC_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.02em;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      margin-left: 10px;
+      white-space: nowrap;
+      color: rgb(113, 118, 123);
+      border: 1px solid rgba(113, 118, 123, 0.4);
+      background: transparent;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${NOTIF_SYNC_CLASS}:hover {
+      color: rgb(29, 155, 240);
+      border-color: rgb(29, 155, 240);
+      background: rgba(29, 155, 240, 0.1);
+    }
+    .${NOTIF_SYNC_CLASS}[data-state="working"] { cursor: progress; }
+    .${NOTIF_SYNC_CLASS}[data-state="done"] {
+      color: rgb(0, 186, 124);
+      border-color: rgb(0, 186, 124);
+      background: rgba(0, 186, 124, 0.12);
+    }
+    .${NOTIF_SYNC_CLASS}[data-state="failed"] {
+      color: rgb(244, 33, 46);
+      border-color: rgb(244, 33, 46);
+      background: rgba(244, 33, 46, 0.12);
+    }
     .${CHAN_WRAP_CLASS} { display: inline-flex; gap: 4px; margin-left: 4px; align-items: center; }
     .${CHAN_CHIP_CLASS} {
       all: unset;
@@ -2114,23 +2199,364 @@ function flushLaunchReplies(): void {
   })();
 }
 
+// ------------------------------------------- notifications surface (C10, NT.5)
+//
+// x.com/notifications is the only place likes, reposts and follows are visible
+// at all — the relationship signals stratus otherwise never sees. Three
+// read-only augmentations plus one $0 harvest, all gated on the pathname (X
+// navigates without reloads, so the check is per scan, not once):
+//
+//   (a) every reply notification stratus already knows (an API-pulled `mentions`
+//       row) gets a "↳ on your post: …" line, plus ✓ when the inbox already
+//       settled it — no more clicking through to remember which post it's on;
+//   (b) aggregated cells get a tier chip per handle that matters (ally / mutual
+//       / in-band target) so the eye goes to the people worth answering;
+//   (c) those same cells are harvested into people rows + timeline events,
+//       behind the existing passiveCapture toggle — no new setting (decision 5);
+//   (d) a "sync replies" chip runs the capped mentions pull on a human click.
+//
+// Only (d) spends, one already-capped POST per deliberate click: a page visit is
+// never consent to spend (decision 4), so nothing here auto-refreshes.
+//
+// The `mentions` table is NEVER written from this surface. Its max stored
+// tweet_id IS the since_id checkpoint, so inserting a DOM-scraped reply id would
+// skip every mention the API hasn't returned yet (§4; C7's launch.ts routes
+// around the same trap). Parent context is a pure read of what the daily pull
+// already billed for.
+
+const NOTIF_CTX_CLASS = 'stratus-notif-ctx';
+const NOTIF_TIERS_CLASS = 'stratus-notif-tiers';
+const NOTIF_TIER_CLASS = 'stratus-notif-tier';
+const NOTIF_SYNC_CLASS = 'stratus-notif-sync';
+const NOTIF_SYNC_LABEL = 'stratus: sync replies';
+
+const NOTIF_CONTEXT_THROTTLE_MS = 60_000;
+const NOTIF_PARENT_MAX = 90;
+const NOTIF_TIER_CHIP_MAX = 3;
+const ENGAGEMENT_FLUSH_MS = 2000;
+// Mirrors MAX_ENGAGEMENTS_PER_BATCH server-side; an over-long batch is a 400
+// for the WHOLE batch, so the client never lets one form.
+const ENGAGEMENT_BATCH_MAX = 50;
+const ENGAGEMENT_KEY_TARGET_CHARS = 40;
+
+/** What crosses the wire to POST /x/people/engagements. `'other'` is dropped
+ *  client-side and deliberately isn't representable (the server's whitelist
+ *  would 400 the whole batch on it). */
+interface EngagementReport {
+  kind: Exclude<EngagementKind, 'other'>;
+  handle: string;
+  targetText: string | null;
+  seenAt: string;
+}
+
+let notifMentions: NotifContextMap = {};
+let notifRankMap: RankMap = {};
+let notifContextAt = 0;
+let notifContextInFlight: Promise<void> | null = null;
+
+const engagementHandled = new WeakSet<Element>();
+const pendingEngagements = new Map<string, EngagementReport>();
+const engagementSent = new Set<string>();
+let engagementFlushTimer: number | null = null;
+
+function onNotificationsPage(): boolean {
+  return location.pathname.startsWith('/notifications');
+}
+
+function clipText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+// One message serves both augmentations: it warms the background's 5-min
+// mentions cache and the 10-min S0.3 rank map in parallel. The response is
+// always ok:true — an unconfigured extension, a failed fetch or a thrown
+// handler all degrade to empty (or last-good) maps, so `{}` means "no context
+// yet", never an error worth surfacing on someone else's page.
+async function fetchNotifContext(force: boolean): Promise<void> {
+  const msg: NotifContextGet = force
+    ? { type: 'stratus/notif-context', force: true }
+    : { type: 'stratus/notif-context' };
+  try {
+    const res = (await chrome.runtime.sendMessage(msg)) as NotifContextResponse | undefined;
+    if (res?.ok) {
+      notifMentions = res.mentions;
+      notifRankMap = res.rankMap;
+    }
+  } catch (err) {
+    console.warn('[stratus] notif context failed', err);
+  }
+  // Stamped on settle, not only on success: the background already decides what
+  // to cache on failure (it keeps the last good map), so this throttle only
+  // governs how often we ask — and stamping unconditionally is what stops a
+  // failing ask from re-firing on every animation frame.
+  notifContextAt = Date.now();
+  // The notifications page can go mutation-quiet between arrivals, so nothing
+  // else would repaint the lines once the maps land.
+  scheduleScan();
+}
+
+// scan() is synchronous: use whatever is cached now and kick a refresh when the
+// throttle window has passed. The forced variant (sync chip) never comes through
+// here — it must not be swallowed by an in-flight bare ask.
+function syncNotifContext(): void {
+  if (notifContextInFlight) return;
+  if (notifContextAt !== 0 && Date.now() - notifContextAt < NOTIF_CONTEXT_THROTTLE_MS) return;
+  notifContextInFlight = fetchNotifContext(false).finally(() => {
+    notifContextInFlight = null;
+  });
+}
+
+// (a) The reply notification's own tweet id is what findPermalink yields here,
+// and that is exactly how the mentions map is keyed.
+function applyNotifParentContext(article: Element): void {
+  const existing = article.querySelector<HTMLElement>(`.${NOTIF_CTX_CLASS}`);
+  const permalink = findPermalink(article);
+  const entry = permalink ? notifMentions[permalink.tweetId] : undefined;
+  const parentText = entry?.parentText ?? null;
+  const answered = entry?.status === 'answered';
+
+  // Nothing known about this reply — also clears a line a recycled node kept.
+  if (!parentText && !answered) {
+    existing?.remove();
+    return;
+  }
+
+  const sig = `${answered ? 'a' : '-'}:${parentText ? clipText(parentText, NOTIF_PARENT_MAX) : ''}`;
+  if (existing && existing.dataset.sig === sig) return;
+
+  const line = existing ?? document.createElement('div');
+  if (!existing) {
+    line.className = NOTIF_CTX_CLASS;
+    // Under the reply's own text when there is one; X sometimes renders a
+    // media-only reply, and then the cell itself is the only anchor.
+    const anchor = article.querySelector('[data-testid="tweetText"]');
+    if (anchor) anchor.insertAdjacentElement('afterend', line);
+    else article.appendChild(line);
+  }
+  line.dataset.sig = sig;
+  line.textContent = '';
+  if (parentText) {
+    line.appendChild(ctxEl('span', 'stratus-notif-ctx-label', '↳ on your post: '));
+    line.appendChild(
+      ctxEl('span', 'stratus-notif-ctx-quote', `“${clipText(parentText, NOTIF_PARENT_MAX)}”`),
+    );
+  }
+  // An answered mention with no parent post of mine still earns the chip — it is
+  // the "don't reply to this twice" signal, which is the point.
+  if (answered) line.appendChild(ctxEl('span', 'stratus-notif-answered', '✓ answered'));
+}
+
+// (b) Tweet-article notifications already get the richer AX.3 glance chips from
+// the shared scan loop; this covers the aggregated cells, which carry up to ~8
+// handles and no User-Name row, so one compact chip per handle that matters is
+// the right density.
+function applyNotifTierChips(cell: Element, handles: string[]): void {
+  const existing = cell.querySelector<HTMLElement>(`.${NOTIF_TIERS_CLASS}`);
+  const chips: { handle: string; tier: PersonTier }[] = [];
+  for (const handle of handles) {
+    const tier = personTierFor(notifRankMap[handle]);
+    if (tier) chips.push({ handle, tier });
+    if (chips.length >= NOTIF_TIER_CHIP_MAX) break;
+  }
+
+  const header = cell.querySelector('[dir]');
+  if (chips.length === 0 || !header) {
+    existing?.remove();
+    return;
+  }
+
+  const sig = chips.map((c) => `${c.tier}:${c.handle}`).join('|');
+  if (existing && existing.dataset.sig === sig) return;
+
+  const span = existing ?? document.createElement('span');
+  if (!existing) {
+    span.className = NOTIF_TIERS_CLASS;
+    // AFTER the header block, never inside it: the parser reads the first [dir]
+    // element as the header line and the longest [dir="auto"] as the target
+    // post, so chips nested in either would feed our own text back into the
+    // next parse. A plain span with no dir attribute is invisible to both.
+    header.insertAdjacentElement('afterend', span);
+  }
+  span.dataset.sig = sig;
+  span.textContent = '';
+  for (const chip of chips) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = NOTIF_TIER_CLASS;
+    btn.dataset.tone = chip.tier;
+    btn.dataset.handle = chip.handle;
+    btn.title = `@${chip.handle} — ${chip.tier}. Open their dossier.`;
+    btn.textContent = `${chip.tier} @${chip.handle}`;
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      sendOpenPerson(chip.handle);
+    });
+    span.appendChild(btn);
+  }
+}
+
+// (b) + (c) share one parse per cell per scan.
+function scanNotificationCells(): void {
+  for (const cell of document.querySelectorAll('article[data-testid="notification"]')) {
+    const parsed = parseNotificationCell(cell);
+    if (!parsed) continue;
+    applyNotifTierChips(cell, parsed.handles);
+
+    if (!passiveCaptureEnabled || engagementHandled.has(cell)) continue;
+    // 'other' is X's bell cell ("New post notifications for … and 6 others") —
+    // never sent. An empty handle list is a skeleton X hasn't filled in yet:
+    // leave both unmarked so a later scan retries them once they resolve
+    // (the capturePassiveHoverCards discipline).
+    if (parsed.kind === 'other' || parsed.handles.length === 0) continue;
+
+    engagementHandled.add(cell);
+    const seenAt = new Date().toISOString();
+    for (const handle of parsed.handles) {
+      recordEngagement({ kind: parsed.kind, handle, targetText: parsed.targetText, seenAt });
+    }
+  }
+}
+
+function recordEngagement(engagement: EngagementReport): void {
+  const key = `${engagement.kind}:${engagement.handle}:${
+    engagement.targetText?.slice(0, ENGAGEMENT_KEY_TARGET_CHARS) ?? ''
+  }`;
+  if (engagementSent.has(key)) return;
+  pendingEngagements.set(key, engagement);
+  if (engagementFlushTimer === null) {
+    engagementFlushTimer = window.setTimeout(flushEngagements, ENGAGEMENT_FLUSH_MS);
+  }
+}
+
+function flushEngagements(): void {
+  engagementFlushTimer = null;
+  if (pendingEngagements.size === 0) return;
+
+  const engagements: EngagementReport[] = [];
+  for (const [key, engagement] of pendingEngagements) {
+    if (engagements.length >= ENGAGEMENT_BATCH_MAX) break;
+    engagements.push(engagement);
+    pendingEngagements.delete(key);
+    engagementSent.add(key);
+  }
+  if (pendingEngagements.size > 0) {
+    // Overflow beyond one server batch waits for the next window.
+    engagementFlushTimer = window.setTimeout(flushEngagements, ENGAGEMENT_FLUSH_MS);
+  }
+  // Chatter guard only: the server's deterministic event ids make a re-send a
+  // no-op, so forgetting keys costs one redundant POST, never a double event.
+  if (engagementSent.size > 3000) engagementSent.clear();
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/people/engagements',
+    body: { engagements },
+  };
+  void (async () => {
+    try {
+      const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+      if (res && !res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] engagement report failed', res.code);
+      }
+    } catch (err) {
+      console.warn('[stratus] engagement report failed', err);
+    }
+  })();
+}
+
+// (d) One chip per notifications pageview, next to X's own "Notifications"
+// heading. Re-injected when X rebuilds the header (sub-tab switches do).
+function syncNotifSyncChip(): void {
+  if (document.querySelector(`.${NOTIF_SYNC_CLASS}`)) return;
+  const header = document.querySelector('[data-testid="primaryColumn"] h2');
+  if (!header) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = NOTIF_SYNC_CLASS;
+  btn.textContent = NOTIF_SYNC_LABEL;
+  btn.title =
+    'Pull the newest mentions so the "on your post" lines cover fresh replies (capped 6/day)';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    void onSyncChipClick(btn);
+  });
+  header.insertAdjacentElement('afterend', btn);
+}
+
+function resetSyncChip(btn: HTMLButtonElement): void {
+  setTimeout(() => {
+    if (btn.isConnected) {
+      btn.dataset.state = 'idle';
+      btn.textContent = NOTIF_SYNC_LABEL;
+    }
+  }, STATUS_PERSIST_MS);
+}
+
+async function onSyncChipClick(btn: HTMLButtonElement): Promise<void> {
+  if (btn.dataset.state === 'working') return;
+  btn.dataset.state = 'working';
+  btn.textContent = 'syncing…';
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/mentions/refresh',
+    body: {},
+  };
+  let res: ApiResponse | undefined;
+  try {
+    res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+  } catch (err) {
+    console.warn('[stratus] mentions refresh failed', err);
+  }
+
+  if (!res?.ok) {
+    // The server's 6/day cap is the real limit and stays the only one — no
+    // client-side bypass, and no retry loop that would spend on its own.
+    const limited = res?.status === 429 || res?.code === 'refresh_limit';
+    btn.dataset.state = 'failed';
+    btn.textContent = limited ? 'limit reached' : 'sync failed';
+    resetSyncChip(btn);
+    return;
+  }
+
+  // The pull is already paid for: force past the background's 5-min mentions
+  // cache (it drains any in-flight pull first) so the rows it just fetched show
+  // up now rather than up to five minutes from now.
+  await fetchNotifContext(true);
+  btn.dataset.state = 'done';
+  btn.textContent = 'synced';
+  resetSyncChip(btn);
+}
+
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
   const focusedId = focusedTweetIdFromUrl();
   const glance = getGlanceMap();
+  const onNotifications = onNotificationsPage();
   for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
     attachRadarAddButton(article);
     applyBand(article);
     applyPersonChips(article, glance);
     if (focusedId) attachReplyMasterButton(article, focusedId);
+    if (onNotifications) applyNotifParentContext(article);
   }
   syncContextPanel(focusedId);
   syncVariantChips(focusedId);
   syncAuthorButton();
   capturePassiveHoverCards();
   captureLaunchReplies();
+  if (onNotifications) {
+    syncNotifContext();
+    scanNotificationCells();
+    syncNotifSyncChip();
+  }
 }
 
 let scheduled = false;
