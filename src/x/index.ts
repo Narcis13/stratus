@@ -19,6 +19,7 @@ import { conversations } from './routes/conversations.ts';
 import { data, explorer } from './routes/data.ts';
 import { digest } from './routes/digest.ts';
 import { drafter } from './routes/drafter.ts';
+import { followingRouter } from './routes/following.ts';
 import { followups } from './routes/followups.ts';
 import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
@@ -77,6 +78,11 @@ export function mountX(app: Hono): void {
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
+  // GR: the following ledger — who I follow / who follows back, from one DOM
+  // scrape of my own /following page. Always mounted, $0: nothing in the file
+  // can reach the X API, and unfollowing stays a manual act in the X app.
+  // `/following/queue` (GR.3) registers above `/following/:handle` (§7.20).
+  app.route('/x', followingRouter);
   // C0: radar draft reads/status flips are $0 and mount without an LLM key;
   // only the insert path (generate-batch, below) needs a configured provider.
   app.route('/x', radar);

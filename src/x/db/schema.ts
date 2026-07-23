@@ -831,3 +831,66 @@ export const replyListUses = sqliteTable(
   },
   (t) => [index('reply_list_uses_used_at_idx').on(t.usedAt)],
 );
+
+// Following ledger (Guardrails §A) — who I follow and whether they follow back,
+// from ONE $0 DOM scrape of my own /following page: X renders a "Follows you"
+// indicator on every row, so a single pass yields both sides. No API sync
+// (~$1.00 per 500+500 pass), no `follows.write` scope — unfollowing stays a
+// manual act in the X app and this table only ever nudges.
+//
+// One row per scrape click. `complete` is the trust flag: only a run that walked
+// the whole list may conclude anything from a handle's ABSENCE, so a cancelled,
+// capped or empty run never reconciles (decision 9).
+export const followingRuns = sqliteTable('following_runs', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  startedAt: integer('started_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  rowsSeen: integer('rows_seen').default(0).notNull(),
+  complete: integer('complete', { mode: 'boolean' }).default(false).notNull(),
+});
+
+// `followed_at` deliberately does not exist: X never exposes when a follow
+// happened, so `first_seen_at` is the proxy (§7.11) and the fill-only rule keeps
+// it monotonic — the unfollow grace window measures from it.
+//
+// status ladder (§7.10, edges owned by routes/following.ts):
+//   active     in my following per the latest data
+//   queued     released into an unfollow batch (GR.3)
+//   done       user ticked "unfollowed" — awaiting scrape confirmation
+//   confirmed  a COMPLETE run no longer saw a `done` handle
+//   gone       a COMPLETE run no longer saw a live handle (deleted account,
+//              they blocked me, or I unfollowed outside the queue)
+export const following = sqliteTable(
+  'following',
+  {
+    handle: text('handle').primaryKey(),
+    displayName: text('display_name'),
+    // Not nullable: the userFollowIndicator's ABSENCE is the "no", so there is
+    // no third state to record. A DOM drift that silently drops the badge would
+    // read as "nobody follows me back" — that guard belongs in the queue's
+    // eligibility rules (GR.3), not in a column type.
+    followsBack: integer('follows_back', { mode: 'boolean' }).default(false).notNull(),
+    // Render order in the latest run — X lists most-recently-followed first, so
+    // this is a best-effort follow-recency tie-break, never a date.
+    listPosition: integer('list_position'),
+    firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    lastRunId: text('last_run_id')
+      .notNull()
+      .references(() => followingRuns.id),
+    status: text('status').notNull().default('active'),
+    keep: integer('keep', { mode: 'boolean' }).default(false).notNull(),
+    // When the user ticked "unfollowed". The 6h release budget and the monitor's
+    // churn rule both count marks in a trailing window, so it is never cleared.
+    unfollowMarkedAt: integer('unfollow_marked_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('following_status_seen_idx').on(t.status, t.firstSeenAt)],
+);
