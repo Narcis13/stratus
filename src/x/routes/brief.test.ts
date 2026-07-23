@@ -2,11 +2,11 @@
 // The DB is shared across test files, so assertions check this file's
 // distinctive rows and structural invariants, never exact totals.
 
-import { beforeAll, describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { mentions, postsPublished, replyDrafts, streaks } from '../db/schema.ts';
+import { mentions, postsPublished, replyDrafts, scheduledPosts, streaks } from '../db/schema.ts';
 import { localDayKey } from '../quests.ts';
 import { brief } from './brief.ts';
 
@@ -15,6 +15,11 @@ app.route('/x', brief);
 
 const ORIGINAL_ID = '97000000000000001';
 const MENTION_ID = '97000000000000002';
+// GR.6: a pending pair used to prove the monitor block is wired. Deliberately
+// ~200 days out — far from every other suite's calendar fixture, outside the
+// brief's own today-window, and `scheduleCluster` reads no clock, so the alert
+// it produces is deterministic rather than baseline-relative.
+const SLOT_IDS = ['gr6-brief-slot-a', 'gr6-brief-slot-b'];
 
 interface Quest {
   key: string;
@@ -50,9 +55,15 @@ interface PinnedWatchBody {
   outperformer: { tweetId: string; text: string; views: number; ratio: number } | null;
 }
 
+interface MonitorBlock {
+  alerts: Array<{ rule: string; severity: string; message: string }>;
+  worst: string | null;
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   pinnedWatch: PinnedWatchBody;
+  monitor: MonitorBlock;
   replyQuota: { postedToday: number };
   today: { anchors: number[]; gaps: BriefGap[] };
   quests: {
@@ -106,6 +117,28 @@ describe('brief quests (C9)', () => {
         answeredAt: now,
       })
       .onConflictDoNothing();
+
+    const far = now.getTime() + 200 * 24 * 3_600_000;
+    await db.insert(scheduledPosts).values([
+      {
+        id: SLOT_IDS[0] as string,
+        text: 'gr6 brief monitor slot one',
+        scheduledFor: new Date(far),
+        status: 'pending',
+        source: 'test',
+      },
+      {
+        id: SLOT_IDS[1] as string,
+        text: 'gr6 brief monitor slot two',
+        scheduledFor: new Date(far + 30 * 60_000),
+        status: 'pending',
+        source: 'test',
+      },
+    ]);
+  });
+
+  afterAll(async () => {
+    await db.delete(scheduledPosts).where(inArray(scheduledPosts.id, SLOT_IDS));
   });
 
   test('quest block has all five quests and reads the seeded rows', async () => {
@@ -171,6 +204,24 @@ describe('brief quests (C9)', () => {
     }
     expect(body.account.conversion.d7.windowDays).toBe(7);
     expect(body.account.conversion.d28.windowDays).toBe(28);
+  });
+
+  test('carries the GR.6 monitor block, one alert per rule, worst derived from it', async () => {
+    const body = await getBrief();
+    expect(Array.isArray(body.monitor.alerts)).toBe(true);
+    // The alert contract the Today card keys on: never two rows for one rule.
+    const rules = body.monitor.alerts.map((a) => a.rule);
+    expect(new Set(rules).size).toBe(rules.length);
+    // `worst` is derived from the alerts shipped alongside it, never stale —
+    // and they arrive severity-desc, so it is the first one's severity.
+    if (body.monitor.alerts.length === 0) expect(body.monitor.worst).toBeNull();
+    else expect(body.monitor.worst).toBe(body.monitor.alerts[0]?.severity as string);
+
+    // The wiring claim: the seeded pending pair is 30 min apart, so the brief
+    // must be running the same rules over the same rows as GET /x/monitor.
+    const cluster = body.monitor.alerts.find((a) => a.rule === 'scheduleCluster');
+    expect(cluster?.severity).toBe('info');
+    expect(typeof cluster?.message).toBe('string');
   });
 
   test('streak row is written idempotently — one row per day', async () => {

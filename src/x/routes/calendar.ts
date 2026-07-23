@@ -25,11 +25,17 @@
 // the documented cheap pattern (link-in-first-reply, $0.015 vs $0.20 — §8.2).
 
 import { randomUUID } from 'node:crypto';
-import { type SQL, and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { type SQL, and, asc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { ideas, scheduledPosts } from '../db/schema.ts';
+import { ideas, postsPublished, scheduledPosts } from '../db/schema.ts';
 import { containsUrl } from '../endpoints.ts';
+import {
+  NEAR_DUPLICATE_THRESHOLD,
+  NEAR_DUPLICATE_WINDOW_MS,
+  SCHEDULE_CLUSTER_MS,
+  shingleJaccard,
+} from '../monitor.ts';
 import { parsePillar } from '../posts/pillars.ts';
 import { getActivePillars } from './pillars.ts';
 
@@ -111,8 +117,124 @@ calendar.post('/posts/scheduled', async (c) => {
     })
     .returning();
 
-  return c.json(row, 201);
+  // Advisory only, and computed AFTER the write on purpose (GR.6): a warning
+  // must never cost a saved post, so a failed read degrades to "no advice"
+  // rather than turning a 201 into a 500.
+  let warnings: string[] = [];
+  if (row) {
+    try {
+      warnings = await scheduleWarnings(row);
+    } catch {
+      warnings = [];
+    }
+  }
+
+  return c.json({ ...row, warnings }, 201);
 });
+
+const MIN_MS = 60_000;
+const DAY_MS = 24 * 60 * MIN_MS;
+
+/** Schedule-time advisory (Guardrails §B, GR.6): the two monitor patterns the
+ *  user can still cheaply undo — a slot too close to another pending one, and
+ *  text that repeats something already out (or already queued).
+ *
+ *  Non-blocking by contract: this returns strings, never an error. The URL
+ *  surcharge guard stays the only content check on this route that can refuse a
+ *  post — everything here is "you may not have noticed", not "no".
+ *
+ *  Thresholds are imported from the monitor, never re-declared: the Today card
+ *  and this warning have to agree about what "too close together" means, or the
+ *  panel contradicts itself between the Composer and Today. */
+async function scheduleWarnings(row: {
+  id: string;
+  text: string;
+  status: string;
+  scheduledFor: Date | null;
+}): Promise<string[]> {
+  // A draft is a scratchpad — nothing is scheduled to happen, so there is no
+  // cadence risk to describe yet. Same reading as the URL guard, which also
+  // only fires on `pending`.
+  if (row.status !== 'pending' || !row.scheduledFor) return [];
+  const at = row.scheduledFor.getTime();
+  const now = Date.now();
+
+  const [pending, recentOriginals] = await Promise.all([
+    // Unbounded by design: the calendar runs about a week ahead at single-user
+    // scale, so this is a few dozen rows and one read covers both checks.
+    db
+      .select({
+        id: scheduledPosts.id,
+        text: scheduledPosts.text,
+        scheduledFor: scheduledPosts.scheduledFor,
+      })
+      .from(scheduledPosts)
+      .where(and(eq(scheduledPosts.status, 'pending'), isNotNull(scheduledPosts.scheduledFor))),
+    // Originals only, same as the monitor's duplicate rule: thread tails are
+    // self-replies and a reply repeating a phrase is not the penalty shape.
+    db
+      .select({ text: postsPublished.text, postedAt: postsPublished.postedAt })
+      .from(postsPublished)
+      .where(
+        and(
+          eq(postsPublished.isReply, false),
+          gte(postsPublished.postedAt, new Date(now - NEAR_DUPLICATE_WINDOW_MS)),
+        ),
+      ),
+  ]);
+
+  const others = pending.filter((p) => p.id !== row.id);
+  const warnings: string[] = [];
+
+  const near = others
+    .map((p) => ({ gapMs: Math.abs((p.scheduledFor as Date).getTime() - at) }))
+    .filter((x) => x.gapMs < SCHEDULE_CLUSTER_MS)
+    .sort((a, b) => a.gapMs - b.gapMs);
+  if (near.length > 0) {
+    const closest = Math.round((near[0] as { gapMs: number }).gapMs / MIN_MS);
+    warnings.push(
+      `${near.length} other pending post${near.length === 1 ? '' : 's'} within ${SCHEDULE_CLUSTER_MS / MIN_MS} min of this slot — the closest is ${closest} min away. Spreading them out reads calmer.`,
+    );
+  }
+
+  // Loudest match wins: one line about the closest twin says more than a list.
+  let publishedTwin: { similarity: number; daysAgo: number } | null = null;
+  for (const p of recentOriginals) {
+    const similarity = shingleJaccard(row.text, p.text);
+    if (similarity < NEAR_DUPLICATE_THRESHOLD) continue;
+    if (publishedTwin !== null && similarity <= publishedTwin.similarity) continue;
+    publishedTwin = {
+      similarity,
+      daysAgo: Math.max(0, Math.round((now - p.postedAt.getTime()) / DAY_MS)),
+    };
+  }
+  if (publishedTwin !== null) {
+    const when =
+      publishedTwin.daysAgo === 0
+        ? 'today'
+        : `${publishedTwin.daysAgo} day${publishedTwin.daysAgo === 1 ? '' : 's'} ago`;
+    warnings.push(
+      `Very similar to a post from ${when} (${pct(publishedTwin.similarity)} overlap) — repetitive content is its own penalty.`,
+    );
+  }
+
+  // The monitor can only see this pair once BOTH are published, which is too
+  // late to fix cheaply — a queued twin is the one duplicate still one click
+  // from being rewritten.
+  let pendingTwin = 0;
+  for (const p of others) pendingTwin = Math.max(pendingTwin, shingleJaccard(row.text, p.text));
+  if (pendingTwin >= NEAR_DUPLICATE_THRESHOLD) {
+    warnings.push(
+      `Very similar to another post already queued (${pct(pendingTwin)} overlap) — they will read as a repeat when both go out.`,
+    );
+  }
+
+  return warnings;
+}
+
+function pct(similarity: number): string {
+  return `${Math.round(similarity * 100)}%`;
+}
 
 // Threads (§8.2): one schedulable unit, N rows. The head (position 1) is a
 // normal draft/pending row carrying scheduled_for; tails are status='segment'

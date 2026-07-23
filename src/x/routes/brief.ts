@@ -23,6 +23,7 @@ import {
   streaks,
   voiceAuthors,
 } from '../db/schema.ts';
+import { runMonitor, worstOf } from '../monitor.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import {
   allQuestsDone,
@@ -34,6 +35,7 @@ import {
   neglectedTargetsAtDayStart,
 } from '../quests.ts';
 import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
+import { loadMonitorInputs } from './monitor.ts';
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -366,6 +368,7 @@ brief.get('/brief', async (c) => {
     postedDraftRows,
     costRows,
     bestTimes,
+    monitorInputs,
   ] = await Promise.all([
     db
       .select({
@@ -457,6 +460,11 @@ brief.get('/brief', async (c) => {
     // S0.4: best-times cells bucketed by the viewer's local clock so each
     // cadence gap can carry the score of its (weekday, hour) cell.
     loadBestTimeCells(tzOffsetMin),
+    // GR.6: the activity monitor's own loader, imported rather than re-written
+    // here — the windows and column choices are decisions, and a second copy of
+    // that SQL would be a second set of them (the `loadBestTimeCells` precedent
+    // one line up). $0: read-time SQL over rows already collected.
+    loadMonitorInputs(now),
   ]);
 
   const tweetIds = published.map((p) => p.tweetId);
@@ -556,6 +564,10 @@ brief.get('/brief', async (c) => {
     })),
     now,
   );
+
+  // GR.6: account health. `runMonitor` is the same call `GET /x/monitor` makes,
+  // over the same inputs — the Today card and the MCP tool can never disagree.
+  const monitorAlerts = runMonitor(monitorInputs);
 
   const yesterdayTweets = weekTweets.filter(
     (t) => t.postedAt >= yesterdayStart && t.postedAt < todayStart,
@@ -713,6 +725,9 @@ brief.get('/brief', async (c) => {
     },
     // S0.9: pinned-post watch — stale or out-performed pin, a nudge to re-pin.
     pinnedWatch,
+    // GR.6: activity monitor — empty `alerts` (and null `worst`) is the normal,
+    // silent case; the Today card renders nothing then.
+    monitor: { alerts: monitorAlerts, worst: worstOf(monitorAlerts) },
     yesterday: {
       from: yesterdayStart,
       to: todayStart,

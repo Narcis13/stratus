@@ -18,6 +18,7 @@ import {
   type BriefQuests,
   type BriefTweet,
   type ConversionWindow,
+  type MonitorSeverity,
   api,
 } from './api.ts';
 import { formatTime } from './datetime.ts';
@@ -91,6 +92,7 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
         <>
           <FollowersCard brief={brief} />
           <PinnedWatchCard brief={brief} />
+          <AccountHealthCard brief={brief} />
           <TodayPlan brief={brief} />
           <ReplyQuota brief={brief} />
           <Yesterday brief={brief} />
@@ -233,6 +235,35 @@ function PinnedWatchCard({ brief }: { brief: Brief }): JSX.Element | null {
           </div>
         )}
       </div>
+    </section>
+  );
+}
+
+// GR.6: the activity monitor's alerts (Guardrails §B). An account suspension
+// zeroes all four goals at once, and every pattern it watches for is something
+// I can do to myself in one afternoon. Nudge-not-action, like the pinned watch:
+// nothing renders when nothing fired, and nothing here blocks anything.
+const SEVERITY_CLASS: Record<MonitorSeverity, string> = {
+  critical: 'error',
+  warn: 'warn',
+  // Advice, not danger (`scheduleCluster`) — plain text, no alarm box.
+  info: 'muted',
+};
+
+function AccountHealthCard({ brief }: { brief: Brief }): JSX.Element | null {
+  // Absent when the server predates GR.6 — render nothing rather than crash.
+  const alerts = brief.monitor?.alerts ?? [];
+  if (alerts.length === 0) return null;
+  return (
+    <section className="brief-section">
+      <h3>Account health</h3>
+      {/* At most one alert per rule (the monitor's contract), so `rule` is a
+          stable key and the list can never render a rule twice. */}
+      {alerts.map((a) => (
+        <div key={a.rule} className={SEVERITY_CLASS[a.severity] ?? 'muted'}>
+          {a.message}
+        </div>
+      ))}
     </section>
   );
 }

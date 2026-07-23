@@ -6,6 +6,7 @@ import {
   type PostDraftResponse,
   type RewriteVariant,
   type ScheduledPost,
+  type ScheduledPostCreated,
   type ScheduledPostWithThread,
   type UpdateBody,
   api,
@@ -107,6 +108,9 @@ export function ComposerPanel({
   const [bestCells, setBestCells] = useState<BestTimeCell[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // GR.6 schedule-time advisory — survives the post-save `reset()` on purpose
+  // (it is about the post that was just saved), so it is set after reset runs.
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [original, setOriginal] = useState<ScheduledPostWithThread | null>(null);
   const [thread, setThread] = useState<ScheduledPost[]>([]);
 
@@ -188,6 +192,7 @@ export function ComposerPanel({
     setThread([]);
     setError(null);
     setNotice(null);
+    setWarnings([]);
     setDrafts([]);
     setDraftMeta(null);
   }, []);
@@ -315,7 +320,7 @@ export function ComposerPanel({
     }
   };
 
-  const submitSingle = async (): Promise<ScheduledPost> => {
+  const submitSingle = async (): Promise<ScheduledPostCreated> => {
     const iso = localInputToIso(scheduledFor);
     if (isEditing && original) {
       const patch: UpdateBody = { text: text.trim(), scheduledFor: iso };
@@ -368,13 +373,15 @@ export function ComposerPanel({
     setError(null);
     setNotice(null);
     try {
-      let row: ScheduledPost;
+      let row: ScheduledPostCreated;
       if (isThreadEdit) row = await submitThreadEdit();
       else if (threadMode && !isEditing) row = await submitThreadCreate();
       else row = await submitSingle();
       onSaved(row);
       onClearEdit();
       reset();
+      // After reset, which clears the previous save's advisory (GR.6).
+      setWarnings(row.warnings ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed');
     } finally {
@@ -825,6 +832,15 @@ export function ComposerPanel({
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="ok">{notice}</div>}
+      {/* GR.6: the post is already saved — these are cadence smells worth a look
+          before the publisher gets there, never a reason it didn't go in. */}
+      {warnings.length > 0 && (
+        <div className="warn">
+          {warnings.map((w) => (
+            <div key={w}>{w}</div>
+          ))}
+        </div>
+      )}
 
       <div className="row">
         <button type="submit" className="primary" disabled={loading || isLocked || !canSubmit}>

@@ -35,6 +35,13 @@ export interface ScheduledPost {
   updatedAt: string;
 }
 
+/** POST /x/posts/scheduled answers with the row plus GR.6's schedule-time
+ *  advisory. `warnings` is never a refusal — the row is already saved when they
+ *  are computed; absent when the deployed server predates GR.6. */
+export interface ScheduledPostCreated extends ScheduledPost {
+  warnings?: string[];
+}
+
 /** GET /x/posts/scheduled/:id on a thread member carries its siblings, plus
  *  the Idea Inbox idea that seeded it (C6 provenance), when one backlinks. */
 export interface ScheduledPostWithThread extends ScheduledPost {
@@ -1036,6 +1043,23 @@ export interface PinnedWatch {
   } | null;
 }
 
+// GR.6: the activity monitor's alerts, mirrored from `src/x/monitor.ts` (§5
+// build isolation — the extension never imports server modules). At most one
+// alert per rule, so `rule` is a safe React key; sorted most-severe first.
+export type MonitorSeverity = 'info' | 'warn' | 'critical';
+
+export interface MonitorAlert {
+  rule: string;
+  severity: MonitorSeverity;
+  message: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface BriefMonitor {
+  alerts: MonitorAlert[];
+  worst: MonitorSeverity | null;
+}
+
 export interface Brief {
   generatedAt: string;
   tzOffsetMin: number;
@@ -1049,6 +1073,9 @@ export interface Brief {
     conversion?: { d7: ConversionWindow; d28: ConversionWindow };
   };
   pinnedWatch: PinnedWatch;
+  // Optional: absent when the deployed server predates GR.6 — the panel must
+  // tolerate a brief payload without it rather than crash (the S0.1 precedent).
+  monitor?: BriefMonitor;
   yesterday: {
     from: string;
     to: string;

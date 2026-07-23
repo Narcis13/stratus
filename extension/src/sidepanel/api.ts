@@ -20,6 +20,7 @@ import {
   type BestTimesResponse,
   type Brief,
   type BriefGap,
+  type BriefMonitor,
   type BriefQuests,
   type BriefTweet,
   type Channel,
@@ -89,6 +90,8 @@ import {
   type MentionsRefreshResult,
   type MentionsResponse,
   type MetricsAccountResponse,
+  type MonitorAlert,
+  type MonitorSeverity,
   type Niche,
   type NicheActive,
   type NicheChannelProposal,
@@ -151,6 +154,7 @@ import {
   type RewriteResponse,
   type RewriteVariant,
   type ScheduledPost,
+  type ScheduledPostCreated,
   type ScheduledPostWithThread,
   type ScrapeBody,
   type SettingEntry,
@@ -204,8 +208,11 @@ export type {
   BestTimesResponse,
   Brief,
   BriefGap,
+  BriefMonitor,
   BriefQuests,
   BriefTweet,
+  MonitorAlert,
+  MonitorSeverity,
   DigestFacts,
   DigestResponse,
   IcebreakersResponse,
@@ -321,6 +328,7 @@ export type {
   GenerateItemsBody,
   GenerateItemsResponse,
   ScheduledPost,
+  ScheduledPostCreated,
   ScheduledPostWithThread,
   ScrapeBody,
   SettingEntry,
@@ -422,8 +430,10 @@ export const api = {
     return request<ScheduledPostWithThread>(s, `/x/posts/scheduled/${id}`);
   },
 
-  create(s: Settings, body: CreateBody): Promise<ScheduledPost> {
-    return request<ScheduledPost>(s, '/x/posts/scheduled', { method: 'POST', body });
+  // GR.6: the response carries `warnings` — advisory strings computed after the
+  // insert. Never a refusal: a warned post is a saved post.
+  create(s: Settings, body: CreateBody): Promise<ScheduledPostCreated> {
+    return request<ScheduledPostCreated>(s, '/x/posts/scheduled', { method: 'POST', body });
   },
 
   createThread(s: Settings, body: CreateThreadBody): Promise<CreateThreadResponse> {
