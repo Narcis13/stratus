@@ -203,6 +203,7 @@ Empty states: *"No account snapshot yet — runs after the first 03:00 UTC pass"
 
 - A **30d / 90d** toggle in the heading switches the window.
 - Each row shows the **inbound count** (`5×`), the **@handle** (dossier link), a **stage chip** if you have a relationship, and a **"last acknowledged"** line: `acknowledged 2d ago` or *"never acknowledged."*
+- When stratus has harvested likes/reposts/follows from your notifications page, the row also shows **`· N engagements`** for the same window (see **[Notifications surface](./notifications-surface.md)**). This is **display-only** — engagement never changes the ranking, because a like is not a conversation. The line is hidden at zero.
 - If a **top-10 fan** hasn't been acknowledged by you in over 7 days, that line turns **amber** — they've given you attention and you owe some back.
 
 Empty state: *"No inbound in the last 30 days."*

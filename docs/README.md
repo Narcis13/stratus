@@ -60,6 +60,17 @@ Beyond the side-panel tabs, stratus ships four cross-cutting surfaces from the `
 
 ---
 
+## On x.com itself
+
+stratus also decorates the pages you're already reading. These aren't tabs — they're the extension's content script adding what it knows to X's own UI, always read-only and free.
+
+| Surface | What it's for |
+|---|---|
+| **[S6 — Augmented X UI](./s6-augmented-ui.md)** | Person chips on the timeline and a "stratus context" panel under each tweet you open. |
+| **[Notifications surface](./notifications-surface.md)** | On x.com/notifications: which post a reply is on, tier chips, and the $0 harvest of likes/reposts/follows into your CRM. |
+
+---
+
 ## A few terms you'll meet
 
 - **Band (hot / warm / skip)** — stratus scores a tweet by how much reach it's getting (views, replies, age, velocity) to decide whether replying to it is worth your time and money. See **[Replies](./replies-tab.md)**.

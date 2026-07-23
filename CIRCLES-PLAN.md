@@ -1,6 +1,6 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
-> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 + C9 shipped 2026-07-05. All phases complete.
+> Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 + C9 shipped 2026-07-05; C10 (added later, own plan) shipped 2026-07-23. All phases complete.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
@@ -109,6 +109,7 @@ Everything below was re-verified against `PLAN.md`, `X-API-IMPLEMENTATION-PLAN.m
 | 6 | The Launch Room | C7 |
 | 7 | Channels | C8 |
 | 14, 15, 9 | Streaks & quests, Sunday Digest, icebreakers | C9 |
+| — | Notifications surface + like/repost/follow harvest (added 2026-07-16, own plan `plans/2026-07-16-notifications.md`) | C10 |
 
 Ordering rationale: C0 stops data loss immediately (tiny). C1 is the foundation every
 later phase references. C2–C4 are the three highest-leverage payoffs. C5+ are the warm
@@ -610,6 +611,51 @@ own-post performance of that topic on one screen.
 
 ---
 
+## Phase C10 — Notifications surface (the engagement half of the relationship)
+
+*Goal: harvest the only relationship signals the system never sees — likes, reposts and
+follows — from the one page that shows them, and fix that page's worst gap while there.*
+
+> **SHIPPED 2026-07-23.** Planned separately (`plans/2026-07-16-notifications.md`, tasks
+> NT.1–NT.7) after C0–C9 had closed, so it is a C-phase by flavour (decision 7) rather
+> than part of the original C0–C9 ladder. **No new table, no migration** — three new
+> `person_events.type` values (`their_like`/`their_repost`/`their_follow`, free-text
+> column) and a new `people.source` value (`notification`).
+
+- **The augmentations (read-only, $0).** On `x.com/notifications`: every reply
+  notification stratus already knows (an API-pulled `mentions` row) gets a
+  `↳ on your post: “…”` line plus `✓ answered`; aggregated cells get ≤3 tier chips
+  (ally/mutual/in-band target) linking to the dossier. Tweet-shaped cells deliberately
+  keep the richer S6 glance chips instead.
+- **The harvest ($0).** `extension/src/shared/notifications.ts` parses each cell
+  icon-first (locale-proof; en+ro keyword fallback, unknown → `other` → dropped
+  client-side). `POST /x/people/engagements` (≤50/batch) → `src/x/people/engagements.ts`:
+  fill-only person upsert (`source: 'notification'`) + an INSERT-OR-IGNORE timeline event
+  under a deterministic id — `…:notif:<handle>:<tweetId>` when the post resolves by
+  collapsed-whitespace prefix match (≥20 chars) against recent own posts, the day bucket
+  `…:notif:<handle>:<YYYY-MM-DD>` when it doesn't, and `their_follow:notif:<handle>` once
+  ever. Gated by the existing `passiveCapture` toggle — no new setting (decision 5).
+- **Stage effect: none, by design (decision 1).** The three types are in
+  `PERSON_EVENT_TYPES` but in no stage set: engagement is not reciprocity, so 50 likes
+  still read `stranger`. `GET /x/people/fans` shows an `engagementCount` per fan that is
+  **display-only** — computed after `rankFans` has already fixed the order, over the
+  ranked page only, so it can never reach the comparator.
+- **The `mentions` table is never written from this surface (decision 3).** Its max
+  stored tweet_id IS the since_id checkpoint; a DOM-scraped id would skip everything the
+  API hasn't returned yet. Parent context is a pure read; the freshness gap is closed by
+  a **human-clicked** `stratus: sync replies` chip running the existing capped
+  `POST /x/mentions/refresh` (6/day server cap, no client bypass, never auto-fired —
+  decision 4).
+
+**Tests:** cell-parser fixtures (happy-dom), the stage matrix proving timeline-only,
+engagement ingest (id shapes, idempotency, fill-only), route validation, the fans
+ranking-unchanged proof. **Smoke:** `scripts/smoke-notifications.ts` ($0).
+**Cost:** $0 recurring; one already-capped mentions pull per deliberate click.
+**Done when:** scrolling the notifications tab grows the roster on its own, and a reply
+notification tells you which of your posts it's on without a click.
+
+---
+
 ## 3. New surface summary
 
 **Tables:** people, person_events, person_snapshots, radar_drafts, conversation_meta,
@@ -617,8 +663,8 @@ ideas, channels, streaks, digests (C9 addition: caches the one weekly narration 
 re-opening the panel on Sunday never re-spends) (+ nullable columns:
 scheduled_posts.register, tags on voice_tweets/radar_drafts).
 
-**Routes:** /x/people (+/:handle, /followups, /fans, /sightings), /x/conversations,
-/x/radar/drafts, /x/playbook, /x/ideas, /x/channels, /x/digest.
+**Routes:** /x/people (+/:handle, /followups, /fans, /sightings, /engagements [C10]),
+/x/conversations, /x/radar/drafts, /x/playbook, /x/ideas, /x/channels, /x/digest.
 
 **Workers:** none new. Hooks ride existing paths (pullMentions, dailyMetrics, publisher
 via extension alarms). No new polling loops — invariant preserved.
