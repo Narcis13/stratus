@@ -4,24 +4,39 @@
 //   A. Discover — incremental own-timeline pull (since_id checkpoint) to catch
 //      tweets posted manually from the X app. Scheduler-posted tweets are
 //      already in posts_published via the publisher, so steady-state discovery
-//      reads only the handful of new manual tweets. New rows seed
-//      nextPollAt = postedAt + 24h. The since_id checkpoint is discovery's OWN
-//      high-water mark (persisted in app_settings), NOT max(posts_published.id):
+//      reads only the handful of new manual tweets. The since_id checkpoint is
+//      discovery's OWN high-water mark (persisted in app_settings), NOT
+//      max(posts_published.id):
 //      the publisher inserts scheduled posts in real time with high snowflake
 //      ids, so deriving since_id from the table max could park it ABOVE a manual
 //      tweet posted earlier the same day — permanently hiding it (that gap lost
 //      a 1.7M-impression post once). Keying off discovery's own high-water means
 //      the publisher's live inserts never advance the checkpoint.
-//   B. Snapshot — read EVERY non-retired row (regardless of age) by batched id
-//      lookup (`GET /2/tweets?ids=`, ≤100 ids/call), write ONE metrics_snapshots
-//      row each, then retire. Whatever a tweet's metrics are at the next ~03:00
-//      UTC pass is the single number we keep — age no longer gates this.
 //
-// ONCE AND ONLY ONCE: each batch is retired in one committed txn the instant the
-// read returns, BEFORE any snapshot insert — so a retired row is never selected
-// again and we never pay to read a tweet twice, even across a crash. The
-// trade-off is at-most-once snapshots: a crash between the retire commit and the
-// inserts loses that batch's snapshots (a metrics gap), never a double charge.
+//      THE PULL *IS* THE SNAPSHOT. The timeline pull already bills $0.001 per
+//      tweet it returns, and it can carry the private metric fields (X prices
+//      fields at zero — only results are billed). So discovery requests
+//      `ownedPrivate` and writes the metrics_snapshots row + retires the row in
+//      the same transaction. Before this, discovery pulled cheap fields and the
+//      snapshot pass immediately re-read the very same ids minutes later — every
+//      own tweet was billed TWICE per day. At ~90 tweets/day that second read
+//      was ~$0.09/day of pure duplication (audit, 2026-07-23).
+//   B. Snapshot — the leftovers only: non-retired rows the pull did NOT cover
+//      (anything below the checkpoint — a publisher insert the pull missed, or a
+//      batch a previous run failed on). Batched id lookup (`GET /2/tweets?ids=`,
+//      ≤100 ids/call), one metrics_snapshots row each, then retire. In steady
+//      state this reads NOTHING and costs $0; it stays as the correctness
+//      backstop, not the main path.
+//
+// ONCE AND ONLY ONCE, on both paths. In B the batch is retired in one committed
+// txn the instant the read returns, BEFORE any snapshot insert — so a retired
+// row is never selected again and we never pay to read a tweet twice, even
+// across a crash. The trade-off is at-most-once snapshots: a crash between the
+// retire commit and the inserts loses that batch's snapshots (a metrics gap),
+// never a double charge. In A the retire and the snapshot are the SAME txn (the
+// read is already paid for by then, so there is nothing to protect but repeat
+// writes) and the whole step is keyed off the existing row — see
+// ingestPulledTweet. Re-pulling a retired tweet is a no-op.
 //
 // Why this shape (and not the old two workers): the 60s poller logged a steady
 // stream of X reads independent of any user action, which polluted cost_events
@@ -34,6 +49,7 @@ import { db } from '../../db/client.ts';
 import { appSettings } from '../../db/shared-schema.ts';
 import { beat } from '../../heartbeats.ts';
 import { accountSnapshots, metricsSnapshots, postsPublished } from '../db/schema.ts';
+import type { XTweet } from '../endpoints.ts';
 import { getMe, getTweetsByIds, getUserTweets } from '../endpoints.ts';
 import { pullMentions } from '../mentions.ts';
 import { getValidAccessToken } from '../token-store.ts';
@@ -61,8 +77,12 @@ export interface RunResult {
   scanned: number;
   /** New posts_published rows inserted by discovery. */
   discovered: number;
-  /** metrics_snapshots rows written this run. */
+  /** metrics_snapshots rows written this run (pull + leftover snapshot pass). */
   snapshotted: number;
+  /** Of `snapshotted`, the rows written straight from the discovery pull — i.e.
+   *  reads the old two-phase design would have paid for a second time. In steady
+   *  state this equals `snapshotted` and the snapshot pass buys nothing. */
+  pullSnapshotted: number;
   /** Rows marked retired this run (snapshotted, or gone from X). */
   retired: number;
   /** Snapshot batches that errored (rows left due for the next run). */
@@ -106,6 +126,7 @@ export async function runDailyMetrics(
     scanned: 0,
     discovered: 0,
     snapshotted: 0,
+    pullSnapshotted: 0,
     retired: 0,
     failed: 0,
     accountSnapshotted: false,
@@ -124,9 +145,20 @@ export async function runDailyMetrics(
   // followers_count data point.
   await snapshotAccount(token, result);
 
-  // Discover before the snapshot pass so any tweet found this run is in the
-  // table before snapshotDue reads every non-retired row regardless of age.
-  await discover(token, deps.selfXUserId, runOpts, result);
+  // Discover first: it now snapshots and retires everything its pull returns, so
+  // running it before snapshotDue is what keeps those rows OUT of the leftover
+  // read. Reversing this order would restore the old double-billing.
+  // A discovery failure must not take the rest of the run with it. It used to:
+  // an uncaught throw here skipped the snapshot pass, the winner re-read AND the
+  // mention pull. Now the run degrades to exactly the old two-phase shape —
+  // whatever discovery already ingested stays un-retired and snapshotDue reads
+  // it — instead of losing the whole day. A 4xx isn't billed, so the fallback
+  // costs nothing beyond the reads it was always going to make.
+  try {
+    await discover(token, deps.selfXUserId, runOpts, result);
+  } catch (err) {
+    console.error(`dailyMetrics: discovery failed: ${describe(err)}`);
+  }
   await snapshotDue(token, result);
   await rereadWinners(token, result);
 
@@ -144,7 +176,8 @@ export async function runDailyMetrics(
 
   console.log(
     `dailyMetrics: scanned=${result.scanned} discovered=${result.discovered} ` +
-      `snapshotted=${result.snapshotted} retired=${result.retired} failed=${result.failed} ` +
+      `snapshotted=${result.snapshotted} (fromPull=${result.pullSnapshotted}) ` +
+      `retired=${result.retired} failed=${result.failed} ` +
       `account=${result.accountSnapshotted} mentions=${result.mentionsNew}/${result.mentionsScanned} ` +
       `mentionsAnswered=${result.mentionsAnswered} rereadWinners=${result.rereadWinners}`,
   );
@@ -210,39 +243,54 @@ async function discover(
   // timeline's high-water at THIS pass — not whatever the publisher inserted.
   let maxSeen = sinceId;
 
-  // Discovery doesn't request the private metric fields — it only needs to seed
-  // rows. The snapshot pass does the authoritative owned read (with private
-  // fields where the tweet is still inside the 30-day window).
+  // The pull carries the private metric fields so it doubles as the snapshot
+  // read (see header A). fullScan is the one exception: it deliberately walks
+  // back over old tweets, and X nulls (and can refuse to store) private fields
+  // past 30 days — that path keeps the cheap pull and leaves the age-split
+  // reads to snapshotDue, exactly as before.
+  const ownedPrivate = !runOpts.fullScan;
+
   for await (const tweet of getUserTweets(token, selfXUserId, {
     maxResults,
     ...(sinceId ? { sinceId } : {}),
+    ...(ownedPrivate ? { ownedPrivate: true } : {}),
   })) {
     result.scanned++;
     maxSeen = maxTweetId(maxSeen, tweet.id);
 
-    const repliedTo = tweet.referenced_tweets?.find((r) => r.type === 'replied_to');
-    const postedAt = tweet.created_at ? new Date(tweet.created_at) : now;
+    if (!ownedPrivate) {
+      // fullScan: seed the row only and let snapshotDue do the age-split read.
+      // A tweet rediscovered this way may well be inside the 30-day window, and
+      // one $0.001 read with the private fields beats a permanent snapshot that
+      // is missing them.
+      const repliedTo = tweet.referenced_tweets?.find((r) => r.type === 'replied_to');
+      const postedAt = tweet.created_at ? new Date(tweet.created_at) : now;
+      const inserted = await db
+        .insert(postsPublished)
+        .values({
+          tweetId: tweet.id,
+          text: tweet.text,
+          postedAt,
+          isReply: tweet.in_reply_to_user_id != null,
+          inReplyToTweetId: repliedTo?.id ?? null,
+          conversationId: tweet.conversation_id ?? null,
+          source: 'manual',
+          hasMedia: (tweet.attachments?.media_keys?.length ?? 0) > 0,
+          nextPollAt: new Date(postedAt.getTime() + DAY_MS),
+        })
+        .onConflictDoNothing()
+        .returning({ tweetId: postsPublished.tweetId });
+      if (inserted.length > 0) result.discovered++;
+      continue;
+    }
 
-    const inserted = await db
-      .insert(postsPublished)
-      .values({
-        tweetId: tweet.id,
-        text: tweet.text,
-        postedAt,
-        isReply: tweet.in_reply_to_user_id != null,
-        inReplyToTweetId: repliedTo?.id ?? null,
-        conversationId: tweet.conversation_id ?? null,
-        source: 'manual',
-        // §S0.2: the discovery read requests `attachments` for free — media_keys
-        // presence is the text-only-vs-media baseline. Absent on a read tweet
-        // means no media (false), never unknown.
-        hasMedia: (tweet.attachments?.media_keys?.length ?? 0) > 0,
-        nextPollAt: new Date(postedAt.getTime() + DAY_MS),
-      })
-      .onConflictDoNothing()
-      .returning({ tweetId: postsPublished.tweetId });
+    const outcome = ingestPulledTweet(tweet, now);
 
-    if (inserted.length > 0) result.discovered++;
+    if (outcome === 'already-retired') continue;
+    if (outcome === 'discovered') result.discovered++;
+    result.pullSnapshotted++;
+    result.snapshotted++;
+    result.retired++;
   }
 
   // Persist the high-water. maxTweetId against `stored` guarantees the checkpoint
@@ -251,6 +299,88 @@ async function discover(
   // below any tweet posted after this pass.
   const next = maxTweetId(stored, maxSeen);
   if (next) await saveDiscoveryCheckpoint(next);
+}
+
+/** What `ingestPulledTweet` did with one tweet from the discovery pull. */
+export type PullIngestOutcome = 'discovered' | 'snapshotted' | 'already-retired';
+
+/**
+ * Write one tweet from the discovery pull as row + snapshot + retirement, in ONE
+ * sync txn. The read is ALREADY BILLED by the time we get here (invariant #7),
+ * so the only thing left to protect is repeat *writes*: the txn keys off what's
+ * already in the table, which makes the step idempotent. A crash before
+ * `saveDiscoveryCheckpoint` re-pulls these tweets on the next run, and every
+ * already-retired row then writes nothing and double-counts nothing.
+ *
+ * Three cases:
+ *   - no row      → insert it retired, pollCount 1, plus its snapshot
+ *                   ('discovered')
+ *   - row, un-retired → a publisher-inserted scheduled post, or one a previous
+ *                   run left due. The pull just paid for its metrics, so retire
+ *                   it here and snapshot — otherwise snapshotDue buys the very
+ *                   same read again ('snapshotted')
+ *   - row, retired → nothing at all ('already-retired')
+ *
+ * Exported for the unit tests, which drive it against the in-memory DB (the
+ * timeline pull itself is network and stays untested by convention).
+ */
+export function ingestPulledTweet(tweet: XTweet, now: Date): PullIngestOutcome {
+  const repliedTo = tweet.referenced_tweets?.find((r) => r.type === 'replied_to');
+  const postedAt = tweet.created_at ? new Date(tweet.created_at) : now;
+
+  return db.transaction((tx): PullIngestOutcome => {
+    const [existing] = tx
+      .select({ retired: postsPublished.retired })
+      .from(postsPublished)
+      .where(eq(postsPublished.tweetId, tweet.id))
+      .all();
+
+    if (existing?.retired) return 'already-retired';
+
+    if (existing) {
+      tx.update(postsPublished)
+        .set({
+          pollCount: sql`${postsPublished.pollCount} + 1`,
+          lastSeenAt: now,
+          nextPollAt: null,
+          retired: true,
+        })
+        .where(eq(postsPublished.tweetId, tweet.id))
+        .run();
+    } else {
+      tx.insert(postsPublished)
+        .values({
+          tweetId: tweet.id,
+          text: tweet.text,
+          postedAt,
+          isReply: tweet.in_reply_to_user_id != null,
+          inReplyToTweetId: repliedTo?.id ?? null,
+          conversationId: tweet.conversation_id ?? null,
+          source: 'manual',
+          // §S0.2: the discovery read requests `attachments` for free —
+          // media_keys presence is the text-only-vs-media baseline. Absent on a
+          // read tweet means no media (false), never unknown.
+          hasMedia: (tweet.attachments?.media_keys?.length ?? 0) > 0,
+          pollCount: 1,
+          lastSeenAt: now,
+          nextPollAt: null,
+          retired: true,
+        })
+        .run();
+    }
+
+    tx.insert(metricsSnapshots)
+      .values({
+        tweetId: tweet.id,
+        publicMetrics: tweet.public_metrics ?? null,
+        nonPublicMetrics: tweet.non_public_metrics ?? null,
+        organicMetrics: tweet.organic_metrics ?? null,
+        ageAtSnapshotMin: ageMinutes(postedAt, now),
+      })
+      .run();
+
+    return existing ? 'snapshotted' : 'discovered';
+  });
 }
 
 const DISCOVERY_CHECKPOINT_KEY = 'x.discovery.since_id';
@@ -295,9 +425,13 @@ export function maxTweetId(a: string | undefined, b: string | undefined): string
 }
 
 async function snapshotDue(token: string, result: RunResult): Promise<void> {
-  // EVERY non-retired tweet, regardless of age. Retired rows are never selected
-  // again, so each tweet is read (and billed) once and only once. Oldest first
-  // so a backlog drains in posting order across passes.
+  // The LEFTOVERS only — discovery now snapshots and retires everything its pull
+  // returns (header A), so in steady state this select comes back empty and the
+  // whole function costs $0. What still lands here: rows below the discovery
+  // checkpoint (a publisher insert the pull didn't cover) and batches an earlier
+  // run failed on. Retired rows are never selected again, so each tweet is read
+  // (and billed) once and only once. Oldest first so a backlog drains in posting
+  // order across passes.
   const rows = await db
     .select({ tweetId: postsPublished.tweetId, postedAt: postsPublished.postedAt })
     .from(postsPublished)
@@ -409,6 +543,11 @@ async function rereadWinners(token: string, result: RunResult): Promise<void> {
         and(
           eq(postsPublished.retired, true),
           eq(postsPublished.pollCount, 1),
+          // Originals only. A reply's snapshot now rides free on the discovery
+          // pull, but its day-7 re-read would be a genuine extra billed call —
+          // and "which content compounds" is a question about posts, not about
+          // the ~90 replies/day the reply habit produces (audit, 2026-07-23).
+          eq(postsPublished.isReply, false),
           lte(postsPublished.postedAt, cutoff),
           // Stay inside the 30-day private-fields window; a candidate older
           // than that missed its re-read on purpose (bounded by design).

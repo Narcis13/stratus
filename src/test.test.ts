@@ -1,8 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { eq, inArray } from 'drizzle-orm';
+import { db } from './db/client.ts';
 import { beat, heartbeatStatus, registerHeartbeat, unregisterHeartbeat } from './heartbeats.ts';
 import { matchOrigin } from './middleware/cors.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
+import { metricsSnapshots, postsPublished } from './x/db/schema.ts';
+import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
 import { defaultPostParams } from './x/fields.ts';
@@ -93,7 +97,7 @@ import {
   targetBand,
 } from './x/routes/voice.ts';
 import { EXTRACT_PROMPT_TEMPLATE, parseExtractedTemplate } from './x/voice/extractPrompt.ts';
-import { maxTweetId, msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
+import { ingestPulledTweet, maxTweetId, msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -244,6 +248,114 @@ describe('maxTweetId (discovery checkpoint high-water)', () => {
 
   test('never regresses on equal ids', () => {
     expect(maxTweetId('999', '999')).toBe('999');
+  });
+});
+
+// The discovery pull now doubles as the snapshot read (one billed read per own
+// tweet per day instead of two — audit 2026-07-23). The property that keeps that
+// safe is idempotency: the pull can be replayed after a crash that lost the
+// checkpoint, and a tweet already retired must cost nothing and write nothing.
+describe('ingestPulledTweet (discovery pull = snapshot)', () => {
+  const NOW = new Date('2026-07-24T03:00:00Z');
+  const POSTED = new Date('2026-07-23T15:00:00Z');
+  const IDS = ['dm1_new', 'dm1_replay', 'dm1_sched', 'dm1_reply'];
+
+  // posts_published/metrics_snapshots are global to the in-memory DB and the
+  // playbook suite aggregates over both — leave nothing behind.
+  afterAll(async () => {
+    await db.delete(metricsSnapshots).where(inArray(metricsSnapshots.tweetId, IDS));
+    await db.delete(postsPublished).where(inArray(postsPublished.tweetId, IDS));
+  });
+
+  function pulled(id: string, extra: Partial<XTweet> = {}): XTweet {
+    return {
+      id,
+      text: 'pulled from the timeline',
+      created_at: POSTED.toISOString(),
+      public_metrics: { impression_count: 900, like_count: 4 },
+      non_public_metrics: { user_profile_clicks: 2 },
+      ...extra,
+    } as XTweet;
+  }
+
+  async function readRow(tweetId: string) {
+    const [row] = await db
+      .select({
+        retired: postsPublished.retired,
+        pollCount: postsPublished.pollCount,
+        nextPollAt: postsPublished.nextPollAt,
+        isReply: postsPublished.isReply,
+        source: postsPublished.source,
+      })
+      .from(postsPublished)
+      .where(eq(postsPublished.tweetId, tweetId));
+    return row;
+  }
+
+  async function snapshotCount(tweetId: string) {
+    const rows = await db
+      .select({ id: metricsSnapshots.id })
+      .from(metricsSnapshots)
+      .where(eq(metricsSnapshots.tweetId, tweetId));
+    return rows.length;
+  }
+
+  test('an unseen tweet lands retired, with its snapshot, in one step', async () => {
+    expect(ingestPulledTweet(pulled('dm1_new'), NOW)).toBe('discovered');
+
+    const row = await readRow('dm1_new');
+    // Retired immediately: this is what stops snapshotDue buying the same read
+    // a second time minutes later.
+    expect(row?.retired).toBe(true);
+    expect(row?.nextPollAt).toBeNull();
+    // pollCount 1 keeps it eligible for the day-7 winner re-read.
+    expect(row?.pollCount).toBe(1);
+    expect(row?.source).toBe('manual');
+    expect(await snapshotCount('dm1_new')).toBe(1);
+  });
+
+  test('replaying the same tweet writes nothing and never double-snapshots', async () => {
+    ingestPulledTweet(pulled('dm1_replay'), NOW);
+    expect(await snapshotCount('dm1_replay')).toBe(1);
+
+    // A run that died before saveDiscoveryCheckpoint re-pulls this tweet.
+    expect(ingestPulledTweet(pulled('dm1_replay'), NOW)).toBe('already-retired');
+    expect(ingestPulledTweet(pulled('dm1_replay'), NOW)).toBe('already-retired');
+
+    expect(await snapshotCount('dm1_replay')).toBe(1);
+    expect((await readRow('dm1_replay'))?.pollCount).toBe(1); // not inflated
+  });
+
+  test('a publisher-inserted scheduled post is adopted, not re-read', async () => {
+    await db.insert(postsPublished).values({
+      tweetId: 'dm1_sched',
+      text: 'scheduled by the publisher',
+      postedAt: POSTED,
+      source: 'scheduled',
+      nextPollAt: new Date(POSTED.getTime() + 24 * 60 * 60 * 1000),
+    });
+
+    expect(ingestPulledTweet(pulled('dm1_sched'), NOW)).toBe('snapshotted');
+
+    const row = await readRow('dm1_sched');
+    expect(row?.retired).toBe(true);
+    expect(row?.nextPollAt).toBeNull();
+    expect(row?.source).toBe('scheduled'); // provenance survives adoption
+    expect(await snapshotCount('dm1_sched')).toBe(1);
+  });
+
+  test('a reply is snapshotted too — the row is free once the pull is paid for', async () => {
+    const outcome = ingestPulledTweet(
+      pulled('dm1_reply', {
+        in_reply_to_user_id: '999',
+        referenced_tweets: [{ type: 'replied_to', id: 'parent-1' }],
+      }),
+      NOW,
+    );
+    expect(outcome).toBe('discovered');
+    expect((await readRow('dm1_reply'))?.isReply).toBe(true);
+    // Playbook reply attribution reads these; dropping them would save $0.
+    expect(await snapshotCount('dm1_reply')).toBe(1);
   });
 });
 
