@@ -1,4 +1,5 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReplyListsPanel } from './ReplyLists.tsx';
 import {
   ApiError,
   type Idea,
@@ -16,6 +17,7 @@ import {
   useSystemPromptOverride,
 } from './replyMasterStorage.ts';
 import type { Settings } from './storage.ts';
+import { SubTabs } from './ui/SubTabs.tsx';
 
 interface Props {
   settings: Settings;
@@ -31,6 +33,13 @@ const TWEET_ID_RE = /^\d{1,32}$/;
 const GROUP_PAGE_SIZE = 10;
 const POSTED_AUTO_CLEAR_MS = 700;
 
+type RepliesView = 'drafts' | 'lists';
+
+const REPLY_SUBTABS: { id: RepliesView; label: string }[] = [
+  { id: 'drafts', label: 'Reply Master' },
+  { id: 'lists', label: 'Lists' },
+];
+
 const STATUS_OPTIONS: { value: '' | ReplyDraftStatus; label: string }[] = [
   { value: '', label: 'All' },
   { value: 'generated', label: 'Generated' },
@@ -40,6 +49,7 @@ const STATUS_OPTIONS: { value: '' | ReplyDraftStatus; label: string }[] = [
 ];
 
 export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
+  const [view, setView] = useState<RepliesView>('drafts');
   const { draft: storageDraft, refresh: refreshStorage } = useLastDraft();
   const {
     value: systemPromptOverride,
@@ -152,14 +162,28 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
     setActiveDraft(row);
   };
 
+  if (view === 'lists') {
+    return (
+      <div className="panel">
+        <div className="panel-header">
+          <h2>Replies</h2>
+        </div>
+        <SubTabs tabs={REPLY_SUBTABS} active={view} onSelect={setView} />
+        <ReplyListsPanel settings={settings} />
+      </div>
+    );
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
-        <h2>Reply Master</h2>
+        <h2>Replies</h2>
         <button type="button" onClick={() => void loadHistory()} disabled={loadingHistory}>
           {loadingHistory ? 'Loading…' : 'Refresh'}
         </button>
       </div>
+
+      <SubTabs tabs={REPLY_SUBTABS} active={view} onSelect={setView} />
 
       {!activeDraft && (
         <p className="muted">

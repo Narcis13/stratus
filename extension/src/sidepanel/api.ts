@@ -43,9 +43,12 @@ import {
   type FollowupKind,
   type FollowupSnoozeBody,
   type FollowupsResponse,
+  type GenerateItemsBody,
+  type GenerateItemsResponse,
   type GeneratedImageItem,
   type GoalKind,
   type GoalStatus,
+  type HumanizerConfig,
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
@@ -125,7 +128,17 @@ import {
   type ReplyDraft,
   type ReplyDraftStatus,
   type ReplyGenerateBody,
+  type ReplyList,
+  type ReplyListCreateBody,
+  type ReplyListDetail,
+  type ReplyListItem,
+  type ReplyListItemPatchBody,
+  type ReplyListItemSource,
+  type ReplyListItemsBody,
+  type ReplyListPatchBody,
+  type ReplyListSummary,
   type ReplyPatchBody,
+  type ReplyTemplateVar,
   type RewriteBody,
   type RewriteResponse,
   type RewriteVariant,
@@ -141,6 +154,8 @@ import {
   type ThreadDraftResponse,
   type TopComment,
   type UpdateBody,
+  type UseReplyBody,
+  type UseReplyResponse,
   type VoiceAuthor,
   type VoiceExtractBatchResult,
   type VoiceTarget,
@@ -272,6 +287,21 @@ export type {
   ReplyDraftStatus,
   ReplyGenerateBody,
   ReplyPatchBody,
+  HumanizerConfig,
+  ReplyList,
+  ReplyListCreateBody,
+  ReplyListDetail,
+  ReplyListItem,
+  ReplyListItemPatchBody,
+  ReplyListItemSource,
+  ReplyListItemsBody,
+  ReplyListPatchBody,
+  ReplyListSummary,
+  ReplyTemplateVar,
+  UseReplyBody,
+  UseReplyResponse,
+  GenerateItemsBody,
+  GenerateItemsResponse,
   ScheduledPost,
   ScheduledPostWithThread,
   ScrapeBody,
@@ -932,6 +962,82 @@ export const api = {
 
     remove(s: Settings, id: string): Promise<void> {
       return request<void>(s, `/x/replies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+
+  // RL — premade canned replies. Everything here is $0 except generate(), the
+  // one LLM call, and that one persists nothing: the panel previews the
+  // proposal and applies it through setItems() (Decision 3). use() is the only
+  // path that may compose a canned reply — picking locally would fork the
+  // anti-repeat state the server owns (Decision 1).
+  replyLists: {
+    list(s: Settings): Promise<ReplyListSummary[]> {
+      return request<ReplyListSummary[]>(s, '/x/reply-lists');
+    },
+
+    get(s: Settings, id: string): Promise<ReplyListDetail> {
+      return request<ReplyListDetail>(s, `/x/reply-lists/${encodeURIComponent(id)}`);
+    },
+
+    create(s: Settings, body: ReplyListCreateBody): Promise<ReplyList> {
+      return request<ReplyList>(s, '/x/reply-lists', { method: 'POST', body });
+    },
+
+    patch(s: Settings, id: string, body: ReplyListPatchBody): Promise<ReplyList> {
+      return request<ReplyList>(s, `/x/reply-lists/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, id: string): Promise<unknown> {
+      return request<unknown>(s, `/x/reply-lists/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    // Answers with the list's WHOLE current set for both modes, so the caller
+    // can render the response directly instead of re-fetching.
+    setItems(s: Settings, id: string, body: ReplyListItemsBody): Promise<ReplyListItem[]> {
+      return request<{ items: ReplyListItem[] }>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/items`,
+        { method: 'POST', body },
+      ).then((r) => r.items);
+    },
+
+    patchItem(
+      s: Settings,
+      id: string,
+      itemId: string,
+      body: ReplyListItemPatchBody,
+    ): Promise<ReplyListItem> {
+      return request<ReplyListItem>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`,
+        { method: 'PATCH', body },
+      );
+    },
+
+    removeItem(s: Settings, id: string, itemId: string): Promise<unknown> {
+      return request<unknown>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`,
+        { method: 'DELETE' },
+      );
+    },
+
+    use(s: Settings, id: string, body: UseReplyBody = {}): Promise<UseReplyResponse> {
+      return request<UseReplyResponse>(s, `/x/reply-lists/${encodeURIComponent(id)}/use`, {
+        method: 'POST',
+        body,
+      });
+    },
+
+    generate(s: Settings, id: string, body: GenerateItemsBody): Promise<GenerateItemsResponse> {
+      return request<GenerateItemsResponse>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/generate`,
+        { method: 'POST', body },
+      );
     },
   },
 };

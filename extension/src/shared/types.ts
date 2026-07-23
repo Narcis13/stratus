@@ -1698,3 +1698,123 @@ export interface SettingsPatchResult {
 export interface SettingsResetResult {
   reset: string[];
 }
+
+// ---------------------------------------------------------------------------
+// Reply lists (RL) — premade canned replies, picked + rendered + humanized on
+// the server (Decision 1: the anti-repeat state lives in the DB, never here).
+// The panel only manages the lists and copies the returned text; posting stays
+// a manual paste (§7.28). Mirrors the `/x/reply-lists` JSON — Date columns are
+// ISO strings over the transport.
+
+/** The per-list jitter knobs. A stored config is ALWAYS fully normalized by the
+ *  server, so a non-null value here has every field. `null` on a list means the
+ *  engine defaults apply — PATCH `{humanizer:{}}` to materialize them. */
+export interface HumanizerConfig {
+  prefixes: string[];
+  suffixes: string[];
+  prefixChance: number;
+  suffixChance: number;
+  lowercaseChance: number;
+  dropPeriodChance: number;
+  typoChance: number;
+}
+
+export type ReplyTemplateVar = 'name' | 'first_name' | 'handle';
+export type ReplyListItemSource = 'manual' | 'ai';
+
+export interface ReplyList {
+  id: string;
+  name: string;
+  description: string | null;
+  humanizer: HumanizerConfig | null;
+  active: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The collection GET adds both counts — the rail renders "n items · m on". */
+export interface ReplyListSummary extends ReplyList {
+  itemCount: number;
+  enabledCount: number;
+}
+
+export interface ReplyListItem {
+  id: string;
+  listId: string;
+  text: string;
+  enabled: boolean;
+  source: ReplyListItemSource;
+  /** The anti-repeat watermark — null = never used. */
+  lastUsedAt: string | null;
+  useCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplyListDetail {
+  list: ReplyList;
+  items: ReplyListItem[];
+}
+
+export interface ReplyListCreateBody {
+  name: string;
+  description?: string;
+  humanizer?: HumanizerConfig | null;
+}
+
+export interface ReplyListPatchBody {
+  name?: string;
+  description?: string | null;
+  /** null clears back to the engine defaults; `{}` materializes them. */
+  humanizer?: HumanizerConfig | Record<string, never> | null;
+  active?: boolean;
+  sortOrder?: number;
+}
+
+/** `replace` swaps the whole set in one txn; `source` is per CALL, not per item. */
+export interface ReplyListItemsBody {
+  mode: 'append' | 'replace';
+  items: { text: string }[];
+  source?: ReplyListItemSource;
+}
+
+export interface ReplyListItemPatchBody {
+  text?: string;
+  enabled?: boolean;
+}
+
+export interface UseReplyBody {
+  vars?: { name?: string; handle?: string };
+  targetTweetId?: string;
+  targetHandle?: string;
+  /** true = render a sample without stamping the anti-repeat state. */
+  preview?: boolean;
+}
+
+export interface UseReplyResponse {
+  itemId: string;
+  text: string;
+  /** Vars the template wanted but the target didn't supply (stripped, not left raw). */
+  missingVars: ReplyTemplateVar[];
+  /** Which jitters fired, e.g. `['prefix', 'typo:swap']`. */
+  applied: string[];
+}
+
+export interface GenerateItemsBody {
+  prompt: string;
+  /** 1..30 — refused, not clamped, past the cap. */
+  count?: number;
+  model?: string;
+  provider?: LlmProvider;
+}
+
+/** Proposal only — nothing is persisted until the panel applies it via setItems. */
+export interface GenerateItemsResponse {
+  items: { text: string }[];
+  count: number;
+  requested: number;
+  model: string;
+  costUsd: number;
+  requestId?: string;
+}
