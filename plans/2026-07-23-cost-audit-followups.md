@@ -1,6 +1,6 @@
 # Cost-Audit Follow-ups (CA) — mention inbox completeness + honest cost ledger
 
-- **Status:** planned 2026-07-23 · not started · **URGENT — jump the queue; both land before the next 03:00 UTC pass. Do CA.1 and CA.2 in one session if budget allows; they touch disjoint files.**
+- **Status:** planned 2026-07-23 · **CA.1 ✓ + CA.2 step 1 ✓ shipped & deployed 2026-07-23** · CA.2 step 2 pending the confirm/refute off the next 03:00 UTC passes (grep prod journal for `[cost-audit]`).
 - **Source:** the 2026-07-23 cost audit (this session). The console showed X spend climbing from ~$0.12/day to ~$0.30/day starting Jul 18. Root cause was benign — reply volume 10×'d (8→90 manual replies/day from Jul 17), and the daily pass scales linearly. **Fix 1 (discovery pull = snapshot, killing the per-tweet double-read) and fix 2 (replies out of the winner re-read) already shipped in the same session** — see `docs/PHASE-HISTORY.md`. This plan is the two findings that were deliberately deferred: one data-loss bug, one measurement bug.
 - **Goal fit:** goal 2 (tracking). CA.1 keeps the mention inbox from silently dropping mentions; CA.2 makes `/cost/today` and `/cost/daily` trustworthy again so the next spend surprise is caught by our own numbers, not the X console.
 - **Cost impact:** **CA.1 is $0** (`since_id` already caps the pull; paging past 50 only bills mentions that actually exist, which we would pay for the next day regardless — it pulls the spend forward one day, it does not add spend, and the 800-mention hard cap bounds it). **CA.2 is $0** (it only changes how we *count* reads we already make). Neither adds a recurring call.
@@ -33,11 +33,11 @@
 
 ## Done when
 
-- [ ] On a simulated >50-mention day (fixture or `--live`), `pullMentions` inserts every mention above the prior `since_id`, not just the first 50, and advances the checkpoint to the true max only after the insert commits.
-- [ ] `getUserMentions` per-request `max_results` is unchanged (still clamped); the completeness comes from pagination, verified by a test that counts pages vs `max_results`.
-- [ ] A 03:00 pass logs `includes.tweets`/`includes.users` counts alongside `data.length` for the discovery/snapshot reads (CA.2 step 1), and the audit's console-vs-ledger gap is either confirmed or refuted in a one-line note in `docs/PHASE-HISTORY.md`.
+- [x] On a simulated >50-mention day (fixture or `--live`), `pullMentions` inserts every mention above the prior `since_id`, not just the first 50, and advances the checkpoint to the true max only after the insert commits. *(2026-07-23 — `src/x/mentions.test.ts`: 120-mention 3-page fixture, all inserted, checkpoint = true max.)*
+- [x] `getUserMentions` per-request `max_results` is unchanged (still clamped); the completeness comes from pagination, verified by a test that counts pages vs `max_results`. *(2026-07-23 — 3 requests, each `max_results=50`.)*
+- [ ] A 03:00 pass logs `includes.tweets`/`includes.users` counts alongside `data.length` for the discovery/snapshot reads (CA.2 step 1), and the audit's console-vs-ledger gap is either confirmed or refuted in a one-line note in `docs/PHASE-HISTORY.md`. *(Instrumentation shipped + deployed 2026-07-23; awaiting the next 03:00 UTC passes — `journalctl -u stratus | grep cost-audit`.)*
 - [ ] If confirmed: the fix lands (drop `referenced_tweets.id` from the metrics-read expansions, or bill `includes`), `/cost/today` for the next pass matches the X console within rounding, and no consumer of `in_reply_to_tweet_id` regresses (`bun run test` green).
-- [ ] `bun run test` + `bun run typecheck` + `bun run lint` green; no migration, no route, no extension build needed.
+- [x] `bun run test` + `bun run typecheck` + `bun run lint` green; no migration, no route, no extension build needed. *(1228/0, typecheck + lint clean, smoke-mentions $0 pass OK.)*
 
 ---
 
