@@ -153,6 +153,8 @@ import {
   type SettingsResponse,
   type ThreadDraftBody,
   type ThreadDraftResponse,
+  type TimelineAffinityAuthor,
+  type TimelineAffinityResponse,
   type TopComment,
   type UpdateBody,
   type UseReplyBody,
@@ -314,6 +316,8 @@ export type {
   SettingsResponse,
   ThreadDraftBody,
   ThreadDraftResponse,
+  TimelineAffinityAuthor,
+  TimelineAffinityResponse,
   TopComment,
   UpdateBody,
   VoiceAuthor,
@@ -693,6 +697,20 @@ export const api = {
     runs(s: Settings, opts: { limit?: number } = {}): Promise<HarvestRun[]> {
       const qs = opts.limit === undefined ? '' : `?limit=${opts.limit}`;
       return request<HarvestRun[]>(s, `/x/harvest/runs${qs}`);
+    },
+
+    // HV.4 — read-time roster over the ambient corpus. $0, no params needed:
+    // the server's defaults (30d / 20 / ≥3 days) are the surface's contract.
+    affinity(
+      s: Settings,
+      opts: { days?: number; limit?: number; minDays?: number } = {},
+    ): Promise<TimelineAffinityResponse> {
+      const q = new URLSearchParams();
+      if (opts.days !== undefined) q.set('days', String(opts.days));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.minDays !== undefined) q.set('minDays', String(opts.minDays));
+      const qs = q.toString();
+      return request<TimelineAffinityResponse>(s, `/x/harvest/affinity${qs ? `?${qs}` : ''}`);
     },
   },
 

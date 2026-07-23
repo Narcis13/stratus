@@ -660,6 +660,26 @@ export interface HarvestRun {
   createdAt: string;
 }
 
+// HV.4 `GET /x/harvest/affinity` — who the algorithm keeps feeding the home
+// timeline, over the mode='timeline' corpus only. `inRoster` is true when the
+// handle already has a people or voice_authors row (retired ones included):
+// what's left with `inRoster: false` is the discovery worth a dossier.
+export interface TimelineAffinityAuthor {
+  handle: string;
+  distinctDays: number;
+  sightings: number;
+  lastSeenAt: string;
+  avgViews: number;
+  stage: PersonStage | null;
+  inRoster: boolean;
+}
+
+export interface TimelineAffinityResponse {
+  days: number;
+  minDays: number;
+  authors: TimelineAffinityAuthor[];
+}
+
 // --------------------------------------------------------------- replies
 
 export type ReplyDraftStatus = 'generated' | 'copied' | 'posted' | 'discarded';

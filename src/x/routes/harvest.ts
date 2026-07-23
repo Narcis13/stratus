@@ -7,6 +7,7 @@
 //   POST /harvest/rows     { runId, rows: [...] }     batched insert (≤500/call)
 //   POST /harvest/passive  { rows: [...] }            ambient timeline ingest (≤100/call)
 //   GET  /harvest/runs     ?limit=                    recent runs, newest first
+//   GET  /harvest/affinity ?days=&limit=&minDays=     who the algorithm keeps showing me
 //
 // Repeated harvests of the same tweet create new rows on purpose — that is the
 // longitudinal curve. Replies-mode batches also reconcile against reply_drafts:
@@ -21,10 +22,11 @@
 // (POST /harvest/runs still rejects the mode). Band is never stored: it stays
 // recomputable from views/comments/tweetTime/capturedAt/text (§7.12).
 
-import { and, desc, eq, gt, gte, inArray, isNull, lt } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { harvestRows, harvestRuns, replyDrafts } from '../db/schema.ts';
+import { harvestRows, harvestRuns, people, replyDrafts, voiceAuthors } from '../db/schema.ts';
+import type { Stage } from '../people/stage.ts';
 import {
   type PersonEventInput,
   normalizePersonHandle,
@@ -54,6 +56,16 @@ const MAX_PASSIVE_BATCH = 100;
 const PASSIVE_DAILY_CAP = 2000;
 const PASSIVE_RECAPTURE_MS = 30 * 60 * 1000;
 const PASSIVE_RETENTION_DAYS = 60;
+
+// Timeline affinity (HV.4). `minDays` is the noise floor: one day of scrolling
+// past someone means nothing, three separate days is the algorithm insisting.
+// Another opening guess — revisit with the other four.
+const DEFAULT_AFFINITY_DAYS = 30;
+const MIN_AFFINITY_DAYS = 7;
+const MAX_AFFINITY_DAYS = 90;
+const DEFAULT_AFFINITY_LIMIT = 20;
+const MAX_AFFINITY_LIMIT = 50;
+const DEFAULT_AFFINITY_MIN_DAYS = 3;
 
 // Fallback-match sanity window: the harvested reply must have been posted
 // after its draft was generated (small slack for clock skew) and within a week
@@ -356,6 +368,103 @@ harvest.get('/harvest/runs', async (c) => {
   return c.json(runs);
 });
 
+// ---------------------------------------------------------------- affinity
+
+export interface AffinityAuthor {
+  handle: string;
+  distinctDays: number;
+  sightings: number;
+  lastSeenAt: string;
+  avgViews: number;
+  stage: Stage | null;
+  inRoster: boolean;
+}
+
+// Who the algorithm keeps putting in front of me (HV.4). Read-time SQL over the
+// ambient corpus only — mode='timeline' is the ONLY discriminator between it and
+// the user's hand-run harvests, so every reader here must carry that filter.
+// $0: nothing on this path can reach xFetch.
+//
+// Ranked by distinct days rather than raw sightings on purpose: one viral thread
+// re-scrolled twenty times in an afternoon is not affinity, being fed the same
+// author on four separate days is. `inRoster` is what makes the list actionable
+// — it flags the handles stratus already knows, so what's left is the discovery.
+harvest.get('/harvest/affinity', async (c) => {
+  const days = intParam(
+    c.req.query('days'),
+    DEFAULT_AFFINITY_DAYS,
+    MIN_AFFINITY_DAYS,
+    MAX_AFFINITY_DAYS,
+  );
+  if (days === null) return c.json({ error: 'invalid_days' }, 400);
+
+  const limit = intParam(c.req.query('limit'), DEFAULT_AFFINITY_LIMIT, 1, MAX_AFFINITY_LIMIT);
+  if (limit === null) return c.json({ error: 'invalid_limit' }, 400);
+
+  // No upper clamp worth having: a floor longer than the longest window is
+  // simply unsatisfiable and answers with an empty roster.
+  const minDays = intParam(c.req.query('minDays'), DEFAULT_AFFINITY_MIN_DAYS, 1, MAX_AFFINITY_DAYS);
+  if (minDays === null) return c.json({ error: 'invalid_min_days' }, 400);
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // UTC days, matching the run boundary (utcDayStart) and the panel's
+  // passiveRowsToday — a local-midnight bucket would disagree for hours a day.
+  const distinctDays = sql<number>`count(distinct strftime('%Y-%m-%d', ${harvestRows.capturedAt} / 1000, 'unixepoch'))`;
+  const sightings = sql<number>`count(*)`;
+
+  const rows = await db
+    .select({
+      handle: harvestRows.handle,
+      distinctDays,
+      sightings,
+      lastSeenAt: sql<number>`max(${harvestRows.capturedAt})`,
+      avgViews: sql<number>`avg(${harvestRows.views})`,
+    })
+    .from(harvestRows)
+    .where(and(eq(harvestRows.mode, PASSIVE_MODE), gte(harvestRows.capturedAt, since)))
+    .groupBy(harvestRows.handle)
+    .having(gte(distinctDays, minDays))
+    .orderBy(desc(distinctDays), desc(sightings))
+    .limit(limit);
+
+  if (rows.length === 0) return c.json({ days, minDays, authors: [] });
+
+  // Handles are lowercased on every side (parseIngestRow, normalizePersonHandle,
+  // the voice scrape), so these join without a lower() wrapper.
+  const handles = rows.map((r) => r.handle);
+  const [personRows, voiceRows] = await Promise.all([
+    db
+      .select({ handle: people.handle, stage: people.stage, retired: people.retired })
+      .from(people)
+      .where(inArray(people.handle, handles)),
+    db
+      .select({ handle: voiceAuthors.handle })
+      .from(voiceAuthors)
+      .where(inArray(voiceAuthors.handle, handles)),
+  ]);
+
+  const personByHandle = new Map(personRows.map((p) => [p.handle, p]));
+  const voiceHandles = new Set(voiceRows.map((v) => v.handle));
+
+  const authors: AffinityAuthor[] = rows.map((r) => {
+    const person = personByHandle.get(r.handle);
+    return {
+      handle: r.handle,
+      distinctDays: Number(r.distinctDays),
+      sightings: Number(r.sightings),
+      lastSeenAt: new Date(Number(r.lastSeenAt)).toISOString(),
+      avgViews: Math.round(Number(r.avgViews)),
+      // A retired person has no current stage — but they ARE known, so they
+      // still read as in-roster and never get nagged as a fresh candidate.
+      stage: person && !person.retired ? (person.stage as Stage) : null,
+      inRoster: person !== undefined || voiceHandles.has(r.handle),
+    };
+  });
+
+  return c.json({ days, minDays, authors });
+});
+
 // ----------------------------------------------------------------- passive
 
 // Exported for unit tests (pure).
@@ -592,6 +701,22 @@ function isMode(v: unknown): v is Mode {
 
 function isScope(v: unknown): v is Scope {
   return typeof v === 'string' && (SCOPES as readonly string[]).includes(v);
+}
+
+// Query-param integers, the `GET /harvest/runs` limit rule generalized: absent →
+// the default, out of range → clamped, anything that isn't a positive integer →
+// null so the caller can 400 with its own code (a typo'd param must not silently
+// read as "the default").
+function intParam(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number | null {
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return Math.min(max, Math.max(min, n));
 }
 
 function normalizeHandle(value: unknown): string | null {

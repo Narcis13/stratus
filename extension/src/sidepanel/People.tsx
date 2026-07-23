@@ -14,9 +14,12 @@ import {
   type PersonEvent,
   type PersonListItem,
   type PersonStage,
+  type TimelineAffinityAuthor,
   api,
 } from './api.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 const STAGES: PersonStage[] = ['ally', 'mutual', 'responded', 'engaged', 'noticed', 'stranger'];
 
@@ -96,6 +99,7 @@ export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.E
         <>
           <PassiveCaptureNote />
           <PeopleList settings={settings} onOpen={setSelected} />
+          <TimelineAffinity settings={settings} onOpen={setSelected} />
         </>
       )}
     </div>
@@ -213,6 +217,104 @@ function PeopleList({
         </section>
       ))}
     </>
+  );
+}
+
+// ------------------------------------------------------------- affinity
+
+// HV.4: the people the algorithm keeps feeding the home timeline, out of the
+// passive harvest corpus. Collapsed and unfetched until asked — the roster above
+// is what the tab is for; this is the "who am I not tracking yet?" drawer.
+// Everything here is $0 read-time SQL, so a refresh costs nothing but a request.
+function TimelineAffinity({
+  settings,
+  onOpen,
+}: {
+  settings: Settings;
+  onOpen: (handle: string) => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [authors, setAuthors] = useState<TimelineAffinityAuthor[] | null>(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.harvest.affinity(settings);
+      setAuthors(res.authors);
+      setDays(res.days);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to load affinity');
+    } finally {
+      setLoading(false);
+    }
+  }, [settings]);
+
+  const toggle = (): void => {
+    const next = !open;
+    setOpen(next);
+    if (next && authors === null && !loading) void load();
+  };
+
+  return (
+    <Section
+      title="Timeline affinity"
+      actions={
+        <>
+          {open && (
+            <button type="button" onClick={() => void load()} disabled={loading}>
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+          )}
+          <button type="button" onClick={toggle}>
+            {open ? 'Hide' : 'Show'}
+          </button>
+        </>
+      }
+    >
+      {open && (
+        <>
+          {error && <div className="error">{error}</div>}
+
+          {authors !== null && authors.length === 0 && !error && (
+            <EmptyState
+              line="Nobody has shown up often enough yet."
+              hint={`Authors need at least 3 separate days in the last ${days} — keep scrolling x.com/home with passive capture on.`}
+            />
+          )}
+
+          {authors !== null && authors.length > 0 && (
+            <ul className="people-list">
+              {authors.map((a) => (
+                <li key={a.handle} className="people-row">
+                  <button
+                    type="button"
+                    className="people-row-main"
+                    onClick={() => onOpen(a.handle)}
+                  >
+                    <span className="people-name">
+                      <span className="people-handle">@{a.handle}</span>{' '}
+                      {a.stage ? (
+                        <span className={`stage-chip stage-${a.stage}`}>{a.stage}</span>
+                      ) : (
+                        !a.inRoster && <span className="people-ago">Start their file →</span>
+                      )}
+                    </span>
+                    <span className="people-counts">
+                      {a.distinctDays}d · {a.sightings}× · {a.avgViews.toLocaleString()} views
+                      <span className="people-ago"> · {fmtAgo(a.lastSeenAt)}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+    </Section>
   );
 }
 

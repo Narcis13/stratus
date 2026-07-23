@@ -3,18 +3,27 @@
 // The prune must never reach a hand-run harvest, so a `posts`-mode run of the
 // same age is seeded beside the stale timeline one and asserted intact.
 
-import { afterAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { harvestRows, harvestRuns } from '../db/schema.ts';
-import { harvest, utcDayStart } from './harvest.ts';
+import { harvestRows, harvestRuns, people, voiceAuthors } from '../db/schema.ts';
+import { type AffinityAuthor, harvest, utcDayStart } from './harvest.ts';
 
 const app = new Hono();
 app.route('/x', harvest);
 
 const AUTHOR = 'hv1_author';
 const KEEP_HANDLE = 'hv1_keep';
+
+// HV.4 affinity seeds — one handle per case the roster has to get right.
+const MULTI = 'hv4_multi';
+const SINGLE = 'hv4_single';
+const ROSTER = 'hv4_roster';
+const VOICE = 'hv4_voice';
+const RETIRED = 'hv4_retired';
+const OLD = 'hv4_old';
+const HAND = 'hv4_hand';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAILY_CAP = 2000;
 
@@ -68,6 +77,9 @@ afterAll(async () => {
     await db.delete(harvestRows).where(inArray(harvestRows.runId, ids));
     await db.delete(harvestRuns).where(inArray(harvestRuns.id, ids));
   }
+  // Shared in-memory DB (§9): the affinity seeds live in tables other suites read.
+  await db.delete(people).where(inArray(people.handle, [ROSTER, RETIRED]));
+  await db.delete(voiceAuthors).where(eq(voiceAuthors.handle, VOICE));
 });
 
 describe('utcDayStart', () => {
@@ -241,5 +253,159 @@ describe('POST /x/harvest/runs', () => {
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_mode');
+  });
+});
+
+// HV.4. Seeded directly (not through the ingest) so capturedAt can span days:
+// distinct UTC days are the ranking signal and the noise floor, and both need a
+// history the 30-minute recapture gate would never let one request build.
+describe('GET /x/harvest/affinity', () => {
+  let seedRunId = '';
+  let nextTweetId = 78000000;
+
+  async function seed(handle: string, dayOffsets: number[], views = 1000): Promise<void> {
+    await db.insert(harvestRows).values(
+      dayOffsets.map((d) => ({
+        runId: seedRunId,
+        tweetId: String(nextTweetId++),
+        handle,
+        mode: 'timeline',
+        text: 'affinity seed',
+        views,
+        capturedAt: new Date(Date.now() - d * DAY_MS),
+      })),
+    );
+  }
+
+  interface AffinityBody {
+    days: number;
+    minDays: number;
+    authors: AffinityAuthor[];
+  }
+
+  async function get(qs = ''): Promise<{ status: number; body: AffinityBody }> {
+    const res = await app.request(`/x/harvest/affinity${qs}`);
+    return { status: res.status, body: (await res.json()) as AffinityBody };
+  }
+
+  const find = (b: AffinityBody, handle: string): AffinityAuthor | undefined =>
+    b.authors.find((a) => a.handle === handle);
+  const rank = (b: AffinityBody, handle: string): number =>
+    b.authors.findIndex((a) => a.handle === handle);
+
+  beforeAll(async () => {
+    // Its own run, created NOW — the rows are backdated, the run is not, so the
+    // 60-day prune on the passive path can never take these out from under us.
+    const [run] = await db
+      .insert(harvestRuns)
+      .values({ handle: 'timeline', mode: 'timeline', scope: 'passive' })
+      .returning();
+    seedRunId = run?.id ?? '';
+
+    await seed(MULTI, [1, 2, 3, 4]);
+    await seed(SINGLE, [1, 1]);
+    await seed(ROSTER, [1, 1, 2, 3, 3]);
+    // Same 3 days as ROSTER but fewer sightings — the tiebreak under test. The
+    // fourth row is a different view count so avgViews is not just `views`.
+    await seed(VOICE, [1, 2, 3], 100);
+    await seed(VOICE, [1], 500);
+    await seed(RETIRED, [1, 2, 3]);
+    await seed(OLD, [40, 41, 42]);
+
+    await db.insert(people).values([
+      { handle: ROSTER, stage: 'engaged', source: 'manual' },
+      { handle: RETIRED, stage: 'mutual', source: 'manual', retired: true },
+    ]);
+    await db.insert(voiceAuthors).values({ handle: VOICE });
+  });
+
+  test('ranks by distinct days, then sightings, and floors the noise', async () => {
+    const { status, body } = await get();
+    expect(status).toBe(200);
+    expect(body.days).toBe(30);
+    expect(body.minDays).toBe(3);
+
+    // 4 distinct days beats 3; the two 3-day authors break the tie on sightings.
+    expect(rank(body, MULTI)).toBeLessThan(rank(body, ROSTER));
+    expect(rank(body, ROSTER)).toBeLessThan(rank(body, VOICE));
+    expect(find(body, SINGLE)).toBeUndefined();
+
+    const multi = find(body, MULTI);
+    expect(multi?.distinctDays).toBe(4);
+    expect(multi?.sightings).toBe(4);
+    expect(new Date(multi?.lastSeenAt ?? 0).getTime()).toBeGreaterThan(Date.now() - 2 * DAY_MS);
+
+    const roster = find(body, ROSTER);
+    expect(roster?.distinctDays).toBe(3);
+    expect(roster?.sightings).toBe(5);
+  });
+
+  test('joins stage and roster membership; a retired person is known, not a candidate', async () => {
+    const { body } = await get();
+
+    expect(find(body, ROSTER)?.stage).toBe('engaged');
+    expect(find(body, ROSTER)?.inRoster).toBe(true);
+
+    // Voice-only: worth flagging as known, but there is no relationship stage.
+    expect(find(body, VOICE)?.stage).toBeNull();
+    expect(find(body, VOICE)?.inRoster).toBe(true);
+    expect(find(body, VOICE)?.avgViews).toBe(200); // (100+100+100+500)/4
+
+    expect(find(body, RETIRED)?.stage).toBeNull();
+    expect(find(body, RETIRED)?.inRoster).toBe(true);
+
+    // The whole point of the surface: someone the algorithm pushes who has no file.
+    expect(find(body, MULTI)?.stage).toBeNull();
+    expect(find(body, MULTI)?.inRoster).toBe(false);
+  });
+
+  test('honours the window, the floor and the limit', async () => {
+    const dflt = await get();
+    expect(find(dflt.body, OLD)).toBeUndefined();
+
+    const wide = await get('?days=90');
+    expect(wide.body.days).toBe(90);
+    expect(find(wide.body, OLD)?.distinctDays).toBe(3);
+
+    const floored = await get('?minDays=1');
+    expect(floored.body.minDays).toBe(1);
+    expect(find(floored.body, SINGLE)?.sightings).toBe(2);
+
+    const capped = await get('?limit=1');
+    expect(capped.body.authors.length).toBe(1);
+
+    // Out of range clamps rather than 400s (the runs-limit rule).
+    expect((await get('?days=1')).body.days).toBe(7);
+    expect((await get('?limit=999')).body.authors.length).toBeLessThanOrEqual(50);
+  });
+
+  test('refuses params that are not positive integers', async () => {
+    for (const [qs, error] of [
+      ['?days=0', 'invalid_days'],
+      ['?days=abc', 'invalid_days'],
+      ['?days=1.5', 'invalid_days'],
+      ['?limit=0', 'invalid_limit'],
+      ['?minDays=0', 'invalid_min_days'],
+    ] as const) {
+      const res = await app.request(`/x/harvest/affinity${qs}`);
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toBe(error);
+    }
+  });
+
+  test('never mixes hand-run harvests into the ambient corpus', async () => {
+    await db.insert(harvestRows).values(
+      [1, 2, 3].map((d) => ({
+        runId: keepRunId,
+        tweetId: String(nextTweetId++),
+        handle: HAND,
+        mode: 'posts',
+        text: 'hand-run harvest',
+        views: 500,
+        capturedAt: new Date(Date.now() - d * DAY_MS),
+      })),
+    );
+
+    expect(find((await get('?minDays=1')).body, HAND)).toBeUndefined();
   });
 });
