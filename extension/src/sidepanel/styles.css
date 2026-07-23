@@ -2077,6 +2077,45 @@ button.danger:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+/* following curation (Guardrails §A) — one row per person to unfollow by hand */
+.following-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.following-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.following-handle {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.following-handle:hover {
+  text-decoration: underline;
+}
+
+/* pushes the ticks to the right edge; the age is the ranking reason, so it
+   stays next to them rather than next to the handle */
+.following-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.following-mutual {
+  color: var(--ok);
+  font-size: 11px;
+}
+
 /* playbook (C4) */
 .pb-table {
   width: 100%;

@@ -1414,6 +1414,69 @@ export interface FansResponse {
   fans: FanItem[];
 }
 
+// ------------------------------------------- following ledger (Guardrails §A)
+
+// The $0 following ledger (src/x/routes/following.ts). Rows arrive from the
+// extension's own /following scrape — no X API anywhere — and unfollowing stays
+// a manual act in the X app, so `status` is a ratchet the user and the scrape
+// advance together, never an action this client performs.
+export type FollowingStatus = 'active' | 'queued' | 'done' | 'confirmed' | 'gone';
+
+export interface FollowingRow {
+  handle: string;
+  displayName: string | null;
+  followsBack: boolean;
+  listPosition: number | null;
+  /** The follow-date proxy (§7.11) — X never exposes the real one. */
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastRunId: string;
+  status: FollowingStatus;
+  keep: boolean;
+  unfollowMarkedAt: string | null;
+}
+
+export interface FollowingListOpts {
+  status?: FollowingStatus;
+  q?: string;
+  limit?: number;
+}
+
+export interface FollowingListResponse {
+  count: number;
+  total: number;
+  lastCompleteRunAt: string | null;
+  following: FollowingRow[];
+}
+
+export interface FollowingQueueItem {
+  handle: string;
+  displayName: string | null;
+  firstSeenAt: string;
+  url: string;
+}
+
+// GET /x/following/queue. `eligibleTotal` is the whole backlog (already-released
+// rows included), not just what's left to release; window/daily counters are the
+// cadence caps the server enforces (15–18 per 6h, 40/day).
+export interface FollowingQueueResponse {
+  batch: FollowingQueueItem[];
+  eligibleTotal: number;
+  releasedNow: number;
+  windowUsed: number;
+  windowCap: number;
+  dailyUsed: number;
+  dailyCeiling: number;
+  lastCompleteRunAt: string | null;
+}
+
+/** `status: 'done'` is the only status a client may set, and only out of
+ *  `queued`; `keep` is an independent pin that moves no status. */
+export interface FollowingPatchBody {
+  status?: 'done';
+  keep?: boolean;
+}
+
 // ---------------------------------------------------------------- playbook (C4)
 
 // GET /x/playbook (src/x/routes/playbook.ts): the measured playbook. Every

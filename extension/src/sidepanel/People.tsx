@@ -9,6 +9,10 @@ import { ChannelTagPicker } from './ChannelTags.tsx';
 import { IcebreakerBox } from './Icebreakers.tsx';
 import {
   ApiError,
+  type FollowingPatchBody,
+  type FollowingQueueResponse,
+  type FollowingRow,
+  type FollowingStatus,
   type PersonAngleCell,
   type PersonDossier,
   type PersonEvent,
@@ -20,6 +24,7 @@ import {
 import type { Settings } from './storage.ts';
 import { EmptyState } from './ui/EmptyState.tsx';
 import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 const STAGES: PersonStage[] = ['ally', 'mutual', 'responded', 'engaged', 'noticed', 'stranger'];
 
@@ -79,8 +84,16 @@ function PassiveCaptureNote(): JSX.Element | null {
   );
 }
 
+type PeopleView = 'roster' | 'following';
+
+const PEOPLE_SUBTABS: SubTab<PeopleView>[] = [
+  { id: 'roster', label: 'Roster' },
+  { id: 'following', label: 'Following' },
+];
+
 export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.Element {
   const [selected, setSelected] = useState<string | null>(openHandle);
+  const [view, setView] = useState<PeopleView>('roster');
 
   useEffect(() => {
     if (openHandle) setSelected(openHandle);
@@ -97,9 +110,16 @@ export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.E
         <DossierView settings={settings} handle={selected} onBack={back} />
       ) : (
         <>
-          <PassiveCaptureNote />
-          <PeopleList settings={settings} onOpen={setSelected} />
-          <TimelineAffinity settings={settings} onOpen={setSelected} />
+          <SubTabs tabs={PEOPLE_SUBTABS} active={view} onSelect={setView} />
+          {view === 'roster' ? (
+            <>
+              <PassiveCaptureNote />
+              <PeopleList settings={settings} onOpen={setSelected} />
+              <TimelineAffinity settings={settings} onOpen={setSelected} />
+            </>
+          ) : (
+            <FollowingView settings={settings} onOpen={setSelected} />
+          )}
         </>
       )}
     </div>
@@ -311,6 +331,325 @@ function TimelineAffinity({
                 </li>
               ))}
             </ul>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// -------------------------------------------------------------- following
+
+// GR.4 — the curation half of the people layer. Everything here is $0 and
+// nothing here unfollows anybody: the batch is a nudge list, the user unfollows
+// in the X app, ticks the row, and the next complete /following scrape confirms
+// it. The caps (15–18 per 6h, 40/day) are enforced server-side; this view only
+// reports them, so there is no client-side clamp to keep in sync.
+//
+// Worth knowing before touching the reload logic: GET /following/queue is what
+// RELEASES rows into the batch, so every load is also a write. It is idempotent
+// (tops the batch up to the budget rather than stacking), which is why reloading
+// after each PATCH is the whole state management here.
+const STALE_SYNC_MS = 7 * 24 * 60 * 60 * 1000;
+
+const LEDGER_STATUSES: FollowingStatus[] = ['active', 'queued', 'done', 'confirmed', 'gone'];
+const LEDGER_LIMIT = 200;
+
+function FollowingView({
+  settings,
+  onOpen,
+}: {
+  settings: Settings;
+  onOpen: (handle: string) => void;
+}): JSX.Element {
+  const [queue, setQueue] = useState<FollowingQueueResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setQueue(await api.following.queue(settings));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to load the unfollow queue');
+    } finally {
+      setLoading(false);
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const patch = useCallback(
+    async (handle: string, body: FollowingPatchBody): Promise<void> => {
+      setBusy(handle);
+      setError(null);
+      try {
+        await api.following.patch(settings, handle, body);
+        await load();
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Update failed');
+      } finally {
+        setBusy(null);
+      }
+    },
+    [settings, load],
+  );
+
+  const lastSync = queue?.lastCompleteRunAt ?? null;
+  const stale = lastSync === null || Date.now() - Date.parse(lastSync) > STALE_SYNC_MS;
+
+  return (
+    <>
+      <div className="panel-header">
+        <h2>Unfollow queue{queue && queue.batch.length > 0 && ` (${queue.batch.length})`}</h2>
+        <button type="button" onClick={() => void load()} disabled={loading}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      {queue && (
+        <>
+          <div className={stale ? 'warn' : 'status-line'}>
+            {lastSync === null
+              ? 'No complete following sync yet.'
+              : `Last complete sync ${fmtAgo(lastSync)}.`}
+            {stale && (
+              <>
+                {' '}
+                Open your own <code>x.com/&lt;you&gt;/following</code> page and run a Following
+                harvest from the Harvest tab — this list is only as good as the last full scroll.
+              </>
+            )}
+          </div>
+
+          <div className="status-line">
+            Unfollowed{' '}
+            <strong>
+              {queue.windowUsed}/{queue.windowCap}
+            </strong>{' '}
+            this 6h window ·{' '}
+            <strong>
+              {queue.dailyUsed}/{queue.dailyCeiling}
+            </strong>{' '}
+            today · {queue.eligibleTotal} eligible in total
+          </div>
+
+          {queue.batch.length === 0 ? (
+            <EmptyState
+              line={
+                queue.eligibleTotal > 0
+                  ? `Cap reached — ${queue.eligibleTotal} still waiting.`
+                  : 'Nobody to unfollow right now.'
+              }
+              hint={
+                queue.eligibleTotal > 0
+                  ? 'Releases are capped at 15–18 per 6 hours and 40 a day so the churn never looks automated. Come back later.'
+                  : 'Everyone you follow either follows back, is a mutual/ally/target, is kept, or was first seen less than 7 days ago.'
+              }
+            />
+          ) : (
+            <ul className="following-list">
+              {queue.batch.map((r) => (
+                <li key={r.handle} className="following-row">
+                  <a
+                    className="following-handle"
+                    href={r.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Open their profile on X — unfollow there, then tick the row"
+                  >
+                    @{r.handle} ↗
+                  </a>
+                  {r.displayName && <span className="muted">{r.displayName}</span>}
+                  <button
+                    type="button"
+                    className="person-link"
+                    title="Open their dossier"
+                    onClick={() => onOpen(r.handle)}
+                  >
+                    file
+                  </button>
+                  <span className="following-meta">first seen {fmtAgo(r.firstSeenAt)}</span>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void patch(r.handle, { status: 'done' })}
+                  >
+                    unfollowed ✓
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    title="Pin them — never suggest this person again"
+                    onClick={() => void patch(r.handle, { keep: true })}
+                  >
+                    keep
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      <FollowingLedger settings={settings} onOpen={onOpen} onChanged={() => void load()} />
+    </>
+  );
+}
+
+// The whole ledger, searchable — including the rows the queue will never offer
+// (mutuals, kept pins, already-gone accounts). Collapsed and unfetched until
+// asked: the batch above is what the tab is for. This is also the only way back
+// from a `keep` pin, so the toggle is two-way here.
+function FollowingLedger({
+  settings,
+  onOpen,
+  onChanged,
+}: {
+  settings: Settings;
+  onOpen: (handle: string) => void;
+  onChanged: () => void;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<FollowingRow[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [q, setQ] = useState('');
+  const [status, setStatus] = useState<FollowingStatus | ''>('');
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.following.list(settings, {
+        ...(q.trim() ? { q: q.trim() } : {}),
+        ...(status ? { status } : {}),
+        limit: LEDGER_LIMIT,
+      });
+      setRows(res.following);
+      setTotal(res.total);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Failed to load the ledger');
+    } finally {
+      setLoading(false);
+    }
+  }, [settings, q, status]);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => void load(), q ? 250 : 0);
+    return () => window.clearTimeout(t);
+  }, [open, load, q]);
+
+  const toggleKeep = async (row: FollowingRow): Promise<void> => {
+    setBusy(row.handle);
+    setError(null);
+    try {
+      await api.following.patch(settings, row.handle, { keep: !row.keep });
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Update failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Section
+      title="Ledger"
+      actions={
+        <>
+          {open && (
+            <button type="button" onClick={() => void load()} disabled={loading}>
+              {loading ? 'Loading…' : 'Refresh'}
+            </button>
+          )}
+          <button type="button" onClick={() => setOpen(!open)}>
+            {open ? 'Hide' : 'Show'}
+          </button>
+        </>
+      }
+    >
+      {open && (
+        <>
+          <input
+            className="people-search"
+            type="search"
+            placeholder="Search handle or name…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+
+          <div className="radar-tabs people-stage-filter">
+            <button
+              type="button"
+              className={`radar-tab${status === '' ? ' active' : ''}`}
+              onClick={() => setStatus('')}
+            >
+              All
+            </button>
+            {LEDGER_STATUSES.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`radar-tab${status === s ? ' active' : ''}`}
+                onClick={() => setStatus(status === s ? '' : s)}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+
+          {error && <div className="error">{error}</div>}
+
+          {rows !== null && rows.length === 0 && !error && (
+            <EmptyState
+              line="No rows match."
+              hint="The ledger fills from a Following harvest — nothing is read from the X API."
+            />
+          )}
+
+          {rows !== null && rows.length > 0 && (
+            <>
+              <ul className="following-list">
+                {rows.map((r) => (
+                  <li key={r.handle} className="following-row">
+                    <button
+                      type="button"
+                      className="person-link"
+                      title="Open their dossier"
+                      onClick={() => onOpen(r.handle)}
+                    >
+                      @{r.handle}
+                    </button>
+                    <span className="stage-chip">{r.status}</span>
+                    {r.followsBack && <span className="following-mutual">follows back</span>}
+                    <span className="following-meta">first seen {fmtAgo(r.firstSeenAt)}</span>
+                    <button
+                      type="button"
+                      disabled={busy !== null}
+                      title={r.keep ? 'Stop pinning — they can be queued again' : 'Never suggest'}
+                      onClick={() => void toggleKeep(r)}
+                    >
+                      {r.keep ? 'kept ✓' : 'keep'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <div className="status-line">
+                {rows.length} of {total} rows
+                {rows.length < total && ' — narrow the search to see the rest'}
+              </div>
+            </>
           )}
         </>
       )}

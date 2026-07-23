@@ -39,6 +39,13 @@ import {
   type DigestResponse,
   type FanItem,
   type FansResponse,
+  type FollowingListOpts,
+  type FollowingListResponse,
+  type FollowingPatchBody,
+  type FollowingQueueItem,
+  type FollowingQueueResponse,
+  type FollowingRow,
+  type FollowingStatus,
   type FollowupItem,
   type FollowupKind,
   type FollowupSnoozeBody,
@@ -217,6 +224,13 @@ export type {
   CreateThreadResponse,
   FanItem,
   FansResponse,
+  FollowingListOpts,
+  FollowingListResponse,
+  FollowingPatchBody,
+  FollowingQueueItem,
+  FollowingQueueResponse,
+  FollowingRow,
+  FollowingStatus,
   FollowupItem,
   FollowupKind,
   FollowupSnoozeBody,
@@ -902,6 +916,35 @@ export const api = {
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
       return request<FansResponse>(s, `/x/people/fans${qs ? `?${qs}` : ''}`);
+    },
+  },
+
+  // Guardrails §A — the $0 following ledger and its capped unfollow queue.
+  // Nothing here unfollows anybody: `queue` nudges, `patch` records what the
+  // user did by hand in the X app, and the next complete scrape confirms it.
+  following: {
+    // Reading the queue is also what RELEASES rows into it (server-side, at read
+    // time), so a reload IS the release call. It tops the batch up to the
+    // cadence budget rather than stacking on it, so re-reading is free of
+    // consequence — but it is a write, not a pure view.
+    queue(s: Settings): Promise<FollowingQueueResponse> {
+      return request<FollowingQueueResponse>(s, '/x/following/queue');
+    },
+
+    list(s: Settings, opts: FollowingListOpts = {}): Promise<FollowingListResponse> {
+      const q = new URLSearchParams();
+      if (opts.status) q.set('status', opts.status);
+      if (opts.q) q.set('q', opts.q);
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<FollowingListResponse>(s, `/x/following${qs ? `?${qs}` : ''}`);
+    },
+
+    patch(s: Settings, handle: string, body: FollowingPatchBody): Promise<FollowingRow> {
+      return request<FollowingRow>(s, `/x/following/${encodeURIComponent(handle)}`, {
+        method: 'PATCH',
+        body,
+      });
     },
   },
 
