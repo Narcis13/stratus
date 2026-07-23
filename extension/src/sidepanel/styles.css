@@ -2572,6 +2572,87 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
+/* --------------------------------------------- GR.8: goals + commitments */
+/* The pacing bar itself reuses .brief-quota-* (same shape, same meaning: how
+   far along a number is). The verdict chip is its own class rather than
+   .stage-chip — a CRM stage and a pacing verdict are different vocabularies,
+   and collapsing them would mislead the next reader. */
+
+.goal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.goal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goal-label {
+  flex: 1;
+  font-size: var(--strat-text-sm);
+  font-weight: var(--strat-weight-semibold);
+}
+
+.goal-verdict {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: var(--strat-text-xs);
+  border: 1px solid var(--strat-border);
+  background: var(--strat-bg-elev);
+  color: var(--strat-muted);
+  flex-shrink: 0;
+}
+
+.goal-verdict.ahead {
+  color: var(--strat-ok);
+  border-color: var(--strat-ok);
+}
+
+.goal-verdict.on-pace {
+  color: var(--strat-accent);
+  border-color: var(--strat-accent);
+}
+
+.goal-verdict.behind {
+  color: var(--strat-warn);
+  border-color: var(--strat-warn);
+}
+
+.goal-verdict.overdue {
+  color: var(--strat-danger);
+  border-color: var(--strat-danger);
+}
+
+.commitment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.commitment-label {
+  flex: 1;
+  min-width: 140px;
+  font-size: var(--strat-text-sm);
+}
+
+.commitment-target {
+  width: 72px;
+}
+
 /* ---------------------------------------------------- C9: Sunday digest */
 
 .digest-narrative p {

@@ -20,6 +20,7 @@ import {
   type BestTimesResponse,
   type Brief,
   type BriefGap,
+  type BriefGoal,
   type BriefMonitor,
   type BriefQuests,
   type BriefTweet,
@@ -27,6 +28,11 @@ import {
   type ChannelAggregate,
   type ChannelCreateBody,
   type ChannelPatchBody,
+  type Commitment,
+  type CommitmentDebt,
+  type CommitmentKey,
+  type CommitmentPutBody,
+  type CommitmentsResponse,
   type ContentPillar,
   type ConversationItem,
   type ConversationPatchBody,
@@ -55,7 +61,9 @@ import {
   type GenerateItemsResponse,
   type GeneratedImageItem,
   type GoalKind,
+  type GoalPacing,
   type GoalStatus,
+  type GoalVerdict,
   type HarvestRun,
   type HumanizerConfig,
   type IcebreakersResponse,
@@ -208,11 +216,19 @@ export type {
   BestTimesResponse,
   Brief,
   BriefGap,
+  BriefGoal,
   BriefMonitor,
   BriefQuests,
   BriefTweet,
   MonitorAlert,
   MonitorSeverity,
+  Commitment,
+  CommitmentDebt,
+  CommitmentKey,
+  CommitmentPutBody,
+  CommitmentsResponse,
+  GoalPacing,
+  GoalVerdict,
   DigestFacts,
   DigestResponse,
   IcebreakersResponse,
@@ -606,6 +622,30 @@ export const api = {
 
     deleteGoal(s: Settings, id: string): Promise<void> {
       return request<void>(s, `/x/me/goals/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+
+  // GR.8 — the daily commitments (Settings → General). Goals themselves are
+  // written through `me.*` above (one table, one writer) and READ off the
+  // brief, so there is no `goals.get` here; only the editor needs these two.
+  // Day keys are the viewer's local days, hence the tz on both calls.
+  commitments: {
+    get(s: Settings): Promise<CommitmentsResponse> {
+      return request<CommitmentsResponse>(
+        s,
+        `/x/commitments?tzOffsetMin=${new Date().getTimezoneOffset()}`,
+      );
+    },
+
+    put(s: Settings, body: CommitmentPutBody): Promise<Commitment> {
+      return request<Commitment>(
+        s,
+        `/x/commitments?tzOffsetMin=${new Date().getTimezoneOffset()}`,
+        {
+          method: 'PUT',
+          body,
+        },
+      );
     },
   },
 

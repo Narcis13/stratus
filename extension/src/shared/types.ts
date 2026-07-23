@@ -1066,6 +1066,71 @@ export interface BriefMonitor {
   worst: MonitorSeverity | null;
 }
 
+// GR.8: the accountability blocks, mirrored from `src/x/goals.ts` and the
+// `me_goals` / `commitments` rows (§5 build isolation — the extension never
+// imports server modules). Dates arrive as ISO strings over the JSON transport.
+export type GoalVerdict = 'achieved' | 'ahead' | 'on_pace' | 'behind' | 'overdue' | 'unknown';
+
+export interface GoalPacing {
+  /** null = unknown, never a fake 0. */
+  current: number | null;
+  pctComplete: number | null;
+  /** Whole days to the deadline; ≤0 = past it; null = no deadline. */
+  daysLeft: number | null;
+  requiredPerDay: number | null;
+  actualPerDay: number | null;
+  verdict: GoalVerdict;
+  projectedAt: string | null;
+}
+
+/** A `me_goals` row as the brief ships it: the row plus live pacing. Distinct
+ *  from `MeGoal`, which carries the Me tab's own ME.1 `progress` instead. */
+export interface BriefGoal {
+  id: string;
+  label: string;
+  kind: GoalKind;
+  target: number;
+  unit: string | null;
+  currentValue: number | null;
+  deadline: string | null;
+  baselineValue: number | null;
+  baselineAt: string | null;
+  status: GoalStatus;
+  createdAt: string;
+  updatedAt: string;
+  pacing: GoalPacing;
+}
+
+export type CommitmentKey = 'replies' | 'originals';
+
+export interface CommitmentDebt {
+  missedLast7: number;
+  missedLast30: number;
+  /** Days inside the 7-day window the promise was actually live — the honest
+   *  denominator for "N of the last M days". */
+  trackedLast7: number;
+  tier: 0 | 1 | 2 | 3;
+}
+
+export interface Commitment {
+  key: CommitmentKey;
+  dailyTarget: number;
+  active: boolean;
+  activeSince: string;
+  updatedAt: string;
+  debt: CommitmentDebt;
+}
+
+export interface CommitmentsResponse {
+  commitments: Commitment[];
+}
+
+export interface CommitmentPutBody {
+  key: CommitmentKey;
+  dailyTarget: number;
+  active?: boolean;
+}
+
 export interface Brief {
   generatedAt: string;
   tzOffsetMin: number;
@@ -1082,6 +1147,10 @@ export interface Brief {
   // Optional: absent when the deployed server predates GR.6 — the panel must
   // tolerate a brief payload without it rather than crash (the S0.1 precedent).
   monitor?: BriefMonitor;
+  // GR.8, same tolerance: active goals with live pacing, and every commitment
+  // (paused ones included) with its debt against the C9 diary.
+  goals?: BriefGoal[];
+  commitments?: Commitment[];
   yesterday: {
     from: string;
     to: string;

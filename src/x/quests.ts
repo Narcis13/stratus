@@ -39,6 +39,10 @@ export interface QuestInputs {
   repliesTarget: number;
   /** Non-reply posts_published with postedAt inside today. */
   originalsPostedToday: number;
+  /** GR.8: the active `originals` commitment's daily target. Absent = the
+   *  shipped default of one post a day. A commitment can only raise this bar
+   *  (its minimum is 1), so no existing streak can be retroactively broken. */
+  originalsTarget?: number;
   /** Targets that were already neglected when the day started. */
   neglectedTargetsAtDayStart: number;
   /** Of those, how many got a reply today. */
@@ -56,6 +60,7 @@ export interface QuestInputs {
 export function computeQuests(i: QuestInputs): Quest[] {
   const targetsTarget = Math.min(NEGLECTED_TARGETS_QUEST_TARGET, i.neglectedTargetsAtDayStart);
   const loopVacuous = i.loopsClosedToday === 0 && i.openLoopsNow === 0;
+  const originalsTarget = i.originalsTarget ?? 1;
   return [
     {
       key: 'replies',
@@ -67,10 +72,10 @@ export function computeQuests(i: QuestInputs): Quest[] {
     },
     {
       key: 'original',
-      label: '1 original post',
+      label: originalsTarget === 1 ? '1 original post' : `${originalsTarget} original posts`,
       n: i.originalsPostedToday,
-      target: 1,
-      done: i.originalsPostedToday >= 1,
+      target: originalsTarget,
+      done: i.originalsPostedToday >= originalsTarget,
       note: null,
     },
     {

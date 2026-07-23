@@ -15,9 +15,12 @@ import { TargetsSection } from './Targets.tsx';
 import {
   ApiError,
   type Brief,
+  type BriefGoal,
   type BriefQuests,
   type BriefTweet,
+  type Commitment,
   type ConversionWindow,
+  type GoalVerdict,
   type MonitorSeverity,
   api,
 } from './api.ts';
@@ -68,8 +71,17 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
           post fires; renders nothing outside that window. */}
       <LaunchRoomSection settings={settings} onOpenPerson={onOpenPerson} />
 
-      {/* Today's quests + streak (C9) — gentle checkmarks, never guilt. */}
-      {brief?.quests && <QuestsSection quests={brief.quests} />}
+      {/* Today's quests + streak (C9) — gentle checkmarks, never guilt. The
+          GR.8 debt line rides underneath: what the daily commitment asked for
+          and how many of the last days went by without it. */}
+      {brief?.quests && (
+        <QuestsSection quests={brief.quests} commitments={brief.commitments ?? []} />
+      )}
+
+      {/* GR.8: goals with live pacing, right under the quests they share a
+          purpose with. Renders nothing until a goal exists (Me tab owns
+          creating them). */}
+      {brief && <GoalsCard settings={settings} brief={brief} onChanged={load} />}
 
       {/* The follow-up queue (C5), capped at 5 — who do I owe, who to
           nurture, who's heating up. */}
@@ -111,7 +123,13 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
   );
 }
 
-function QuestsSection({ quests }: { quests: BriefQuests }): JSX.Element {
+function QuestsSection({
+  quests,
+  commitments,
+}: {
+  quests: BriefQuests;
+  commitments: Commitment[];
+}): JSX.Element {
   const hit = quests.items.filter((q) => q.done).length;
   return (
     <section className="brief-section">
@@ -139,8 +157,143 @@ function QuestsSection({ quests }: { quests: BriefQuests }): JSX.Element {
       {hit === quests.items.length && (
         <div className="ok">All done — the rest of the day is yours.</div>
       )}
+      <DebtLine commitments={commitments} />
     </section>
   );
+}
+
+// GR.8: the commitment debt. Tier 0 (nothing missed) renders NOTHING — the C9
+// tone contract is that a quiet day is never punished, so the copy only appears
+// once there is an actual gap, states the count, and points at the way out
+// instead of scolding. Tiering lives here because it is presentation: the
+// server ships the counts, the panel decides how loudly to say them.
+function DebtLine({ commitments }: { commitments: Commitment[] }): JSX.Element | null {
+  const owed = commitments.filter((c) => c.active && c.debt.tier > 0);
+  if (owed.length === 0) return null;
+  const loud = owed.some((c) => c.debt.tier >= 2);
+  return (
+    <div className={loud ? 'warn' : 'status-line'}>
+      {owed.map((c) => (
+        <div key={c.key}>{debtCopy(c)}</div>
+      ))}
+    </div>
+  );
+}
+
+function debtCopy(c: Commitment): string {
+  const { missedLast7, trackedLast7, tier } = c.debt;
+  const days = `${missedLast7} of the last ${trackedLast7} day${trackedLast7 === 1 ? '' : 's'}`;
+  if (tier === 1) return `${c.key}: missed ${days}.`;
+  if (tier === 2) return `${c.key}: missed ${days} — ${c.dailyTarget}/day was the promise.`;
+  return `${c.key}: missed ${days}. If ${c.dailyTarget}/day isn't the right bar, lower it in Settings.`;
+}
+
+// GR.8: goals with live pacing (Guardrails §C). Only ACTIVE goals arrive — the
+// server settles achieved/missed on this very read — and an empty list renders
+// nothing at all (the PinnedWatchCard only-when-there-is-something discipline).
+// Creating a goal lives in the Me tab, which is the one writer; the drop button
+// is the single write here, because a goal you have stopped chasing should not
+// keep grading your week.
+const VERDICT_LABEL: Record<GoalVerdict, string> = {
+  achieved: 'achieved',
+  ahead: 'ahead',
+  on_pace: 'on pace',
+  behind: 'behind',
+  overdue: 'overdue',
+  unknown: 'no read',
+};
+
+const VERDICT_CLASS: Record<GoalVerdict, string> = {
+  achieved: 'ahead',
+  ahead: 'ahead',
+  on_pace: 'on-pace',
+  behind: 'behind',
+  overdue: 'overdue',
+  unknown: 'unknown',
+};
+
+function GoalsCard({
+  settings,
+  brief,
+  onChanged,
+}: {
+  settings: Settings;
+  brief: Brief;
+  onChanged: () => Promise<void>;
+}): JSX.Element | null {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Absent when the server predates GR.8 — render nothing rather than crash.
+  const goals = brief.goals ?? [];
+  if (goals.length === 0) return null;
+
+  const drop = async (g: BriefGoal): Promise<void> => {
+    if (!confirm(`Stop tracking "${g.label}"? It stays in the Me tab.`)) return;
+    setBusyId(g.id);
+    setError(null);
+    try {
+      await api.me.patchGoal(settings, g.id, { status: 'dropped' });
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not drop that goal');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <section className="brief-section">
+      <h3>Goals</h3>
+      {error && <div className="error">{error}</div>}
+      <ul className="goal-list">
+        {goals.map((g) => (
+          <li key={g.id} className="goal-row">
+            <div className="goal-head">
+              <span className="goal-label">{g.label}</span>
+              <span className={`goal-verdict ${VERDICT_CLASS[g.pacing.verdict]}`}>
+                {VERDICT_LABEL[g.pacing.verdict]}
+              </span>
+              <button
+                type="button"
+                onClick={() => void drop(g)}
+                disabled={busyId === g.id}
+                title="Stop tracking this goal — it stays in the Me tab"
+              >
+                {busyId === g.id ? '…' : 'drop'}
+              </button>
+            </div>
+            <div className="brief-quota">
+              <div className="brief-quota-bar">
+                <div
+                  className={`brief-quota-fill${g.pacing.verdict === 'achieved' ? ' met' : ''}`}
+                  style={{ width: `${g.pacing.pctComplete ?? 0}%` }}
+                />
+              </div>
+              <span className="brief-quota-label">
+                {fmtNum(g.pacing.current)} / {fmtNum(g.target)}
+                {g.unit ? ` ${g.unit}` : ''}
+              </span>
+            </div>
+            <div className="status-line">{paceLine(g)}</div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function paceLine(g: BriefGoal): string {
+  const p = g.pacing;
+  if (p.daysLeft === null) return 'No deadline — nothing to be behind on.';
+  if (p.daysLeft <= 0) return `Deadline passed ${Math.abs(p.daysLeft)}d ago.`;
+  const need = p.requiredPerDay === null ? '—' : `${fmtRate(p.requiredPerDay)}/day`;
+  const doing = p.actualPerDay === null ? 'nothing measured yet' : `${fmtRate(p.actualPerDay)}/day`;
+  return `${p.daysLeft}d left · need ${need} · doing ${doing}`;
+}
+
+function fmtRate(n: number): string {
+  return n >= 10 ? Math.round(n).toLocaleString() : n.toFixed(1);
 }
 
 function FollowersCard({ brief }: { brief: Brief }): JSX.Element {

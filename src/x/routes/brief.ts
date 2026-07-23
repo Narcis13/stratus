@@ -34,6 +34,7 @@ import {
   localDayKey,
   neglectedTargetsAtDayStart,
 } from '../quests.ts';
+import { type CommitmentView, loadCommitmentsWithDebt, loadGoalsWithPacing } from './goals.ts';
 import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
 import { loadMonitorInputs } from './monitor.ts';
 import { targetBand } from './voice.ts';
@@ -369,6 +370,8 @@ brief.get('/brief', async (c) => {
     costRows,
     bestTimes,
     monitorInputs,
+    commitmentViews,
+    goalViews,
   ] = await Promise.all([
     db
       .select({
@@ -465,6 +468,14 @@ brief.get('/brief', async (c) => {
     // that SQL would be a second set of them (the `loadBestTimeCells` precedent
     // one line up). $0: read-time SQL over rows already collected.
     loadMonitorInputs(now),
+    // GR.8: the accountability pair, both through the loaders `GET /x/goals`
+    // and `GET /x/commitments` use — same reason as the monitor one line up.
+    // The debt window ends yesterday, so reading the diary here (before this
+    // request rewrites today's streaks row further down) changes nothing.
+    loadCommitmentsWithDebt(now, tzOffsetMin),
+    // NOTE this one WRITES: it settles `active → achieved | missed` on read
+    // (GR.7's lazy flip). Opening Today is now what advances a finished goal.
+    loadGoalsWithPacing(now),
   ]);
 
   const tweetIds = published.map((p) => p.tweetId);
@@ -677,10 +688,19 @@ brief.get('/brief', async (c) => {
   let targetsTouched = 0;
   for (const h of neglectedAtStart) if (repliedTodayHandles.has(h)) targetsTouched++;
 
+  // GR.8: a daily commitment is a promise I made to myself, so it outranks the
+  // doctrine default — but only while it is ACTIVE. An absent or paused row
+  // changes nothing, which is why the table ships with no seed.
+  const activeCommitment = (key: string): CommitmentView | undefined =>
+    commitmentViews.find((c) => c.key === key && c.active);
+  const repliesCommitment = activeCommitment('replies');
+  const originalsCommitment = activeCommitment('originals');
+
   const questItems = computeQuests({
     repliesPostedToday: postedDraftRows.length,
-    repliesTarget: replyTarget.min,
+    repliesTarget: repliesCommitment?.dailyTarget ?? replyTarget.min,
     originalsPostedToday: originalsToday.length,
+    originalsTarget: originalsCommitment?.dailyTarget ?? 1,
     neglectedTargetsAtDayStart: neglectedAtStart.size,
     neglectedTargetsTouched: targetsTouched,
     loopsClosedToday: Number(answeredToday?.n ?? 0),
@@ -753,6 +773,14 @@ brief.get('/brief', async (c) => {
       items: questItems,
       streak,
     },
+    // GR.8: accountability (Guardrails §C). ACTIVE goals only — the loader has
+    // already settled anything that hit its target or ran out of days on this
+    // very read, and a finished goal belongs to the Me tab's ledger, not to the
+    // coach surface. Empty is the normal case; the Today card renders nothing.
+    goals: goalViews.filter((g) => g.status === 'active'),
+    // Both keys, active or not: the panel needs the paused ones to show what
+    // the debt was measured against before it stopped counting.
+    commitments: commitmentViews,
     week: {
       from: weekAgo,
       to: now,

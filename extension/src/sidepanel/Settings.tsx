@@ -7,7 +7,13 @@ import {
 } from '../shared/aiSettings.ts';
 import { NicheCard } from './Niche.tsx';
 import { PromptsPanel } from './Prompts.tsx';
-import { ApiError, type LlmModel, type LlmReasoningEffort, api } from './api.ts';
+import {
+  ApiError,
+  type CommitmentKey,
+  type LlmModel,
+  type LlmReasoningEffort,
+  api,
+} from './api.ts';
 import {
   DEFAULT_DENSITY,
   DEFAULT_THEME,
@@ -166,6 +172,7 @@ export function SettingsPanel(): JSX.Element {
       {view === 'general' && (
         <>
           <NicheCard />
+          <CommitmentsCard settings={currentSettings} />
           <form className="panel" onSubmit={onSave}>
             <h2>Settings</h2>
             <p className="muted">
@@ -333,6 +340,122 @@ export function SettingsPanel(): JSX.Element {
         </>
       )}
     </>
+  );
+}
+
+// GR.8 — daily commitments (Guardrails §C): the minimum I hold myself to each
+// day. An absent or paused row changes nothing (the quests fall back to the
+// doctrine defaults, which is why the table ships with no seed); an active one
+// raises the Today quest bar and starts accumulating debt from the day the
+// promise was made. Deliberately minimal (D6) — UI.11 rebuilds Settings and
+// absorbs this. Saving is per key, because that is what PUT /x/commitments is.
+const COMMITMENT_KEYS: CommitmentKey[] = ['replies', 'originals'];
+
+const COMMITMENT_LABEL: Record<CommitmentKey, string> = {
+  replies: 'Replies per day',
+  originals: 'Original posts per day',
+};
+
+interface CommitmentForm {
+  target: string;
+  active: boolean;
+}
+
+function CommitmentsCard({ settings }: { settings: Settings }): JSX.Element {
+  const [forms, setForms] = useState<Record<CommitmentKey, CommitmentForm>>({
+    replies: { target: '', active: false },
+    originals: { target: '', active: false },
+  });
+  const [busy, setBusy] = useState<CommitmentKey | null>(null);
+  const [saved, setSaved] = useState<CommitmentKey | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.commitments.get(settings);
+        if (cancelled) return;
+        setForms((f) => {
+          const next = { ...f };
+          for (const c of res.commitments)
+            next[c.key] = { target: String(c.dailyTarget), active: c.active };
+          return next;
+        });
+      } catch {
+        // Unconfigured, or a server predating GR.8 — the fields stay blank and
+        // a save will report the real error.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings]);
+
+  const set = (key: CommitmentKey, patch: Partial<CommitmentForm>): void =>
+    setForms((f) => ({ ...f, [key]: { ...f[key], ...patch } }));
+
+  const save = async (key: CommitmentKey): Promise<void> => {
+    const n = Number(forms[key].target);
+    if (!Number.isInteger(n) || n < 1 || n > 100) {
+      setError('Daily target must be a whole number from 1 to 100.');
+      return;
+    }
+    setBusy(key);
+    setSaved(null);
+    setError(null);
+    try {
+      const row = await api.commitments.put(settings, {
+        key,
+        dailyTarget: n,
+        active: forms[key].active,
+      });
+      set(key, { target: String(row.dailyTarget), active: row.active });
+      setSaved(key);
+      setTimeout(() => setSaved(null), 1500);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.code : 'save_failed');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <h2>Daily commitments</h2>
+      <p className="muted">
+        The minimum you hold yourself to. An active commitment replaces the doctrine target in
+        Today's quests; missed days show up there as debt. Nothing is ever blocked.
+      </p>
+      {error && <div className="error">{error}</div>}
+      {COMMITMENT_KEYS.map((key) => (
+        <div className="row commitment-row" key={key}>
+          <span className="commitment-label">{COMMITMENT_LABEL[key]}</span>
+          <input
+            className="commitment-target"
+            type="number"
+            min="1"
+            max="100"
+            step="1"
+            placeholder="—"
+            value={forms[key].target}
+            onChange={(e) => set(key, { target: e.target.value })}
+          />
+          <label className="row voice-toggle">
+            <input
+              type="checkbox"
+              checked={forms[key].active}
+              onChange={(e) => set(key, { active: e.target.checked })}
+            />
+            <span>active</span>
+          </label>
+          <button type="button" onClick={() => void save(key)} disabled={busy === key}>
+            {busy === key ? 'Saving…' : 'Save'}
+          </button>
+          {saved === key && <span className="ok">Saved</span>}
+        </div>
+      ))}
+    </div>
   );
 }
 

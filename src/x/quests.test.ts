@@ -42,6 +42,24 @@ describe('computeQuests', () => {
     );
   });
 
+  // GR.8: an `originals` commitment raises that quest's bar. Additive — an
+  // input without the field behaves exactly as it did before the commitment
+  // system existed, which is what keeps every streak already on the books.
+  test('original quest defaults to one post and labels it in the singular', () => {
+    const q = byKey(computeQuests(BASE)).get('original');
+    expect(q?.target).toBe(1);
+    expect(q?.label).toBe('1 original post');
+  });
+
+  test('an originals commitment raises the bar and pluralizes the label', () => {
+    const q = byKey(computeQuests({ ...BASE, originalsTarget: 3, originalsPostedToday: 2 }));
+    expect(q.get('original')?.target).toBe(3);
+    expect(q.get('original')?.label).toBe('3 original posts');
+    expect(q.get('original')?.done).toBe(false);
+    const met = byKey(computeQuests({ ...BASE, originalsTarget: 3, originalsPostedToday: 3 }));
+    expect(met.get('original')?.done).toBe(true);
+  });
+
   test('targets quest scales down to what was actually neglected', () => {
     // 5 neglected → target 2.
     const q1 = byKey(

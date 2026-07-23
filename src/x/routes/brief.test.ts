@@ -6,7 +6,15 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { mentions, postsPublished, replyDrafts, scheduledPosts, streaks } from '../db/schema.ts';
+import {
+  commitments,
+  meGoals,
+  mentions,
+  postsPublished,
+  replyDrafts,
+  scheduledPosts,
+  streaks,
+} from '../db/schema.ts';
 import { localDayKey } from '../quests.ts';
 import { brief } from './brief.ts';
 
@@ -60,17 +68,42 @@ interface MonitorBlock {
   worst: string | null;
 }
 
+interface GoalBlock {
+  id: string;
+  label: string;
+  status: string;
+  target: number;
+  pacing: {
+    current: number | null;
+    pctComplete: number | null;
+    daysLeft: number | null;
+    requiredPerDay: number | null;
+    actualPerDay: number | null;
+    verdict: string;
+    projectedAt: string | null;
+  };
+}
+
+interface CommitmentBlock {
+  key: string;
+  dailyTarget: number;
+  active: boolean;
+  debt: { missedLast7: number; missedLast30: number; trackedLast7: number; tier: number };
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   pinnedWatch: PinnedWatchBody;
   monitor: MonitorBlock;
-  replyQuota: { postedToday: number };
+  replyQuota: { postedToday: number; target: { min: number; max: number } };
   today: { anchors: number[]; gaps: BriefGap[] };
   quests: {
     day: string;
     items: Quest[];
     streak: { current: number; todayComplete: boolean };
   };
+  goals: GoalBlock[];
+  commitments: CommitmentBlock[];
 }
 
 async function getBrief(): Promise<BriefBody> {
@@ -234,5 +267,117 @@ describe('brief quests (C9)', () => {
     const body = await getBrief();
     expect(body.quests.day).toBe(dayKey);
     expect(typeof body.quests.streak.current).toBe('number');
+  });
+});
+
+// GR.8 — the accountability blocks. Every test sets up the commitments state it
+// needs at its own start (the table is tiny and only this file and
+// goals.test.ts ever write it), so no assertion depends on test order.
+describe('brief accountability blocks (GR.8)', () => {
+  const GOAL_ID = 'gr8-brief-goal';
+  const DAY = 86_400_000;
+
+  beforeAll(async () => {
+    const now = Date.now();
+    await db.delete(commitments);
+    // A `custom` goal so the pacing arithmetic is fully seeded here and can't
+    // move with whatever account_snapshots other suites leave behind: 40 of 100
+    // in 10 days (4/day measured) with 30 days left (2/day required) = ahead.
+    await db.insert(meGoals).values({
+      id: GOAL_ID,
+      label: 'gr8 brief goal',
+      kind: 'custom',
+      target: 100,
+      currentValue: 40,
+      baselineValue: 0,
+      baselineAt: new Date(now - 10 * DAY),
+      deadline: new Date(now + 30 * DAY),
+      status: 'active',
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(commitments);
+    await db.delete(meGoals).where(eq(meGoals.id, GOAL_ID));
+  });
+
+  test('with no commitments the quest targets are the shipped defaults', async () => {
+    await db.delete(commitments);
+    const body = await getBrief();
+    const byKey = new Map(body.quests.items.map((q) => [q.key, q]));
+    expect(byKey.get('replies')?.target).toBe(body.replyQuota.target.min);
+    expect(byKey.get('original')?.target).toBe(1);
+    expect(body.commitments).toEqual([]);
+  });
+
+  test('an active replies commitment outranks the doctrine quota target', async () => {
+    await db.delete(commitments);
+    await db
+      .insert(commitments)
+      .values({ key: 'replies', dailyTarget: 17, active: true, updatedAt: new Date() });
+    const body = await getBrief();
+    const replies = body.quests.items.find((q) => q.key === 'replies');
+    expect(replies?.target).toBe(17);
+    expect(replies?.label).toBe('17 quality replies');
+    // The doctrine band itself is untouched — the commitment is a personal
+    // minimum, not a redefinition of the 10–20/day reply doctrine.
+    expect(body.replyQuota.target.min).not.toBe(17);
+  });
+
+  test('a paused commitment changes nothing', async () => {
+    await db.delete(commitments);
+    await db
+      .insert(commitments)
+      .values({ key: 'replies', dailyTarget: 17, active: false, updatedAt: new Date() });
+    const body = await getBrief();
+    const replies = body.quests.items.find((q) => q.key === 'replies');
+    expect(replies?.target).toBe(body.replyQuota.target.min);
+    // …but it still ships, so the panel can show what is paused.
+    expect(body.commitments.find((c) => c.key === 'replies')?.active).toBe(false);
+  });
+
+  test('an active originals commitment raises the original quest', async () => {
+    await db.delete(commitments);
+    await db
+      .insert(commitments)
+      .values({ key: 'originals', dailyTarget: 3, active: true, updatedAt: new Date() });
+    const body = await getBrief();
+    const original = body.quests.items.find((q) => q.key === 'original');
+    expect(original?.target).toBe(3);
+    expect(original?.label).toBe('3 original posts');
+  });
+
+  test('commitments carry the debt tier over the streak diary', async () => {
+    await db.delete(commitments);
+    // Promised three days ago → exactly three days are on the hook (the window
+    // ends yesterday; today is still in progress and can never be a miss).
+    await db.insert(commitments).values({
+      key: 'replies',
+      dailyTarget: 12,
+      active: true,
+      activeSince: new Date(Date.now() - 3 * DAY),
+      updatedAt: new Date(),
+    });
+    const body = await getBrief();
+    const c = body.commitments.find((x) => x.key === 'replies');
+    expect(c?.dailyTarget).toBe(12);
+    expect(c?.debt.trackedLast7).toBe(3);
+    expect(c?.debt.missedLast7).toBeLessThanOrEqual(3);
+    // Tier ladder (cutoffs 1/3/5) — asserted against whatever the shared diary
+    // actually holds rather than a fixed count other suites could perturb.
+    const missed = c?.debt.missedLast7 ?? 0;
+    expect(c?.debt.tier).toBe(missed >= 5 ? 3 : missed >= 3 ? 2 : missed >= 1 ? 1 : 0);
+  });
+
+  test('goals arrive active-only with live pacing', async () => {
+    const body = await getBrief();
+    for (const g of body.goals) expect(g.status).toBe('active');
+    const g = body.goals.find((x) => x.id === GOAL_ID);
+    expect(g?.pacing.current).toBe(40);
+    expect(g?.pacing.pctComplete).toBe(40);
+    expect(g?.pacing.daysLeft).toBe(30);
+    expect(g?.pacing.requiredPerDay).toBeCloseTo(2, 5);
+    expect(g?.pacing.actualPerDay).toBeCloseTo(4, 1);
+    expect(g?.pacing.verdict).toBe('ahead');
   });
 });
