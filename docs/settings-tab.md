@@ -62,7 +62,7 @@ A **401** response means "not authorized" — the server got your request but di
 
 ## Behavior & privacy toggles
 
-Three checkboxes sit between the connection fields and the harvest section. Each one saves immediately when you click it.
+Four checkboxes sit between the connection fields and the harvest section. Each one saves immediately when you click it.
 
 ### Apply content pillars to reply drafting (default off)
 
@@ -80,7 +80,16 @@ Three checkboxes sit between the connection fields and the harvest section. Each
 - **What it does:** as you browse X normally and hover over someone's name or avatar, X shows a little profile pop-up ("hover card"). With this **on** (the default), the extension quietly reads those hover cards you naturally triggered and adds those people to your stratus roster (the "People" tab), building your contact list from ordinary browsing — no clicking "save" required.
 - **What data it captures:** only what's already on the hover card X drew because *you* hovered — handle, display name, basic profile info. It does **not** synthesize hovers, crawl, or read anything you didn't naturally bring up on screen. New people are added gently (a hover glimpse never overwrites richer data you've already saved).
 - **Why it's on by default:** it grows your relationship roster for free from browsing you were already doing. It's the effortless way the People layer fills itself in.
-- **How to opt out:** simply **uncheck** this box. It saves immediately, and the extension stops capturing people from hover cards from that point on. This is the one place to turn passive capture off.
+- **How to opt out:** simply **uncheck** this box. It saves immediately, and the extension stops capturing people from hover cards from that point on. This is the one place to turn passive contact capture off.
+
+### Passive timeline harvest while browsing /home (default on, $0)
+
+- **What it does:** while you scroll **x.com/home**, the extension records each tweet the algorithm showed you — its text and its on-screen engagement numbers — into your own stratus database. Nothing is sent to X, nothing is fetched from X's paid API: it reads the numbers already drawn on your screen, so it costs **$0** no matter how much you scroll. It's the automatic sibling of the [Harvest tab](./harvest-tab.md)'s manual bulk scrape.
+- **What data it captures:** the tweet, its author's handle, its like/reply/repost/bookmark/view counts, and when you saw it — for **every** readable tweet on the home timeline, including ones you'd never reply to (those are the denominator the analytics need). Ads and promoted rows carry no readable counters and are skipped. **No one is added to your People roster from this** — being shown a tweet isn't a relationship.
+- **Where it stops:** home timeline only (not profiles, search, or tweet pages); nothing while a Harvest-tab run is going in that tab; at most one row per tweet per 30 minutes; a ceiling of **2,000 rows a day**; and everything older than **60 days** is deleted automatically.
+- **Why it's on by default:** it's free, invisible, and it's what powers **People → Timeline affinity** ("who does the algorithm keep showing me?") and **Playbook → Timeline funnel** ("of what I was shown, what did I actually reply to?"). Neither says anything useful until a few days of real scrolling have accumulated.
+- **How to opt out:** **uncheck** this box. It takes effect immediately in every open X tab — no reload needed — and the Harvest tab's status line switches to *"Passive capture off"*.
+- **Note:** this is a **separate** toggle from *Passive contact capture from hover cards* above. One grows your people roster from profile pop-ups you hover; this one grows the tweet corpus from your timeline. Turning either off leaves the other running.
 
 ---
 
@@ -172,8 +181,9 @@ The mention-refresh budget is **not** a control on this Settings tab — there's
 
 ### Opt out of passive capture
 1. Go to the **Settings** tab.
-2. **Uncheck** *"Passive contact capture from hover cards (default on)"*.
-3. That's it — it saves the moment you click. The extension stops adding people from hover cards.
+2. **Uncheck** *"Passive contact capture from hover cards (default on)"* to stop adding people from hover cards.
+3. **Uncheck** *"Passive timeline harvest while browsing /home (default on, $0)"* to stop recording the tweets your home timeline shows you.
+4. That's it — both save the moment you click, and they're independent: turning one off leaves the other running.
 
 ### Reset a harvest cursor that's skipping tweets
 1. Go to the **Settings** tab and scroll to **Harvest cursors**.
@@ -188,7 +198,7 @@ The mention-refresh budget is **not** a control on this Settings tab — there's
 - **Not configured (tabs locked):** if the **API URL** or **Bearer token** is empty, every tab except **Settings** is disabled and greyed out, and trying to view another tab shows *"Configure API URL and bearer token first."* Fill in both fields and click **Save** to unlock everything. This is the expected first-run state, not an error.
 - **Save button won't click:** the **Save** button is intentionally disabled until **both** the API URL and Bearer token fields contain text. Make sure neither is blank.
 - **Tabs unlocked but nothing loads / requests fail (401 or errors):** the extension only checks that the two fields are *non-empty* — it doesn't verify they're correct. A wrong token or wrong URL unlocks the UI but every request fails. Re-check the token against the server's `API_TOKEN`, confirm the URL is right and the server is running, then **Save** again. See [Troubleshooting a 401](#troubleshooting-a-401-or-everything-is-failing).
-- **A toggle didn't seem to stick:** the three toggles save on click, independently of the Save button. If one looks unchanged, click it again — the checkbox reflects the stored state.
+- **A toggle didn't seem to stick:** the four toggles save on click, independently of the Save button. If one looks unchanged, click it again — the checkbox reflects the stored state.
 
 ---
 

@@ -38,7 +38,7 @@ A recurring theme you'll see everywhere: **stratus drafts, you post.** Actual po
 | **[Channels](./channels-tab.md)** | Topics as places — group people, saved tweets, ideas, and your own post performance by subject on one screen. |
 | **[Calendar](./calendar-tab.md)** | See and manage everything queued to post and everything already posted; the publishing lifecycle. |
 | **[Composer](./composer-tab.md)** | Write, AI-draft, and schedule original posts and threads; suggests the best times to post. |
-| **[Harvest](./harvest-tab.md)** | Bulk-collect tweets from a page you're viewing into a CSV (and into stratus) — free, no API. |
+| **[Harvest](./harvest-tab.md)** | Bulk-collect tweets from a page you're viewing into a CSV (and into stratus) — free, no API. Also documents the automatic **passive timeline harvest** that runs while you scroll x.com/home. |
 | **[Voice](./voice-tab.md)** | Your swipe file of others' tweets + your editable content pillars; extract reusable templates. |
 | **[Replies](./replies-tab.md)** | "Reply Master" — AI-draft strong replies to the right tweets (band-gated to save money), then paste them yourself. |
 | **[Ideas](./ideas-tab.md)** | The Idea Inbox — capture post/reply ideas (even by right-click on any page) so none get lost. |

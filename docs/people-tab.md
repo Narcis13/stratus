@@ -68,7 +68,32 @@ There are three ways a person appears here:
 
 1. **Explicit save** — when you save one of their tweets or save them as an author from the Voice library, or reply to them, or the daily mention pull finds them, they're added automatically.
 2. **Passive hover capture** — just *hovering* someone's profile card while you browse X can add them (see Tips below). This grows the roster in the background with zero effort.
-3. **Manual "Start their file"** — you can create a file for any handle by hand, even one the system has never seen (see the *unknown handle* state below).
+3. **Manual "Start their file"** — you can create a file for any handle by hand, even one the system has never seen (see the *unknown handle* state below). The **Timeline affinity** drawer below the roster is the shortcut for this.
+
+---
+
+## Timeline affinity — who the algorithm keeps showing you
+
+Under the roster sits a collapsed section called **Timeline affinity**. It answers one question: *who does X keep putting in front of me that I'm not tracking yet?*
+
+It's built from the passive timeline capture — while you scroll `x.com/home`, stratus quietly records the tweets you were shown (free, no API; see **[Harvest](./harvest-tab.md)** and the toggle in **[Settings](./settings-tab.md)**). This list groups those sightings by author.
+
+### Opening it
+Click **Show**. Nothing is loaded until you do — the roster above is what the tab is for, this is the "what am I missing?" drawer. Once open, a **Refresh** button re-reads it; there's no polling.
+
+### How it's ranked
+By the number of **separate days** an author showed up in the last 30 — not by raw sightings. One viral thread you scrolled past twenty times in an afternoon isn't affinity; being fed the same person on four different days is. Sightings break ties. An author needs **at least 3 separate days** to appear at all, which is the noise floor that keeps one-off encounters out.
+
+### What each row shows
+- **@handle** — the author.
+- **A stage chip** (`engaged`, `mutual`, …) if they're already in your roster with a stage.
+- **"Start their file →"** if stratus has never heard of them. This is the useful case: click the row and you land straight on the create-a-file screen for that handle.
+- **Counts** — `4d · 11× · 8,200 views`: separate days seen, total sightings, and their average views across those sightings.
+
+People you've deliberately **retired** show neither a chip nor the "Start their file" prompt — they're known and intentionally dropped, so the list won't nag you about them again.
+
+### When it's empty
+*"Nobody has shown up often enough yet."* Either passive capture is off, or you haven't scrolled enough for anyone to clear the 3-day floor. This fills in over days of ordinary browsing, not minutes.
 
 ---
 

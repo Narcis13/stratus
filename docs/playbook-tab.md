@@ -17,6 +17,7 @@ You'll usually open this tab to:
 - Sanity-check a habit ("is replying to *hot* tweets actually worth it, or should I focus on *warm* ones?").
 - Decide where to aim your effort (which angle, which content pillar, which size of account).
 - Pull your best-performing post templates out of your own winners so you can reuse them.
+- See what you're *missing* — the **Timeline funnel** measures how many of the good tweets you were shown scrolled past unanswered.
 
 ---
 
@@ -131,6 +132,31 @@ Since you can draft on different models (Grok, or any OpenRouter model — set i
 - **There's no "lift" line here** — unlike the paired comparisons above, this is just one cell per model, because there's no single baseline to divide against. It's a leaderboard you read by eye.
 
 This is the honest judge of the provider experiment: switch to a new model, keep drafting, and once ~20 measured replies accumulate its real numbers appear next to Grok's. (Note it can't isolate the *prompt* from the *model* — if you also edited prompts, both effects are folded into the same cell.)
+
+### Timeline funnel
+
+**Question it answers:** *Of the tweets the algorithm actually put in front of me, how many did I reply to — and was I letting the good ones go by?*
+
+Every other section here measures the replies you *wrote*. This one measures the ones you **didn't**. Its raw material is the passive timeline capture: while you scroll `x.com/home`, stratus records each tweet you were shown, free (see **[Harvest](./harvest-tab.md)**; the toggle lives in **[Settings](./settings-tab.md)**). The header reads `Timeline funnel (14/430 replied)` — replies you made, out of tweets you were shown, over the last 30 days.
+
+The table splits that by **the band the tweet was in when you first saw it** — how good an opportunity it was at that moment:
+
+| Column | Meaning |
+|---|---|
+| **band when seen** | `hot` / `warm` / `skip` / `no band` / `unknown` — the classification at your **first** sighting. |
+| **seen** | Distinct tweets you were shown in that band. |
+| **replied** | How many of those you replied to. |
+| **capture** | `replied ÷ seen`, as a percentage — your capture rate for that band. |
+
+**How to read it.** The `hot` row is the one that matters: those were live, fast-moving tweets where a reply had the best chance of being seen. A low hot-capture rate means opportunities are scrolling past you — the fix is the [Replies](./replies-tab.md) tab and the Radar on [Today](./today-tab.md), not more scrolling. The `skip` row *should* be near zero; that's the machinery working.
+
+**Things worth knowing before you trust a number:**
+
+- **The band is frozen at first sighting.** Seeing the same tweet again three hours later doesn't re-band it — by then the moment has passed, and re-banding would flatter you.
+- **`no band` vs `unknown` are different.** `no band` means stratus classified the tweet and judged it not worth replying to. `unknown` means it couldn't tell — the tweet's timestamp never rendered, so there was no age, so there was no velocity to score. A sudden pile-up in `unknown` is a capture glitch, not a change in your timeline.
+- **The rate reads low on purpose.** Only replies you drafted *in stratus* count as "replied". Canned replies and anything you typed straight into X leave no draft behind, so they're invisible here. Treat the number as a floor and watch the trend, not the absolute.
+- **Every cell is gated at n≥20 seen** and shows `insufficient data (n=…)` until then. Getting 20 tweets into a band is hours of scrolling, not minutes — expect this whole section to say nothing for the first few days.
+- **"Nothing captured yet — passive harvest fills this while you scroll x.com/home."** means the corpus is empty: either passive capture is off, or you haven't browsed with the extension loaded.
 
 ### Relationship lift
 
