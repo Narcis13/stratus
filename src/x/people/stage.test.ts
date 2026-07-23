@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  INBOUND_TYPES,
+  OUTBOUND_TYPES,
+  PERSON_EVENT_TYPES,
   type PersonEventType,
   type StageEvent,
   computeStage,
@@ -95,6 +98,36 @@ describe('computeStage matrix', () => {
       ev('their_mention', d, 12),
     ]);
     expect(computeStage(events, NOW)).toBe('ally');
+  });
+
+  // C10 decision 1: notification-harvested engagement is not reciprocity.
+  test.each(['their_like', 'their_repost', 'their_follow'] as const)(
+    '%s belongs to no stage set',
+    (type) => {
+      expect(PERSON_EVENT_TYPES).toContain(type);
+      expect(INBOUND_TYPES).not.toContain(type);
+      expect(OUTBOUND_TYPES).not.toContain(type);
+      // Covers NOTICED_TYPES too (not exported): a lone engagement moves nothing.
+      expect(computeStage([ev(type, 2)], NOW)).toBe('stranger');
+    },
+  );
+
+  test('50 likes and a follow is still a stranger', () => {
+    const events: StageEvent[] = [
+      ...Array.from({ length: 50 }, (_, i) => ev('their_like', i % 30, 8)),
+      ev('their_repost', 4),
+      ev('their_follow', 1),
+    ];
+    expect(computeStage(events, NOW)).toBe('stranger');
+  });
+
+  test('engagement never lifts a real relationship either — mutual stays mutual', () => {
+    const talked = [0, 5].flatMap((d) => [ev('my_reply', d, 9), ev('their_mention', d, 12)]);
+    expect(computeStage(talked, NOW)).toBe('mutual');
+    const withLikes = [...talked, ev('their_like', 1), ev('their_follow', 0)];
+    // Neither promoted past mutual nor (via the caller's ratchet) demoted.
+    expect(computeStage(withLikes, NOW)).toBe('mutual');
+    expect(maxStage('mutual', computeStage([ev('their_like', 1)], NOW))).toBe('mutual');
   });
 
   test('future-dated events are ignored', () => {

@@ -453,7 +453,8 @@ export const people = sqliteTable(
     stageUpdatedAt: integer('stage_updated_at', { mode: 'timestamp_ms' }),
     notes: text('notes'),
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
-    // First surface that created the row: mention | voice | reply | harvest | manual
+    // First surface that created the row:
+    // mention | voice | reply | harvest | hover | launch | notification | manual
     source: text('source'),
     firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' }),
     lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
@@ -478,7 +479,9 @@ export const personEvents = sqliteTable(
       .notNull()
       .references(() => people.handle),
     // saved_tweet | saved_author | my_reply | their_mention |
-    // their_reply_to_me | hover_sighting | harvest_seen | note | manual_dm_logged
+    // their_reply_to_me | hover_sighting | harvest_seen |
+    // their_like | their_repost | their_follow (C10 notification harvest —
+    // timeline-only, see src/x/people/stage.ts) | note | manual_dm_logged
     type: text('type').notNull(),
     refTable: text('ref_table'),
     refId: text('ref_id'),

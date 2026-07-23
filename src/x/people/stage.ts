@@ -19,13 +19,19 @@ export const PERSON_EVENT_TYPES = [
   'their_reply_to_me',
   'hover_sighting',
   'harvest_seen',
+  'their_like',
+  'their_repost',
+  'their_follow',
   'note',
   'manual_dm_logged',
 ] as const;
 export type PersonEventType = (typeof PERSON_EVENT_TYPES)[number];
 
-// Which event types mean what to the stage machine. harvest_seen and the
-// manual types are timeline-only — they never advance a stage on their own.
+// Which event types mean what to the stage machine. harvest_seen, the three
+// notification-harvested engagement types (C10) and the manual types are
+// timeline-only — they never advance a stage on their own. Engagement is NOT
+// reciprocity: someone can like fifty posts without a word being exchanged, so
+// their_like/their_repost/their_follow deliberately appear in no set below.
 const NOTICED_TYPES: readonly PersonEventType[] = ['saved_tweet', 'saved_author', 'hover_sighting'];
 export const INBOUND_TYPES: readonly PersonEventType[] = ['their_mention', 'their_reply_to_me'];
 export const OUTBOUND_TYPES: readonly PersonEventType[] = ['my_reply'];
