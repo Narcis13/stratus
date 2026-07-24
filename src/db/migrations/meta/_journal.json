@@ -155,6 +155,13 @@
       "when": 1784880178093,
       "tag": "0021_square_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1784891810544,
+      "tag": "0022_chilly_tomas",
+      "breakpoints": true
     }
   ]
 }

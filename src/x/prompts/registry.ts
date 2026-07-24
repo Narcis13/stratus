@@ -23,6 +23,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
+import { DM_PROMPT_TEMPLATE } from '../people/dm.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { IDEAS_PROMPT_TEMPLATE } from '../posts/ideasPrompt.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
@@ -45,6 +46,7 @@ export const PROMPT_KEYS = [
   'digest',
   'icebreaker',
   'reply-list',
+  'dm',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -150,6 +152,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: REPLY_LIST_PROMPT_TEMPLATE,
     required: ['{{COUNT}}', '{{REQUEST}}', '{{EXISTING_ITEMS}}'],
     optional: [],
+  },
+  dm: {
+    name: 'DM drafts',
+    description:
+      'The direct-message drafter behind POST /x/dms/draft — one message grounded strictly on real shared context (the icebreaker grounding), any-language steer in, English out.',
+    defaultBody: DM_PROMPT_TEMPLATE,
+    required: ['{{GROUNDING}}'],
+    optional: ['{{IDEA}}', '{{PURPOSE}}'],
   },
 };
 

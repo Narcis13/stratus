@@ -947,3 +947,39 @@ export const audienceActivity = sqliteTable(
   },
   (t) => [index('audience_activity_captured_idx').on(t.capturedAt)],
 );
+
+// DM drafts (Authoring 3.0 / CIRCLES outbound, A3.9): grounded direct-message
+// drafts for a known person. Each draft is one Grok call grounded STRICTLY on
+// the icebreaker grounding (decision 8 — no fabricated familiarity; a thin
+// dossier refuses 422 before any spend). Sending stays manual in X; "Mark sent"
+// logs the existing manual_dm_logged person event. `grounding` snapshots exactly
+// what the model saw (§7.16). Lifecycle: draft → sent | discarded (sent is
+// terminal — nothing regresses from it, §7.10).
+export const dmDrafts = sqliteTable(
+  'dm_drafts',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Lowercased people.handle (FK, like person_events/person_snapshots) — the
+    // route resolves the person before inserting, so the ref always exists.
+    handle: text('handle')
+      .notNull()
+      .references(() => people.handle),
+    text: text('text').notNull(),
+    // The optional steer that was used (any language in; the DM is English).
+    purpose: text('purpose'),
+    status: text('status').notNull().default('draft'), // draft | sent | discarded
+    // JSON: exactly what grounded the draft — { block, idea } (§7.16).
+    grounding: text('grounding', { mode: 'json' }).$type<{ block: string; idea: string | null }>(),
+    costUsd: real('cost_usd'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('dm_drafts_handle_created_idx').on(t.handle, t.createdAt)],
+);

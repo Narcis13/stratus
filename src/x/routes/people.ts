@@ -37,6 +37,7 @@ import {
 } from '../people/engagements.ts';
 import {
   ICEBREAKER_SCHEMA,
+  type IcebreakerGroundingInputs,
   MAX_GROUNDING_EXCHANGES,
   MAX_GROUNDING_TWEETS,
   buildIcebreakerInput,
@@ -662,16 +663,18 @@ peopleRouter.post('/people/:handle/events', async (c) => {
 
 // ------------------------------------------------------- icebreakers (C9)
 
-// "Suggest an opener": one Grok call (~$0.005) grounded STRICTLY on real
-// shared context. Order matters for $0 paths: unknown person → 404 and no
-// shared context → 422 are decided BEFORE the XAI_API_KEY check, so smoke
-// tests and thin dossiers never risk a Grok call.
-peopleRouter.post('/people/:handle/icebreakers', async (c) => {
-  const handle = normalizePersonHandle(c.req.param('handle'));
-  if (!handle) return c.json({ error: 'invalid_handle' }, 400);
-
+// Assemble the icebreaker grounding INPUTS for a handle — the person row (voice-
+// author bio/name as fallback), past exchanges, their saved tweets, and the
+// channels we share. Returns null only when the person row doesn't exist (the
+// 404). Extracted from the icebreaker route (A3.9) so the DM drafter grounds off
+// exactly the same material — decision 8: DM reuses the icebreaker grounding
+// verbatim, never a second assembly. The renderer (which may still return null
+// for a materially-empty dossier — the 422) stays the caller's step.
+export async function loadIcebreakerGrounding(
+  handle: string,
+): Promise<IcebreakerGroundingInputs | null> {
   const [person] = await db.select().from(people).where(eq(people.handle, handle));
-  if (!person) return c.json({ error: 'not_found' }, 404);
+  if (!person) return null;
 
   const [voiceAuthor] = await db
     .select({ bio: voiceAuthors.bio, displayName: voiceAuthors.displayName })
@@ -705,25 +708,36 @@ peopleRouter.post('/people/:handle/icebreakers', async (c) => {
   for (const t of savedTweets) for (const tag of t.tags ?? []) theirTags.add(tag);
   const sharedChannels = [...theirTags].filter((t) => channelSlugs.has(t));
 
-  const grounding = renderIcebreakerGrounding(
-    {
-      handle,
-      displayName: person.displayName ?? voiceAuthor?.displayName ?? null,
-      stage: person.stage as Stage,
-      bio: person.bio ?? voiceAuthor?.bio ?? null,
-      notes: person.notes,
-      exchanges: exchangeRows.map((e) => ({
-        direction: (INBOUND_TYPES as readonly string[]).includes(e.type)
-          ? ('inbound' as const)
-          : ('outbound' as const),
-        at: e.at,
-        summary: e.summary as string,
-      })),
-      savedTweets: savedTweets.map((t) => ({ text: t.text, createdAt: t.createdAt })),
-      sharedChannels,
-    },
-    new Date(),
-  );
+  return {
+    handle,
+    displayName: person.displayName ?? voiceAuthor?.displayName ?? null,
+    stage: person.stage as Stage,
+    bio: person.bio ?? voiceAuthor?.bio ?? null,
+    notes: person.notes,
+    exchanges: exchangeRows.map((e) => ({
+      direction: (INBOUND_TYPES as readonly string[]).includes(e.type)
+        ? ('inbound' as const)
+        : ('outbound' as const),
+      at: e.at,
+      summary: e.summary as string,
+    })),
+    savedTweets: savedTweets.map((t) => ({ text: t.text, createdAt: t.createdAt })),
+    sharedChannels,
+  };
+}
+
+// "Suggest an opener": one Grok call (~$0.005) grounded STRICTLY on real
+// shared context. Order matters for $0 paths: unknown person → 404 and no
+// shared context → 422 are decided BEFORE the LLM key check, so smoke
+// tests and thin dossiers never risk a Grok call.
+peopleRouter.post('/people/:handle/icebreakers', async (c) => {
+  const handle = normalizePersonHandle(c.req.param('handle'));
+  if (!handle) return c.json({ error: 'invalid_handle' }, 400);
+
+  const inputs = await loadIcebreakerGrounding(handle);
+  if (!inputs) return c.json({ error: 'not_found' }, 404);
+
+  const grounding = renderIcebreakerGrounding(inputs, new Date());
   if (grounding === null) return c.json({ error: 'no_shared_context' }, 422);
 
   // §7.4 order: 404/422 above already refused for free. This is the cheap

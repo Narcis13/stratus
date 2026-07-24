@@ -19,6 +19,7 @@ import { channelsRouter } from './routes/channels.ts';
 import { conversations } from './routes/conversations.ts';
 import { data, explorer } from './routes/data.ts';
 import { digest } from './routes/digest.ts';
+import { dmsRouter } from './routes/dms.ts';
 import { drafter } from './routes/drafter.ts';
 import { followingRouter } from './routes/following.ts';
 import { followups } from './routes/followups.ts';
@@ -130,6 +131,11 @@ export function mountX(app: Hono): void {
   app.route('/x', followups);
   // C1: the people layer — pure SQL over already-collected data, always $0.
   app.route('/x', peopleRouter);
+  // A3.9: DM drafts — list/patch are pure SQL and always mounted; only
+  // POST /dms/draft spends (one Grok call, LLM-gated at runtime). Mounted after
+  // peopleRouter — it imports loadIcebreakerGrounding from it and shares the
+  // grounding refusal ladder (decision 8).
+  app.route('/x', dmsRouter);
   // C7: Launch Room early-replier ingest — DOM-scraped, people+events only, $0.
   app.route('/x', launch);
   // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.
