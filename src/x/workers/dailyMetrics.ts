@@ -44,14 +44,20 @@
 // a predictable daily window at owned-read prices ($0.001/result), and a missed
 // run simply leaves rows for the next pass (still read exactly once each).
 
-import { and, asc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gte, inArray, isNotNull, isNull, lte, sql } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
 import { appSettings } from '../../db/shared-schema.ts';
 import { beat } from '../../heartbeats.ts';
-import { accountSnapshots, metricsSnapshots, postsPublished } from '../db/schema.ts';
+import {
+  accountSnapshots,
+  metricsSnapshots,
+  postsPublished,
+  scheduledPosts,
+} from '../db/schema.ts';
 import type { XTweet } from '../endpoints.ts';
 import { getMe, getTweetsByIds, getUserTweets } from '../endpoints.ts';
 import { pullMentions } from '../mentions.ts';
+import { matchManualRows } from '../posts/manualReconcile.ts';
 import { getValidAccessToken } from '../token-store.ts';
 
 export interface DailyMetricsDeps {
@@ -98,6 +104,9 @@ export interface RunResult {
   mentionsAnswered: number;
   /** Day-7 winner re-reads this run (§8.4, capped at 5/day). */
   rereadWinners: number;
+  /** Manual scheduled rows linked to their pasted tweet this run (A3.6). $0 —
+   *  pure SQL over already-billed rows. */
+  manualLinked: number;
 }
 
 export const DAILY_METRICS_HEARTBEAT = 'x.dailyMetrics';
@@ -134,6 +143,7 @@ export async function runDailyMetrics(
     mentionsNew: 0,
     mentionsAnswered: 0,
     rereadWinners: 0,
+    manualLinked: 0,
   };
 
   const token = await getValidAccessToken({
@@ -159,6 +169,17 @@ export async function runDailyMetrics(
   } catch (err) {
     console.error(`dailyMetrics: discovery failed: ${describe(err)}`);
   }
+
+  // Link manually-pasted tweets back to their calendar rows now that discovery
+  // has ingested them (A3.6). $0 — pure SQL over rows the pull already paid for.
+  // A reconcile failure must never take the run down (the pullMentions
+  // discipline below): a missed link is retried on the next pass at no cost.
+  try {
+    await reconcileManualPosts(result);
+  } catch (err) {
+    console.error(`dailyMetrics: manual reconcile failed: ${describe(err)}`);
+  }
+
   await snapshotDue(token, result);
   await rereadWinners(token, result);
 
@@ -179,7 +200,8 @@ export async function runDailyMetrics(
       `snapshotted=${result.snapshotted} (fromPull=${result.pullSnapshotted}) ` +
       `retired=${result.retired} failed=${result.failed} ` +
       `account=${result.accountSnapshotted} mentions=${result.mentionsNew}/${result.mentionsScanned} ` +
-      `mentionsAnswered=${result.mentionsAnswered} rereadWinners=${result.rereadWinners}`,
+      `mentionsAnswered=${result.mentionsAnswered} rereadWinners=${result.rereadWinners} ` +
+      `manualLinked=${result.manualLinked}`,
   );
   return result;
 }
@@ -595,6 +617,86 @@ async function rereadWinners(token: string, result: RunResult): Promise<void> {
     } catch (err) {
       console.error(`dailyMetrics: winner re-read insert failed ${tweet.id}: ${describe(err)}`);
     }
+  }
+}
+
+// Both sides are bounded to the last 30 days so the scan can't grow unbounded —
+// a slot older than that which never reconciled is stale and stays unlinked.
+const RECONCILE_LOOKBACK_MS = 30 * DAY_MS;
+
+// Manual-post reconcile (A3.6): link hand-pasted tweets back to their calendar
+// rows so they enter the metrics pipeline exactly like API posts. $0 — pure SQL
+// over rows the discovery pull already billed; no X call anywhere. mark-posted
+// deliberately writes NO tweet id (the since_id checkpoint trap, decision 6), so
+// the link is made here by text + time — the harvest replies-reconcile
+// discipline (routes/harvest.ts::matchUnlinkedDraft). This inserts nothing into
+// posts_published: it only stamps scheduled_post_id on rows discovery already
+// created, so the discovery checkpoint is untouched.
+async function reconcileManualPosts(result: RunResult): Promise<void> {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - RECONCILE_LOOKBACK_MS);
+
+  // Scheduled rows still awaiting a link: manual (pasted, not yet flipped) or
+  // already-posted-but-unlinked, with a slot time inside the window.
+  const manualRows = await db
+    .select({
+      id: scheduledPosts.id,
+      text: scheduledPosts.text,
+      scheduledFor: scheduledPosts.scheduledFor,
+      status: scheduledPosts.status,
+    })
+    .from(scheduledPosts)
+    .where(
+      and(
+        inArray(scheduledPosts.status, ['manual', 'posted']),
+        isNull(scheduledPosts.postedTweetId),
+        isNotNull(scheduledPosts.scheduledFor),
+        gte(scheduledPosts.scheduledFor, cutoff),
+      ),
+    );
+  if (manualRows.length === 0) return;
+
+  // Recent unlinked own originals — the pool the paste could have landed in.
+  const publishedRows = await db
+    .select({
+      tweetId: postsPublished.tweetId,
+      text: postsPublished.text,
+      postedAt: postsPublished.postedAt,
+      isReply: postsPublished.isReply,
+      scheduledPostId: postsPublished.scheduledPostId,
+    })
+    .from(postsPublished)
+    .where(
+      and(
+        eq(postsPublished.isReply, false),
+        isNull(postsPublished.scheduledPostId),
+        gte(postsPublished.postedAt, cutoff),
+      ),
+    );
+  if (publishedRows.length === 0) return;
+
+  // scheduled_for is non-null by the select above; narrow for the pure matcher.
+  const manualInput = manualRows.flatMap((r) =>
+    r.scheduledFor
+      ? [{ id: r.id, text: r.text, scheduledFor: r.scheduledFor, status: r.status }]
+      : [],
+  );
+
+  for (const link of matchManualRows(manualInput, publishedRows)) {
+    // One sync txn per match (§7.13): stamp both sides atomically. status is set
+    // to 'posted' — a manual row flips, an already-posted row stays posted (same
+    // value). The row is never re-selected once posted_tweet_id is set.
+    db.transaction((tx) => {
+      tx.update(scheduledPosts)
+        .set({ postedTweetId: link.tweetId, status: 'posted', updatedAt: now })
+        .where(eq(scheduledPosts.id, link.scheduledPostId))
+        .run();
+      tx.update(postsPublished)
+        .set({ scheduledPostId: link.scheduledPostId })
+        .where(eq(postsPublished.tweetId, link.tweetId))
+        .run();
+    });
+    result.manualLinked++;
   }
 }
 
