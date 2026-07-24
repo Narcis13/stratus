@@ -249,6 +249,16 @@ describe('estimatePostCostUsd', () => {
     });
     expect(c.usd).toBeCloseTo(0.03);
   });
+  test('manual mode is $0 even with a URL — the user pastes it (A3.7)', () => {
+    const c = estimatePostCostUsd({
+      threadMode: false,
+      text: 'read this https://example.com',
+      segments: [],
+      manual: true,
+    });
+    expect(c.usd).toBe(0);
+    expect(c.note).toBe('manual paste');
+  });
 });
 
 describe('splitIntoThread', () => {

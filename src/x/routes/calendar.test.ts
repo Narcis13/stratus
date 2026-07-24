@@ -378,3 +378,35 @@ describe('manual publish (A3.5)', () => {
     expect(deleted.status).toBe(204);
   });
 });
+
+// A3.7 (D117): the schedule-time advisory is blind to nothing once manual rows
+// exist — a manual slot fires warnings, and manual and pending count as each
+// other's neighbors. Fixtures sit ~300 d out, clear of every band above.
+describe('manual rows are first-class in scheduleWarnings (A3.7)', () => {
+  const DAY_MS = 24 * 3_600_000;
+  const at = (days: number, minutes = 0): string =>
+    new Date(Date.now() + days * DAY_MS + minutes * 60_000).toISOString();
+
+  test('a manual slot near a pending one warns, proving both fire and see each other', async () => {
+    const pending = await send<Row>('/x/posts/scheduled', 'POST', {
+      text: 'a37 pending anchor for the cluster check',
+      scheduledFor: at(300),
+      status: 'pending',
+    });
+    expect(pending.status).toBe(201);
+    createdIds.push(pending.body.id);
+    // The pending row is alone in its band, so it warns about nothing yet.
+    expect(pending.body.warnings.some((w) => w.includes('within'))).toBe(false);
+
+    const manual = await send<Row>('/x/posts/scheduled', 'POST', {
+      text: 'a37 manual pasted right after the pending one',
+      scheduledFor: at(300, 20),
+      status: 'manual',
+    });
+    expect(manual.status).toBe(201);
+    createdIds.push(manual.body.id);
+    const cluster = manual.body.warnings.find((w) => w.includes('within'));
+    expect(cluster).toBeDefined();
+    expect(cluster).toContain('20 min away');
+  });
+});

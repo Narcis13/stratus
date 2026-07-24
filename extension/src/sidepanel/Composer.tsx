@@ -1,6 +1,12 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
 import { audienceScoreFor } from '../shared/activeTimes.ts';
-import type { AudienceCapture, BestTimeCell, PostPillar, PostRegister } from '../shared/types.ts';
+import type {
+  AudienceCapture,
+  BestTimeCell,
+  PostPillar,
+  PostRegister,
+  PostStatus,
+} from '../shared/types.ts';
 import {
   ApiError,
   type Idea,
@@ -74,6 +80,23 @@ function fmtViews(n: number): string {
   return Math.round(n).toLocaleString();
 }
 
+// A3.7 — the status a single-post edit should transition to, given the current
+// status and the publish-mode toggle. Only the schedulable states participate
+// (posted/publishing are locked out of editing; cancelled/failed keep their
+// status unless re-scheduled the normal API way). null = leave status untouched.
+function nextEditStatus(
+  cur: PostStatus,
+  manual: boolean,
+  hasTime: boolean,
+): 'draft' | 'pending' | 'manual' | null {
+  if (cur !== 'draft' && cur !== 'pending' && cur !== 'manual') return null;
+  if (manual) return hasTime ? 'manual' : null; // no-time is guarded before submit
+  if (cur === 'manual') return hasTime ? 'pending' : 'draft';
+  if (cur === 'draft' && hasTime) return 'pending';
+  if (cur === 'pending' && !hasTime) return 'draft';
+  return null;
+}
+
 type DraftCard = PostDraftResponse['drafts'][number];
 
 // "any pillar" stays static; the rest are fetched live (§8.6 editable pillars).
@@ -122,6 +145,10 @@ export function ComposerPanel({
   // GR.6 schedule-time advisory — survives the post-save `reset()` on purpose
   // (it is about the post that was just saved), so it is set after reset runs.
   const [warnings, setWarnings] = useState<string[]>([]);
+  // A3.7 — publish mode. API (default): the publisher ships it. Manual: the user
+  // pastes it at the slot ($0, URL surcharge doesn't apply). Single posts only —
+  // threads reject manual server-side (decision 7), so the toggle hides there.
+  const [manualMode, setManualMode] = useState(false);
   const [original, setOriginal] = useState<ScheduledPostWithThread | null>(null);
   const [thread, setThread] = useState<ScheduledPost[]>([]);
 
@@ -219,6 +246,7 @@ export function ComposerPanel({
     setError(null);
     setNotice(null);
     setWarnings([]);
+    setManualMode(false);
     setDrafts([]);
     setDraftMeta(null);
   }, []);
@@ -242,6 +270,10 @@ export function ComposerPanel({
           const head = row.thread.find((s) => s.threadPosition === 1) ?? row.thread[0];
           setScheduledFor(isoToLocalInput(head?.scheduledFor ?? null));
         } else {
+          // A3.7 — a manual row stays manual; a Studio-marked visual (media_note)
+          // must ship by hand anyway (the API can't attach images), so nudge
+          // manual on. The user can still flip back to API.
+          setManualMode(row.status === 'manual' || row.mediaNote != null);
           setScheduledFor(isoToLocalInput(row.scheduledFor));
         }
       })
@@ -279,13 +311,20 @@ export function ComposerPanel({
       : null;
   })();
 
+  // A3.7 — manual mode is a single-post-only affordance; the toggle never shows
+  // in either thread branch, so this also gates the $0 cost line and the URL
+  // suppression to the single-post render.
+  const isSinglePost = !isThreadEdit && !(threadMode && !isEditing);
+  const isManualSingle = isSinglePost && manualMode;
+
   // Live cost preview (invariant #1) — what this post will bill before you save.
+  // Manual mode is $0 (the user pastes it), and the URL surcharge doesn't apply.
   const costPreview = estimatePostCostUsd(
     isThreadEdit
       ? { threadMode: true, text: '', segments: thread.map((s) => s.text) }
       : threadMode && !isEditing
         ? { threadMode: true, text: '', segments }
-        : { threadMode: false, text, segments: [] },
+        : { threadMode: false, text, segments: [], manual: manualMode },
   );
 
   // §8.2 affordance: a link in tweet 1 costs $0.20; in the first reply, $0.015.
@@ -371,14 +410,17 @@ export function ComposerPanel({
     const iso = localInputToIso(scheduledFor);
     if (isEditing && original) {
       const patch: UpdateBody = { text: text.trim(), scheduledFor: iso };
-      if (original.status === 'draft' && iso) patch.status = 'pending';
-      if (original.status === 'pending' && !iso) patch.status = 'draft';
+      // A3.7 — the publish-mode toggle drives the status transition. Manual
+      // needs a slot (guarded above); flipping back to API re-derives
+      // pending/draft from whether a time is set.
+      const target = nextEditStatus(original.status, manualMode, iso != null);
+      if (target && target !== original.status) patch.status = target;
       return api.update(settings, original.id, patch);
     }
     return api.create(settings, {
       text: text.trim(),
       scheduledFor: iso,
-      status: iso ? 'pending' : 'draft',
+      status: manualMode ? 'manual' : iso ? 'pending' : 'draft',
     });
   };
 
@@ -416,6 +458,13 @@ export function ComposerPanel({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    // A3.7 — manual posts are pasted at a specific slot, so a time is required
+    // (the server would 400 `scheduled_for_required_when_pending` anyway; catch
+    // it here with a clearer message before the round-trip).
+    if (isManualSingle && !localInputToIso(scheduledFor)) {
+      setError('Manual posts need a scheduled time — that is the slot you paste them at.');
+      return;
+    }
     setLoading(true);
     setError(null);
     setNotice(null);
@@ -595,7 +644,11 @@ export function ComposerPanel({
     ? thread.some((s) => s.text.trim() !== '')
     : threadMode && !isEditing
       ? segments.filter((s) => s.trim() !== '').length >= 2
-      : text.trim() !== '' && TWEET_LIMIT - text.length >= 0;
+      : text.trim() !== '' &&
+        TWEET_LIMIT - text.length >= 0 &&
+        // A3.7 — manual mode has no draft form: it's a scheduled paste, so a
+        // time is mandatory before the button unlocks.
+        (!manualMode || scheduledFor !== '');
 
   const threadSegments = isThreadEdit ? thread.map((s) => s.text) : segments;
   const threadCharTotal = threadSegments.reduce((n, s) => n + s.length, 0);
@@ -800,7 +853,7 @@ export function ComposerPanel({
         </div>
       )}
 
-      {headHasUrl && (
+      {headHasUrl && !isManualSingle && (
         <div className="warn">
           ⚠ A URL in tweet 1 is billed at $0.20 (13×).{' '}
           {!threadMode && !isEditing && (
@@ -808,6 +861,30 @@ export function ComposerPanel({
               Move link to first reply ($0.030)
             </button>
           )}
+        </div>
+      )}
+
+      {isSinglePost && !isLocked && (
+        <div className="publish-mode">
+          <span className="muted">Publish</span>
+          <div className="segmented">
+            <button
+              type="button"
+              className={manualMode ? '' : 'active'}
+              onClick={() => setManualMode(false)}
+              title="Stratus publishes it automatically at the slot"
+            >
+              API
+            </button>
+            <button
+              type="button"
+              className={manualMode ? 'active' : ''}
+              onClick={() => setManualMode(true)}
+              title="You paste it in X yourself at the slot — $0, and links are fine (no $0.20 surcharge)"
+            >
+              Manual (you paste)
+            </button>
+          </div>
         </div>
       )}
 
@@ -871,17 +948,27 @@ export function ComposerPanel({
         )}
         {!isLocked && audienceStale && <div className="best-times muted">{audienceStale}</div>}
         <small className="muted">
-          {scheduledFor
-            ? 'Will save as pending and ship at this minute.'
-            : 'Empty → saved as draft.'}
+          {isManualSingle
+            ? scheduledFor
+              ? 'Manual — you paste it in X at this minute; nothing auto-publishes.'
+              : 'Manual mode needs a time — that is the slot you paste it at.'
+            : scheduledFor
+              ? 'Will save as pending and ship at this minute.'
+              : 'Empty → saved as draft.'}
         </small>
       </label>
 
-      {costPreview.usd > 0 && (
-        <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
-          ≈ ${costPreview.usd.toFixed(3)}
-          {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
+      {isManualSingle ? (
+        <div className="cost-preview">
+          $0 <span className="muted">· you paste it</span>
         </div>
+      ) : (
+        costPreview.usd > 0 && (
+          <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
+            ≈ ${costPreview.usd.toFixed(3)}
+            {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
+          </div>
+        )
       )}
 
       {error && <div className="error">{error}</div>}

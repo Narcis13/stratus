@@ -479,6 +479,13 @@ export const api = {
     return request<void>(s, `/x/posts/scheduled/${id}`, { method: 'DELETE' });
   },
 
+  // A3.7 — flip a `manual` row to `posted` after you've pasted it in X. No body,
+  // no tweet id: the daily reconcile links the pasted tweet by text match (A3.6,
+  // decision 6). 409 `not_manual` if the row isn't manual.
+  markPosted(s: Settings, id: string): Promise<ScheduledPost> {
+    return request<ScheduledPost>(s, `/x/posts/scheduled/${id}/mark-posted`, { method: 'POST' });
+  },
+
   drafts: {
     // §8.1 — three register-distinct drafts land as draft rows in the calendar.
     generate(s: Settings, body: PostDraftBody): Promise<PostDraftResponse> {

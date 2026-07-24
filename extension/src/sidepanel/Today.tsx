@@ -455,7 +455,18 @@ function TodayPlan({ brief }: { brief: Brief }): JSX.Element {
           {scheduled.map((p) => (
             <li key={p.id} className="post-row brief-plan-row">
               <span className="post-time">{formatTime(p.scheduledFor)}</span>
-              <span className={`badge badge-${p.status}`}>{p.status}</span>
+              {/* A3.7 — the styled `manual` chip carries a paste hint; the user
+                  ships it by hand at the slot, nothing auto-publishes. */}
+              <span
+                className={`badge badge-${p.status}`}
+                title={
+                  p.status === 'manual'
+                    ? "You paste this in X yourself at the slot — it won't auto-publish."
+                    : undefined
+                }
+              >
+                {p.status}
+              </span>
               {p.mediaNote && (
                 <span
                   className="badge badge-media"

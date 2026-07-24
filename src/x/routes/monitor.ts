@@ -10,7 +10,7 @@
 // Static path, no `:param` — §7.20 is a "keep it that way" note here, not a
 // live trap.
 
-import { and, eq, gte, isNotNull } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { following, postsPublished, replyDrafts, scheduledPosts } from '../db/schema.ts';
@@ -68,12 +68,19 @@ export async function loadMonitorInputs(now: Date): Promise<MonitorInputs> {
           gte(following.unfollowMarkedAt, new Date(t - UNFOLLOW_CHURN_WINDOW_MS)),
         ),
       ),
-    // Pending only — `draft`/`segment` rows aren't going anywhere on a timer,
-    // and worker-owned `publishing`/`posted` rows are already spent.
+    // Scheduled slots the user can still re-space: `pending` (publisher-driven)
+    // plus `manual` (the user pastes it at the slot, A3.7/D117) — both occupy a
+    // minute on the calendar and read as a burst if crowded. `draft`/`segment`
+    // aren't on a timer, and worker-owned `publishing`/`posted` are already spent.
     db
       .select({ id: scheduledPosts.id, scheduledFor: scheduledPosts.scheduledFor })
       .from(scheduledPosts)
-      .where(and(eq(scheduledPosts.status, 'pending'), isNotNull(scheduledPosts.scheduledFor))),
+      .where(
+        and(
+          inArray(scheduledPosts.status, ['pending', 'manual']),
+          isNotNull(scheduledPosts.scheduledFor),
+        ),
+      ),
   ]);
 
   return {

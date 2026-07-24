@@ -54,6 +54,29 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
     void load();
   }, [load]);
 
+  // A3.7 — flip a manual row to `posted` after you've pasted it in X. One click,
+  // no confirm: it's exactly what you just did in X, and it's reversible (the
+  // reconcile self-heals the link). Reload after, because status drives the
+  // chips server-side.
+  const [marking, setMarking] = useState<string | null>(null);
+  const markPosted = useCallback(
+    async (id: string) => {
+      setMarking(id);
+      setError(null);
+      try {
+        await api.markPosted(settings, id);
+        await load();
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Failed to mark posted');
+      } finally {
+        setMarking(null);
+      }
+    },
+    [settings, load],
+  );
+
+  const now = Date.now();
+
   return (
     <div className="panel">
       <div className="panel-header">
@@ -81,30 +104,59 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
                 <div className="day-empty">—</div>
               ) : (
                 <ul className="post-list">
-                  {dayPosts.map((p) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        className={`post-row status-${p.status}`}
-                        onClick={() => onEdit(p.id)}
-                      >
-                        <span className="post-time">{formatTime(p.scheduledFor)}</span>
-                        <span className={`badge badge-${p.status}`}>{p.status}</span>
-                        {p.threadId && <span className="badge">🧵</span>}
-                        {p.quoteTweetId && <span className="badge">re-up</span>}
-                        {p.mediaNote && (
+                  {dayPosts.map((p) => {
+                    // A3.7 — a manual slot whose time has passed but hasn't been
+                    // marked posted is overdue: it won't auto-publish, so it's a
+                    // nudge to paste it (or mark it) rather than an error.
+                    const overdue =
+                      p.status === 'manual' &&
+                      p.scheduledFor != null &&
+                      new Date(p.scheduledFor).getTime() < now;
+                    return (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          className={`post-row status-${p.status}${overdue ? ' overdue' : ''}`}
+                          onClick={() => onEdit(p.id)}
+                        >
+                          <span className="post-time">{formatTime(p.scheduledFor)}</span>
                           <span
-                            className="badge badge-media"
-                            title={`${p.mediaNote} — post manually with its visual (the API can't attach images)`}
+                            className={`badge badge-${p.status}`}
+                            title={
+                              p.status === 'manual'
+                                ? "You paste this in X yourself at the slot — it won't auto-publish."
+                                : undefined
+                            }
                           >
-                            visual
+                            {p.status}
                           </span>
+                          {p.threadId && <span className="badge">🧵</span>}
+                          {p.quoteTweetId && <span className="badge">re-up</span>}
+                          {p.mediaNote && (
+                            <span
+                              className="badge badge-media"
+                              title={`${p.mediaNote} — post manually with its visual (the API can't attach images)`}
+                            >
+                              visual
+                            </span>
+                          )}
+                          {p.pillar && <span className="badge badge-pillar">{p.pillar}</span>}
+                          <span className="post-text">{p.text}</span>
+                        </button>
+                        {p.status === 'manual' && (
+                          <button
+                            type="button"
+                            className="mark-posted-btn"
+                            onClick={() => void markPosted(p.id)}
+                            disabled={marking === p.id}
+                            title="Flip to posted — the next daily pass links the tweet"
+                          >
+                            {marking === p.id ? '…' : 'Mark posted'}
+                          </button>
                         )}
-                        {p.pillar && <span className="badge badge-pillar">{p.pillar}</span>}
-                        <span className="post-text">{p.text}</span>
-                      </button>
-                    </li>
-                  ))}
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>

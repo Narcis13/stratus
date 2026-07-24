@@ -163,15 +163,20 @@ async function scheduleWarnings(row: {
   scheduledFor: Date | null;
 }): Promise<string[]> {
   // A draft is a scratchpad — nothing is scheduled to happen, so there is no
-  // cadence risk to describe yet. Same reading as the URL guard, which also
-  // only fires on `pending`.
-  if (row.status !== 'pending' || !row.scheduledFor) return [];
+  // cadence risk to describe yet. `manual` is first-class here (A3.7/D117): the
+  // user pastes it at its slot, so a manual post crowded against another slot,
+  // or repeating something already out, is exactly the cadence smell this warns
+  // about — the publish mechanism doesn't change how it reads to followers.
+  if ((row.status !== 'pending' && row.status !== 'manual') || !row.scheduledFor) return [];
   const at = row.scheduledFor.getTime();
   const now = Date.now();
 
   const [pending, recentOriginals] = await Promise.all([
     // Unbounded by design: the calendar runs about a week ahead at single-user
-    // scale, so this is a few dozen rows and one read covers both checks.
+    // scale, so this is a few dozen rows and one read covers both checks. Both
+    // `pending` and `manual` slots count as neighbors (A3.7/D117) — a cadence
+    // warning blind to the manual half of the calendar is wrong once manual
+    // rows exist.
     db
       .select({
         id: scheduledPosts.id,
@@ -179,7 +184,12 @@ async function scheduleWarnings(row: {
         scheduledFor: scheduledPosts.scheduledFor,
       })
       .from(scheduledPosts)
-      .where(and(eq(scheduledPosts.status, 'pending'), isNotNull(scheduledPosts.scheduledFor))),
+      .where(
+        and(
+          inArray(scheduledPosts.status, ['pending', 'manual']),
+          isNotNull(scheduledPosts.scheduledFor),
+        ),
+      ),
     // Originals only, same as the monitor's duplicate rule: thread tails are
     // self-replies and a reply repeating a phrase is not the penalty shape.
     db
@@ -203,7 +213,7 @@ async function scheduleWarnings(row: {
   if (near.length > 0) {
     const closest = Math.round((near[0] as { gapMs: number }).gapMs / MIN_MS);
     warnings.push(
-      `${near.length} other pending post${near.length === 1 ? '' : 's'} within ${SCHEDULE_CLUSTER_MS / MIN_MS} min of this slot — the closest is ${closest} min away. Spreading them out reads calmer.`,
+      `${near.length} other scheduled post${near.length === 1 ? '' : 's'} within ${SCHEDULE_CLUSTER_MS / MIN_MS} min of this slot — the closest is ${closest} min away. Spreading them out reads calmer.`,
     );
   }
 

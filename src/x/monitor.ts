@@ -339,7 +339,7 @@ export function scheduleCluster(slots: readonly MonitorSlot[]): MonitorAlert | n
   return {
     rule: 'scheduleCluster',
     severity: 'info',
-    message: `${pairs.length} pending pair${pairs.length === 1 ? '' : 's'} scheduled under ${SCHEDULE_CLUSTER_MS / MIN_MS} min apart — spreading them out reads calmer.`,
+    message: `${pairs.length} scheduled pair${pairs.length === 1 ? '' : 's'} under ${SCHEDULE_CLUSTER_MS / MIN_MS} min apart — spreading them out reads calmer.`,
     evidence: {
       clusterCount: pairs.length,
       thresholdMin: SCHEDULE_CLUSTER_MS / MIN_MS,

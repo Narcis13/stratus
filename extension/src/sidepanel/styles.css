@@ -1655,6 +1655,58 @@ button.danger:hover:not(:disabled) {
   color: var(--warn);
   font-weight: 600;
 }
+/* A3.7 — publish-mode (API | Manual) segmented toggle above the schedule row. */
+.publish-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--strat-radius-sm);
+  overflow: hidden;
+}
+.segmented button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+.segmented button.active {
+  background: var(--strat-accent-fill);
+  color: var(--text);
+  font-weight: 600;
+}
+/* A3.7 — a manual slot whose time has passed but isn't marked posted, plus its
+   one-click confirm button in the Calendar day list. */
+.post-row.overdue {
+  background: var(--strat-warn-fill);
+}
+.post-row.overdue .post-time {
+  color: var(--strat-warn);
+}
+.mark-posted-btn {
+  margin: 2px 10px 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--strat-warn);
+  color: var(--strat-warn);
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.mark-posted-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .draft-cards {
   display: flex;
   flex-direction: column;

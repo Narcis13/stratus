@@ -197,11 +197,16 @@ export interface CostEstimate {
 
 // Mirrors createPost's pricing (invariant #1): a URL in a standalone post or a
 // thread head is billed 13× ($0.20); replies/tail segments are always base.
+// A3.7: `manual` posts never touch the API (the user pastes them at the slot),
+// so they cost $0 — and the URL surcharge simply doesn't apply, which is the
+// sanctioned way to post a link at $0 (decision 5).
 export function estimatePostCostUsd(opts: {
   threadMode: boolean;
   text: string;
   segments: string[];
+  manual?: boolean;
 }): CostEstimate {
+  if (opts.manual) return { usd: 0, note: 'manual paste' };
   if (opts.threadMode) {
     const segs = opts.segments.map((s) => s.trim()).filter((s) => s !== '');
     if (segs.length === 0) return { usd: 0, note: '' };
