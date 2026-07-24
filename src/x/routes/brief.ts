@@ -258,9 +258,12 @@ export function attachLatestSnapshots(posts: PublishedRow[], snaps: SnapRow[]): 
 // Profile visits land on the pinned tweet, so a stale or out-performed pin
 // leaks the account's best first impression. Two nudges, never an action
 // (pinning stays manual in the X app): warn when the pin hasn't changed in
-// >21 days, or when a recent post has ≥3× its measured views.
+// >21 days, or when a recent post has ≥3× its measured views. Both thresholds
+// are settings-backed (UI.3, the `pinned` group); buildPinnedWatch takes them as
+// params defaulted here, and the brief handler reads the overrides.
 const PIN_STALE_DAYS = 21;
 const PIN_OUTPERFORM_RATIO = 3;
+const PIN_DEFAULTS = { staleDays: PIN_STALE_DAYS, outperformRatio: PIN_OUTPERFORM_RATIO };
 /** Only originals posted this recently count as "your best work isn't pinned"
  *  candidates — an old post the user already chose not to pin isn't news. */
 const PIN_CANDIDATE_DAYS = 30;
@@ -324,10 +327,11 @@ export function buildPinnedWatch(
   pinnedViews: number | null,
   recentPosts: PinnedWatchPost[],
   now: Date,
+  opts: { staleDays: number; outperformRatio: number } = PIN_DEFAULTS,
 ): PinnedWatch {
   const ageDays =
     pin.since === null ? null : Math.floor((now.getTime() - pin.since.getTime()) / DAY_MS);
-  const stale = ageDays !== null && ageDays > PIN_STALE_DAYS;
+  const stale = ageDays !== null && ageDays > opts.staleDays;
 
   let outperformer: PinnedWatch['outperformer'] = null;
   // Need a known pin and a positive view count to compare against.
@@ -337,7 +341,7 @@ export function buildPinnedWatch(
         (p) =>
           p.tweetId !== pin.pinnedTweetId &&
           p.views !== null &&
-          p.views >= pinnedViews * PIN_OUTPERFORM_RATIO,
+          p.views >= pinnedViews * opts.outperformRatio,
       )
       .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0];
     if (best && best.views !== null) {
@@ -630,6 +634,10 @@ brief.get('/brief', async (c) => {
       views: pinViewsByTweet.get(p.tweetId) ?? null,
     })),
     now,
+    {
+      staleDays: getSetting<number>('x.pinned.staleDays'),
+      outperformRatio: getSetting<number>('x.pinned.outperformRatio'),
+    },
   );
 
   // GR.6: account health. `runMonitor` is the same call `GET /x/monitor` makes,

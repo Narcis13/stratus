@@ -17,6 +17,7 @@ import {
 } from '../db/schema.ts';
 import { rankFans } from '../people/followups.ts';
 import { logPersonEvents } from '../people/store.ts';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { followups } from './followups.ts';
 import { peopleRouter } from './people.ts';
 
@@ -407,6 +408,38 @@ describe('followups routes', () => {
   test('GET /people/fans validates days', async () => {
     expect((await app.request('/x/people/fans?days=0')).status).toBe(400);
     expect((await app.request('/x/people/fans?days=nope')).status).toBe(400);
+  });
+
+  // UI.3 done-when: the follow-up route reads the `followups` group per request,
+  // so a widened neglectedAllyDays drops a borderline-quiet ally from the queue.
+  // Process-global store → reset in finally (UI.2 gotcha #3).
+  test('a widened x.followups.neglectedAllyDays drops a 16-day-quiet ally', async () => {
+    const H = 'c5_ui3_ally';
+    const quiet = new Date(Date.now() - 16 * DAY_MS);
+    await db
+      .insert(people)
+      .values({
+        handle: H,
+        stage: 'mutual',
+        // Old promotion moment so it reads as neglected, never a fresh dm_ready.
+        stageUpdatedAt: quiet,
+        lastInboundAt: quiet,
+        lastOutboundAt: quiet,
+      })
+      .onConflictDoNothing();
+    try {
+      // Default 14d window: 16-day-quiet ally is neglected.
+      let { body } = await getJson<FollowupsBody>('/x/people/followups');
+      expect(itemsFor(body, H).map((i) => i.kind)).toEqual(['neglected_ally']);
+
+      // Widen to 21d and the same ally is no longer neglected.
+      setSettings({ 'x.followups.neglectedAllyDays': 21 });
+      ({ body } = await getJson<FollowupsBody>('/x/people/followups'));
+      expect(itemsFor(body, H)).toHaveLength(0);
+    } finally {
+      resetSettings({ keys: ['x.followups.neglectedAllyDays'] });
+      await db.delete(people).where(eq(people.handle, H));
+    }
   });
 
   test('cleanup', async () => {

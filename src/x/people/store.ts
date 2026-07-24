@@ -14,6 +14,7 @@ import {
   replyDrafts,
 } from '../db/schema.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
+import { getSetting } from '../settings/registry.ts';
 import { buildAngleCrosstab } from './angles.ts';
 import {
   type ExchangeSummary,
@@ -26,9 +27,24 @@ import {
   type PersonEventType,
   type Stage,
   type StageEvent,
+  type StageThresholds,
   computeStage,
   maxStage,
 } from './stage.ts';
+
+// The stage thresholds are read from the settings store here — not threaded from
+// the routes — because recomputePerson runs from every ingest path (mentions,
+// harvest, engagements, PATCH), and a knob honored only in one route would let
+// the others advance a stage on the default ladder. getSetting is a sync,
+// Map-cached read; the ratchet never demotes, so overrides only touch future
+// advances (Decision 6: this module is impure DB access, not a pure fn).
+function stageThresholds(): StageThresholds {
+  return {
+    mutualExchangeDays: getSetting<number>('x.people.mutualExchangeDays'),
+    allyExchangeDays: getSetting<number>('x.people.allyExchangeDays'),
+    allyWindowDays: getSetting<number>('x.people.allyWindowDays'),
+  };
+}
 
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
 
@@ -184,7 +200,7 @@ export async function recomputePerson(handle: string, now: Date): Promise<void> 
   if (!person) return;
 
   const current = person.stage as Stage;
-  const next = maxStage(current, computeStage(events, now));
+  const next = maxStage(current, computeStage(events, now, stageThresholds()));
 
   const atMs = events.map((e) => e.at.getTime());
   const firstSeen = Math.min(...atMs, person.firstSeenAt?.getTime() ?? Number.POSITIVE_INFINITY);

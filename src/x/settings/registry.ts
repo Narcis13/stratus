@@ -154,6 +154,213 @@ const QUESTS: SettingDef[] = [
   },
 ];
 
+// People (CIRCLES-PLAN C1) — the stage-machine thresholds computeStage() reads.
+// Opening guesses (2 exchange days → mutual, 4/60d → ally), revisited after ~30
+// days of real events. They only affect FUTURE recomputes: the ratchet never
+// auto-demotes, so lowering a threshold can't strip a rank someone already earned.
+// NB the 2–10x target-band multipliers are NOT here — they're owned by the active
+// niche (niches.doctrine, N.5) and read via loadDoctrine(), same call as the reply
+// band; a settings key would be a second silent owner (D2/D30c, the UI.2 drop).
+const PEOPLE: SettingDef[] = [
+  {
+    key: 'x.people.mutualExchangeDays',
+    group: 'people',
+    label: 'Mutual after',
+    description:
+      'Distinct two-way exchange days (an inbound and an outbound on the same day) before a relationship reaches "mutual". Only affects future recomputes — stages never auto-demote.',
+    type: 'number',
+    default: 2,
+    min: 1,
+    max: 10,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.people.allyExchangeDays',
+    group: 'people',
+    label: 'Ally after',
+    description:
+      'Two-way exchange days inside the ally window before a relationship reaches "ally". Only affects future recomputes.',
+    type: 'number',
+    default: 4,
+    min: 2,
+    max: 20,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.people.allyWindowDays',
+    group: 'people',
+    label: 'Ally window',
+    description:
+      'The rolling window the ally exchange-day count must fall inside. Only affects future recomputes.',
+    type: 'number',
+    default: 60,
+    min: 14,
+    max: 180,
+    unit: 'days',
+    scope: 'server',
+  },
+];
+
+// Follow-ups (CIRCLES-PLAN C5) — the queue windows classifyFollowups() and the
+// re-up / momentum / fan helpers read. Opening guesses; the follow-up route reads
+// them per request via getSetting and passes them down (the pure modules take
+// params defaulted to today's constants). The weekly digest's neglected windows
+// read the same neglectedTargetDays/neglectedAllyDays keys — one owner, two
+// consumers — so a change moves both surfaces at once.
+const FOLLOWUPS: SettingDef[] = [
+  {
+    key: 'x.followups.chainLiveMaxAgeH',
+    group: 'followups',
+    label: 'Chain-live max age',
+    description:
+      'How recent an inbound reply-to-your-reply must be to count as a live chain (top of the queue).',
+    type: 'number',
+    default: 24,
+    min: 1,
+    max: 72,
+    unit: 'h',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.dmReadyWindowDays',
+    group: 'followups',
+    label: 'DM-ready window',
+    description:
+      'How recently a person must have advanced to responded/mutual to still surface as a good DM moment.',
+    type: 'number',
+    default: 7,
+    min: 1,
+    max: 30,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.neglectedTargetDays',
+    group: 'followups',
+    label: 'Neglected target after',
+    description:
+      'Days without a reply from you before a roster target surfaces as neglected (also drives the weekly digest neglected-targets list).',
+    type: 'number',
+    default: 7,
+    min: 1,
+    max: 60,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.neglectedAllyDays',
+    group: 'followups',
+    label: 'Neglected ally after',
+    description:
+      'Days without any exchange (either way) before a mutual/ally surfaces as neglected (also drives the weekly digest neglected-allies list).',
+    type: 'number',
+    default: 14,
+    min: 1,
+    max: 90,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.momentumWeeklyPct',
+    group: 'followups',
+    label: 'Momentum threshold',
+    description:
+      'Weekly follower-growth rate (%/week of the segment base) an account must clear — and beat its prior rate — to flag as heating up.',
+    type: 'number',
+    default: 5,
+    min: 1,
+    max: 50,
+    unit: '%',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.reupMinAgeDays',
+    group: 'followups',
+    label: 'Re-up min age',
+    description: 'Youngest an own post may be to surface as a quote-tweet re-up candidate.',
+    type: 'number',
+    default: 14,
+    min: 3,
+    max: 180,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.reupMaxAgeDays',
+    group: 'followups',
+    label: 'Re-up max age',
+    description: 'Oldest an own post may be to surface as a quote-tweet re-up candidate.',
+    type: 'number',
+    default: 60,
+    min: 3,
+    max: 180,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.followups.fanUnacknowledgedDays',
+    group: 'followups',
+    label: 'Fan unacknowledged after',
+    description:
+      'Days since your last reply to a top fan before the panel ambers them as unacknowledged.',
+    type: 'number',
+    default: 7,
+    min: 1,
+    max: 30,
+    unit: 'days',
+    scope: 'server',
+  },
+];
+
+// Pinned watch (S0.9) — the two nudges buildPinnedWatch() applies to the pinned
+// tweet (profile visits land there). The 30d candidate horizon stays a constant.
+const PINNED: SettingDef[] = [
+  {
+    key: 'x.pinned.staleDays',
+    group: 'pinned',
+    label: 'Pin stale after',
+    description: 'Days the pinned tweet can go unchanged before the brief warns it is stale.',
+    type: 'number',
+    default: 21,
+    min: 7,
+    max: 90,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.pinned.outperformRatio',
+    group: 'pinned',
+    label: 'Pin outperform ratio',
+    description:
+      'How many times the pinned tweet’s measured views a recent post must beat before the brief flags it as a better pin.',
+    type: 'number',
+    default: 3,
+    min: 1.5,
+    max: 10,
+    step: 0.5,
+    unit: '×',
+    scope: 'server',
+  },
+];
+
+// Digest (Sunday review) — presentation cap on the weekly neglected lists. The
+// windows those lists use come from the follow-ups group (single owner).
+const DIGEST: SettingDef[] = [
+  {
+    key: 'x.digest.neglectedCap',
+    group: 'digest',
+    label: 'Neglected list cap',
+    description: 'Most entries the weekly digest lists per neglected group (targets, allies).',
+    type: 'number',
+    default: 5,
+    min: 1,
+    max: 20,
+    scope: 'server',
+  },
+];
+
 // Display — soft presentation limits the brief applies to already-collected data;
 // they never change what is measured or billed, only how much of it is shown.
 const DISPLAY: SettingDef[] = [
@@ -182,12 +389,24 @@ const DISPLAY: SettingDef[] = [
   },
 ];
 
-export const SETTINGS_REGISTRY: SettingDef[] = [...DOCTRINE, ...QUESTS, ...DISPLAY];
+export const SETTINGS_REGISTRY: SettingDef[] = [
+  ...DOCTRINE,
+  ...QUESTS,
+  ...PEOPLE,
+  ...FOLLOWUPS,
+  ...PINNED,
+  ...DIGEST,
+  ...DISPLAY,
+];
 
 /** Human labels for each group id, in the order they should render. */
 export const GROUP_LABELS: Record<string, string> = {
   doctrine: 'Doctrine',
   quests: 'Quests',
+  people: 'People',
+  followups: 'Follow-ups',
+  pinned: 'Pinned watch',
+  digest: 'Digest',
   display: 'Display',
 };
 

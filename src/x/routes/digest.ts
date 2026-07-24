@@ -41,6 +41,7 @@ import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
 import { loadPromptSafe } from '../prompts/registry.ts';
 import { localDayKey } from '../quests.ts';
+import { getSetting } from '../settings/registry.ts';
 import { loadCommitmentsWithDebt, loadFlowCurrents, loadGoalsWithPacing } from './goals.ts';
 import {
   loadMediaRows,
@@ -52,10 +53,13 @@ import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
-const NEGLECTED_CAP = 5;
+// The neglected-list cap and its two windows are settings-backed (UI.3): the cap
+// is the `digest` group's own knob (default 5), and the windows read the
+// `followups` group's neglectedTargetDays / neglectedAllyDays — one owner (the
+// follow-up queue), two consumers — so tuning a window moves both the daily queue
+// and this weekly list. The handler reads all three via getSetting and passes
+// them to loadNeglectedTargets / loadNeglectedAllies.
 const STAGE_TRANSITION_CAP = 10;
-const NEGLECTED_TARGET_DAYS = 7;
-const NEGLECTED_ALLY_DAYS = 14;
 const DIGEST_MAX_OUTPUT_TOKENS = 700;
 
 export const digest = new Hono();
@@ -274,9 +278,16 @@ async function loadFacts(
     loadFanCounts(prevStart, start),
   ]);
 
+  const neglectedCap = getSetting<number>('x.digest.neglectedCap');
   const [neglectedTargets, neglectedAllies] = await Promise.all([
-    loadNeglectedTargets(end),
-    loadNeglectedAllies(end),
+    loadNeglectedTargets(end, {
+      neglectedDays: getSetting<number>('x.followups.neglectedTargetDays'),
+      cap: neglectedCap,
+    }),
+    loadNeglectedAllies(end, {
+      neglectedDays: getSetting<number>('x.followups.neglectedAllyDays'),
+      cap: neglectedCap,
+    }),
   ]);
 
   const [replyGuidance, postGuidance] = await Promise.all([
@@ -425,9 +436,12 @@ async function loadFanCounts(
   return rows.map((r) => ({ handle: r.handle, inbound: Number(r.inbound) }));
 }
 
-/** 2–10x roster targets with no pasted reply in the trailing week (same
+/** 2–10x roster targets with no pasted reply in the trailing window (same
  *  reading as the brief's quest and C5's neglected_target). */
-async function loadNeglectedTargets(asOf: Date): Promise<string[]> {
+async function loadNeglectedTargets(
+  asOf: Date,
+  opts: { neglectedDays: number; cap: number },
+): Promise<string[]> {
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
     .from(accountSnapshots)
@@ -467,13 +481,14 @@ async function loadNeglectedTargets(asOf: Date): Promise<string[]> {
     .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`);
   for (const r of rows) lastByHandle.set(r.handle, r.last);
 
-  const cutoff = asOf.getTime() - NEGLECTED_TARGET_DAYS * DAY_MS;
-  return targets
-    .filter((h) => (lastByHandle.get(h)?.getTime() ?? 0) < cutoff)
-    .slice(0, NEGLECTED_CAP);
+  const cutoff = asOf.getTime() - opts.neglectedDays * DAY_MS;
+  return targets.filter((h) => (lastByHandle.get(h)?.getTime() ?? 0) < cutoff).slice(0, opts.cap);
 }
 
-async function loadNeglectedAllies(asOf: Date): Promise<string[]> {
+async function loadNeglectedAllies(
+  asOf: Date,
+  opts: { neglectedDays: number; cap: number },
+): Promise<string[]> {
   const rows = await db
     .select({
       handle: people.handle,
@@ -482,13 +497,13 @@ async function loadNeglectedAllies(asOf: Date): Promise<string[]> {
     })
     .from(people)
     .where(and(eq(people.retired, false), inArray(people.stage, ['mutual', 'ally'])));
-  const cutoff = asOf.getTime() - NEGLECTED_ALLY_DAYS * DAY_MS;
+  const cutoff = asOf.getTime() - opts.neglectedDays * DAY_MS;
   return rows
     .filter(
       (p) => Math.max(p.lastInboundAt?.getTime() ?? 0, p.lastOutboundAt?.getTime() ?? 0) < cutoff,
     )
     .map((p) => p.handle)
-    .slice(0, NEGLECTED_CAP);
+    .slice(0, opts.cap);
 }
 
 function dayKeyPlus(day: string, days: number): string {

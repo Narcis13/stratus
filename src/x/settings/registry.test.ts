@@ -113,10 +113,26 @@ describe('registry adapter + grouping', () => {
     }
   });
 
-  test('settingsByGroup returns doctrine, quests and display in order, each labelled', () => {
+  test('settingsByGroup returns every group in GROUP_LABELS order, each labelled', () => {
     const groups = settingsByGroup();
-    expect(groups.map((g) => g.id)).toEqual(['doctrine', 'quests', 'display']);
-    expect(groups.map((g) => g.label)).toEqual(['Doctrine', 'Quests', 'Display']);
+    expect(groups.map((g) => g.id)).toEqual([
+      'doctrine',
+      'quests',
+      'people',
+      'followups',
+      'pinned',
+      'digest',
+      'display',
+    ]);
+    expect(groups.map((g) => g.label)).toEqual([
+      'Doctrine',
+      'Quests',
+      'People',
+      'Follow-ups',
+      'Pinned watch',
+      'Digest',
+      'Display',
+    ]);
 
     const doctrine = groups.find((g) => g.id === 'doctrine');
     const dkeys = doctrine?.defs.map((d) => d.key) ?? [];
@@ -132,8 +148,46 @@ describe('registry adapter + grouping', () => {
     const display = groups.find((g) => g.id === 'display');
     expect(display?.defs.map((d) => d.key)).toContain('x.display.sparklineDays');
 
-    // Every def belongs to exactly one of the three groups (no orphan groups).
+    // Every def belongs to exactly one group (no orphans).
     const grouped = groups.reduce((n, g) => n + g.defs.length, 0);
     expect(grouped).toBe(SETTINGS_REGISTRY.length);
+  });
+
+  test('UI.3 groups carry their knobs; the niche-owned band multipliers stay out', () => {
+    const groups = settingsByGroup();
+    const keysOf = (id: string) => groups.find((g) => g.id === id)?.defs.map((d) => d.key) ?? [];
+
+    expect(keysOf('people')).toEqual([
+      'x.people.mutualExchangeDays',
+      'x.people.allyExchangeDays',
+      'x.people.allyWindowDays',
+    ]);
+    expect(keysOf('followups')).toEqual([
+      'x.followups.chainLiveMaxAgeH',
+      'x.followups.dmReadyWindowDays',
+      'x.followups.neglectedTargetDays',
+      'x.followups.neglectedAllyDays',
+      'x.followups.momentumWeeklyPct',
+      'x.followups.reupMinAgeDays',
+      'x.followups.reupMaxAgeDays',
+      'x.followups.fanUnacknowledgedDays',
+    ]);
+    expect(keysOf('pinned')).toEqual(['x.pinned.staleDays', 'x.pinned.outperformRatio']);
+    expect(keysOf('digest')).toEqual(['x.digest.neglectedCap']);
+
+    // The 2–10x target-band multipliers are niche doctrine (loadDoctrine), never
+    // settings keys — the D2/D30c single-owner call, same as the reply band.
+    const allKeys = SETTINGS_REGISTRY.map((d) => d.key);
+    expect(allKeys).not.toContain('x.people.targetBandMinX');
+    expect(allKeys).not.toContain('x.people.targetBandMaxX');
+  });
+
+  test('validation honors UI.3 ranges (fractional outperform ratio + bounds)', () => {
+    expect(settingsRegistry.validate('x.people.mutualExchangeDays', 3)).toBeNull();
+    expect(settingsRegistry.validate('x.people.mutualExchangeDays', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.followups.chainLiveMaxAgeH', 72)).toBeNull();
+    expect(settingsRegistry.validate('x.followups.chainLiveMaxAgeH', 73)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.pinned.outperformRatio', 2.5)).toBeNull();
+    expect(settingsRegistry.validate('x.pinned.outperformRatio', 1)).toBe('out_of_range');
   });
 });

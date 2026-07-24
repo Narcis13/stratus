@@ -33,13 +33,11 @@ import {
 import { loadDoctrine } from '../niche/store.ts';
 import { ENGAGEMENT_EVENT_TYPE } from '../people/engagements.ts';
 import {
-  CHAIN_LIVE_MAX_AGE_MS,
   type ChainInbound,
   type FollowerPoint,
   type FollowupPerson,
+  type FollowupWindows,
   type MomentumCandidate,
-  REUP_MAX_AGE_DAYS,
-  REUP_MIN_AGE_DAYS,
   type ReupCandidate,
   aboutToEnterBand,
   classifyFollowups,
@@ -53,6 +51,7 @@ import {
 } from '../people/followups.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { myReplyTweetIds, normalizePersonHandle } from '../people/store.ts';
+import { getSetting } from '../settings/registry.ts';
 import { authorMomentum, targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -75,6 +74,19 @@ export const followups = new Hono();
 followups.get('/people/followups', async (c) => {
   const now = new Date();
 
+  // Queue windows are settings-backed (UI.3, the `followups` group). Read once
+  // per request via getSetting (sync, Map-cached) and thread the values down —
+  // the pure classifier/momentum/reup helpers take them as params.
+  const windows: FollowupWindows = {
+    chainLiveMaxAgeMs: getSetting<number>('x.followups.chainLiveMaxAgeH') * 60 * 60 * 1000,
+    dmReadyWindowMs: getSetting<number>('x.followups.dmReadyWindowDays') * DAY_MS,
+    neglectedTargetDays: getSetting<number>('x.followups.neglectedTargetDays'),
+    neglectedAllyDays: getSetting<number>('x.followups.neglectedAllyDays'),
+  };
+  const momentumWeeklyPct = getSetting<number>('x.followups.momentumWeeklyPct');
+  const reupMinAgeDays = getSetting<number>('x.followups.reupMinAgeDays');
+  const reupMaxAgeDays = getSetting<number>('x.followups.reupMaxAgeDays');
+
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
     .from(accountSnapshots)
@@ -90,7 +102,7 @@ followups.get('/people/followups', async (c) => {
     .where(
       and(
         eq(mentions.status, 'unanswered'),
-        gte(mentions.postedAt, new Date(now.getTime() - CHAIN_LIVE_MAX_AGE_MS)),
+        gte(mentions.postedAt, new Date(now.getTime() - windows.chainLiveMaxAgeMs)),
         isNotNull(mentions.inReplyToTweetId),
       ),
     );
@@ -188,7 +200,7 @@ followups.get('/people/followups', async (c) => {
     const person = peopleByHandle.get(handle);
     const latest = points[points.length - 1] as FollowerPoint;
 
-    const inflection = momentumInflection(points, now);
+    const inflection = momentumInflection(points, now, { weeklyPctThreshold: momentumWeeklyPct });
     // Band entry is a mutual-and-up signal — a stranger crossing 2x my size is
     // trivia; an ally doing it means my early replies are about to compound.
     const enteringBand =
@@ -213,19 +225,26 @@ followups.get('/people/followups', async (c) => {
   const snoozeRows = await db.select().from(followupSnoozes);
   const snoozes = new Map(snoozeRows.map((s) => [s.itemKey, s.snoozedUntil]));
 
-  const { items, snoozed } = classifyFollowups({
-    now,
-    chainInbound,
-    people: followupPeople,
-    targetHandles,
-    momentum,
-    snoozes,
-  });
+  const { items, snoozed } = classifyFollowups(
+    {
+      now,
+      chainInbound,
+      people: followupPeople,
+      targetHandles,
+      momentum,
+      snoozes,
+    },
+    windows,
+  );
 
   // reup_candidate (§S0.6): proven own posts (measured views ≥ the winner bar)
   // 14–60d old that haven't been quote-tweeted yet. Not a person item — pick
   // the single best and ranked just above momentum at the queue tail.
-  const reup = pickReupCandidate(await loadReupCandidates(now), snoozes, now);
+  const reup = pickReupCandidate(
+    await loadReupCandidates(now, reupMinAgeDays, reupMaxAgeDays),
+    snoozes,
+    now,
+  );
   let finalItems = items;
   if (reup.item) {
     const momentumIdx = items.findIndex((i) => i.kind === 'momentum');
@@ -251,9 +270,13 @@ followups.get('/people/followups', async (c) => {
 // the max snapshot impression_count, same read as the dailyMetrics winner
 // re-read. Retired rows are kept: retire-before-snapshot (invariant #7) means
 // nearly every measured tweet is retired, so filtering on it would find nothing.
-async function loadReupCandidates(now: Date): Promise<ReupCandidate[]> {
-  const oldest = new Date(now.getTime() - REUP_MAX_AGE_DAYS * DAY_MS);
-  const newest = new Date(now.getTime() - REUP_MIN_AGE_DAYS * DAY_MS);
+async function loadReupCandidates(
+  now: Date,
+  minAgeDays: number,
+  maxAgeDays: number,
+): Promise<ReupCandidate[]> {
+  const oldest = new Date(now.getTime() - maxAgeDays * DAY_MS);
+  const newest = new Date(now.getTime() - minAgeDays * DAY_MS);
   const winners = await db
     .select({
       tweetId: postsPublished.tweetId,
@@ -337,6 +360,7 @@ followups.patch('/people/followups', async (c) => {
 
 followups.get('/people/fans', async (c) => {
   const now = new Date();
+  const fanUnackDays = getSetting<number>('x.followups.fanUnacknowledgedDays');
 
   let days = FANS_DEFAULT_DAYS;
   const daysStr = c.req.query('days');
@@ -407,7 +431,7 @@ followups.get('/people/fans', async (c) => {
       engagementCount: engagements.get(f.handle) ?? 0,
       lastInboundAt: f.lastInboundAt,
       lastOutboundAt: f.lastOutboundAt,
-      unacknowledged: fanUnacknowledged(f, now),
+      unacknowledged: fanUnacknowledged(f, now, fanUnackDays),
     })),
   });
 });

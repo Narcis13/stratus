@@ -35,6 +35,23 @@ export const DM_READY_WINDOW_MS = 7 * DAY_MS;
 export const NEGLECTED_TARGET_DAYS = 7;
 export const NEGLECTED_ALLY_DAYS = 14;
 
+/** The queue windows classifyFollowups() applies. Overridable per-request via the
+ *  settings store (the follow-up route reads the `followups` group and passes
+ *  them down); defaults to today's constants so every existing call stays green. */
+export interface FollowupWindows {
+  chainLiveMaxAgeMs: number;
+  dmReadyWindowMs: number;
+  neglectedTargetDays: number;
+  neglectedAllyDays: number;
+}
+
+export const FOLLOWUP_DEFAULTS: FollowupWindows = {
+  chainLiveMaxAgeMs: CHAIN_LIVE_MAX_AGE_MS,
+  dmReadyWindowMs: DM_READY_WINDOW_MS,
+  neglectedTargetDays: NEGLECTED_TARGET_DAYS,
+  neglectedAllyDays: NEGLECTED_ALLY_DAYS,
+};
+
 // Momentum thresholds: an inflection needs a recent segment spanning ≥3 days
 // (two enriches minutes apart aren't a trend), a series whose latest point
 // isn't stale, and a recent weekly growth rate ≥5% that beats the prior rate.
@@ -125,15 +142,18 @@ export interface ClassifyResult {
  *  advance first), then neglected targets (never/oldest outbound first), then
  *  neglected allies (oldest exchange first), then momentum lines (hottest
  *  first). One item per person — the highest-priority kind wins. */
-export function classifyFollowups(inputs: ClassifyInputs): ClassifyResult {
+export function classifyFollowups(
+  inputs: ClassifyInputs,
+  windows: FollowupWindows = FOLLOWUP_DEFAULTS,
+): ClassifyResult {
   const nowMs = inputs.now.getTime();
   const personByHandle = new Map(inputs.people.map((p) => [p.handle, p]));
 
   const candidates: FollowupItem[] = [];
 
-  // chain_live — inbound reply to my reply, <24h old. Top priority.
+  // chain_live — inbound reply to my reply, inside the live window. Top priority.
   const chains = inputs.chainInbound
-    .filter((m) => nowMs - m.postedAt.getTime() < CHAIN_LIVE_MAX_AGE_MS)
+    .filter((m) => nowMs - m.postedAt.getTime() < windows.chainLiveMaxAgeMs)
     .sort((a, b) => a.postedAt.getTime() - b.postedAt.getTime());
   for (const m of chains) {
     const person = personByHandle.get(m.handle);
@@ -156,7 +176,7 @@ export function classifyFollowups(inputs: ClassifyInputs): ClassifyResult {
       (p) =>
         (p.stage === 'responded' || p.stage === 'mutual') &&
         p.stageUpdatedAt !== null &&
-        nowMs - p.stageUpdatedAt.getTime() < DM_READY_WINDOW_MS,
+        nowMs - p.stageUpdatedAt.getTime() < windows.dmReadyWindowMs,
     )
     .sort((a, b) => (b.stageUpdatedAt as Date).getTime() - (a.stageUpdatedAt as Date).getTime());
   for (const p of dmReady) {
@@ -170,9 +190,9 @@ export function classifyFollowups(inputs: ClassifyInputs): ClassifyResult {
     });
   }
 
-  // neglected_target — targets roster ∩ people, my last outbound >7d or never
-  // (generalizes the Targets amber).
-  const targetCutoff = nowMs - NEGLECTED_TARGET_DAYS * DAY_MS;
+  // neglected_target — targets roster ∩ people, my last outbound past the
+  // window or never (generalizes the Targets amber).
+  const targetCutoff = nowMs - windows.neglectedTargetDays * DAY_MS;
   const neglectedTargets = inputs.people
     .filter(
       (p) =>
@@ -194,8 +214,8 @@ export function classifyFollowups(inputs: ClassifyInputs): ClassifyResult {
     });
   }
 
-  // neglected_ally — stage ≥ mutual, no exchange either way in 14d.
-  const allyCutoff = nowMs - NEGLECTED_ALLY_DAYS * DAY_MS;
+  // neglected_ally — stage ≥ mutual, no exchange either way inside the window.
+  const allyCutoff = nowMs - windows.neglectedAllyDays * DAY_MS;
   const neglectedAllies = inputs.people
     .filter((p) => {
       if (stageRank(p.stage) < stageRank('mutual')) return false;
@@ -292,10 +312,17 @@ export interface MomentumInflection {
   segmentDays: number;
 }
 
-/** Upward inflection: the latest ≥3-day segment grows ≥5%/week AND faster
- *  than the series before it (no prior segment = a new trend counts). Null
- *  when the series is too thin, too stale, or just not accelerating. */
-export function momentumInflection(points: FollowerPoint[], now: Date): MomentumInflection | null {
+/** Upward inflection: the latest ≥3-day segment grows ≥ the weekly-%% threshold
+ *  AND faster than the series before it (no prior segment = a new trend counts).
+ *  Null when the series is too thin, too stale, or just not accelerating. The
+ *  threshold defaults to MOMENTUM_WEEKLY_PCT_THRESHOLD; the follow-up route
+ *  passes the `x.followups.momentumWeeklyPct` override. */
+export function momentumInflection(
+  points: FollowerPoint[],
+  now: Date,
+  opts: { weeklyPctThreshold?: number } = {},
+): MomentumInflection | null {
+  const weeklyPctThreshold = opts.weeklyPctThreshold ?? MOMENTUM_WEEKLY_PCT_THRESHOLD;
   if (points.length < 2) return null;
   const ordered = [...points].sort((a, b) => a.capturedAt.getTime() - b.capturedAt.getTime());
   const last = ordered[ordered.length - 1] as FollowerPoint;
@@ -319,7 +346,7 @@ export function momentumInflection(points: FollowerPoint[], now: Date): Momentum
       ? ((base.followersCount - first.followersCount) / first.followersCount / prevDays) * 7 * 100
       : null;
 
-  if (weeklyRatePct < MOMENTUM_WEEKLY_PCT_THRESHOLD) return null;
+  if (weeklyRatePct < weeklyPctThreshold) return null;
   if (prevWeeklyRatePct !== null && weeklyRatePct <= prevWeeklyRatePct) return null;
 
   return {
@@ -438,12 +465,16 @@ export function rankFans<T extends FanInput>(fans: T[]): T[] {
   });
 }
 
-/** A fan I haven't replied to in >7d (or ever) is unacknowledged — the panel
- *  ambers the top-10 ones. */
-export function fanUnacknowledged(fan: FanInput, now: Date): boolean {
+/** A fan I haven't replied to in > the window (or ever) is unacknowledged — the
+ *  panel ambers the top-10 ones. `unackDays` defaults to FAN_UNACKNOWLEDGED_DAYS;
+ *  the fans route passes the `x.followups.fanUnacknowledgedDays` override. */
+export function fanUnacknowledged(
+  fan: FanInput,
+  now: Date,
+  unackDays: number = FAN_UNACKNOWLEDGED_DAYS,
+): boolean {
   return (
-    fan.lastOutboundAt === null ||
-    now.getTime() - fan.lastOutboundAt.getTime() > FAN_UNACKNOWLEDGED_DAYS * DAY_MS
+    fan.lastOutboundAt === null || now.getTime() - fan.lastOutboundAt.getTime() > unackDays * DAY_MS
   );
 }
 

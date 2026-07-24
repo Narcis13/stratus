@@ -4,7 +4,9 @@ import {
   OUTBOUND_TYPES,
   PERSON_EVENT_TYPES,
   type PersonEventType,
+  STAGE_DEFAULTS,
   type StageEvent,
+  type StageThresholds,
   computeStage,
   exchangeDays,
   maxStage,
@@ -133,6 +135,44 @@ describe('computeStage matrix', () => {
   test('future-dated events are ignored', () => {
     const future = { type: 'my_reply' as const, at: new Date(NOW.getTime() + DAY_MS) };
     expect(computeStage([future], NOW)).toBe('stranger');
+  });
+});
+
+// UI.3: the thresholds are a settings-backed param (recomputePerson reads them);
+// the matrix above pins the defaults, these pin the param path itself.
+describe('computeStage with custom thresholds', () => {
+  const strict: StageThresholds = {
+    mutualExchangeDays: 3,
+    allyExchangeDays: 5,
+    allyWindowDays: 60,
+  };
+
+  test('two exchange days is mutual by default but not at mutualExchangeDays=3', () => {
+    const events = [0, 5].flatMap((d) => [ev('my_reply', d, 9), ev('their_mention', d, 12)]);
+    expect(computeStage(events, NOW)).toBe('mutual');
+    // Same events, stricter bar → the exchange count no longer clears mutual.
+    expect(computeStage(events, NOW, strict)).toBe('responded');
+  });
+
+  test('four exchange days is ally by default but only mutual at allyExchangeDays=5', () => {
+    const events = [0, 10, 25, 55].flatMap((d) => [
+      ev('my_reply', d, 9),
+      ev('their_mention', d, 12),
+    ]);
+    expect(computeStage(events, NOW)).toBe('ally');
+    expect(computeStage(events, NOW, strict)).toBe('mutual');
+    // A fifth exchange day inside the window re-earns ally under the strict bar.
+    const five = [...events, ev('my_reply', 40, 9), ev('their_mention', 40, 12)];
+    expect(computeStage(five, NOW, strict)).toBe('ally');
+  });
+
+  test('a narrow allyWindowDays disqualifies an otherwise-dense stretch', () => {
+    const events = [0, 5, 10, 15].flatMap((d) => [
+      ev('my_reply', d, 9),
+      ev('their_mention', d, 12),
+    ]);
+    expect(computeStage(events, NOW)).toBe('ally');
+    expect(computeStage(events, NOW, { ...STAGE_DEFAULTS, allyWindowDays: 7 })).toBe('mutual');
   });
 });
 

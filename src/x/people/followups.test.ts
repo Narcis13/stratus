@@ -266,6 +266,41 @@ describe('classifyFollowups', () => {
     expect(snoozed).toBe(1);
     expect(items.map((i) => i.kind)).toEqual(['neglected_target']);
   });
+
+  // UI.3: the four windows are a settings-backed second param (the route reads
+  // the `followups` group and passes them). Defaults match the constants above.
+  test('honors custom windows: a narrower neglectedAllyDays drops a quiet ally', () => {
+    const quiet = [person('ally20', { stage: 'ally', lastOutboundAt: daysAgo(20) })];
+    // 20d quiet — neglected at the default 14d window.
+    expect(classifyFollowups(inputs({ people: quiet })).items.map((i) => i.kind)).toEqual([
+      'neglected_ally',
+    ]);
+    // Widen the window to 21d and the same ally is no longer neglected.
+    const wide = classifyFollowups(inputs({ people: quiet }), {
+      chainLiveMaxAgeMs: DAY_MS,
+      dmReadyWindowMs: 7 * DAY_MS,
+      neglectedTargetDays: 7,
+      neglectedAllyDays: 21,
+    });
+    expect(wide.items).toEqual([]);
+  });
+
+  test('honors custom windows: chain-live and neglected-target windows widen together', () => {
+    const res = classifyFollowups(
+      inputs({
+        chainInbound: [chain('c', 30)], // 30h old — past the default 24h chain window
+        people: [person('t', { lastOutboundAt: daysAgo(8) })],
+        targetHandles: new Set(['t']),
+      }),
+      {
+        chainLiveMaxAgeMs: 48 * HOUR_MS, // now 30h counts
+        dmReadyWindowMs: 7 * DAY_MS,
+        neglectedTargetDays: 14, // now the 8-day-cold target does NOT
+        neglectedAllyDays: 14,
+      },
+    );
+    expect(res.items.map((i) => `${i.kind}:${i.handle}`)).toEqual(['chain_live:c']);
+  });
 });
 
 describe('pickReupCandidate', () => {
@@ -367,6 +402,18 @@ describe('momentumInflection', () => {
   test('a stale series (latest point >30d old) never flags', () => {
     expect(momentumInflection([pt(45, 1000), pt(35, 1200)], NOW)).toBeNull();
   });
+
+  test('honors a custom weeklyPctThreshold (UI.3 momentumWeeklyPct)', () => {
+    // +6%/wk clears the default 5% but not a stricter 8% bar.
+    const series = [pt(8, 1000), pt(1, 1060)];
+    expect(momentumInflection(series, NOW)).not.toBeNull();
+    expect(momentumInflection(series, NOW, { weeklyPctThreshold: 8 })).toBeNull();
+    // A looser 2% bar flags a segment the default would reject.
+    expect(momentumInflection([pt(8, 1000), pt(1, 1030)], NOW)).toBeNull();
+    expect(
+      momentumInflection([pt(8, 1000), pt(1, 1030)], NOW, { weeklyPctThreshold: 2 }),
+    ).not.toBeNull();
+  });
 });
 
 describe('aboutToEnterBand', () => {
@@ -405,5 +452,8 @@ describe('fans', () => {
     expect(fanUnacknowledged(fan(null), NOW)).toBe(true);
     expect(fanUnacknowledged(fan(daysAgo(8)), NOW)).toBe(true);
     expect(fanUnacknowledged(fan(daysAgo(3)), NOW)).toBe(false);
+    // UI.3: a custom fanUnacknowledgedDays window moves the boundary.
+    expect(fanUnacknowledged(fan(daysAgo(3)), NOW, 2)).toBe(true);
+    expect(fanUnacknowledged(fan(daysAgo(8)), NOW, 14)).toBe(false);
   });
 });
