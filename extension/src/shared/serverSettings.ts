@@ -48,6 +48,26 @@ export interface ServerConfig {
   /** x.band.* — every threshold the on-page badge classifies with (UI.7). The
    *  server gate reads the same twelve knobs, so one number moves both sides. */
   band: BandThresholds;
+  /** x.display.doNextCap — rows the Today "Do next" strip shows before the
+   *  overflow line (UI.12). */
+  doNextCap: number;
+  /** x.display.doNextSnoozeH — how far the "zz" button pushes a follow-up out.
+   *  The snooze itself is stored server-side at press time. */
+  doNextSnoozeH: number;
+  /** x.display.fansAmberTopN — how deep into Top fans an unacknowledged fan
+   *  still ambers. */
+  fansAmberTopN: number;
+  /** x.display.radarDraftCap — tweets one "Draft replies" click batches. Always
+   *  use it through `radarBatchSize()`, never raw: the server enforces
+   *  `batchReplyCap` and refuses (not truncates) anything above it. */
+  radarDraftCap: number;
+  /** x.ai.batchReplyCap — the batch size the SERVER enforces. Mirrored only so
+   *  the panel can stop asking for a batch it knows will be refused. */
+  batchReplyCap: number;
+  /** x.followups.neglectedTargetDays — days cold before a roster target reads as
+   *  neglected. The same key the follow-up queue and the weekly digest use: the
+   *  Today roster tint must not disagree with the queue that nags about it. */
+  neglectedTargetDays: number;
 }
 
 export const SERVER_DEFAULTS: ServerConfig = {
@@ -57,7 +77,21 @@ export const SERVER_DEFAULTS: ServerConfig = {
   bestTimeMinN: 3,
   panelRefreshCap: 4,
   band: BAND,
+  doNextCap: 5,
+  doNextSnoozeH: 24,
+  fansAmberTopN: 10,
+  radarDraftCap: 20,
+  batchReplyCap: 25,
+  neglectedTargetDays: 7,
 };
+
+/** The batch size a "Draft replies" click may actually ask for: the display cap,
+ *  clamped to the cap the server enforces. Both knobs are independently editable
+ *  and the ceiling can move under either one, so the clamp lives here — one
+ *  place — rather than in the Radar's render. */
+export function radarBatchSize(cfg: ServerConfig): number {
+  return Math.max(1, Math.min(cfg.radarDraftCap, cfg.batchReplyCap));
+}
 
 // Ranges/steps were already enforced by the registry when the value was
 // written, so these guards are about a corrupted or half-written blob, not
@@ -113,5 +147,15 @@ export function readServerConfig(raw: unknown): ServerConfig {
       SERVER_DEFAULTS.panelRefreshCap,
     ),
     band: readBand(blob),
+    doNextCap: readNumber(blob, 'x.display.doNextCap', SERVER_DEFAULTS.doNextCap),
+    doNextSnoozeH: readNumber(blob, 'x.display.doNextSnoozeH', SERVER_DEFAULTS.doNextSnoozeH),
+    fansAmberTopN: readNumber(blob, 'x.display.fansAmberTopN', SERVER_DEFAULTS.fansAmberTopN),
+    radarDraftCap: readNumber(blob, 'x.display.radarDraftCap', SERVER_DEFAULTS.radarDraftCap),
+    batchReplyCap: readNumber(blob, 'x.ai.batchReplyCap', SERVER_DEFAULTS.batchReplyCap),
+    neglectedTargetDays: readNumber(
+      blob,
+      'x.followups.neglectedTargetDays',
+      SERVER_DEFAULTS.neglectedTargetDays,
+    ),
   };
 }

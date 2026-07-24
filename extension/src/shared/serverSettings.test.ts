@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { BAND } from '../replyBand.ts';
-import { SERVER_DEFAULTS, readServerConfig } from './serverSettings.ts';
+import { SERVER_DEFAULTS, radarBatchSize, readServerConfig } from './serverSettings.ts';
 
 describe('readServerConfig — the mirrored blob (UI.6)', () => {
   test('a full blob wins over every baked default', () => {
@@ -11,6 +11,12 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
         'x.doctrine.ladderSwitchAt': 3,
         'x.gates.bestTimeMinN': 8,
         'x.mentions.panelRefreshCap': 1,
+        'x.display.doNextCap': 8,
+        'x.display.doNextSnoozeH': 48,
+        'x.display.fansAmberTopN': 25,
+        'x.display.radarDraftCap': 12,
+        'x.ai.batchReplyCap': 40,
+        'x.followups.neglectedTargetDays': 10,
       }),
     ).toEqual({
       anchors3: [8, 14, 19],
@@ -19,6 +25,12 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       bestTimeMinN: 8,
       panelRefreshCap: 1,
       band: BAND,
+      doNextCap: 8,
+      doNextSnoozeH: 48,
+      fansAmberTopN: 25,
+      radarDraftCap: 12,
+      batchReplyCap: 40,
+      neglectedTargetDays: 10,
     });
   });
 
@@ -80,10 +92,56 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'anchors3',
       'anchors4',
       'band',
+      'batchReplyCap',
       'bestTimeMinN',
+      'doNextCap',
+      'doNextSnoozeH',
+      'fansAmberTopN',
       'ladderSwitchAt',
+      'neglectedTargetDays',
       'panelRefreshCap',
+      'radarDraftCap',
     ]);
+  });
+});
+
+// UI.12 — the Today tab's presentation caps. Four of them exist only for the
+// panel; the other two were server-scoped knobs flipped to mirrored so the panel
+// reads the SAME number the server acts on rather than a lookalike constant.
+describe('readServerConfig — Today display caps (UI.12)', () => {
+  test('each cap falls back on its own', () => {
+    const cfg = readServerConfig({ 'x.display.doNextCap': 'five', 'x.display.fansAmberTopN': 3 });
+    expect(cfg.doNextCap).toBe(SERVER_DEFAULTS.doNextCap);
+    expect(cfg.fansAmberTopN).toBe(3);
+    expect(cfg.radarDraftCap).toBe(SERVER_DEFAULTS.radarDraftCap);
+    expect(cfg.neglectedTargetDays).toBe(SERVER_DEFAULTS.neglectedTargetDays);
+  });
+
+  test('the baked caps ARE the registry defaults', () => {
+    // Drift here is invisible: the panel would simply behave differently before
+    // the first sync than after it.
+    expect(SERVER_DEFAULTS.doNextCap).toBe(5);
+    expect(SERVER_DEFAULTS.doNextSnoozeH).toBe(24);
+    expect(SERVER_DEFAULTS.fansAmberTopN).toBe(10);
+    expect(SERVER_DEFAULTS.radarDraftCap).toBe(20);
+    expect(SERVER_DEFAULTS.batchReplyCap).toBe(25);
+    expect(SERVER_DEFAULTS.neglectedTargetDays).toBe(7);
+  });
+});
+
+describe('radarBatchSize — the display cap clamped to what the server allows', () => {
+  test('the lower of the two wins, in both directions', () => {
+    expect(radarBatchSize({ ...SERVER_DEFAULTS, radarDraftCap: 20, batchReplyCap: 25 })).toBe(20);
+    // Raising the radar cap past the server's ceiling used to buy a refused
+    // click; now it just stops at the ceiling.
+    expect(radarBatchSize({ ...SERVER_DEFAULTS, radarDraftCap: 50, batchReplyCap: 25 })).toBe(25);
+    expect(radarBatchSize({ ...SERVER_DEFAULTS, radarDraftCap: 3, batchReplyCap: 50 })).toBe(3);
+  });
+
+  test('a corrupt blob can never produce a zero-or-negative batch', () => {
+    // Both knobs floor at 1 in the registry, so this is corruption-only — but a
+    // 0 here would silently disable the button rather than surface a problem.
+    expect(radarBatchSize({ ...SERVER_DEFAULTS, radarDraftCap: 0, batchReplyCap: 0 })).toBe(1);
   });
 });
 

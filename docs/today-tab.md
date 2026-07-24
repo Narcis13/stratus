@@ -58,6 +58,8 @@ If loading the Brief fails, a red error line appears just under the header; the 
 
 Sections are described in the order they appear on screen (top to bottom). Many of them **render nothing at all when there's no data** — this is intentional, and each note below says when a section is invisible.
 
+Several section headers carry a small **⚙** button. That's the inline settings affordance: it opens a little card holding exactly the knobs that shape *that* section, and it writes to the same place **Settings → Tuning** does. See **[Tuning Today from Today](#tuning-today-from-today-the--gears)** below for the full list. Where a number in this document is configurable, it's written as "N by default."
+
 ### 1. Launch Room 🚀
 
 **When it appears:** only for **30 minutes** right after one of your scheduled posts actually goes live. Outside that window this section is completely absent. (The extension sets a timer for each scheduled post; when the post's time arrives it verifies with the server that the post really shipped, then opens the room and shows a browser notification: *"«your post…» just went live — open the Launch Room."*)
@@ -114,7 +116,9 @@ This is your gentle daily checklist — designed to encourage, never to guilt. E
 
 **Gentle by design:** a quest with no opportunity today (e.g. you had no post to launch) is counted as done, with a note explaining why. A quiet day never breaks your streak. When every quest is done you'll see *"All done — the rest of the day is yours."*
 
-The heading shows your **streak** — the number of consecutive days you finished everything (e.g. *"· 5-day streak"*), or *"· streak starts today"* the first day. There is no red, no penalty, anywhere in this section.
+The heading shows your **streak** — the number of consecutive days you finished everything (e.g. *"5-day streak"*), or *"streak starts today"* the first day. There is no red, no penalty, anywhere in this section.
+
+The **⚙** in the header edits the quest targets themselves: originals per day, how many neglected targets to ask for, how cold "neglected" means, and the launch-room attendance window. The **reply** quest is deliberately not in there — it follows your niche's reply band, or a daily commitment when one is active, and a second knob for the same number would silently disagree with the first. The gear says so.
 
 **Your commitments set two of the targets.** If you've promised yourself a daily minimum in **Settings → Commitments**, the *Quality replies* and *1 original* quests read that number instead of the defaults — the labels become e.g. *"17 quality replies"* and *"3 original posts"*. A **paused** commitment changes nothing. A commitment can only ever *raise* a bar, so a streak already on the books can't be retroactively broken. (The **Replies quota** section further down deliberately keeps showing the 10–20/day doctrine band: a personal minimum isn't a redefinition of the doctrine, so the two legitimately disagree.)
 
@@ -144,7 +148,7 @@ Each goal shows:
 
 ### 5. Do Next
 
-**When it appears:** loads independently when the tab opens. This is your **follow-up queue** — a short, ranked list (max 5 shown) of the single most useful thing to do for each person or post. It's a queue, not a dashboard: work the top and it shrinks.
+**When it appears:** loads independently when the tab opens. This is your **follow-up queue** — a short, ranked list (**5 rows by default**) of the single most useful thing to do for each person or post. It's a queue, not a dashboard: work the top and it shrinks. The header **⚙** sets how many rows to show and how long the **zz** snooze lasts; *which* follow-ups qualify at all is the Follow-ups group in **Settings → Tuning**.
 
 Each row has a small colored **kind chip**, the person's **@handle** (a link to their dossier) or *"your post"*, a one-line **reason**, and action buttons.
 
@@ -162,9 +166,9 @@ Each row has a small colored **kind chip**, the person's **@handle** (a link to 
 - **↗** (when present) — opens the relevant tweet on X (their reply, or your post to re-up).
 - **opener** (person rows) — expands an "icebreaker" box that drafts a reply-style opener and a DM-style opener grounded strictly on your real shared history with that person (an AI call, roughly **$0.005**). Only one opener box is open at a time. You copy and send manually.
 - **draft** (re-up rows only) — drafts three quote-tweet "re-up" takes on your old winning post via Grok (roughly **$0.006**). They land as draft rows in your Calendar for you to schedule. After drafting, that candidate drops off the queue.
-- **zz** — snoozes this item for 24 hours.
+- **zz** — snoozes this item for **24 hours by default** (the ⚙ changes it; a snooze already pressed keeps the length it was given).
 
-If there's nothing to do, you'll see *"Nothing owed — go hunting."* (with a count of any snoozed items). If there are more than 5 items, a *"+N more in the queue"* note appears at the bottom.
+If there's nothing to do, you'll see *"Nothing owed — go hunting."* (with a count of any snoozed items). If there are more rows than the strip shows, a *"+N more in the queue"* note appears at the bottom.
 
 ### 6. Conversations (the Inbox)
 
@@ -202,8 +206,9 @@ Rows are ranked by: **manually pinned** first, then **who the author is** (an al
 
 **Header actions:**
 
-- **Draft replies (N)** — makes **one** Grok call that drafts a reply — three angle variants (extends / contrarian / debate) — for every un-drafted tweet in the queue (up to 20 at a time). The cost of that single call is shown afterward. Each tweet then shows its ready reply (the first variant), and drafts survive a browser restart with all three variants intact.
+- **Draft replies (N)** — makes **one** Grok call that drafts a reply — three angle variants (extends / contrarian / debate) — for every un-drafted tweet in the queue (**20 at a time by default**). The cost of that single call is shown afterward. Each tweet then shows its ready reply (the first variant), and drafts survive a browser restart with all three variants intact.
 - **Clear** — dismisses everything currently shown (so it won't come back).
+- **⚙** — the batch size. Two numbers live in there: the radar's own draft cap, and the batch cap the *server* enforces. The click sends the lower of the two, so raising one past the other can't buy you a refused click. What lands on the radar at all is the **Reply band** group in Settings → Tuning — the same twelve thresholds the on-page badge uses, which is why the badge can never promise a draft the server then refuses.
 
 **Two tabs:**
 
@@ -233,9 +238,11 @@ Each row shows:
 - **@handle** (a link to their dossier) and **↗** (their profile on X).
 - Their **follower count**.
 - **Momentum** — their follower growth, e.g. `+45/day`, or *"no trend yet"* if there aren't enough data points.
-- A **"last replied to"** line: `replied 3d ago · 5× total`, or *"never replied to."* If it's been more than **7 days** (or never), this line turns **amber** — a neglected target you should get back to.
+- A **"last replied to"** line: `replied 3d ago · 5× total`, or *"never replied to."* If it's been more than **7 days by default** (or never), this line turns **amber** — a neglected target you should get back to.
 
-Empty states: *"No account snapshot yet — runs after the first 03:00 UTC pass"* (stratus needs to know your own follower count first, which it records daily), or *"No saved authors in the 2–10x band. Save authors from their profile page to build the roster."*
+The header **⚙** edits that window — and it's the *same* number the **Do Next** queue and the Sunday digest use, not a lookalike, so the roster can't look calm while the queue nags about the same person. The **2–10× follower band itself is not in the gear**: it belongs to your active niche (**Settings → General → Niche**), which the gear says out loud.
+
+Empty states: *"No account snapshot yet."* (stratus sizes the band off your own follower count, which the first 03:00 UTC pass records), or *"No saved authors in the 2–10x band."* with a hint to save authors from their profile page.
 
 ### 9. Top Fans
 
@@ -244,7 +251,7 @@ Empty states: *"No account snapshot yet — runs after the first 03:00 UTC pass"
 - A **30d / 90d** toggle in the heading switches the window.
 - Each row shows the **inbound count** (`5×`), the **@handle** (dossier link), a **stage chip** if you have a relationship, and a **"last acknowledged"** line: `acknowledged 2d ago` or *"never acknowledged."*
 - When stratus has harvested likes/reposts/follows from your notifications page, the row also shows **`· N engagements`** for the same window (see **[Notifications surface](./notifications-surface.md)**). This is **display-only** — engagement never changes the ranking, because a like is not a conversation. The line is hidden at zero.
-- If a **top-10 fan** hasn't been acknowledged by you in over 7 days, that line turns **amber** — they've given you attention and you owe some back.
+- If a **top-10 fan** (by default) hasn't been acknowledged by you in over **7 days** (by default), that line turns **amber** — they've given you attention and you owe some back. The header **⚙** holds both numbers: how deep the amber goes, and how long counts as unacknowledged. Only the nudge moves — the ranking is inbound volume over the window you picked, always.
 
 Empty state: *"No inbound in the last 30 days."*
 
@@ -330,6 +337,28 @@ This is the coach's weekly note. It makes one Grok call (roughly **$0.01**) to n
 
 ---
 
+## Tuning Today from Today (the ⚙ gears)
+
+Five section headers carry a **⚙**. Each one opens a small card of exactly the knobs that shape that section — the same knobs, stored in the same place, as **Settings → Tuning**. Editing one here and looking at it there shows the identical value; there is no separate "Today config."
+
+| Gear | What it holds | Notes |
+|---|---|---|
+| **Today's quests** | Originals per day · neglected targets per day · neglected-after (days) · launch attend window (min) | The *reply* quest is absent on purpose — your niche's reply band (or an active commitment) owns that number. |
+| **Do next** | Rows to show · snooze length (h) | Which follow-ups qualify is the **Follow-ups** group in Settings → Tuning. |
+| **Radar** | Radar draft cap · AI batch reply cap | A click sends the **lower** of the two. What reaches the radar at all is the **Reply band** group. |
+| **Targets** | Neglected target after (days) | The same key the Do-next queue and the Sunday digest read. The 2–10× band is niche-owned. |
+| **Top fans** | Fan amber rank · fan unacknowledged after (days) | Moves the nudge only, never the ranking. |
+
+**How the gears behave:**
+
+- **Changes save themselves.** There is no Save button. Drag a slider or type a number and it's written a moment after you stop — one write per knob, not one per drag tick. Closing the popover mid-edit still saves what you moved.
+- **A rejected value snaps back.** Every knob has a floor and a ceiling defined server-side; a value outside them is refused, the row shows the error code, and the saved value reappears. The bounds are the guard — not the UI.
+- **A small accent dot** next to a label means that knob is no longer at its shipped default. Click the dot to put it back.
+- **A gear is invisible when the server is unreachable.** The section itself keeps working: the numbers it renders with come from a locally mirrored copy that falls back to the shipped defaults, so a dead server changes nothing about what you see, only your ability to edit it.
+- **Numbers cross to the page too.** The knobs Today reads live in a mirrored blob the extension refreshes when you save. A change lands in an already-open panel within a few minutes, or immediately when you reopen it.
+
+---
+
 ## Common workflows
 
 ### Work my reply queue this morning
@@ -370,7 +399,7 @@ This is the coach's weekly note. It makes one Grok call (roughly **$0.01**) to n
 ## States you'll see
 
 - **Loading** — the top **Refresh** button reads *"Loading…"* while the Brief fetches. Individual sections may briefly show nothing until their own data arrives.
-- **Empty** — most sections show a plain gray line when there's genuinely nothing to do (*"Nothing owed — go hunting,"* *"Browse X — hot/warm tweets… queue up here,"* *"No conversations yet,"* etc.). Some sections (**Launch Room**, **Pinned post**, **Profile-click leaders**) render nothing at all when they have no reason to appear — that's normal, not a bug.
+- **Empty** — most sections show a short coach line, usually with a second smaller line telling you what would fill it (*"Nothing owed — go hunting"* / *"Reply to a target from Radar or the roster and the chain comes back here when they answer"*). Some sections (**Launch Room**, **Pinned post**, **Profile-click leaders**) render nothing at all when they have no reason to appear — that's normal, not a bug.
 - **Error** — a red line appears in the affected section (or under the header for the Brief). It's scoped: an error in one section doesn't take down the rest of the tab. Common causes are a bad or missing bearer token, or the server being unreachable. Refresh to retry.
 
 ---
@@ -395,5 +424,6 @@ This is the coach's weekly note. It makes one Grok call (roughly **$0.01**) to n
 - **The daily 03:00 UTC snapshot** is why yesterday's tweets sometimes read *"awaiting 03:00 UTC snapshot"* — stratus measures each tweet's numbers once a day rather than polling constantly (to keep costs near zero).
 - **Time zones:** everything on Today uses your local day *except* the Spend section, which uses the UTC billing day to match X's billing.
 - **Almost every handle is a link** to that person's dossier in the People tab — click through whenever you want the full history before you reply.
-- **Amber means "you owe someone."** Whenever a "last replied" or "acknowledged" line turns amber (in Targets or Top Fans), it's flagging attention you've received but haven't returned.
+- **Amber means "you owe someone."** Whenever a "last replied" or "acknowledged" line turns amber (in Targets or Top Fans), it's flagging attention you've received but haven't returned. Both windows are editable from the ⚙ on those sections.
+- **Every number on this tab that could be argued with is a knob.** Where a count or a window looks arbitrary, check the section's ⚙ before working around it — and see **[Settings → Tuning](./settings-tab.md)** for the full registry.
 - **Green never turns red.** The quests and streak are built to encourage. A day with no opportunity counts as done, and a quiet day never breaks your streak.

@@ -12,6 +12,7 @@ import { FansSection } from './Fans.tsx';
 import { LaunchRoomSection } from './LaunchRoom.tsx';
 import { ManualPostCardSection } from './ManualPostCard.tsx';
 import { RadarSection } from './Radar.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import { TargetsSection } from './Targets.tsx';
 import {
   ApiError,
@@ -26,7 +27,10 @@ import {
   api,
 } from './api.ts';
 import { formatTime } from './datetime.ts';
+import { type SettingsEditor, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 interface Props {
   settings: Settings;
@@ -40,6 +44,9 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
   const [brief, setBrief] = useState<Brief | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // UI.12 — ONE editor for the whole tab, shared by every inline gear below
+  // (Settings → Tuning edits the identical keys through the identical hook).
+  const editor = useSettingsEditor(settings);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,7 +88,11 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
           GR.8 debt line rides underneath: what the daily commitment asked for
           and how many of the last days went by without it. */}
       {brief?.quests && (
-        <QuestsSection quests={brief.quests} commitments={brief.commitments ?? []} />
+        <QuestsSection
+          quests={brief.quests}
+          commitments={brief.commitments ?? []}
+          editor={editor}
+        />
       )}
 
       {/* GR.8: goals with live pacing, right under the quests they share a
@@ -91,20 +102,20 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
 
       {/* The follow-up queue (C5), capped at 5 — who do I owe, who to
           nurture, who's heating up. */}
-      <DoNextSection settings={settings} onOpenPerson={onOpenPerson} />
+      <DoNextSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
 
       {/* Threaded inbox (C2) — conversations with open loops and chains first.
           Supersedes the flat §7.5 mention list. */}
       <ConversationsSection settings={settings} onOpenPerson={onOpenPerson} />
 
       {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
-      <RadarSection settings={settings} onOpenPerson={onOpenPerson} />
+      <RadarSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
 
       {/* The 2–10x reply-target roster (§7.4) — its own $0 fetch. */}
-      <TargetsSection settings={settings} onOpenPerson={onOpenPerson} />
+      <TargetsSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
 
       {/* Top Fans (C5) — people who already notice you. */}
-      <FansSection settings={settings} onOpenPerson={onOpenPerson} />
+      <FansSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
 
       {brief && (
         <>
@@ -129,26 +140,49 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
   );
 }
 
+// UI.12 — the quest targets are the one set of numbers a user wants to change
+// the moment they disagree with the checklist, so they get a gear on the very
+// section that grades them. The reply quest is deliberately absent: it follows
+// the niche reply band (or an active commitment that outranks it), and a knob
+// here would be a second silent owner of that number.
+const QUEST_KEYS = [
+  'x.quests.originalsTarget',
+  'x.quests.neglectedTargetsCount',
+  'x.quests.neglectedTargetDays',
+  'x.quests.launchAttendWindowMin',
+];
+
 function QuestsSection({
   quests,
   commitments,
+  editor,
 }: {
   quests: BriefQuests;
   commitments: Commitment[];
+  editor: SettingsEditor;
 }): JSX.Element {
   const hit = quests.items.filter((q) => q.done).length;
+  const streak =
+    quests.streak.current > 0
+      ? `${quests.streak.current}-day streak`
+      : hit === quests.items.length
+        ? 'streak starts today'
+        : '';
   return (
-    <section className="brief-section">
-      <h3>
-        Today's quests
-        <span className="quest-streak">
-          {quests.streak.current > 0
-            ? ` · ${quests.streak.current}-day streak`
-            : hit === quests.items.length
-              ? ' · streak starts today'
-              : ''}
-        </span>
-      </h3>
+    <Section
+      title="Today's quests"
+      actions={
+        <>
+          {streak && <span className="quest-streak">{streak}</span>}
+          <SettingsGear
+            editor={editor}
+            keys={QUEST_KEYS}
+            label="Configure the daily quest targets"
+            note="The reply quest isn't here — it follows your niche's reply band, or a daily commitment when one is active. Both live under Settings → General."
+          />
+        </>
+      }
+    >
       <ul className="quest-list">
         {quests.items.map((q) => (
           <li key={q.key} className={`quest-row${q.done ? ' quest-done' : ''}`}>
@@ -164,7 +198,7 @@ function QuestsSection({
         <div className="ok">All done — the rest of the day is yours.</div>
       )}
       <DebtLine commitments={commitments} />
-    </section>
+    </Section>
   );
 }
 
@@ -249,8 +283,7 @@ function GoalsCard({
   };
 
   return (
-    <section className="brief-section">
-      <h3>Goals</h3>
+    <Section title="Goals">
       {error && <div className="error">{error}</div>}
       <ul className="goal-list">
         {goals.map((g) => (
@@ -285,7 +318,7 @@ function GoalsCard({
           </li>
         ))}
       </ul>
-    </section>
+    </Section>
   );
 }
 
@@ -363,8 +396,7 @@ function PinnedWatchCard({ brief }: { brief: Brief }): JSX.Element | null {
   if (!w || !w.pinnedTweetId || (!w.stale && !w.outperformer)) return null;
   const pinnedUrl = `https://x.com/i/web/status/${w.pinnedTweetId}`;
   return (
-    <section className="brief-section">
-      <h3>Pinned post</h3>
+    <Section title="Pinned post">
       <div className="warn">
         {w.stale && (
           <div>
@@ -394,7 +426,7 @@ function PinnedWatchCard({ brief }: { brief: Brief }): JSX.Element | null {
           </div>
         )}
       </div>
-    </section>
+    </Section>
   );
 }
 
@@ -414,8 +446,7 @@ function AccountHealthCard({ brief }: { brief: Brief }): JSX.Element | null {
   const alerts = brief.monitor?.alerts ?? [];
   if (alerts.length === 0) return null;
   return (
-    <section className="brief-section">
-      <h3>Account health</h3>
+    <Section title="Account health">
       {/* At most one alert per rule (the monitor's contract), so `rule` is a
           stable key and the list can never render a rule twice. */}
       {alerts.map((a) => (
@@ -423,7 +454,7 @@ function AccountHealthCard({ brief }: { brief: Brief }): JSX.Element | null {
           {a.message}
         </div>
       ))}
-    </section>
+    </Section>
   );
 }
 
@@ -452,10 +483,12 @@ function Sparkline({ points }: { points: number[] }): JSX.Element | null {
 function TodayPlan({ brief }: { brief: Brief }): JSX.Element {
   const { scheduled, gaps, anchors } = brief.today;
   return (
-    <section className="brief-section">
-      <h3>Today's plan</h3>
+    <Section title="Today's plan">
       {scheduled.length === 0 ? (
-        <div className="muted">Nothing scheduled today.</div>
+        <EmptyState
+          line="Nothing scheduled today."
+          hint="The open slots below are ranked by what your own posts have earned at that hour — take the top one in Composer."
+        />
       ) : (
         <ul className="post-list brief-plan">
           {scheduled.map((p) => (
@@ -510,7 +543,7 @@ function TodayPlan({ brief }: { brief: Brief }): JSX.Element {
       ) : (
         <div className="ok">All {anchors.length} slots filled.</div>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -519,8 +552,7 @@ function ReplyQuota({ brief }: { brief: Brief }): JSX.Element {
   const { posts, replies, replyPct, targetReplyPct } = brief.week;
   const pct = Math.min(100, (postedToday / target.min) * 100);
   return (
-    <section className="brief-section">
-      <h3>Replies</h3>
+    <Section title="Replies">
       <div className="brief-quota">
         <div className="brief-quota-bar">
           <div
@@ -536,17 +568,19 @@ function ReplyQuota({ brief }: { brief: Brief }): JSX.Element {
         Week: <strong>{replies}</strong> replies · <strong>{posts}</strong> posts
         {replyPct !== null && ` — ${replyPct}% replies (target ${targetReplyPct}%)`}
       </div>
-    </section>
+    </Section>
   );
 }
 
 function Yesterday({ brief }: { brief: Brief }): JSX.Element {
   const { posts, replies } = brief.yesterday;
   return (
-    <section className="brief-section">
-      <h3>Yesterday</h3>
+    <Section title="Yesterday">
       {posts.length === 0 && replies.length === 0 ? (
-        <div className="muted">Nothing published yesterday.</div>
+        <EmptyState
+          line="Nothing published yesterday."
+          hint="A quiet day costs nothing — the streak counts quests, not volume."
+        />
       ) : (
         <>
           {posts.length > 0 && <TweetList label={`Posts (${posts.length})`} tweets={posts} />}
@@ -555,7 +589,7 @@ function Yesterday({ brief }: { brief: Brief }): JSX.Element {
           )}
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -589,8 +623,7 @@ function Leaders({
   };
 
   return (
-    <section className="brief-section">
-      <h3>Profile click leaders (7d)</h3>
+    <Section title="Profile click leaders (7d)">
       {note && <div className="status-line">{note}</div>}
       <ul className="brief-tweets">
         {tweets.map((t) => (
@@ -623,7 +656,7 @@ function Leaders({
           </li>
         ))}
       </ul>
-    </section>
+    </Section>
   );
 }
 
@@ -655,13 +688,12 @@ function TweetList({ label, tweets }: { label: string; tweets: BriefTweet[] }): 
 function SpendLine({ brief }: { brief: Brief }): JSX.Element {
   const { xUsd, grokUsd, totalUsd } = brief.spend;
   return (
-    <section className="brief-section">
-      <h3>Spend today (UTC)</h3>
+    <Section title="Spend today (UTC)">
       <div className="brief-spend">
         X <strong>{fmtUsd(xUsd)}</strong> · Grok <strong>{fmtUsd(grokUsd)}</strong> · total{' '}
         <strong>{fmtUsd(totalUsd)}</strong>
       </div>
-    </section>
+    </Section>
   );
 }
 

@@ -332,6 +332,7 @@ describe('registry adapter + grouping', () => {
       'x.doctrine.anchors3',
       'x.doctrine.anchors4',
       'x.doctrine.ladderSwitchAt',
+      'x.followups.neglectedTargetDays',
       'x.band.bigViews',
       'x.band.baitViews',
       'x.band.earlyReplies',
@@ -345,7 +346,12 @@ describe('registry adapter + grouping', () => {
       'x.band.tooSmallViews',
       'x.band.tooSmallVpm',
       'x.gates.bestTimeMinN',
+      'x.ai.batchReplyCap',
       'x.mentions.panelRefreshCap',
+      'x.display.doNextCap',
+      'x.display.doNextSnoozeH',
+      'x.display.fansAmberTopN',
+      'x.display.radarDraftCap',
     ]);
     // The server's own refresh cap is the real limit and stays server-side —
     // the panel budget degrading to its baked value must never widen it.
@@ -384,6 +390,59 @@ describe('registry adapter + grouping', () => {
     for (const d of SETTINGS_REGISTRY.filter((x) => x.group === 'band')) {
       expect([d.key, d.description.includes('>=100 measured replies')]).toEqual([d.key, true]);
     }
+  });
+
+  // UI.12: the Today tab's own presentation caps. They are the first knobs whose
+  // ONLY consumer is the side panel, so `mirrored` is not an optimization here —
+  // a server-scoped one would never reach the code that reads it.
+  test('UI.12 display knobs are panel-read, mirrored, and bounded', () => {
+    const groups = settingsByGroup();
+    expect(groups.find((g) => g.id === 'display')?.defs.map((d) => d.key)).toEqual([
+      'x.display.sparklineDays',
+      'x.display.leaderCount',
+      'x.display.doNextCap',
+      'x.display.doNextSnoozeH',
+      'x.display.fansAmberTopN',
+      'x.display.radarDraftCap',
+    ]);
+
+    const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
+    for (const k of [
+      'x.display.doNextCap',
+      'x.display.doNextSnoozeH',
+      'x.display.fansAmberTopN',
+      'x.display.radarDraftCap',
+    ]) {
+      expect([k, byKey.get(k)?.scope]).toEqual([k, 'mirrored']);
+      // Presentation caps bind the next render — nothing here arms a timer.
+      expect([k, byKey.get(k)?.appliesOn]).toEqual([k, undefined]);
+    }
+    // The two brief-read display knobs stay server-side: the panel gets those
+    // numbers already applied, inside the brief payload.
+    expect(byKey.get('x.display.sparklineDays')?.scope).toBe('server');
+    expect(byKey.get('x.display.leaderCount')?.scope).toBe('server');
+
+    // The roster tint and the follow-up queue read ONE key, and the Radar's
+    // batch size and the cap the server enforces travel together — both are the
+    // reason these two flipped to mirrored rather than growing panel twins.
+    expect(byKey.get('x.followups.neglectedTargetDays')?.scope).toBe('mirrored');
+    expect(byKey.get('x.ai.batchReplyCap')?.scope).toBe('mirrored');
+    // …and the quests group keeps its own same-named knob (a different question:
+    // how many neglected targets today's quest asks for), still server-only.
+    expect(byKey.get('x.quests.neglectedTargetDays')?.scope).toBe('server');
+
+    expect(settingsRegistry.validate('x.display.doNextCap', 15)).toBeNull();
+    expect(settingsRegistry.validate('x.display.doNextCap', 16)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.display.doNextCap', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.display.doNextSnoozeH', 168)).toBeNull();
+    expect(settingsRegistry.validate('x.display.doNextSnoozeH', 169)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.display.fansAmberTopN', 50)).toBeNull();
+    expect(settingsRegistry.validate('x.display.fansAmberTopN', 51)).toBe('out_of_range');
+    // The radar cap tops out where the batch cap does; between the two the panel
+    // clamps, so this ceiling is the outer bound, not the effective one.
+    expect(settingsRegistry.validate('x.display.radarDraftCap', 50)).toBeNull();
+    expect(settingsRegistry.validate('x.display.radarDraftCap', 51)).toBe('out_of_range');
+    expect(byKey.get('x.display.radarDraftCap')?.max).toBe(byKey.get('x.ai.batchReplyCap')?.max);
   });
 
   test('validation honors UI.3 ranges (fractional outperform ratio + bounds)', () => {

@@ -252,17 +252,22 @@ const FOLLOWUPS: SettingDef[] = [
     scope: 'server',
   },
   {
+    // Mirrored since UI.12: the Today Targets roster tints a row "neglected" on
+    // the panel side, and the follow-up queue surfaces the same person from the
+    // server side. Two owners of "how cold is cold" would let the roster look
+    // calm while the queue is nagging, so the panel reads this very key rather
+    // than minting an x.display.targetsNeglectDays twin.
     key: 'x.followups.neglectedTargetDays',
     group: 'followups',
     label: 'Neglected target after',
     description:
-      'Days without a reply from you before a roster target surfaces as neglected (also drives the weekly digest neglected-targets list).',
+      'Days without a reply from you before a roster target surfaces as neglected — the follow-up queue, the Today targets tint, and the weekly digest list all read this one number.',
     type: 'number',
     default: 7,
     min: 1,
     max: 60,
     unit: 'days',
-    scope: 'server',
+    scope: 'mirrored',
   },
   {
     key: 'x.followups.neglectedAllyDays',
@@ -749,6 +754,11 @@ const AI: SettingDef[] = [
     scope: 'server',
   },
   {
+    // Mirrored since UI.12 so the Radar can clamp its own draft cap to it. The
+    // server refuses an oversized batch rather than truncating it, so without
+    // the number on the client the only way to discover the ceiling is a failed
+    // click; the panel is not the enforcer, it just stops asking for what it
+    // knows will be refused.
     key: 'x.ai.batchReplyCap',
     group: 'ai',
     label: 'Batch reply cap',
@@ -758,7 +768,7 @@ const AI: SettingDef[] = [
     default: 25,
     min: 5,
     max: 50,
-    scope: 'server',
+    scope: 'mirrored',
   },
 ];
 
@@ -807,8 +817,13 @@ const MENTIONS: SettingDef[] = [
   },
 ];
 
-// Display — soft presentation limits the brief applies to already-collected data;
-// they never change what is measured or billed, only how much of it is shown.
+// Display — soft presentation limits applied to already-collected data; they
+// never change what is measured or billed, only how much of it is shown. The
+// first two are read by the brief route; the four UI.12 added are read by the
+// side panel off the mirrored blob, which is why they are `mirrored` and the
+// other two are not. `radarDraftCap` is the one with teeth: it sizes a batch
+// the server then charges for, so the panel clamps it to `x.ai.batchReplyCap`
+// (also mirrored) instead of letting a raised cap turn into a refused click.
 const DISPLAY: SettingDef[] = [
   {
     key: 'x.display.sparklineDays',
@@ -832,6 +847,55 @@ const DISPLAY: SettingDef[] = [
     min: 1,
     max: 10,
     scope: 'server',
+  },
+  {
+    key: 'x.display.doNextCap',
+    group: 'display',
+    label: 'Do-next rows',
+    description:
+      'How many follow-ups the Today "Do next" strip shows at once. It is a queue, not a dashboard — everything past this still counts, it just reads as "+N more".',
+    type: 'number',
+    default: 5,
+    min: 1,
+    max: 15,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.display.doNextSnoozeH',
+    group: 'display',
+    label: 'Do-next snooze',
+    description:
+      'How far the "zz" button pushes a follow-up out of the queue. Snoozes are stored server-side when you press it, so a change here only sizes new ones.',
+    type: 'number',
+    default: 24,
+    min: 1,
+    max: 168,
+    unit: 'h',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.display.fansAmberTopN',
+    group: 'display',
+    label: 'Fan amber rank',
+    description:
+      'How far down the Top-fans list an unacknowledged fan still ambers. Past this rank the reciprocity nudge goes quiet — the ranking itself is unchanged.',
+    type: 'number',
+    default: 10,
+    min: 1,
+    max: 50,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.display.radarDraftCap',
+    group: 'display',
+    label: 'Radar draft cap',
+    description:
+      'How many radar tweets one "Draft replies" click sends in a single batch. The panel clamps this to the AI batch reply cap, which is the number the server actually enforces.',
+    type: 'number',
+    default: 20,
+    min: 1,
+    max: 50,
+    scope: 'mirrored',
   },
 ];
 

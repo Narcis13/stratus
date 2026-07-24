@@ -6,6 +6,7 @@
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ApiError, type DigestResponse, type DigestScorecard, api } from './api.ts';
 import type { Settings } from './storage.ts';
+import { Section } from './ui/Section.tsx';
 
 // GR.9 — the five scorecard components, in weight order. A component the server
 // scored `null` had no data this week and was dropped from the blend; listing it
@@ -70,8 +71,7 @@ export function DigestSection({ settings }: { settings: Settings }): JSX.Element
   }, [isSunday, load]);
 
   return (
-    <section className="brief-section">
-      <h3>This week{isSunday ? ' — Sunday digest' : ''}</h3>
+    <Section title={`This week${isSunday ? ' — Sunday digest' : ''}`}>
       {error && <div className="error">{error}</div>}
 
       {!data && (
@@ -155,6 +155,6 @@ export function DigestSection({ settings }: { settings: Settings }): JSX.Element
           </div>
         </>
       )}
-    </section>
+    </Section>
   );
 }

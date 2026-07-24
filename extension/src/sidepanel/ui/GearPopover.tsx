@@ -11,6 +11,13 @@ interface Props {
   onReset?: ((key: string) => void) | undefined;
   /** Accessible name for the trigger. */
   label?: string | undefined;
+  /** One line of context above the rows (UI.12). Mostly OWNERSHIP: a gear is
+   *  next to a feature, so the number a user expects to find in it but which
+   *  lives elsewhere has to say so here, or its absence reads as a bug. */
+  note?: string | undefined;
+  /** Per-key refusal codes (UI.12). The registry bounds are the money guard, so
+   *  a rejected value must be visibly rejected rather than left looking saved. */
+  errors?: Record<string, string> | undefined;
 }
 
 /** GearPopover — the inline-config affordance: a `⚙` glyph button opening a
@@ -22,6 +29,8 @@ export function GearPopover({
   onPatch,
   onReset,
   label = 'Configure',
+  note,
+  errors,
 }: Props): JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -48,13 +57,20 @@ export function GearPopover({
       </button>
       {open && (
         <div className="ui-gear-pop">
+          {note && <p className="ui-gear-note">{note}</p>}
           {settings.map((entry) => (
-            <SettingRow
-              key={entry.key}
-              entry={entry}
-              onChange={(value) => onPatch(entry.key, value)}
-              onReset={onReset ? () => onReset(entry.key) : undefined}
-            />
+            <div key={entry.key}>
+              <SettingRow
+                entry={entry}
+                onChange={(value) => onPatch(entry.key, value)}
+                onReset={onReset ? () => onReset(entry.key) : undefined}
+              />
+              {errors?.[entry.key] && (
+                <p className="error ui-gear-error">
+                  {errors[entry.key]} — value rejected, showing the saved one.
+                </p>
+              )}
+            </div>
           ))}
         </div>
       )}

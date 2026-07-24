@@ -1075,17 +1075,9 @@ button.danger:hover:not(:disabled) {
 }
 
 /* radar (§7.2) — band colors mirror the content-script badge */
-.radar-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.radar-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+/* UI.12 removed `.radar-head` / `.radar-actions`: the Radar and the Inbox both
+   moved onto the `Section` primitive, whose `.ui-section-head` /
+   `.ui-section-actions` are the same layout with token spacing. */
 .radar-clear {
   font-size: 11px;
   padding: 2px 8px;
@@ -1605,8 +1597,9 @@ button.danger:hover:not(:disabled) {
 
 /* ---------------------------------------------------- targets (§7.4) */
 
+/* Sits in `.ui-section-actions` since UI.12, which supplies the gap — the old
+   `margin-left` was for living inside the section's `<h3>`. */
 .targets-band {
-  margin-left: 8px;
   font-size: 11px;
   font-weight: 400;
   color: var(--muted);
@@ -2389,8 +2382,8 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
+/* Same as `.targets-band` — UI.12 moved it into the section's actions slot. */
 .fans-window {
-  margin-left: 8px;
   display: inline-flex;
   gap: 4px;
 }
@@ -3433,6 +3426,18 @@ button.danger:hover:not(:disabled) {
 }
 .ui-gear-pop .ui-setting-control {
   justify-content: flex-start;
+}
+/* UI.12 — the ownership line: which number this gear does NOT hold, and where
+   it lives instead. Reads as context, never as an error. */
+.ui-gear-note {
+  margin: 0 0 var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  line-height: 1.45;
+  color: var(--strat-muted);
+}
+.ui-gear-error {
+  margin: 0 0 var(--strat-space-3);
+  font-size: var(--strat-text-xs);
 }
 
 /* ============================================================================

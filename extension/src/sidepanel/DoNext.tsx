@@ -5,6 +5,7 @@
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { IcebreakerBox } from './Icebreakers.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type FollowupItem,
@@ -12,10 +13,17 @@ import {
   type FollowupsResponse,
   api,
 } from './api.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import type { SettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
-const STRIP_CAP = 5;
-const SNOOZE_HOURS = 24;
+// UI.12 — the strip cap and the snooze length are the two numbers a user argues
+// with once they have actually worked the queue for a week, so they became knobs.
+// Both are read off the MIRRORED blob, never fetched here: an unreachable server
+// still has to render a queue, and the baked fallbacks are the registry defaults.
+const DONEXT_KEYS = ['x.display.doNextCap', 'x.display.doNextSnoozeH'];
 
 const KIND_LABEL: Record<FollowupKind, string> = {
   chain_live: 'chain',
@@ -36,10 +44,13 @@ function itemKey(item: FollowupItem): string {
 export function DoNextSection({
   settings,
   onOpenPerson,
+  editor,
 }: {
   settings: Settings;
   onOpenPerson: (handle: string) => void;
+  editor: SettingsEditor;
 }): JSX.Element {
+  const server = useServerSettings();
   const [data, setData] = useState<FollowupsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -62,7 +73,7 @@ export function DoNextSection({
 
   const snooze = async (item: FollowupItem): Promise<void> => {
     setBusyKey(itemKey(item));
-    const snoozedUntil = new Date(Date.now() + SNOOZE_HOURS * 3600_000).toISOString();
+    const snoozedUntil = new Date(Date.now() + server.doNextSnoozeH * 3600_000).toISOString();
     try {
       await api.people.snoozeFollowup(
         settings,
@@ -96,25 +107,30 @@ export function DoNextSection({
     }
   };
 
-  const items = data?.items.slice(0, STRIP_CAP) ?? [];
+  const items = data?.items.slice(0, server.doNextCap) ?? [];
   const overflow = (data?.items.length ?? 0) - items.length;
 
   return (
-    <section className="brief-section">
-      <h3>
-        Do next
-        {data && data.counts.total > 0 && ` (${data.counts.total})`}
-      </h3>
-
+    <Section
+      title={`Do next${data && data.counts.total > 0 ? ` (${data.counts.total})` : ''}`}
+      actions={
+        <SettingsGear
+          editor={editor}
+          keys={DONEXT_KEYS}
+          label="Configure the do-next queue"
+          note="How much of the queue to show, and how long a snooze lasts. Which follow-ups qualify at all is the Follow-ups group in Settings → Tuning."
+        />
+      }
+    >
       {error && <div className="error">{error}</div>}
       {note && <div className="status-line">{note}</div>}
 
       {data &&
         (items.length === 0 ? (
-          <div className="muted">
-            Nothing owed{data.counts.snoozed > 0 ? ` (${data.counts.snoozed} snoozed)` : ''} — go
-            hunting.
-          </div>
+          <EmptyState
+            line={`Nothing owed${data.counts.snoozed > 0 ? ` (${data.counts.snoozed} snoozed)` : ''} — go hunting.`}
+            hint="Reply to a target from Radar or the roster and the chain comes back here when they answer."
+          />
         ) : (
           <>
             <ul className="donext-list">
@@ -187,7 +203,7 @@ export function DoNextSection({
                     <button
                       type="button"
                       className="donext-snooze"
-                      title={`Snooze ${SNOOZE_HOURS}h`}
+                      title={`Snooze ${server.doNextSnoozeH}h`}
                       disabled={busyKey === itemKey(item)}
                       onClick={() => void snooze(item)}
                     >
@@ -205,6 +221,6 @@ export function DoNextSection({
             {overflow > 0 && <div className="muted donext-more">+{overflow} more in the queue</div>}
           </>
         ))}
-    </section>
+    </Section>
   );
 }

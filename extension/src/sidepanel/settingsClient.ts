@@ -56,6 +56,43 @@ export function filterSettingGroups(groups: SettingsGroup[], query: string): Set
   return out;
 }
 
+/** The knobs an inline gear tunes, in the order the caller asked for them (UI.12
+ *  — a gear's rows are a curated sequence, not registry order). A key the server
+ *  doesn't know is skipped rather than faked: gears name keys as string literals,
+ *  so a renamed knob should go quiet, never render an empty control. Pure. */
+export function entriesForKeys(groups: SettingsGroup[], keys: string[]): SettingEntry[] {
+  const byKey = new Map(groups.flatMap((g) => g.settings).map((s) => [s.key, s]));
+  const out: SettingEntry[] = [];
+  for (const k of keys) {
+    const entry = byKey.get(k);
+    if (entry) out.push(entry);
+  }
+  return out;
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  return a === b;
+}
+
+/** Apply an edit locally, ahead of its debounced PATCH. `isDefault` is
+ *  recomputed here because it drives the reset dot, which has to track a slider
+ *  drag — refetching per tick is not an option. Pure; the caller owns state. */
+export function applyOptimisticValue(
+  groups: SettingsGroup[],
+  key: string,
+  value: unknown,
+): SettingsGroup[] {
+  return groups.map((g) => ({
+    ...g,
+    settings: g.settings.map((s) =>
+      s.key === key ? { ...s, value, isDefault: sameValue(value, s.default) } : s,
+    ),
+  }));
+}
+
 /** Patch one knob. Validation (range/type) happens server-side against the
  *  registry; a bad value rejects with an ApiError the caller surfaces. */
 export async function patchSetting(s: Settings, key: string, value: unknown): Promise<void> {

@@ -20,6 +20,8 @@ import {
 } from './api.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 const LIST_LIMIT = 30;
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
@@ -188,13 +190,11 @@ export function ConversationsSection({
   const counts = data?.counts;
 
   return (
-    <section className="brief-section">
-      <div className="radar-head">
-        <h3>
-          Inbox
-          {counts && counts.openLoops > 0 && ` — ${counts.openLoops} owed`}
-          {counts && counts.chains > 0 && ` (${counts.chains} chain)`}
-        </h3>
+    <Section
+      title={`Inbox${counts && counts.openLoops > 0 ? ` — ${counts.openLoops} owed` : ''}${
+        counts && counts.chains > 0 ? ` (${counts.chains} chain)` : ''
+      }`}
+      actions={
         <button
           type="button"
           className="radar-clear"
@@ -204,15 +204,16 @@ export function ConversationsSection({
         >
           {refreshing ? 'Refreshing…' : `Refresh (${refreshesLeft} left)`}
         </button>
-      </div>
-
+      }
+    >
       {error && <div className="error">{error}</div>}
 
       {data &&
         (data.threads.length === 0 ? (
-          <div className="muted">
-            No conversations yet. Refresh pulls new mentions (~$0.001 each).
-          </div>
+          <EmptyState
+            line="No conversations yet."
+            hint="Refresh pulls new mentions (~$0.001 each) — the daily pass does it for free anyway."
+          />
         ) : (
           <ul className="radar-list">
             {data.threads.map((t) => (
@@ -235,7 +236,7 @@ export function ConversationsSection({
             ))}
           </ul>
         ))}
-    </section>
+    </Section>
   );
 }
 

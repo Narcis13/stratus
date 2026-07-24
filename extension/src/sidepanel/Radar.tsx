@@ -25,13 +25,22 @@ import {
   rankSightings,
   splitClicked,
 } from '../shared/radar.ts';
+import { radarBatchSize } from '../shared/serverSettings.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import type { SettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
-// One Grok call per click; cap how many tweets ride along so the batch stays
-// cheap and the model keeps each reply anchored.
-const RADAR_DRAFT_CAP = 20;
+// UI.12 — the batch size is now two knobs, not one baked constant: the display
+// cap (how many tweets THIS click sends) clamped by the server's own batch cap
+// (how many it will accept at all). `radarBatchSize` is the one place that
+// clamp lives; reading `radarDraftCap` raw here would resurrect the failed-click
+// footgun the mirror was widened to remove.
+const RADAR_KEYS = ['x.display.radarDraftCap', 'x.ai.batchReplyCap'];
 
 function useRadarSightings(): RadarSighting[] {
   const [sightings, setSightings] = useState<RadarSighting[]>([]);
@@ -109,10 +118,13 @@ function confirmDraft(tweetId: string): void {
 export function RadarSection({
   settings,
   onOpenPerson,
+  editor,
 }: {
   settings: Settings;
   onOpenPerson: (handle: string) => void;
+  editor: SettingsEditor;
 }): JSX.Element {
+  const server = useServerSettings();
   const ranked = rankSightings(useRadarSightings());
   const { queue, clicked } = splitClicked(ranked);
   const { ready, fresh } = groupQueue(queue);
@@ -130,7 +142,7 @@ export function RadarSection({
   }, []);
 
   // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
-  const undrafted = fresh.slice(0, RADAR_DRAFT_CAP);
+  const undrafted = fresh.slice(0, radarBatchSize(server));
 
   const draftReplies = async (): Promise<void> => {
     if (undrafted.length === 0) return;
@@ -171,10 +183,10 @@ export function RadarSection({
   const shown = view === 'queue' ? queue : clicked;
 
   return (
-    <section className="brief-section">
-      <div className="radar-head">
-        <h3>Radar</h3>
-        <div className="radar-actions">
+    <Section
+      title="Radar"
+      actions={
+        <>
           {view === 'queue' && (
             <button
               type="button"
@@ -197,9 +209,15 @@ export function RadarSection({
               Clear
             </button>
           )}
-        </div>
-      </div>
-
+          <SettingsGear
+            editor={editor}
+            keys={RADAR_KEYS}
+            label="Configure radar drafting"
+            note="One click, one Grok call — the batch is the lower of these two. What lands on the radar at all is the Reply band group in Settings → Tuning, the same twelve thresholds the on-page badge uses."
+          />
+        </>
+      }
+    >
       <div className="radar-tabs">
         <button
           type="button"
@@ -221,7 +239,10 @@ export function RadarSection({
 
       {view === 'queue' ? (
         queue.length === 0 ? (
-          <div className="muted">Browse X — hot/warm tweets you scroll past queue up here.</div>
+          <EmptyState
+            line="Browse X — hot/warm tweets you scroll past queue up here."
+            hint="Nothing is fetched for this; it's what the page already showed you, banded and ranked."
+          />
         ) : (
           <>
             {ready.length > 0 && (
@@ -243,7 +264,10 @@ export function RadarSection({
           </>
         )
       ) : clicked.length === 0 ? (
-        <div className="muted">Replies you copy land here — most recent first.</div>
+        <EmptyState
+          line="Replies you copy land here — most recent first."
+          hint="Opening a drafted tweet copies its reply and moves the row across."
+        />
       ) : (
         <ul className="radar-list">
           {clicked.map((s) => (
@@ -251,7 +275,7 @@ export function RadarSection({
           ))}
         </ul>
       )}
-    </section>
+    </Section>
   );
 }
 

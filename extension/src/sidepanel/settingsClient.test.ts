@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { SettingEntry, SettingsGroup } from './api.ts';
-import { filterSettingGroups, flattenSettings } from './settingsClient.ts';
+import {
+  applyOptimisticValue,
+  entriesForKeys,
+  filterSettingGroups,
+  flattenSettings,
+} from './settingsClient.ts';
 
 function entry(over: Partial<SettingEntry> & { key: string }): SettingEntry {
   return {
@@ -101,5 +106,82 @@ describe('flattenSettings', () => {
       'x.band.bigViews',
       'x.band.freshMin',
     ]);
+  });
+});
+
+// UI.12 — the two pure halves of the shared settings-editing discipline. Both
+// are used by the Settings Tuning panel AND by the inline Today gears, so a
+// regression here desynchronizes two surfaces at once.
+describe('entriesForKeys', () => {
+  test('returns the caller order, not registry order', () => {
+    // A gear's rows are a curated sequence — "cap, then snooze" — and it pulls
+    // them from groups that know nothing about each other.
+    expect(
+      entriesForKeys(GROUPS, ['x.band.freshMin', 'x.budgets.imageDailyUsd']).map((s) => s.key),
+    ).toEqual(['x.band.freshMin', 'x.budgets.imageDailyUsd']);
+  });
+
+  test('an unknown key is skipped, not faked', () => {
+    // Gears name keys as string literals; if one is renamed server-side the row
+    // should vanish rather than render a control over nothing.
+    expect(entriesForKeys(GROUPS, ['x.gone.away', 'x.band.bigViews']).map((s) => s.key)).toEqual([
+      'x.band.bigViews',
+    ]);
+    expect(entriesForKeys(GROUPS, [])).toEqual([]);
+    expect(entriesForKeys([], ['x.band.bigViews'])).toEqual([]);
+  });
+});
+
+describe('applyOptimisticValue', () => {
+  test('the edited row moves and every other row is untouched', () => {
+    const next = applyOptimisticValue(GROUPS, 'x.band.bigViews', 900);
+    const edited = next[1]?.settings[0];
+    expect([edited?.key, edited?.value, edited?.isDefault]).toEqual([
+      'x.band.bigViews',
+      900,
+      false,
+    ]);
+    expect(next[1]?.settings[1]).toEqual(GROUPS[1]?.settings[1] as SettingEntry);
+    expect(next[0]).toEqual(GROUPS[0] as SettingsGroup);
+    // Pure: the caller's state is what re-renders, so the input must survive.
+    expect(GROUPS[1]?.settings[0]?.value).toBe(1);
+  });
+
+  test('editing back TO the default clears the reset dot', () => {
+    // isDefault drives the accent dot, and it has to track a slider dragged all
+    // the way home — otherwise the dot claims an override that no longer exists.
+    const moved = applyOptimisticValue(GROUPS, 'x.band.bigViews', 900);
+    const home = applyOptimisticValue(moved, 'x.band.bigViews', 1);
+    expect(home[1]?.settings[0]?.isDefault).toBe(true);
+  });
+
+  test('array values compare by contents, not identity', () => {
+    // The anchor-hour knobs are numberArray; a fresh array with equal contents
+    // IS the default, and `===` would call it an override forever.
+    const groups: SettingsGroup[] = [
+      {
+        id: 'doctrine',
+        label: 'Doctrine',
+        settings: [
+          entry({
+            key: 'x.doctrine.anchors3',
+            group: 'doctrine',
+            type: 'numberArray',
+            default: [9, 13, 18],
+            value: [9, 13, 18],
+          }),
+        ],
+      },
+    ];
+    expect(
+      applyOptimisticValue(groups, 'x.doctrine.anchors3', [9, 13, 18])[0]?.settings[0],
+    ).toEqual({ ...(groups[0]?.settings[0] as SettingEntry), isDefault: true });
+    expect(
+      applyOptimisticValue(groups, 'x.doctrine.anchors3', [9, 13])[0]?.settings[0]?.isDefault,
+    ).toBe(false);
+  });
+
+  test('an unknown key changes nothing', () => {
+    expect(applyOptimisticValue(GROUPS, 'x.gone.away', 5)).toEqual(GROUPS);
   });
 });

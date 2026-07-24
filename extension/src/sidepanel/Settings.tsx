@@ -1,4 +1,4 @@
-import { type FormEvent, type JSX, useEffect, useMemo, useRef, useState } from 'react';
+import { type FormEvent, type JSX, useEffect, useMemo, useState } from 'react';
 import {
   type AiFormFields,
   aiFormToPatch,
@@ -12,18 +12,11 @@ import {
   type CommitmentKey,
   type LlmModel,
   type LlmReasoningEffort,
-  type SettingEntry,
-  type SettingsGroup,
   api,
 } from './api.ts';
 import { COMING_SOON, comingSoonMatches } from './comingSoon.ts';
-import {
-  filterSettingGroups,
-  loadSettingGroups,
-  patchSetting,
-  resetGroup,
-  resetKeys,
-} from './settingsClient.ts';
+import { filterSettingGroups } from './settingsClient.ts';
+import { useSettingsEditor } from './settingsEditor.ts';
 import {
   DEFAULT_DENSITY,
   DEFAULT_THEME,
@@ -366,10 +359,6 @@ export function SettingsPanel(): JSX.Element {
 // isolation) — every label, bound, unit and default on screen came over the
 // wire, so a knob added server-side appears here with no extension rebuild.
 
-/** Sliders fire on every drag tick; a PATCH per tick would be a write storm.
- *  Long enough to coalesce a drag, short enough that a save feels immediate. */
-const PATCH_DEBOUNCE_MS = 400;
-
 /** Copy that only makes sense at group level — mostly OWNERSHIP: several numbers
  *  a user expects to find here deliberately live on the active niche instead
  *  (one owner per knob), and the AI group is the lower of two legitimate tiers. */
@@ -386,133 +375,12 @@ const GROUP_NOTE: Record<string, string> = {
     'Ceilings, not switches. The spend checks themselves are never configurable — these only move where the line sits.',
 };
 
-function sameValue(a: unknown, b: unknown): boolean {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => v === b[i]);
-  }
-  return a === b;
-}
-
 function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
-  const [groups, setGroups] = useState<SettingsGroup[] | null>(null);
+  // UI.12 moved the optimistic/debounce/flush/re-read discipline into
+  // `useSettingsEditor` so the inline Today gears share it byte for byte.
+  const { groups, error, rowErrors, busyGroup, change, resetKey, resetGroupId } =
+    useSettingsEditor(settings);
   const [query, setQuery] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
-  const [busyGroup, setBusyGroup] = useState<string | null>(null);
-
-  // Debounced writes: the timer and the value it will send, per key.
-  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  const pendingValues = useRef(new Map<string, unknown>());
-  // The unmount flush needs today's settings without re-subscribing the effect.
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
-
-  const reload = async (): Promise<void> => {
-    try {
-      setGroups(await loadSettingGroups(settingsRef.current));
-      setError(null);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.code : 'load_failed');
-    }
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const gs = await loadSettingGroups(settings);
-        if (!cancelled) setGroups(gs);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof ApiError ? e.code : 'load_failed');
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [settings]);
-
-  useEffect(() => {
-    const timerMap = timers.current;
-    const valueMap = pendingValues.current;
-    return () => {
-      // Switching subtab unmounts this panel; a knob the user already moved must
-      // not be silently dropped, so flush the debounce instead of cancelling it.
-      for (const t of timerMap.values()) clearTimeout(t);
-      timerMap.clear();
-      for (const [key, value] of valueMap) {
-        void patchSetting(settingsRef.current, key, value).catch(() => {});
-      }
-      valueMap.clear();
-    };
-  }, []);
-
-  const commit = async (key: string): Promise<void> => {
-    const value = pendingValues.current.get(key);
-    pendingValues.current.delete(key);
-    timers.current.delete(key);
-    try {
-      await patchSetting(settingsRef.current, key, value);
-    } catch (e) {
-      // The registry floors/ceilings are the money guard — a value the server
-      // rejected must not sit on screen looking saved, so re-read the truth.
-      setRowErrors((p) => ({ ...p, [key]: e instanceof ApiError ? e.code : 'save_failed' }));
-      await reload();
-    }
-  };
-
-  const onChange = (entry: SettingEntry, value: unknown): void => {
-    // Optimistic: the control has to track the drag, and `isDefault` drives the
-    // reset dot, so recompute it here rather than refetching per tick.
-    setGroups((gs) =>
-      gs === null
-        ? gs
-        : gs.map((g) => ({
-            ...g,
-            settings: g.settings.map((s) =>
-              s.key === entry.key ? { ...s, value, isDefault: sameValue(value, s.default) } : s,
-            ),
-          })),
-    );
-    setRowErrors((prev) => {
-      if (!(entry.key in prev)) return prev;
-      const next = { ...prev };
-      delete next[entry.key];
-      return next;
-    });
-
-    pendingValues.current.set(entry.key, value);
-    const existing = timers.current.get(entry.key);
-    if (existing) clearTimeout(existing);
-    timers.current.set(
-      entry.key,
-      setTimeout(() => void commit(entry.key), PATCH_DEBOUNCE_MS),
-    );
-  };
-
-  const onResetKey = async (key: string): Promise<void> => {
-    const t = timers.current.get(key);
-    if (t) clearTimeout(t);
-    timers.current.delete(key);
-    pendingValues.current.delete(key);
-    try {
-      await resetKeys(settingsRef.current, [key]);
-      await reload();
-    } catch (e) {
-      setRowErrors((p) => ({ ...p, [key]: e instanceof ApiError ? e.code : 'reset_failed' }));
-    }
-  };
-
-  const onResetGroup = async (id: string): Promise<void> => {
-    setBusyGroup(id);
-    try {
-      await resetGroup(settingsRef.current, id);
-      await reload();
-    } catch (e) {
-      setError(e instanceof ApiError ? e.code : 'reset_failed');
-    } finally {
-      setBusyGroup(null);
-    }
-  };
 
   if (groups === null) {
     return (
@@ -577,7 +445,7 @@ function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
                 type="button"
                 className="settings-group-reset"
                 disabled={busyGroup === group.id}
-                onClick={() => void onResetGroup(group.id)}
+                onClick={() => resetGroupId(group.id)}
               >
                 {busyGroup === group.id ? 'Resetting…' : 'Reset group'}
               </button>
@@ -588,8 +456,8 @@ function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
               <div key={entry.key}>
                 <SettingRow
                   entry={entry}
-                  onChange={(v) => onChange(entry, v)}
-                  onReset={() => void onResetKey(entry.key)}
+                  onChange={(v) => change(entry.key, v)}
+                  onReset={() => resetKey(entry.key)}
                 />
                 {rowErrors[entry.key] && (
                   <p className="error settings-row-error">

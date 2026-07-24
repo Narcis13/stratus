@@ -130,6 +130,12 @@ The box at the top filters as you type, across every group at once. It matches a
 
 Every group header has a **Reset group** button, which drops every override in that group back to the shipped defaults at once. Groups you've never touched are already at their defaults, so it does nothing there.
 
+### The same knobs, next to the feature (inline ⚙)
+
+Tuning is the complete list, but you rarely arrive here wondering about "the display group" — you arrive wondering why the Do-next strip only shows five rows. So the knobs that shape a section also appear behind a small **⚙** on that section's own header. The **[Today tab](./today-tab.md#tuning-today-from-today-the--gears)** has five of them (quests, Do next, Radar, Targets, Top fans).
+
+There is no second store and no second copy: a gear edits the same key with the same discipline (auto-save, the same accent dot, the same server-side refusal), so a number changed in a gear reads back identically here. A gear simply doesn't render when the server is unreachable — the section keeps working off its mirrored copy.
+
 ### Where some numbers *aren't*
 
 A few numbers you might expect in Tuning deliberately live somewhere else, because each setting has exactly one owner:

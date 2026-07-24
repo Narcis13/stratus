@@ -4,18 +4,31 @@
 // list of top voices as a living view instead of vibes. One $0 GET.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type VoiceTarget, type VoiceTargets, api } from './api.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import type { SettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
-const NEGLECT_DAYS = 7;
+// UI.12 — the roster tint reads `x.followups.neglectedTargetDays`, the SAME key
+// the follow-up queue and the weekly digest use, rather than a display twin: a
+// roster that looks calm while "Do next" nags about the same person is a bug the
+// user experiences as the tool contradicting itself. The 2–10x follower window
+// is NOT here — the active niche owns it (D2/D129), which the gear note says.
+const TARGETS_KEYS = ['x.followups.neglectedTargetDays'];
 
 export function TargetsSection({
   settings,
   onOpenPerson,
+  editor,
 }: {
   settings: Settings;
   onOpenPerson: (handle: string) => void;
+  editor: SettingsEditor;
 }): JSX.Element {
+  const server = useServerSettings();
   const [data, setData] = useState<VoiceTargets | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,50 +46,65 @@ export function TargetsSection({
   }, [load]);
 
   return (
-    <section className="brief-section">
-      <h3>
-        Targets
-        {data && data.targets.length > 0 && ` (${data.targets.length})`}
-        {data?.band && (
-          <span className="targets-band">
-            {fmtNum(data.band.min)}–{fmtNum(data.band.max)} followers
-          </span>
-        )}
-      </h3>
-
+    <Section
+      title={`Targets${data && data.targets.length > 0 ? ` (${data.targets.length})` : ''}`}
+      actions={
+        <>
+          {data?.band && (
+            <span className="targets-band">
+              {fmtNum(data.band.min)}–{fmtNum(data.band.max)} followers
+            </span>
+          )}
+          <SettingsGear
+            editor={editor}
+            keys={TARGETS_KEYS}
+            label="Configure the neglected-target window"
+            note="The 2–10× follower window itself belongs to your active niche — edit it under Settings → General → Niche. This one number also drives the Do-next queue and the Sunday digest."
+          />
+        </>
+      }
+    >
       {error && <div className="error">{error}</div>}
 
       {data &&
         (data.myFollowers === null ? (
-          <div className="muted">
-            No account snapshot yet — runs after the first 03:00 UTC pass.
-          </div>
+          <EmptyState
+            line="No account snapshot yet."
+            hint="The band is sized off your own follower count — the first 03:00 UTC pass fills it in."
+          />
         ) : data.targets.length === 0 ? (
-          <div className="muted">
-            No saved authors in the 2–10x band. Save authors from their profile page to build the
-            roster.
-          </div>
+          <EmptyState
+            line="No saved authors in the 2–10x band."
+            hint="Save authors from their profile page on X and the ones in-band show up here."
+          />
         ) : (
           <ul className="targets-list">
             {data.targets.map((t) => (
-              <TargetRow key={t.handle} t={t} onOpenPerson={onOpenPerson} />
+              <TargetRow
+                key={t.handle}
+                t={t}
+                neglectDays={server.neglectedTargetDays}
+                onOpenPerson={onOpenPerson}
+              />
             ))}
           </ul>
         ))}
-    </section>
+    </Section>
   );
 }
 
 function TargetRow({
   t,
+  neglectDays,
   onOpenPerson,
 }: {
   t: VoiceTarget;
+  neglectDays: number;
   onOpenPerson: (handle: string) => void;
 }): JSX.Element {
   const neglected =
     t.lastRepliedAt === null ||
-    Date.now() - Date.parse(t.lastRepliedAt) > NEGLECT_DAYS * 24 * 60 * 60 * 1000;
+    Date.now() - Date.parse(t.lastRepliedAt) > neglectDays * 24 * 60 * 60 * 1000;
 
   return (
     <li className="target-row">
