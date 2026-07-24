@@ -3,10 +3,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
-import { data } from './data.ts';
+import { data, explorer } from './data.ts';
 
 const app = new Hono();
 app.route('/x', data);
+app.route('/', explorer);
 
 async function get<T>(path: string): Promise<{ status: number; body: T }> {
   const res = await app.request(path);
@@ -100,5 +101,18 @@ describe('POST /x/data/query', () => {
     });
     expect(status).toBe(400);
     expect(body.error).toBe('tokens_forbidden');
+  });
+});
+
+// A3.13: the /writer shell hangs off the same public root router as /explorer —
+// served with no bearer, data-free (the /x/articles fetches it makes carry the
+// token). One-line mount check beside the explorer's.
+describe('GET /writer (public shell)', () => {
+  test('serves the writer HTML without a bearer', async () => {
+    const res = await app.request('/writer');
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(/stratus.*writer/i.test(html)).toBe(true);
+    expect(html.includes('/x/articles')).toBe(true);
   });
 });
