@@ -919,3 +919,31 @@ export const following = sqliteTable(
   },
   (t) => [index('following_status_seen_idx').on(t.status, t.firstSeenAt)],
 );
+
+// Audience "Active times" heatmap captures (Authoring 3.0, A3.2) — the $0 DOM
+// scrape of X Analytics' when-is-my-audience-online grid. Append-only on
+// purpose: repeated captures form a longitudinal series (the harvest_runs
+// precedent), and the newest row is "current" for the Composer's slot blending.
+// This is PRESENCE data, not measured outcomes — §7.19 gating happens in the
+// consumers (own gated best-time cells always outrank it), never here.
+export const audienceActivity = sqliteTable(
+  'audience_activity',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    // Server-stamped at insert (client clocks lie); the route sets it
+    // explicitly rather than leaning on the column default.
+    capturedAt: integer('captured_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    // The analytics dropdown at capture time ('likes', …) — free text, X owns
+    // the vocabulary.
+    metric: text('metric').notNull(),
+    // Viewer-local tz at capture: the grid buckets are local wall-clock.
+    tzOffsetMin: integer('tz_offset_min').notNull(),
+    cols: integer('cols').notNull(),
+    rows: integer('rows').notNull(),
+    // number[cols][rows], 0..1 intensity, col 0 = Monday (ActiveTimesGrid).
+    grid: text('grid', { mode: 'json' }).$type<number[][]>().notNull(),
+  },
+  (t) => [index('audience_activity_captured_idx').on(t.capturedAt)],
+);

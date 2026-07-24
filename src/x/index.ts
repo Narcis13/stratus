@@ -11,6 +11,7 @@ import { llmConfigured } from '../llm/index.ts';
 export { registerXTools } from './mcp.ts';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
+import { analyticsRouter } from './routes/analytics.ts';
 import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
@@ -64,6 +65,10 @@ export function mountX(app: Hono): void {
   app.route('/x', brief);
   app.route('/x', calendar);
   app.route('/x', metrics);
+  // A3.2: audience Active-times captures — $0 DOM-scraped presence data from
+  // X Analytics, stored append-only. Always mounted (no X call, no LLM);
+  // static path only, so §7.20 can't bite.
+  app.route('/x', analyticsRouter);
   app.route('/x', pillars);
   // AI.4: the prompt editor — CRUD over `prompt_overrides` (the editable half of
   // the AI.3 registry). Always mounted: editing a prompt must work with no LLM
