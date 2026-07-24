@@ -52,7 +52,21 @@ Under the picker you'll see one of two hints for the day you're scheduling:
 - A **best-times line**, e.g. *"Best Wed: 17:xx **2.1k**/day (n=6) · 09:xx **1.4k**/day (n=4)"* — the top-performing hours for that weekday, with `n` being how many of your posts were measured in that slot. The `xx` in the hour is a reminder that the exact minute will be jittered.
 - Or *"No measured best-time for Wed yet (need ≥3 posts in a slot)"* — shown until you have enough measured history. stratus deliberately won't give you "advice" from thin data.
 
+Below the measured hint you may also see **audience** lines, drawn from the X Analytics activity heatmap you captured (see [Settings → Sightings/passive capture](./settings-tab.md)):
+
+- *"Audience peak Wed: 17:xx, 20:xx"* — the hours your **audience** is most active on X that weekday. This is softer than your own measured history: when **Best time** ranks slots, a measured own-time always wins; audience activity only breaks ties among hours with no measured signal, and it's labelled so you know which is which. Dead (zero-activity) hours are never shown as peaks.
+- A **staleness nudge** — if your last heatmap capture is older than ~4 weeks (or you've never captured one), a line reminds you to revisit **X Analytics → Audience** so the audience advice stays current. Capture is passive: stratus reads the heatmap only when you happen to visit that page (with Sightings on).
+
 A small line under everything states what will happen when you save: *"Will save as pending and ship at this minute"* if a time is set, or *"Empty → saved as draft"* if it isn't.
+
+#### Publish mode: API or Manual
+
+For a **single post** (not a thread), a small **API | Manual** toggle sits with the scheduling controls:
+
+- **API** (default) — the background publisher posts it for you automatically at its minute. This is the normal path.
+- **Manual** — *you* paste the post into X by hand at its slot, then mark it posted (from the Calendar or the Today reminder). Nothing is sent through the API, so **there is no cost** (the cost line reads *"$0 · you paste it"*) and, crucially, **the link surcharge doesn't apply** — a manual post may contain a URL freely. stratus auto-selects Manual when the post carries a **Studio visual** (the API can't attach media), and a scheduled time is required either way (there's nothing to remind you about without one).
+
+The toggle never appears in **thread** mode — threads are always API-published (there's no manual thread). Switching an existing post between API and Manual just changes how it will publish; its text and time are untouched.
 
 #### How slots are chosen
 
@@ -61,6 +75,8 @@ stratus works from a light daily cadence of a few posts at set anchor hours — 
 ### The cost preview
 
 Above the Save button, when there's a cost to show, you'll see a live estimate like **≈ $0.015**. This is what publishing the post will bill against your X API budget. A normal post costs about **$0.015**. A post with a **link (URL) in it costs $0.20** — roughly 13× more — because of how X prices link posts. If your text contains a URL, the preview turns into a warning and shows that surcharge (see Tips below for how to avoid it).
+
+In **Manual** publish mode the estimate reads **$0 · you paste it** and the link warning disappears — a hand-posted tweet never hits the API, so it's free and can hold a link. Manual mode is the sanctioned $0 way to post something with a link.
 
 ### Saving
 

@@ -191,6 +191,10 @@ Type your text, tap the matching button, and it lands on the timeline. Both butt
 
 The **Openers** section holds the **Suggest an opener** button (icebreakers). Covered in its own section below.
 
+### Draft DM — write a grounded direct message
+
+Right below Openers, the **Draft DM** section drafts a full direct message (not just a one-line opener) for this person, grounded strictly on your real shared history. Covered in its own section below.
+
 ### My replies to them — with measured outcomes
 
 If you've replied to this person, this section lists your recent replies (up to 5) and how each one actually performed. The heading shows the totals, e.g. *My replies to them (7, 5 measured)* — how many replies, and how many have real metrics yet.
@@ -241,6 +245,20 @@ When you're not sure how to open with someone, the **Suggest an opener** button 
 - The small **cost** figure (about **$0.005** per click) is shown next to the buttons. Nothing is charged unless you press the button.
 
 If there isn't enough real shared context yet, you'll see *"Nothing real to open with yet — save one of their tweets or log an exchange first."* — do that and try again. If the server has no AI key configured, you'll see *"Grok is not configured on the server."*
+
+---
+
+## Draft DM — a grounded direct message
+
+Where an icebreaker is a short *opener*, the **Draft DM** box (in the dossier's *Draft DM* section, right after Openers) writes a complete direct message for someone you already have real shared context with. It's the outbound side of the people layer — you draft here, then send it by hand in X (stratus can't send DMs and never will).
+
+- Optionally type an **idea or purpose** — what you want the DM to do ("thank them for the shout-out", "float a collab"). You can write it in **any language**; the DM comes back in **English**. Leave it blank to let the draft follow the shared context alone.
+- Tap **Draft DM** (one Grok call, ~**$0.005**). An editable message appears — tweak the wording, then **Copy** and paste it into X.
+- **Mark sent** logs the message onto the person's timeline (the ✉ event) so your history stays honest — it saves your edited text first, so what's logged matches what you actually sent. **Discard** drops the draft.
+- **What it knew** reveals the exact grounding (your notes, their bio, recent exchanges, saved tweets, shared channels) — the DM is built strictly from real context, never invented familiarity.
+- Below the box, the person's **prior DMs** you've drafted here are listed.
+
+The refusals mirror the icebreaker: a **thin dossier** (no real shared context) shows *"No shared context yet — save their tweets or exchange replies first."* before anything is drafted or charged, and a server with no AI key shows the Grok-not-configured line. You can also reach this box from the **Today → Do Next** DM row's **draft DM** button, which opens the dossier here.
 
 ---
 

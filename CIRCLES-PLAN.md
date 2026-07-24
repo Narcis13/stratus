@@ -440,7 +440,11 @@ in a draft call's rendered prompt.
 > projected to cross 2x my size within 30d at their current followers/day. (4) one item
 > per person (highest-priority kind wins) and a snoozed item doesn't hide the person's
 > lower-priority items. `scripts/smoke-followups.ts` is the rerunnable $0 check. See
-> CLAUDE.md phase status for the full entry.
+> CLAUDE.md phase status for the full entry. (5) **Authoring 3.0 (A3.9–A3.10, 2026-07-24)
+> gave the `dm_ready` pen a drafter:** the dossier's **Draft DM** box (`POST /x/dms/draft`,
+> `dm_drafts`) writes a grounded outbound DM off the same icebreaker grounding, still
+> pasted by hand and logged via the same `manual_dm_logged` event. See
+> `docs/people-tab.md` §"Draft DM" and `plans/2026-07-17-authoring-3.md`.
 
 - **Follow-up queue.** `GET /x/people/followups` computes, from people + events:
   - `chain_live`: inbound reply to my reply, < 24h old (also flagged in C2) — top priority
