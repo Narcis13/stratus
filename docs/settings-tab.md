@@ -114,6 +114,29 @@ Paste a paragraph describing a niche ("I post about evidence-based nutrition for
 
 ---
 
+## Daily commitments
+
+Under the Niche card is a small **Commitments** card: the daily minimums you hold yourself to. Two keys, each a number plus an **active** checkbox and its own **Save** button (they save one at a time — this is a promise, not a preference sheet).
+
+- **replies** — how many replies a day you're committing to.
+- **originals** — how many original posts a day.
+
+Range 1–100. Leaving a row **inactive** keeps the number on file without holding you to it.
+
+What a commitment actually does:
+
+- It **raises the quest targets** on the [Today tab](./today-tab.md) — *"17 quality replies"* instead of the doctrine default. It can only ever raise a bar, never lower one, so no streak already earned can be retroactively broken.
+- It **accumulates debt** when you miss days: a quiet line under Today's quest list, escalating to amber past three missed days, and past five it suggests lowering the bar rather than pushing harder.
+- It **feeds the Sunday grade** — the reply-quota component of the weekly scorecard is measured against your commitment when there is one.
+
+What it deliberately does **not** do: it never blocks anything, and it doesn't touch the doctrine's own 10–20/day reply band shown in Today's **Replies quota** section. Those are different numbers answering different questions — one is sustainable practice, the other is a personal promise.
+
+Two behaviours worth knowing: editing the target **never** erases days you already missed (raising the bar isn't a fresh start), but switching a commitment from inactive back to active **does** restart the clock. And a commitment made today reads zero debt, because today can't be a missed day yet.
+
+If the card loads blank, the fields stay empty rather than inventing a target — save and the real error will surface.
+
+---
+
 ## AI provider (the AI subtab)
 
 The **AI** subtab controls which large language model drafts your posts, replies, threads, ideas, and everything else the app generates. By default everything runs on **Grok** (xAI). If you'd rather draft on Claude, GPT, Gemini, or any other model, you switch the provider to **OpenRouter** here and pick a model.

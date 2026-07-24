@@ -69,6 +69,18 @@ Above the Save button, when there's a cost to show, you'll see a live estimate l
 
 The resulting post appears on your Calendar with the matching status.
 
+### Schedule-time warnings
+
+After a **pending** post saves, you may see one or more **amber lines** under the confirmation. They are advice, never a refusal — the post is already saved, and the only thing that can ever *block* a save is the URL surcharge guard. There are three:
+
+- **"N other pending posts within 45 min of this slot — the closest is X min away."** Your calendar is bunching up. The publisher jitters its minutes precisely so your posting doesn't look mechanical; two slots twenty minutes apart undoes that.
+- **"Very similar to a post from N days ago (92% overlap) — repetitive content is its own penalty."** You've published something close to this within the last two weeks. X down-ranks repetition on its own.
+- **"Very similar to another post already queued (100% overlap) — they will read as a repeat when both go out."** The twin isn't published yet, it's sitting in your queue. This is the useful one: it's the only moment a duplicate is still one edit away from being fixed. Once both are out, all anyone can do is note it.
+
+The same thresholds drive the **Account health** card on the [Today tab](./today-tab.md) — the Composer warns you *before* the risk exists, Today tells you *after*. They can never disagree, because both read the same numbers.
+
+Two things they deliberately don't do: a **draft** gets no warnings (nothing is scheduled to happen yet), and **editing** an existing post doesn't re-check (the advisory rides the initial save only).
+
 ---
 
 ## AI drafting (draft with AI)

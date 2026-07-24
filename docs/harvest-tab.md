@@ -43,10 +43,11 @@ Work down the panel top to bottom.
 The X username to harvest, without the `@` (though you can type it — it's stripped). It's **pre-filled** from whatever profile the extension detected, but you can overwrite it with any handle. A handle must be 1–15 characters, letters, numbers, or underscores. Until you enter a valid one, the harvest button stays disabled and reads **"Enter a handle"**.
 
 ### Harvest (mode)
-Two buttons — pick what kind of tweet to collect:
+Three buttons — pick what to collect:
 
 - **Posts** — the account's own original posts (its main profile timeline). Reposts (retweets) and other people's tweets are skipped; you get only tweets *authored by that account*.
 - **Replies** — the account's replies to other people (the "Posts & replies" / `/with_replies` view). Each reply is paired with the tweet it was replying to, so you capture both sides.
+- **Following** — not tweets at all: the list of accounts **you** follow, and whether each one follows you back. This feeds the People tab's unfollow queue; see **[Following mode](#following-mode--one-scrape-both-directions)** below.
 
 ### Date range (scope)
 How far back to collect. Four buttons:
@@ -91,6 +92,40 @@ A small grey line under the button reports the *other* harvest — the one you n
 - **"Passive: 412 rows today"** — how many tweets today's ambient timeline capture has collected so far (see the next section). The day rolls over at **midnight UTC**, not your local midnight, so the number resets at a fixed time worldwide.
 - **"Passive capture off"** — the Settings toggle is off, so nothing is being collected.
 - **Nothing at all** — the count hasn't loaded yet, or the server couldn't be reached. It never guesses "0".
+
+---
+
+## Following mode — one scrape, both directions
+
+The third mode collects people instead of tweets. X renders a small **Follows you** badge on every row of your `/following` page, so a single scroll answers both halves of the question at once: *who do I follow*, and *who follows me back*. That's why there is no follower-page scrape and no API sync — one pass is enough, and it costs **$0**.
+
+The rows land in the People tab's **[Following subtab](./people-tab.md#the-following-subtab--roster-hygiene)**, which turns them into a small, capped batch of long-standing non-followers to consider unfollowing. Nothing here unfollows anyone.
+
+### Running it
+
+1. Open **your own** following page: `x.com/<your-handle>/following`.
+2. Pick **Following**. The handle box freezes to the handle of the page you have open, and the **Date range** and **Min views** controls disappear — neither means anything for a list of people.
+3. **Start**, and let it scroll to the bottom.
+
+The mode chip is always clickable, but **Start** is blocked with a hint until you're actually on a `/following` page — a chip that looks selected *and* disabled reads as a broken panel and explains nothing.
+
+> **It refuses to scrape someone else's list.** Before it begins, the extension checks the account switcher in X's left nav against the page you're on. A positive mismatch aborts with *not your following list*. Importing someone else's followees as your own would wreck your whole ledger in a single pass, and it takes nothing more than a stale handle to get there.
+
+### Why finishing matters
+
+A run that reaches the **bottom of the list** is marked *complete*, and only a complete run is allowed to conclude anything from a handle's **absence** — that someone is gone, or that an unfollow you ticked off actually took.
+
+Any other ending — you hit **Stop**, the **Max rows** cap fires, or the scroll gives up — updates every row it saw and nothing else. That's always safe, but it also means the ledger never advances. The panel says so with a **partial pass** notice when it happens.
+
+**The trap worth knowing:** *Max rows carries over from your last posts harvest.* If you capped a study at 200 rows last week, a Following run will stop at 200 too, silently never completing. If the Following subtab starts looking stale, check that box before suspecting anything else.
+
+### What you get
+
+- A live **"N follow you back"** count while it runs.
+- A small CSV: handle, display name, follows-you.
+- The ledger itself, in the People tab.
+
+Rows are shipped in batches as it goes, so a mid-run failure just leaves the run open (and therefore never complete) rather than corrupting anything.
 
 ---
 

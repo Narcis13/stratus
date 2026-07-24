@@ -15,6 +15,15 @@ You'll usually land here in one of two ways:
 - You open the tab directly to browse or search your roster.
 - You **click a handle somewhere else** in stratus (in the Targets list, the Radar queue, the mention Inbox, the reply editor, the Voice library) and it opens that person's file right here. This is called *click-through*, and it works from almost anywhere a handle appears.
 
+### Two subtabs: Roster | Following
+
+At the top of the panel is a **Roster | Following** switch.
+
+- **Roster** — the CRM proper: everyone stratus knows about, the dossiers, the icebreakers. Most of this document.
+- **Following** — the other direction: everyone *you* follow, and whether they follow you back. It's a hygiene surface, not a CRM one — it hands you a small, capped batch of long-standing non-followers to consider unfollowing, and nothing else.
+
+The switch disappears while a dossier is open, because both subtabs open the *same* dossier — **← People** takes you back to whichever subtab you came from.
+
 ---
 
 ## The roster view
@@ -94,6 +103,63 @@ People you've deliberately **retired** show neither a chip nor the "Start their 
 
 ### When it's empty
 *"Nobody has shown up often enough yet."* Either passive capture is off, or you haven't scrolled enough for anyone to clear the 3-day floor. This fills in over days of ordinary browsing, not minutes.
+
+---
+
+## The Following subtab — roster hygiene
+
+Follow enough people and the list stops meaning anything: hundreds of accounts you followed once, most of whom never followed back, quietly diluting your timeline. The Following subtab is the cleanup loop for that — and it is **manual by design**. stratus never unfollows anybody. It has no permission to, asks for none, and there is no button anywhere that calls an X write. All it does is hand you a short list and keep count.
+
+### Where the data comes from
+
+One **free** scrape of your own `/following` page. X renders a *Follows you* badge on every row, so a single pass tells stratus both halves at once: who you follow, and who reciprocates. No API call, no cost, no new permission. You run it from the **[Harvest tab](./harvest-tab.md)** — open `x.com/<you>/following`, pick the **Following** mode, hit Start, and let it scroll.
+
+At the top of the subtab is a **freshness line**: *last complete sync N days ago*. It turns amber (with a "run a Following harvest" hint) when the last full pass is older than **7 days** or has never happened. Freshness matters because of the one rule the whole feature turns on:
+
+> **Presence is proof; absence only counts when the scroll finished.** A cancelled or capped scrape updates what it saw and nothing else. Only a pass that reached the bottom of the list is allowed to conclude that someone is gone.
+
+So a partial run is always safe — it can never wrongly write anyone off — but it also can't confirm your unfollows. If the ledger starts looking stale, check the **Max rows** box on the Harvest tab first: a capped run never counts as complete.
+
+### The batch
+
+The middle of the panel is the actual work: a handful of people, **longest-standing non-followers first**. Each row has the handle (a link to their X profile — that's where you unfollow), a small **file** button that opens their dossier, and two actions:
+
+- **unfollowed ✓** — you did it in the X app; tick it here. The row moves to *awaiting confirmation* and leaves the batch.
+- **keep** — pin them. They're never offered again, whatever the numbers say.
+
+Nobody reaches this list by accident. A person is excluded if **any** of these is true:
+
+- they follow you back;
+- you followed them in the last **7 days** (a grace window — first impressions take a while);
+- they're at stage **mutual** or **ally** in your roster, or on your **2–10× targets** list — a real relationship is never up for a hygiene sweep;
+- you pinned them **keep**.
+
+The whitelist is recomputed every time you open the panel, not stored. So the moment someone becomes a mutual, they're pulled out of the batch — even if they were already sitting in it.
+
+### The cadence line
+
+Under the batch: `windowUsed/windowCap · dailyUsed/dailyCeiling · N eligible`.
+
+Unfollowing in bursts is one of the shapes X's spam heuristics watch for, so the queue paces itself: at most **15–18 people per 6-hour window** and **40 per day**. The window number is deliberately re-rolled on every read — a perfectly constant batch size is itself a fingerprint — so seeing it move between two refreshes is correct, not a bug.
+
+Two empty states that mean opposite things, and the "N eligible" number is how you tell them apart:
+
+- **N eligible > 0, empty batch** — you've hit the 6-hour or daily cap. Come back later.
+- **0 eligible** — nobody qualifies. Nothing to do.
+
+### Confirming, and the one thing that can go backwards
+
+Ticking **unfollowed ✓** is a claim, not a fact. The next *complete* scrape checks it: if that person is genuinely gone from your following list they're marked **confirmed**; if they're still there — the click didn't take, X threw an error, you changed your mind — the row quietly comes back into the batch. That's the only status in the whole ledger that ever moves backwards.
+
+A person who vanishes from a complete pass without you ticking them is marked **gone**: they deleted their account, blocked you, or you unfollowed them outside the queue. Either way stratus stops tracking them, and a later scrape that sees them again brings them straight back.
+
+### The Ledger drawer
+
+Collapsed at the bottom: **Ledger** — search and a status filter over the whole following list (`active`, `queued`, `done`, `confirmed`, `gone`). This is also the **only way to un-pin someone**: the batch's `keep` button only pins, so if you change your mind, find them here and toggle `kept ✓` back off. Un-keeping reopens their eligibility immediately.
+
+### Cost
+
+**$0.** The scrape is DOM-only, the queue is arithmetic over data you already have, and the unfollow itself happens in the X app with your own hands.
 
 ---
 

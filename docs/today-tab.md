@@ -102,7 +102,33 @@ This is your gentle daily checklist — designed to encourage, never to guilt. E
 
 The heading shows your **streak** — the number of consecutive days you finished everything (e.g. *"· 5-day streak"*), or *"· streak starts today"* the first day. There is no red, no penalty, anywhere in this section.
 
-### 3. Do Next
+**Your commitments set two of the targets.** If you've promised yourself a daily minimum in **Settings → Commitments**, the *Quality replies* and *1 original* quests read that number instead of the defaults — the labels become e.g. *"17 quality replies"* and *"3 original posts"*. A **paused** commitment changes nothing. A commitment can only ever *raise* a bar, so a streak already on the books can't be retroactively broken. (The **Replies quota** section further down deliberately keeps showing the 10–20/day doctrine band: a personal minimum isn't a redefinition of the doctrine, so the two legitimately disagree.)
+
+**The debt line.** Under the quest list, if you've missed a commitment on recent days, one small line appears — and only then:
+
+- **Nothing at all** when you've missed nothing. Silence is the reward.
+- **One missed day** — a quiet grey line.
+- **Three or more** — amber.
+- **Five or more** — amber, and it suggests *lowering the bar in Settings* rather than trying harder. A promise you keep breaking is usually the wrong promise.
+
+Today never counts as a miss (it's still in progress), and days before you made the promise count as nothing at all — so a commitment made this morning reads zero, which is correct rather than broken.
+
+### 3. Goals
+
+**When it appears:** only when you have at least one **active** goal (set them in the **[Me tab](./me-tab.md)**). No goals, no card — the Me tab is where goals are created, and this is where they're chased.
+
+Where the Me tab is the ledger ("500 replies by September"), this card answers the only question that matters day to day: **am I going to make it?**
+
+Each goal shows:
+
+- A **verdict chip** — `ahead`, `on pace`, `behind`, or `overdue`. A goal with no deadline, or one whose metric hasn't been measured yet, is simply left ungraded rather than guessed at.
+- A **progress bar** (the same bar the replies quota uses).
+- A line like **`23d left · need 4/day · doing 6/day`** — what the remaining days each have to carry, against the rate you're actually managing. That comparison *is* the verdict.
+- A **drop** button (with a confirmation) for a goal you've stopped chasing. Dropping matters: an abandoned goal that stays active keeps dragging down your weekly grade.
+
+**Goals settle themselves when you look at them.** Opening Today is what notices that a goal hit its target (**achieved**) or ran out of days (**missed**) — there's no background job. When that happens the goal simply *disappears from this card*, with no fanfare, and lives on in the Me tab's ledger. That's deliberate: this card is a to-do list, not a trophy shelf.
+
+### 4. Do Next
 
 **When it appears:** loads independently when the tab opens. This is your **follow-up queue** — a short, ranked list (max 5 shown) of the single most useful thing to do for each person or post. It's a queue, not a dashboard: work the top and it shrinks.
 
@@ -126,7 +152,7 @@ Each row has a small colored **kind chip**, the person's **@handle** (a link to 
 
 If there's nothing to do, you'll see *"Nothing owed — go hunting."* (with a count of any snoozed items). If there are more than 5 items, a *"+N more in the queue"* note appears at the bottom.
 
-### 4. Conversations (the Inbox)
+### 5. Conversations (the Inbox)
 
 **When it appears:** loads independently when the tab opens. This is your **mention inbox rendered as threaded conversations** — grouped by conversation, not as a flat list of tweets. The conversations where the last word is theirs (open loops) sort to the top, and **chains** (they replied to your reply) sit at the very top.
 
@@ -154,7 +180,7 @@ When a thread is an open loop, expanding it reveals the reply workflow:
 
 Empty state: *"No conversations yet. Refresh pulls new mentions (~$0.001 each)."*
 
-### 5. Radar
+### 6. Radar
 
 **When it appears:** always present, fed live from your browsing session. **This is $0 and free-flowing.** As you scroll X, the extension quietly scores each tweet's **band** (hot/warm/skip). Every **hot** or **warm** tweet you scroll past gets added to the Radar queue here, so a good reply opportunity doesn't evaporate the moment it leaves your screen. You can also **pin any tweet regardless of band** with the round **⊕ "add to Radar"** button that sits on every tweet's action row on x.com — "I want to reply to this one, period." A pinned tweet gets a **`manual`** band chip and ranks at the very top of the queue. (The queue lives in browser session memory and clears when you close the browser — though drafted replies are saved on the server and rehydrate after a restart.)
 
@@ -184,7 +210,7 @@ Rows are ranked by: **manually pinned** first, then **who the author is** (an al
 
 Empty state: *"Browse X — hot/warm tweets you scroll past queue up here."*
 
-### 6. Targets
+### 7. Targets
 
 **When it appears:** loads independently when the tab opens. This is your **roster of in-band accounts** — saved authors whose follower count is 2–10× yours, the sweet spot for replies that get noticed and reciprocated. The heading shows the count and the exact follower band (e.g. *"1.2k–6.0k followers"*).
 
@@ -197,7 +223,7 @@ Each row shows:
 
 Empty states: *"No account snapshot yet — runs after the first 03:00 UTC pass"* (stratus needs to know your own follower count first, which it records daily), or *"No saved authors in the 2–10x band. Save authors from their profile page to build the roster."*
 
-### 7. Top Fans
+### 8. Top Fans
 
 **When it appears:** loads independently when the tab opens. These are **people who already notice you** — ranked by how many times they've mentioned or replied to you over a trailing window.
 
@@ -208,14 +234,14 @@ Empty states: *"No account snapshot yet — runs after the first 03:00 UTC pass"
 
 Empty state: *"No inbound in the last 30 days."*
 
-### 8. Followers KPI and conversion line
+### 9. Followers KPI and conversion line
 
 **When it appears:** whenever the Brief loaded. From the Brief.
 
 - A big **follower number**, with a **+N / 7d** delta (green up, red down) and a small **sparkline** of your recent follower trend.
 - Below it, a **conversion line** (when there's enough data): e.g. *"1.2k profile visits → +34 followers · 2.8% 7d · 3.1% 28d."* This answers "is my profile converting the attention it gets?" — of the people who visited your profile, what fraction turned into follows, over the last 7 days (and 28 days when available). It only shows once you've had at least 20 profile visits in the window.
 
-### 9. Pinned post watch
+### 10. Pinned post watch
 
 **When it appears:** **only when there's a nudge to make** — otherwise completely absent. Your pinned tweet is the first thing profile visitors see, so stratus watches it. Two possible nudges (either or both):
 
@@ -224,21 +250,41 @@ Empty state: *"No inbound in the last 30 days."*
 
 Pinning is manual in the X app — these are reminders, not actions.
 
-### 10. Today's plan
+### 11. Account health
+
+**When it appears:** **only when something actually fired** — on a normal day this section does not exist. That silence is the feature: an always-visible "all clear" panel trains you to stop reading it.
+
+This is the one part of stratus that watches **you** rather than your audience. An account suspension zeroes every goal at once, so a handful of rules look for the shapes X's spam heuristics are known to punish — all computed from data stratus already has, at **$0**, and all **advisory**. Nothing here ever blocks an action.
+
+Rows are colour-coded: red = critical, amber = warn, grey = advice. The five rules:
+
+| Rule | Fires when | Reads as |
+|---|---|---|
+| **Posting burst** | more than 4 original posts in 24h, or any two posted under 20 minutes apart | The publisher jitters its minutes on purpose; two posts twenty minutes apart means you're posting by hand on top of the schedule. |
+| **Reply burst** | more than 10 replies pasted inside any one hour (critical above 15) | The exact shape bulk-reply detection watches for. It looks at the *densest* hour of the last three, so a burst that ended ninety minutes ago still shows — X saw it either way. |
+| **Near-duplicate** | two of your originals in the last 14 days overlap 80%+ | Repetitive content is its own penalty. Both tweet ids are listed. |
+| **Unfollow churn** | 25+ unfollows marked in 24h (critical at 40) | This can only fire if you out-ran the [Following queue](./people-tab.md#the-following-subtab--roster-hygiene) by hand — it enforces the same 40/day ceiling. |
+| **Schedule cluster** | two pending posts under 45 minutes apart | Advice, not danger. The [Composer](./composer-tab.md#schedule-time-warnings) tells you this at schedule time, when it's still one edit away from fixed. |
+
+Every threshold is an **opening guess**, and each rule reports at most one row — so this card can never fill your screen with the same complaint five times.
+
+One thing it deliberately doesn't do: thread tails don't count as a posting burst. They're published as self-replies, so a six-tweet thread stays one post as far as this card is concerned.
+
+### 12. Today's plan
 
 **When it appears:** whenever the Brief loaded. From the Brief. Two parts:
 
 - **Scheduled posts today** — each with its time, a status badge (`pending`, `posted`, etc.), and the post text. If nothing's scheduled: *"Nothing scheduled today."*
 - **Open slots (gaps)** — the recommended posting times ("anchors") for today that you *haven't* filled, ranked highest-value first. Each shows the hour and, when there's enough history, the average views-per-day that time slot has earned (`2.1k avg views/day · n=6`), or *"no data (n=…)"* when the sample's too small to advise. If every slot is filled you'll see *"All N slots filled."*
 
-### 11. Replies quota
+### 13. Replies quota
 
 **When it appears:** whenever the Brief loaded. From the Brief. Tracks the reply side of the 70/30 doctrine.
 
 - A **progress bar** and label like **7 / 10–20 today** — replies you've posted today against the daily target range. The bar turns green once you hit the minimum.
 - A **week line**: *"Week: 42 replies · 12 posts — 78% replies (target 70%)."* This is where you see whether your reply-to-post mix matches the 70/30 doctrine over the week.
 
-### 12. Yesterday
+### 14. Yesterday
 
 **When it appears:** whenever the Brief loaded. From the Brief. Yesterday's published output with measured numbers:
 
@@ -246,23 +292,25 @@ Pinning is manual in the X app — these are reminders, not actions.
 - If a tweet hasn't been measured yet, it shows *"awaiting 03:00 UTC snapshot"* — stratus reads each tweet's metrics once, in a daily 3 AM UTC pass.
 - If you published nothing: *"Nothing published yesterday."*
 
-### 13. Profile-click leaders (7d)
+### 15. Profile-click leaders (7d)
 
 **When it appears:** only when there's at least one leader — otherwise absent. Your tweets from the last 7 days that earned the most **profile visits** (the follow-driving metric). Each shows the text, profile-visit count, views, and whether it's a post or reply.
 
 For **posts** (not replies) there's a **quote re-up** button: it drafts three fresh quote-tweet takes on that proven winner via Grok (roughly **$0.006**), landing them as draft rows in your Calendar. Nothing posts until you schedule one. A status line confirms *"3 quote drafts in the calendar ($0.0063)."*
 
-### 14. Spend today (UTC)
+### 16. Spend today (UTC)
 
 **When it appears:** whenever the Brief loaded. From the Brief. Today's API spend, split by source: *"X $0.0120 · Grok $0.0043 · total $0.0163."* Note this section is anchored to the **UTC billing day** (unlike the rest of the tab, which uses your local day), so it lines up with X's billing.
 
-### 15. Sunday Digest ("This week")
+### 17. Sunday Digest ("This week")
 
 **When it appears:** always present at the bottom. On **Sundays** it loads automatically; any other day it waits behind a **"Read the week's digest"** button.
 
 This is the coach's weekly note. It makes one Grok call (roughly **$0.01**) to narrate your week — but **only from real numbers**, never invented. The narration is cached per week on the server, so opening the panel twice on Sunday doesn't spend again.
 
 - A **narrative** (a few short paragraphs), or a fallback line if Grok isn't configured or hit an error (the facts below still stand).
+- A **grade badge** above the facts — a single **0–100** score for the week, with a breakdown on hover and *"+6 vs last week"* when you improved. It blends five things you can act on: how many days you finished all your quests (30%), how many separate days you published an original (20%), replies against your target (25%), how your active goals are pacing (15%), and how close your reply/post mix landed to the 70/30 doctrine (10%). A component with no data drops out and the rest re-weight, so a quiet area is never scored as a failure. The delta line celebrates a rise and states a fall plainly — no red, same as the rest of the tab.
+  **No badge at all under four tracked days.** A week you barely opened the panel for isn't a week that can be graded, and half a grade is worse than none — so the whole badge is absent, and the narration is never even shown a number to comment on.
 - A **facts strip**: follower delta, profile-visit conversion, posts/replies count, in-band reply share (the 70/30 roster-coverage check, with a ✓ when you're on-doctrine), quest days completed, and total spend.
 - A footer showing *"week of …"* and a **Rewrite** button — the one explicit way to re-spend the ~$0.01 and regenerate the narration.
 

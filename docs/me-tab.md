@@ -23,14 +23,21 @@ The AI never *writes* your profile — it only reads it. You type the entries; G
 
 ### 1. Goals
 
-Each goal is a card with a progress bar. There are three kinds:
+Each goal is a card with a progress bar. There are five kinds:
 
 - **Followers** — progress tracks itself from your daily account snapshot (the once-a-day follower count stratus already collects). No value to edit; the card says *auto · from daily snapshot*. Progress stays blank until the first daily snapshot lands.
 - **MRR** and **Custom** — you set the current value yourself. Type it into the **Current value** box; it saves when you click away (on blur). Give the goal a **unit** ($, users, whatever) so the numbers read right.
+- **Posted replies** and **Originals** — counted for you, from the day you created the goal forward ("500 replies by September"). Nothing to type: stratus tallies your posted replies and your non-reply publishes. Because they start at zero on the day you set them, they never sweep in all of history.
 
 Every goal shows `current / target (pct%)` and, if you set a **deadline**, how many days are left (or how many days overdue, in amber). Buttons let you mark a goal **achieved**, **drop** it, **reactivate** a closed one, or **delete** it. Achieved and dropped goals sink to the bottom, dimmed — they stay for the record but are never injected into drafts.
 
 **Add a goal** with the **+ Add goal** button: label, kind, target, optional unit, optional deadline.
+
+**Goals close themselves.** A goal that reaches its target becomes **achieved**; one whose deadline passes becomes **missed**. That happens the next time anything reads your goals — opening Today, opening the Sunday digest, or asking an agent for `x_goals` — not on a timer. Both are one click to undo (**reactivate**). The Me tab deliberately shows what is *stored* rather than settling anything itself, so a goal can read `active` here a moment before Today settles it.
+
+**Pacing lives on the Today tab, not here.** This tab is the ledger — the label, the number, the date. "Am I on track to make that date?" (required-vs-actual per day, the on-pace/behind chip) is a Today-tab question; see `docs/today-tab.md`.
+
+The two counted kinds are **kept out of your drafting prompts on purpose**: "I need 290 more replies" is process, not biography, and it is exactly the kind of number that colours a draft badly. They *do* reach the Sunday digest, which is where a reply quota belongs.
 
 ### 2. Quick log
 
