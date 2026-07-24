@@ -3,6 +3,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { db } from './db/client.ts';
 import { beat, heartbeatStatus, registerHeartbeat, unregisterHeartbeat } from './heartbeats.ts';
 import { matchOrigin } from './middleware/cors.ts';
+import type { ActiveTimesGrid } from './shared/activeTimes.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
 import { metricsSnapshots, postsPublished } from './x/db/schema.ts';
@@ -1548,6 +1549,29 @@ describe('brief annotateGaps (S0.4)', () => {
     const [gap] = annotateGaps([9], cells, 3);
     expect(gap?.sufficient).toBe(false);
     expect(gap?.n).toBe(0);
+  });
+
+  test('carries audience intensity when a capture exists, never reordering (A3.4)', () => {
+    const cells = [c(3, 9, 5, 400)]; // only Wed 9h is measured
+    // Wed audience hot at 18h, cold elsewhere. Columns are Mon..Su → col (3+6)%7.
+    const audGrid = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+    (audGrid[(3 + 6) % 7] as number[])[18] = 1;
+    const audience: ActiveTimesGrid = {
+      cols: 7,
+      rows: 24,
+      grid: audGrid,
+      tzOffsetMin: 0,
+      metric: 'likes',
+    };
+    const withAud = annotateGaps([9, 13, 18], cells, 3, audience);
+    const byHour = new Map(withAud.map((g) => [g.hour, g]));
+    expect(byHour.get(18)?.audienceScore).toBe(1); // the audience peak
+    expect(byHour.get(9)?.audienceScore).toBe(0); // measured but cold audience
+    // Ordering stays own-score-first — audience is display data, not a key.
+    const noAud = annotateGaps([9, 13, 18], cells, 3);
+    expect(noAud.every((g) => g.audienceScore === null)).toBe(true);
+    expect(withAud.map((g) => g.hour)).toEqual(noAud.map((g) => g.hour));
+    expect(withAud[0]?.hour).toBe(9); // the measured hole still leads
   });
 });
 

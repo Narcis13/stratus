@@ -1,14 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import type { ActiveTimesGrid } from '../shared/activeTimes.ts';
 import type { BestTimeCell } from '../shared/types.ts';
 import {
   ANCHORS_3,
   ANCHORS_4,
   BEST_TIME_MIN_N,
+  audiencePeakHours,
   bestTimeCellScore,
   estimatePostCostUsd,
   findScheduleGaps,
   jitterMinutes,
   pickAnchors,
+  slotHint,
   splitIntoThread,
   suggestBestSlotDate,
   suggestSlotDate,
@@ -26,6 +29,16 @@ function cell(weekday: number, hour: number, posts: number, rate: number | null)
     avgLikes: null,
     avgProfileVisits: null,
   };
+}
+
+// A 7×24 audience grid with the given (jsWeekday, hour) cells set to 1, all
+// else 0. Columns run Mon..Sun; audienceScoreFor maps jsWeekday via (wd+6)%7.
+function grid(hot: Array<[number, number]>): ActiveTimesGrid {
+  const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+  for (const [wd, hr] of hot) {
+    (cells[(wd + 6) % 7] as number[])[hr] = 1;
+  }
+  return { cols: 7, rows: 24, grid: cells, tzOffsetMin: 0, metric: 'likes' };
 }
 
 describe('pickAnchors', () => {
@@ -148,6 +161,51 @@ describe('best-times slot picker (S0.4)', () => {
       new Date(2026, 5, 18, 18, 5),
     ];
     expect(suggestBestSlotDate(now, claimed, [], 0, fixedJitter)).toBeNull();
+  });
+});
+
+describe('audience-blended slots (A3.4)', () => {
+  const fixedJitter = () => 0;
+  const now = new Date(2026, 5, 18, 7, 0); // Thu 07:00, before the 9 anchor
+
+  test('a measured cell outranks a hotter but unmeasured audience slot', () => {
+    const cells = [cell(4, 9, 5, 300)]; // only 9 is measured (and low)
+    const aud = grid([[4, 18]]); // Thu 18h is the audience peak, 9h/13h cold
+    // Tier 1 holds: measured 9 wins over hot-but-unmeasured 18.
+    const d = suggestBestSlotDate(now, [], cells, 0, fixedJitter, aud);
+    expect(d?.getHours()).toBe(9);
+  });
+
+  test('audience intensity breaks the tie among unmeasured slots', () => {
+    const aud = grid([[4, 18]]); // Thu 18h hot, 9h/13h cold
+    const withAud = suggestBestSlotDate(now, [], [], 0, fixedJitter, aud);
+    expect(withAud?.getHours()).toBe(18); // later-but-hot beats earlier-cold
+    const withoutAud = suggestBestSlotDate(now, [], [], 0, fixedJitter);
+    expect(withoutAud?.getHours()).toBe(9); // no grid → earliest, unchanged
+  });
+
+  test('passing null audience is identical to omitting it', () => {
+    const cells = [cell(4, 9, 5, 300), cell(4, 13, 5, 900), cell(4, 18, 5, 600)];
+    const omitted = suggestBestSlotDate(now, [], cells, 7, fixedJitter);
+    const nulled = suggestBestSlotDate(now, [], cells, 7, fixedJitter, null);
+    expect(nulled?.getTime()).toBe(omitted?.getTime());
+  });
+
+  test('slotHint labels why a slot won', () => {
+    expect(slotHint(cell(4, 9, 5, 300), 0.9)).toBe('measured'); // measured outranks audience
+    expect(slotHint(cell(4, 9, 2, 999), 0.9)).toBe('audience'); // below n gate → audience
+    expect(slotHint(undefined, 0.5)).toBe('audience');
+    expect(slotHint(undefined, null)).toBeNull();
+  });
+
+  test('audiencePeakHours returns the busiest local hours, best-first', () => {
+    const aud = grid([
+      [4, 21],
+      [4, 18],
+    ]); // Thu 18h & 21h equally hot, rest cold
+    expect(audiencePeakHours(aud, 4)).toEqual([18, 21]); // tie → earlier first
+    expect(audiencePeakHours(aud, 4, 1)).toEqual([18]);
+    expect(audiencePeakHours(aud, 0)).toEqual([]); // Sunday is all-cold → no peaks
   });
 });
 

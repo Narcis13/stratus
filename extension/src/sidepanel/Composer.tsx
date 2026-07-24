@@ -1,5 +1,6 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
-import type { BestTimeCell, PostPillar, PostRegister } from '../shared/types.ts';
+import { audienceScoreFor } from '../shared/activeTimes.ts';
+import type { AudienceCapture, BestTimeCell, PostPillar, PostRegister } from '../shared/types.ts';
 import {
   ApiError,
   type Idea,
@@ -12,7 +13,10 @@ import {
   api,
 } from './api.ts';
 import {
+  audiencePeakHours,
+  bestTimeCellScore,
   estimatePostCostUsd,
+  slotHint,
   splitIntoThread,
   suggestBestSlotDate,
   suggestSlotDate,
@@ -52,6 +56,9 @@ const URL_RE = /(^|\s)https?:\/\//i;
 const URL_EXTRACT_RE = /https?:\/\/\S+/g;
 // How far ahead "Suggest slot" scans the calendar for open anchors.
 const SLOT_HORIZON_DAYS = 7;
+// Past this the captured audience heatmap is stale enough to nudge a refresh
+// visit — the grid drifts as the audience does (A3.4).
+const AUDIENCE_STALE_DAYS = 28;
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
@@ -106,6 +113,10 @@ export function ComposerPanel({
   const [suggesting, setSuggesting] = useState(false);
   // S0.4 — best-times cells (local weekday × hour) for the slot picker.
   const [bestCells, setBestCells] = useState<BestTimeCell[]>([]);
+  // A3.4 — the latest captured audience heatmap ($0), blended below measured
+  // cells in "Best time" and shown as the day's audience peaks. null until the
+  // fetch lands or when X Analytics was never visited.
+  const [audience, setAudience] = useState<AudienceCapture | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // GR.6 schedule-time advisory — survives the post-save `reset()` on purpose
@@ -139,6 +150,21 @@ export function ComposerPanel({
       .then((r) => alive && setBestCells(r.cells))
       .catch(() => {
         /* no best-times hints; Suggest slot / manual entry still work */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+
+  // A3.4 — load the captured audience heatmap once on mount, alongside
+  // best-times. Silent null on 404/unconfigured: measured cells still rank.
+  useEffect(() => {
+    let alive = true;
+    api.analytics
+      .activeTimes(settings)
+      .then((r) => alive && setAudience(r.capture))
+      .catch(() => {
+        /* no audience data; "Best time" falls back to measured cells only */
       });
     return () => {
       alive = false;
@@ -240,6 +266,19 @@ export function ComposerPanel({
   })();
   const topSlots = topCellsForWeekday(bestCells, selectedWeekday);
 
+  // A3.4 — captured audience peaks for the scheduling day (presence, not
+  // measured advice — always labeled "audience") + a staleness/absence nudge.
+  const audiencePeaks = audience ? audiencePeakHours(audience, selectedWeekday) : [];
+  const audienceStale = ((): string | null => {
+    if (!audience) return 'no audience data — visit X Analytics once';
+    const capturedMs = new Date(audience.capturedAt).getTime();
+    if (Number.isNaN(capturedMs)) return null;
+    const days = Math.floor((Date.now() - capturedMs) / 86_400_000);
+    return days > AUDIENCE_STALE_DAYS
+      ? `audience data ${days}d old — visit X Analytics to refresh`
+      : null;
+  })();
+
   // Live cost preview (invariant #1) — what this post will bill before you save.
   const costPreview = estimatePostCostUsd(
     isThreadEdit
@@ -295,7 +334,7 @@ export function ComposerPanel({
       const now = new Date();
       const slotted = await readSlottedPending(now);
       const slot = best
-        ? suggestBestSlotDate(now, slotted, bestCells, SLOT_HORIZON_DAYS)
+        ? suggestBestSlotDate(now, slotted, bestCells, SLOT_HORIZON_DAYS, Math.random, audience)
         : suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS);
       if (!slot) {
         setError(`No open slot in the next ${SLOT_HORIZON_DAYS} days — every anchor is filled.`);
@@ -306,11 +345,19 @@ export function ComposerPanel({
         const cell = bestCells.find(
           (c) => c.weekday === slot.getDay() && c.hour === slot.getHours(),
         );
-        const score = cell?.avgViewsPerDay ?? cell?.avgViews ?? null;
+        const audScore = audience
+          ? audienceScoreFor(audience, slot.getDay(), slot.getHours())
+          : null;
+        const hint = slotHint(cell, audScore);
+        const where = `${WEEKDAYS[slot.getDay()]} ${fmtHour(slot.getHours())}`;
+        // Label WHY the slot won (§7.19/decision 10): measured own-data, else
+        // captured audience presence, else the earliest-open fallback.
         setNotice(
-          score != null
-            ? `Best open slot: ${WEEKDAYS[slot.getDay()]} ${fmtHour(slot.getHours())} · ${fmtViews(score)} avg views/day (n=${cell?.posts}).`
-            : 'No measured best-time yet — filled the earliest open slot instead.',
+          hint === 'measured'
+            ? `Best open slot: ${where} · ${fmtViews(bestTimeCellScore(cell) ?? 0)} avg views/day (n=${cell?.posts}).`
+            : hint === 'audience'
+              ? `Best open slot: ${where} · audience peak (no measured data yet).`
+              : 'No measured best-time yet — filled the earliest open slot instead.',
         );
       }
     } catch (err) {
@@ -816,6 +863,13 @@ export function ComposerPanel({
               No measured best-time for {WEEKDAYS[selectedWeekday]} yet (need ≥3 posts in a slot).
             </div>
           ))}
+        {!isLocked && audiencePeaks.length > 0 && (
+          <div className="best-times muted">
+            Audience peak {WEEKDAYS[selectedWeekday]}:{' '}
+            {audiencePeaks.map((h) => fmtHour(h)).join(', ')}
+          </div>
+        )}
+        {!isLocked && audienceStale && <div className="best-times muted">{audienceStale}</div>}
         <small className="muted">
           {scheduledFor
             ? 'Will save as pending and ship at this minute.'

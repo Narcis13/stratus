@@ -992,6 +992,25 @@ export interface BestTimesResponse {
   cells: BestTimeCell[];
 }
 
+/** GET /x/analytics/active-times (A3.2) — the newest captured audience heatmap
+ *  row, or null when the user has never visited X Analytics. The full DB row is
+ *  returned: `grid` is number[col][row] (col 0 = Monday, 0..1 intensity) and
+ *  `capturedAt` is an ISO string over the wire. Structurally a superset of the
+ *  shared `ActiveTimesGrid`, so it feeds `audienceScoreFor` directly (A3.4). */
+export interface AudienceCapture {
+  id: number;
+  capturedAt: string;
+  metric: string;
+  tzOffsetMin: number;
+  cols: number;
+  rows: number;
+  grid: number[][];
+}
+
+export interface ActiveTimesResponse {
+  capture: AudienceCapture | null;
+}
+
 // GET /x/metrics/account — the daily follower KPI series (S5.5 milestone card
 // reads it). `snapshotAt` is the JSON-serialized Date (ISO string).
 export interface AccountSeriesPoint {

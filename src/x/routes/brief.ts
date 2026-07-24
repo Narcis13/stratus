@@ -12,9 +12,11 @@ import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
+import { type ActiveTimesGrid, audienceScoreFor } from '../../shared/activeTimes.ts';
 import { type ConversionTweet, computeConversion } from '../conversion.ts';
 import {
   accountSnapshots,
+  audienceActivity,
   mentions,
   metricsSnapshots,
   postsPublished,
@@ -109,12 +111,17 @@ export interface AnnotatedGap {
   avgViews: number | null;
   score: number | null;
   sufficient: boolean;
+  /** A3.4: captured audience presence for this local (weekday, hour), 0..1, or
+   *  null with no capture. Display data for the TodayPlan row — NEVER a reorder
+   *  key (§7.19/decision 10: own measured cells rank; audience is labeled). */
+  audienceScore: number | null;
 }
 
 export function annotateGaps(
   gapHours: number[],
   cells: BestTimeCell[],
   localWeekday: number,
+  audience?: ActiveTimesGrid | null,
 ): AnnotatedGap[] {
   return gapHours
     .map((hour) => {
@@ -127,6 +134,7 @@ export function annotateGaps(
         avgViews: cell?.avgViews ?? null,
         score,
         sufficient: score != null,
+        audienceScore: audience ? audienceScoreFor(audience, localWeekday, hour) : null,
       };
     })
     .sort((a, b) => {
@@ -372,6 +380,7 @@ brief.get('/brief', async (c) => {
     monitorInputs,
     commitmentViews,
     goalViews,
+    audienceRows,
   ] = await Promise.all([
     db
       .select({
@@ -476,6 +485,14 @@ brief.get('/brief', async (c) => {
     // NOTE this one WRITES: it settles `active → achieved | missed` on read
     // (GR.7's lazy flip). Opening Today is now what advances a finished goal.
     loadGoalsWithPacing(now),
+    // A3.4: newest audience Active-times capture ($0 select). The gap
+    // annotation blends its intensity below own measured cells; absent when
+    // X Analytics was never visited, in which case audienceScore stays null.
+    db
+      .select()
+      .from(audienceActivity)
+      .orderBy(desc(audienceActivity.capturedAt), desc(audienceActivity.id))
+      .limit(1),
   ]);
 
   const tweetIds = published.map((p) => p.tweetId);
@@ -600,7 +617,10 @@ brief.get('/brief', async (c) => {
   // local weekday, highest-value hole first. `todayStart` is local midnight as
   // a UTC instant, so shifting it back yields today's local weekday.
   const todayLocalWeekday = new Date(todayStart.getTime() - tzOffsetMin * 60_000).getUTCDay();
-  const gaps = annotateGaps(gapHours, bestTimes.cells, todayLocalWeekday);
+  // A3.4: the newest capture is a full audience_activity row — a structural
+  // superset of ActiveTimesGrid, so audienceScoreFor reads it directly.
+  const audienceGrid: ActiveTimesGrid | null = audienceRows[0] ?? null;
+  const gaps = annotateGaps(gapHours, bestTimes.cells, todayLocalWeekday, audienceGrid);
 
   const weekReplies = published.filter((p) => p.isReply).length;
   const weekPosts = published.length - weekReplies;

@@ -6,11 +6,13 @@
 
 import type { ApiRequest, ApiResponse, BinaryPayload } from '../shared/messages.ts';
 import {
+  type ActiveTimesResponse,
   type AiSettings,
   type AiSettingsPatchBody,
   type AiSettingsResponse,
   ApiError,
   type AssetSaveBody,
+  type AudienceCapture,
   type AuthorProfile,
   type BatchReplyGenerateBody,
   type BatchReplyItem,
@@ -190,6 +192,8 @@ import type { Settings } from './storage.ts';
 
 export { ApiError };
 export type {
+  ActiveTimesResponse,
+  AudienceCapture,
   AiSettings,
   AiSettingsPatchBody,
   AiSettingsResponse,
@@ -440,6 +444,15 @@ export const api = {
     // latest crossed rung client-side over it ($0, already-billed data).
     account(s: Settings): Promise<MetricsAccountResponse> {
       return request<MetricsAccountResponse>(s, '/x/metrics/account');
+    },
+  },
+
+  // A3.4 — the newest captured audience "Active times" heatmap ($0, DOM-scraped
+  // by the content script on X Analytics). The Composer blends it below its own
+  // measured best-times; a 404/unconfigured just leaves `capture` null.
+  analytics: {
+    activeTimes(s: Settings): Promise<ActiveTimesResponse> {
+      return request<ActiveTimesResponse>(s, '/x/analytics/active-times');
     },
   },
 

@@ -6,6 +6,7 @@
 // No React, no chrome, no Date.now() inside — `now`/`rand` are injected so the
 // logic stays deterministic in tests.
 
+import { type ActiveTimesGrid, audienceScoreFor } from '../shared/activeTimes.ts';
 import type { BestTimeCell } from '../shared/types.ts';
 import { addDays, isSameLocalDay, startOfLocalDay } from './datetime.ts';
 
@@ -100,17 +101,21 @@ export function topCellsForWeekday(
 // Like suggestSlotDate, but ranks the open anchors by best-times score instead
 // of earliest-first. Candidates are still only the cadence-ladder anchors (so
 // the cadence is respected) and the minute is still jittered (never top-of-
-// hour). Slots whose cell clears the n gate outrank those that don't; among
-// equals, the earliest wins — so an empty/thin history degrades exactly to
-// suggestSlotDate. Returns null if every anchor in the horizon is claimed.
+// hour). Ranking is three tiers (A3.4): (1) own gated score desc — the measured
+// authority, §7.19/decision 10, two measured candidates never reorder by
+// audience; (2) among unmeasured slots, captured audience intensity desc; (3)
+// earliest. With no `audience` grid every audienceScore is null, so tier 2
+// collapses and the picker degrades byte-for-byte to its pre-A3.4 behavior.
+// Returns null if every anchor in the horizon is claimed.
 export function suggestBestSlotDate(
   now: Date,
   scheduledLocal: Date[],
   cells: BestTimeCell[],
   horizonDays = 7,
   rand: () => number = Math.random,
+  audience?: ActiveTimesGrid | null,
 ): Date | null {
-  const candidates: Array<{ date: Date; score: number | null }> = [];
+  const candidates: Array<{ date: Date; score: number | null; audienceScore: number | null }> = [];
   for (let d = 0; d <= horizonDays; d++) {
     const day = startOfLocalDay(addDays(now, d));
     const dayPosts = scheduledLocal.filter((s) => isSameLocalDay(s, day));
@@ -124,17 +129,58 @@ export function suggestBestSlotDate(
       cand.setHours(hour, jitterMinutes(rand), 0, 0);
       if (cand.getTime() <= now.getTime() + 60_000) continue;
       const cell = cells.find((c) => c.weekday === day.getDay() && c.hour === hour);
-      candidates.push({ date: cand, score: bestTimeCellScore(cell) });
+      candidates.push({
+        date: cand,
+        score: bestTimeCellScore(cell),
+        audienceScore: audience ? audienceScoreFor(audience, day.getDay(), hour) : null,
+      });
     }
   }
   if (candidates.length === 0) return null;
   candidates.sort((a, b) => {
-    if (a.score != null && b.score != null && a.score !== b.score) return b.score - a.score;
-    if (a.score != null && b.score == null) return -1;
-    if (a.score == null && b.score != null) return 1;
+    // Tier 1 — own measured score outranks everything; measured ties fall to
+    // the earliest (audience never reorders two measured slots).
+    if (a.score != null && b.score != null) {
+      if (a.score !== b.score) return b.score - a.score;
+      return a.date.getTime() - b.date.getTime();
+    }
+    if (a.score != null) return -1;
+    if (b.score != null) return 1;
+    // Tier 2 — among unmeasured slots, audience intensity breaks the tie.
+    if (a.audienceScore != null && b.audienceScore != null && a.audienceScore !== b.audienceScore) {
+      return b.audienceScore - a.audienceScore;
+    }
+    if (a.audienceScore != null && b.audienceScore == null) return -1;
+    if (a.audienceScore == null && b.audienceScore != null) return 1;
+    // Tier 3 — earliest.
     return a.date.getTime() - b.date.getTime();
   });
   return (candidates[0] as { date: Date }).date;
+}
+
+// Why a suggested best-slot won, so the UI can say so: 'measured' when its own
+// gated cell clears the n gate (the authority), 'audience' when only captured
+// presence data spoke, null when neither did (the earliest-open fallback).
+export function slotHint(
+  cell: BestTimeCell | undefined,
+  audienceScore: number | null,
+): 'measured' | 'audience' | null {
+  if (bestTimeCellScore(cell) != null) return 'measured';
+  if (audienceScore != null) return 'audience';
+  return null;
+}
+
+// The local hours a captured audience heatmap is busiest for one weekday, best
+// first (ties: earlier hour). Presence data — labeled "audience" in the UI,
+// never merged with measured advice; dead (zero-intensity) hours aren't peaks.
+export function audiencePeakHours(grid: ActiveTimesGrid, weekday: number, topN = 2): number[] {
+  const scored: Array<{ hour: number; score: number }> = [];
+  for (let hour = 0; hour < 24; hour++) {
+    const s = audienceScoreFor(grid, weekday, hour);
+    if (s != null && s > 0) scored.push({ hour, score: s });
+  }
+  scored.sort((a, b) => (a.score !== b.score ? b.score - a.score : a.hour - b.hour));
+  return scored.slice(0, topN).map((x) => x.hour);
 }
 
 // --------------------------------------------------------------------- cost
