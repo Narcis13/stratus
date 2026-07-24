@@ -2,15 +2,16 @@
 
 The **Settings** tab is where you connect the stratus extension to your stratus server and control a few privacy and behavior switches. This is the first tab you have to deal with: until you enter the API URL and bearer token here, every other tab is locked and the extension keeps you on Settings. Once those two fields are filled in and saved, the rest of the app unlocks and stays connected — you rarely need to come back unless you change servers, rotate your token, or want to flip a toggle.
 
-### Three subtabs: General · AI · Prompts
+### Four subtabs: General · Tuning · AI · Prompts
 
-Settings is split into three subtabs across the top:
+Settings is split into four subtabs across the top:
 
-- **General** — everything in the sections below: the connection fields, the behavior/privacy toggles, your niche, and harvest cursors. This is the default subtab.
+- **General** — the connection fields, the behavior/privacy toggles, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
+- **Tuning** — every tunable number the server has, in one searchable list: doctrine, quests, people, follow-ups, the reply band, stat gates, budgets, workers and more. See [Tuning](#tuning-the-tuning-subtab).
 - **AI** — which LLM provider drafts your content (Grok or OpenRouter), and the model/temperature/token/effort knobs. See [AI provider](#ai-provider-the-ai-subtab).
 - **Prompts** — the editable text of every AI prompt behind the app, with a one-click "Restore Default Prompts". See [Prompts editor](#prompts-editor-the-prompts-subtab).
 
-The AI and Prompts subtabs are the "power user" half — you can ignore them entirely and everything drafts on the shipped defaults (Grok, stock prompts). They're there for when you want to run a different model or tune how the AI writes.
+Tuning, AI and Prompts are the "power user" half — you can ignore them entirely and everything runs on the shipped defaults (Grok, stock prompts, the doctrine numbers stratus was built with). They're there for when you want to run a different model, tune how the AI writes, or move a threshold.
 
 ---
 
@@ -27,7 +28,7 @@ Step by step:
 5. **Click Save.** The **Save** button stays disabled until both fields have something in them. When you click it, the button briefly reads **Saving…**, then a green **Saved** appears next to it.
 6. **The other tabs unlock.** As soon as both fields are saved and non-empty, every other tab (Today, People, Calendar, Composer, and so on) becomes clickable. You're connected.
 
-> **Tip:** The three toggle switches lower down (pillars, auto-type, passive capture) save **the instant you click them** — they don't wait for the Save button. The **Save** button exists only to commit the API URL and bearer token together.
+> **Tip:** The four toggle switches lower down (pillars, auto-type, passive capture, passive harvest) save **the instant you click them** — they don't wait for the Save button. So do the Appearance dropdowns. The **Save** button exists only to commit the API URL and bearer token together.
 
 ---
 
@@ -91,6 +92,57 @@ Four checkboxes sit between the connection fields and the harvest section. Each 
 - **Why it's on by default:** it's free, invisible, and it's what powers **People → Timeline affinity** ("who does the algorithm keep showing me?") and **Playbook → Timeline funnel** ("of what I was shown, what did I actually reply to?"). Neither says anything useful until a few days of real scrolling have accumulated.
 - **How to opt out:** **uncheck** this box. It takes effect immediately in every open X tab — no reload needed — and the Harvest tab's status line switches to *"Passive capture off"*.
 - **Note:** this is a **separate** toggle from *Passive contact capture from hover cards* above. One grows your people roster from profile pop-ups you hover; this one grows the tweet corpus from your timeline. Turning either off leaves the other running.
+
+---
+
+## Appearance
+
+Three dropdowns controlling how the side panel *looks*. They're panel-only — nothing here reaches the server, nothing here changes what stratus does — and each applies the instant you change it, with no Save.
+
+- **Theme** — **System** (default, follows your OS light/dark setting), **Dark**, or **Light**. The overlays stratus draws *on X itself* (badges, chips, the context panel) are deliberately exempt: they follow X's own page theme so they never clash with the site.
+- **Density** — **Cozy** (default) or **Compact**. Compact tightens the spacing throughout, fitting noticeably more on screen in a narrow side panel.
+- **Text size** — **Small (12px)**, **Default (13px)**, or **Large (14px)**. Scales the whole panel, not just body copy.
+
+These three are stored locally in the extension, like the connection fields — they're per-browser, not per-account, so they don't follow you to another machine.
+
+---
+
+## Tuning (the Tuning subtab)
+
+**Tuning** is every number stratus makes a decision with, in one place. Doctrine cadence, quest targets, follow-up windows, the reply-band thresholds, stat gates, budgets, worker schedules, display limits — all of it, live-editable, with the bounds and the reasoning attached to each row.
+
+The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
+
+### How a row works
+
+Each row shows the knob's **name**, a one-line **description** carrying the *why* (and the warning, where there is one), and a control picked to fit: a **slider** for a bounded number, a plain number box for an unbounded one, a checkbox, a dropdown, or a comma-separated list for things like the posting-hour anchors.
+
+- **Saving is automatic.** Move a control and it saves about a third of a second later — there is no Save button. The pause exists so dragging a slider is one save, not fifty. Switching subtabs mid-drag still saves.
+- **A small accent dot** appears to the left of any knob you've changed from its shipped default. **Click the dot** to put that one knob back.
+- **Out-of-range values are refused by the server**, not by the box. If you type something the knob's floor or ceiling forbids, the row shows the refusal code and snaps back to the value that's actually stored. Those floors and ceilings are the real guard — they're the reason a budget knob can't be talked into an unbounded number, here or by an AI agent through the MCP tools.
+- **A `restart` tag** on a row means that knob is read once when the server boots (it arms a timer), so a change lands on the next restart. Only the worker schedule knobs are like this; **everything else applies to the very next request** — no restart, no rebuild.
+
+### Search
+
+The box at the top filters as you type, across every group at once. It matches a knob's **name**, its **description**, or its **raw key** — and if what you type matches a **group name**, the whole group stays, so searching `budget` gives you every budget knob rather than only the ones that repeat the word. The count line under the box tells you how many of the total matched.
+
+### Per-group reset
+
+Every group header has a **Reset group** button, which drops every override in that group back to the shipped defaults at once. Groups you've never touched are already at their defaults, so it does nothing there.
+
+### Where some numbers *aren't*
+
+A few numbers you might expect in Tuning deliberately live somewhere else, because each setting has exactly one owner:
+
+- **Your reply quota, week reply %, and the 2–10× target-follower window** belong to your **active niche** — edit them under **General → Niche**. Tuning says so at the top of the affected groups.
+- **The Reply band group is a different thing from the reply targets.** Those twelve numbers are the *classifier* thresholds — what counts as hot, warm or skip. They're the same numbers on both sides: the badge stratus draws on a tweet and the gate the server applies before spending on a draft read the identical settings, so the badge can never promise a draft the server then refuses. (Changing one takes effect on the page within a few minutes, or immediately when you reopen the panel.)
+- **AI calls is the lower of two tiers.** Those knobs are the per-surface defaults; whatever you set in **Settings → AI** is a *global* override that wins over them. The blank fields in the AI subtab are what fall back to this group. The AI subtab links straight here.
+
+> A caution worth repeating from the descriptions themselves: the band thresholds and the stat gates ship as **opening guesses**. They're worth recalibrating from measurements — not from a hunch — and the descriptions tell you how much data each one wants first.
+
+### Coming soon
+
+At the bottom sits the **roadmap**: features that are planned and specced but not built, each with the knobs it would add. The rows are inert — dimmed, with no controls at all, because there's nothing on the server to store yet. It's there so you can see where the product is going from inside the product. Entries are removed as they ship.
 
 ---
 

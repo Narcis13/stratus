@@ -3911,3 +3911,126 @@ button.danger:hover:not(:disabled) {
   font-size: var(--strat-text-xs);
   color: var(--strat-danger);
 }
+
+/* ============================================================================
+   Settings → Tuning (UI.11) — the registry-driven knob cockpit: sticky search,
+   per-group reset, ownership notes, and the inert coming-soon roadmap.
+   ========================================================================= */
+
+.settings-search {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--strat-bg-elev);
+  padding-bottom: var(--strat-space-3);
+}
+.settings-search input[type="search"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--strat-bg);
+  color: var(--strat-text);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-md);
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: var(--strat-text-sm);
+}
+.settings-search input[type="search"]:focus {
+  outline: none;
+  border-color: var(--strat-accent);
+}
+.settings-count {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-group-reset {
+  background: transparent;
+  border: 1px solid var(--strat-border);
+  color: var(--strat-muted);
+  border-radius: var(--strat-radius-sm);
+  padding: 2px 8px;
+  font-size: var(--strat-text-xs);
+  cursor: pointer;
+}
+.settings-group-reset:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+}
+
+/* Ownership/tier copy above a group's rows — several numbers a user expects
+   here live on the active niche instead, and saying so is the whole point. */
+.settings-note {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  line-height: 1.5;
+}
+.settings-row-error {
+  margin: 0 0 var(--strat-space-4);
+  font-size: var(--strat-text-xs);
+}
+
+/* A button that reads as a link — used to jump between settings subtabs. */
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--strat-accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.linklike:hover {
+  color: var(--strat-accent-hover);
+}
+
+/* Coming soon — inert by construction: no control is rendered at all, so there
+   is nothing to disable. Dimmed to read as roadmap, not as broken settings. */
+.coming-soon {
+  padding: var(--strat-space-4) 0;
+  border-top: 1px solid var(--strat-border);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.coming-soon:first-of-type {
+  border-top: none;
+}
+.coming-soon-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--strat-space-4);
+}
+.coming-soon-title {
+  font-size: var(--strat-text-sm);
+  color: var(--strat-text);
+}
+.coming-soon-plan {
+  font-family: var(--strat-font-mono);
+  font-size: var(--strat-text-3xs);
+  color: var(--strat-muted);
+}
+.coming-soon-summary {
+  margin: 2px 0 var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  line-height: 1.5;
+}
+.coming-soon-knobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.coming-soon-knobs li {
+  display: flex;
+  gap: var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  line-height: 1.4;
+}
+.coming-soon-knob {
+  color: var(--strat-text);
+  flex-shrink: 0;
+}

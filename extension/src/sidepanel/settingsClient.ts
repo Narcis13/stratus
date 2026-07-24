@@ -30,6 +30,32 @@ export function flattenSettings(groups: SettingsGroup[]): SettingEntry[] {
   return groups.flatMap((g) => g.settings);
 }
 
+/** Search filter for the Settings tab (UI.11). Matches a knob on its key, label
+ *  or description; a query matching the GROUP's label or id keeps the whole
+ *  group, so "budget" finds every budget knob rather than only the ones whose
+ *  own text repeats the word. Groups left with no matching rows drop out.
+ *  Pure — the component owns the query state. */
+export function filterSettingGroups(groups: SettingsGroup[], query: string): SettingsGroup[] {
+  const q = query.trim().toLowerCase();
+  if (q === '') return groups;
+
+  const out: SettingsGroup[] = [];
+  for (const g of groups) {
+    if (g.label.toLowerCase().includes(q) || g.id.toLowerCase().includes(q)) {
+      out.push(g);
+      continue;
+    }
+    const settings = g.settings.filter(
+      (s) =>
+        s.key.toLowerCase().includes(q) ||
+        s.label.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q),
+    );
+    if (settings.length > 0) out.push({ ...g, settings });
+  }
+  return out;
+}
+
 /** Patch one knob. Validation (range/type) happens server-side against the
  *  registry; a bad value rejects with an ApiError the caller surfaces. */
 export async function patchSetting(s: Settings, key: string, value: unknown): Promise<void> {
