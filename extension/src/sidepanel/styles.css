@@ -432,6 +432,11 @@ code {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
 }
+/* The counter ramps neutral → warn → danger (UI.13), so the 280 limit stops
+   being a cliff you only notice after going over it. */
+.counter.near {
+  color: var(--warn);
+}
 .counter.over {
   color: var(--danger);
   font-weight: 600;
@@ -692,8 +697,11 @@ button.danger:hover:not(:disabled) {
 .ghost:disabled {
   cursor: default;
 }
+/* The tray sits under a `Section` eyebrow since UI.13 (its count moved into the
+   title), so the panel's own gap spaces it — a margin here would double up.
+   Clipping keeps the first/last row inside the card's rounded border. */
 .drafts-tray {
-  margin-top: 10px;
+  overflow: hidden;
 }
 .tray-draft-selected {
   background: var(--strat-accent-fill);
@@ -1666,20 +1674,16 @@ button.danger:hover:not(:disabled) {
   padding: 1px 7px;
   font-size: 11px;
 }
+/* UI.13 — the drafter's head is a `Section` eyebrow now (its own `h3` rule is
+   gone: `.ui-section-eyebrow` styles it identically). This wrapper survives for
+   the hairline divider that separates writing from AI drafting; the panel's gap
+   supplies the space above it, so no margin here. */
 .drafter {
-  margin-top: 14px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-.drafter h3 {
-  margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
 }
 .badge-pillar {
   background: var(--strat-pillar-bg);
@@ -1706,6 +1710,11 @@ button.danger:hover:not(:disabled) {
 }
 .best-time-cell {
   white-space: nowrap;
+}
+/* UI.13 — a measured cell still under the best-time gate. Dimmed on purpose:
+   it is evidence that data is accumulating, never a recommendation (§7.19). */
+.best-time-thin {
+  opacity: 0.65;
 }
 /* S0.4 — best-time-annotated cadence gaps in the Today tab. */
 .brief-gaps {

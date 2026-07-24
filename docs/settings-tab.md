@@ -132,7 +132,7 @@ Every group header has a **Reset group** button, which drops every override in t
 
 ### The same knobs, next to the feature (inline ⚙)
 
-Tuning is the complete list, but you rarely arrive here wondering about "the display group" — you arrive wondering why the Do-next strip only shows five rows. So the knobs that shape a section also appear behind a small **⚙** on that section's own header. The **[Today tab](./today-tab.md#tuning-today-from-today-the--gears)** has five of them (quests, Do next, Radar, Targets, Top fans).
+Tuning is the complete list, but you rarely arrive here wondering about "the display group" — you arrive wondering why the Do-next strip only shows five rows. So the knobs that shape a section also appear behind a small **⚙** on that section's own header. The **[Today tab](./today-tab.md#tuning-today-from-today-the--gears)** has five of them (quests, Do next, Radar, Targets, Top fans); the **[Composer](./composer-tab.md)** (Schedule) and the **[Calendar](./calendar-tab.md)** (This week) share a sixth — the cadence ladder plus the best-time gate, one gear on both tabs because both render the same anchor hours.
 
 There is no second store and no second copy: a gear edits the same key with the same discipline (auto-save, the same accent dot, the same server-side refusal), so a number changed in a gear reads back identically here. A gear simply doesn't render when the server is unreachable — the section keeps working off its mirrored copy.
 

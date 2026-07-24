@@ -1,5 +1,6 @@
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import type { AudienceCapture, BestTimeCell } from '../shared/types.ts';
+import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type ScheduledPost, api } from './api.ts';
 import {
   BOARD_DAYS,
@@ -9,15 +10,24 @@ import {
   occupiedSlotDates,
   slotDateFor,
 } from './calendarLogic.ts';
-import { suggestBestSlotDate } from './composerLogic.ts';
+import { CADENCE_SETTING_KEYS, suggestBestSlotDate } from './composerLogic.ts';
 import { addDays, formatDayLabel, formatTime, startOfLocalDay } from './datetime.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
+import { useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 interface Props {
   settings: Settings;
   onEdit: (id: string) => void;
 }
+
+// UI.13 — the board's ghost slots ARE the cadence ladder, so the same gear the
+// Composer's Schedule section carries belongs here. The note says what the gear
+// does NOT hold: which hour is worth posting into is measured, never configured.
+const CADENCE_NOTE =
+  'The same ladder the Composer schedules on — ghost slots are these hours. Which of them is worth posting into comes from your own measured posts, not from a setting.';
 
 // Hours read HH:xx — the :xx signals the mandatory minute jitter (never top-of-
 // hour), matching the Composer's best-time labels.
@@ -42,6 +52,8 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
   // The mirrored cadence ladder + best-time gate (UI.6) — the board's ghost
   // anchors and the Composer's "Best time" read the same configured numbers.
   const server = useServerSettings();
+  // UI.13 — the tab's ONE settings editor, behind the board's cadence gear.
+  const editor = useSettingsEditor(settings);
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
   const [drafts, setDrafts] = useState<ScheduledPost[]>([]);
   const [bestCells, setBestCells] = useState<BestTimeCell[]>([]);
@@ -138,6 +150,9 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
   );
 
   const board = buildWeekBoard(new Date(), posts, drafts, bestCells, audience, server);
+  // Nothing lined up all week — worth saying once, above the board, rather than
+  // seven times inside it (the ghosts still render: they are the answer).
+  const weekIsEmpty = board.columns.every((c) => c.rows.length === 0);
 
   // "→ best slot": the audience-blended ranking over every open anchor (§7.19 —
   // own measured cells first, captured audience second, earliest third).
@@ -177,104 +192,126 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
 
       {error && <div className="error">{error}</div>}
       {selectedDraftId && (
-        <div className="status-line">Draft armed — click an open slot above to schedule it.</div>
+        <div className="status-line">
+          Draft armed — click any open slot in the week to place it.
+        </div>
       )}
 
-      <div className="week-board">
-        {board.columns.map((col) => (
-          <div
-            key={col.date.toISOString()}
-            className={`week-col${col.isToday ? ' week-col-today' : ''}`}
-          >
-            <div className="day-header">
-              <span className="day-label">{formatDayLabel(col.date)}</span>
-              <span className="day-count">{col.rows.length}</span>
-            </div>
+      <Section
+        title="This week"
+        actions={
+          <SettingsGear
+            editor={editor}
+            keys={CADENCE_SETTING_KEYS}
+            label="Configure the posting cadence"
+            note={CADENCE_NOTE}
+          />
+        }
+      >
+        {weekIsEmpty && !loading && (
+          <EmptyState
+            line="Nothing scheduled in the next seven days."
+            hint="The faint slots below are the open anchors — arm a draft from the tray, or write one in the Composer."
+          />
+        )}
+        <div className="week-board">
+          {board.columns.map((col) => (
+            <div
+              key={col.date.toISOString()}
+              className={`week-col${col.isToday ? ' week-col-today' : ''}`}
+            >
+              <div className="day-header">
+                <span className="day-label">{formatDayLabel(col.date)}</span>
+                <span className="day-count">{col.rows.length}</span>
+              </div>
 
-            {col.rows.length > 0 && (
-              <ul className="post-list">
-                {col.rows.map((r) => (
-                  <li key={r.id}>
-                    <button
-                      type="button"
-                      className={`post-row status-${r.status}${r.overdue ? ' overdue' : ''}`}
-                      onClick={() => onEdit(r.id)}
-                    >
-                      <span className="post-time">{formatTime(r.scheduledFor)}</span>
-                      <span
-                        className={`badge badge-${r.status}`}
-                        title={
-                          r.isManual
-                            ? "You paste this in X yourself at the slot — it won't auto-publish."
-                            : undefined
-                        }
-                      >
-                        {r.status}
-                      </span>
-                      {r.isThread && <span className="badge">🧵</span>}
-                      {r.isReup && <span className="badge">re-up</span>}
-                      {r.hasVisual && (
-                        <span
-                          className="badge badge-media"
-                          title={`${r.mediaNote} — post manually with its visual (the API can't attach images)`}
-                        >
-                          visual
-                        </span>
-                      )}
-                      {r.pillar && <span className="badge badge-pillar">{r.pillar}</span>}
-                      <span className="post-text">{r.snippet}</span>
-                    </button>
-                    {r.isManual && (
+              {col.rows.length > 0 && (
+                <ul className="post-list">
+                  {col.rows.map((r) => (
+                    <li key={r.id}>
                       <button
                         type="button"
-                        className="mark-posted-btn"
-                        onClick={() => void markPosted(r.id)}
-                        disabled={marking === r.id}
-                        title="Flip to posted — the next daily pass links the tweet"
+                        className={`post-row status-${r.status}${r.overdue ? ' overdue' : ''}`}
+                        onClick={() => onEdit(r.id)}
                       >
-                        {marking === r.id ? '…' : 'Mark posted'}
+                        <span className="post-time">{formatTime(r.scheduledFor)}</span>
+                        <span
+                          className={`badge badge-${r.status}`}
+                          title={
+                            r.isManual
+                              ? "You paste this in X yourself at the slot — it won't auto-publish."
+                              : undefined
+                          }
+                        >
+                          {r.status}
+                        </span>
+                        {r.isThread && <span className="badge">🧵</span>}
+                        {r.isReup && <span className="badge">re-up</span>}
+                        {r.hasVisual && (
+                          <span
+                            className="badge badge-media"
+                            title={`${r.mediaNote} — post manually with its visual (the API can't attach images)`}
+                          >
+                            visual
+                          </span>
+                        )}
+                        {r.pillar && <span className="badge badge-pillar">{r.pillar}</span>}
+                        <span className="post-text">{r.snippet}</span>
                       </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
+                      {r.isManual && (
+                        <button
+                          type="button"
+                          className="mark-posted-btn"
+                          onClick={() => void markPosted(r.id)}
+                          disabled={marking === r.id}
+                          title="Flip to posted — the next daily pass links the tweet"
+                        >
+                          {marking === r.id ? '…' : 'Mark posted'}
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-            {col.ghosts.length > 0 && (
-              <div className="ghost-list">
-                {col.ghosts.map((g) => (
-                  <button
-                    key={g.hour}
-                    type="button"
-                    className={`ghost ghost-${g.hint ?? 'none'}${selectedDraftId ? ' ghost-armed' : ''}`}
-                    onClick={() => scheduleAt(col.date, g.hour)}
-                    disabled={!selectedDraftId || scheduling != null}
-                    title={
-                      selectedDraftId
-                        ? 'Schedule the armed draft here'
-                        : g.hint === 'measured'
-                          ? 'Measured best time'
-                          : g.hint === 'audience'
-                            ? 'Audience is active here'
-                            : 'Open slot'
-                    }
-                  >
-                    {ghostLabel(g)}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+              {col.ghosts.length > 0 && (
+                <div className="ghost-list">
+                  {col.ghosts.map((g) => (
+                    <button
+                      key={g.hour}
+                      type="button"
+                      className={`ghost ghost-${g.hint ?? 'none'}${selectedDraftId ? ' ghost-armed' : ''}`}
+                      onClick={() => scheduleAt(col.date, g.hour)}
+                      disabled={!selectedDraftId || scheduling != null}
+                      title={
+                        selectedDraftId
+                          ? 'Schedule the armed draft here'
+                          : g.hint === 'measured'
+                            ? 'Measured best time'
+                            : g.hint === 'audience'
+                              ? 'Audience is active here'
+                              : 'Open slot'
+                      }
+                    >
+                      {ghostLabel(g)}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Today after its last anchor: nothing queued and nothing left to
+                queue. Every other day always has at least one open anchor. */}
+              {col.rows.length === 0 && col.ghosts.length === 0 && (
+                <div className="day-empty">Anchors have passed.</div>
+              )}
+            </div>
+          ))}
+        </div>
+      </Section>
 
       {board.tray.length > 0 && (
-        <div className="day-card drafts-tray">
-          <div className="day-header">
-            <span className="day-label">Drafts (unscheduled)</span>
-            <span className="day-count">{board.tray.length}</span>
-          </div>
-          <ul className="post-list">
+        <Section title={`Drafts · unscheduled (${board.tray.length})`}>
+          <ul className="post-list day-card drafts-tray">
             {board.tray.map((d) => {
               const selected = selectedDraftId === d.id;
               return (
@@ -311,7 +348,7 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
               );
             })}
           </ul>
-        </div>
+        </Section>
       )}
     </div>
   );

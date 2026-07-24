@@ -30,6 +30,17 @@ export interface CadenceConfig {
 
 export const CADENCE_DEFAULTS: CadenceConfig = SERVER_DEFAULTS;
 
+/** The registry keys behind `CadenceConfig`, in the order an inline gear should
+ *  read them (UI.13). Shared by the Composer's Schedule gear and the Calendar
+ *  board's, because the two surfaces render the SAME ladder — a second literal
+ *  list is how one of them ends up tuning a knob the other ignores. */
+export const CADENCE_SETTING_KEYS = [
+  'x.doctrine.anchors3',
+  'x.doctrine.anchors4',
+  'x.doctrine.ladderSwitchAt',
+  'x.gates.bestTimeMinN',
+];
+
 // `ladderSwitchAt`+ posts already slotted that day means the 4/day ladder, else
 // 3/day — identical rule (and identical config shape) to brief.pickAnchors so
 // the Composer, the Calendar board and the brief agree.
@@ -117,6 +128,23 @@ export function topCellsForWeekday(
   return cells
     .filter((c) => c.weekday === weekday && bestTimeCellScore(c, minN) != null)
     .sort((a, b) => (bestTimeCellScore(b, minN) ?? 0) - (bestTimeCellScore(a, minN) ?? 0))
+    .slice(0, limit);
+}
+
+// The other side of the gate (UI.13): cells for this weekday that DO have
+// measured posts but sit below it, thickest first (ties: earlier hour). Shown
+// greyed when nothing clears the gate, so "no best time yet" can say how close
+// the data is instead of reading as "nothing was ever measured". Never advice —
+// the caller renders these dimmed and labelled with their n (§7.19).
+export function thinCellsForWeekday(
+  cells: BestTimeCell[],
+  weekday: number,
+  limit = 3,
+  minN = BEST_TIME_MIN_N,
+): BestTimeCell[] {
+  return cells
+    .filter((c) => c.weekday === weekday && c.posts > 0 && c.posts < minN)
+    .sort((a, b) => (a.posts !== b.posts ? b.posts - a.posts : a.hour - b.hour))
     .slice(0, limit);
 }
 

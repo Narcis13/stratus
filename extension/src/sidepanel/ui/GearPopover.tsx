@@ -38,7 +38,14 @@ export function GearPopover({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (!ref.current || ref.current.contains(e.target as Node)) return;
+      // Commit before closing (UI.13). A `numberArray` row writes on BLUR, and
+      // React unmounts this subtree the moment we close — removing a focused
+      // input does NOT fire blur, so the anchors someone just typed would be
+      // dropped silently. Blurring first turns the outside click into a save.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && ref.current.contains(active)) active.blur();
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);

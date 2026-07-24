@@ -7,6 +7,7 @@ import type {
   PostRegister,
   PostStatus,
 } from '../shared/types.ts';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type Idea,
@@ -19,6 +20,7 @@ import {
   api,
 } from './api.ts';
 import {
+  CADENCE_SETTING_KEYS,
   audiencePeakHours,
   bestTimeCellScore,
   estimatePostCostUsd,
@@ -26,6 +28,7 @@ import {
   splitIntoThread,
   suggestBestSlotDate,
   suggestSlotDate,
+  thinCellsForWeekday,
   topCellsForWeekday,
 } from './composerLogic.ts';
 import {
@@ -36,7 +39,10 @@ import {
   startOfLocalDay,
 } from './datetime.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
+import { useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 interface Props {
   settings: Settings;
@@ -67,7 +73,24 @@ const SLOT_HORIZON_DAYS = 7;
 // visit — the grid drifts as the audience does (A3.4).
 const AUDIENCE_STALE_DAYS = 28;
 
+// Characters left at which the counter starts warning — the DS counter ramp is
+// neutral → warn → danger, so the limit stops being a cliff you only see after
+// falling off it.
+const COUNTER_WARN_AT = 20;
+
+// UI.13 — the cadence gear's ownership line. The ladder is HOURS; every
+// how-many number a user might come looking for here has a different owner, and
+// an unexplained absence reads as a missing knob (D134d).
+const CADENCE_NOTE =
+  "These are the anchor hours, not the quota — how many originals a day you owe lives in Today's quests, and the reply band comes from your niche (Settings → General).";
+
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+// The counter's className for `remaining` characters left of the 280 limit.
+function counterClass(remaining: number): string {
+  if (remaining < 0) return 'counter over';
+  return remaining <= COUNTER_WARN_AT ? 'counter near' : 'counter';
+}
 
 // Hours show as HH:xx — the :xx signals the mandatory minute jitter (never
 // top-of-hour), so a best-time slot never reads as a robotic 17:00.
@@ -133,6 +156,10 @@ export function ComposerPanel({
   // brief and /metrics/best-times read, so a PATCHed anchor moves this picker
   // after one background sync instead of at the next extension rebuild.
   const server = useServerSettings();
+  // UI.13 — ONE editor for the whole tab, behind the Schedule gear. It reads the
+  // registry over its own $0 `GET /x/settings`; the numbers the form itself
+  // obeys still come from the mirrored blob above, which the PATCH re-syncs.
+  const editor = useSettingsEditor(settings);
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
   const [segments, setSegments] = useState<string[]>(['', '']);
@@ -302,6 +329,13 @@ export function ComposerPanel({
     return new Date().getDay();
   })();
   const topSlots = topCellsForWeekday(bestCells, selectedWeekday, 3, server.bestTimeMinN);
+  // UI.13 — when nothing clears the gate, show what IS measured, greyed and with
+  // its n, instead of a flat "no data": "two posts at 17:xx, need three" is a
+  // nudge to keep posting there; "no measured best-time" reads as a dead end.
+  const thinSlots =
+    topSlots.length > 0
+      ? []
+      : thinCellsForWeekday(bestCells, selectedWeekday, 3, server.bestTimeMinN);
 
   // A3.4 — captured audience peaks for the scheduling day (presence, not
   // measured advice — always labeled "audience") + a staleness/absence nudge.
@@ -747,7 +781,7 @@ export function ComposerPanel({
                 <span>
                   {seg.threadPosition}/{thread.length}
                   {segLocked && ` · ${seg.status}`}
-                  <span className={`counter${TWEET_LIMIT - seg.text.length < 0 ? ' over' : ''}`}>
+                  <span className={counterClass(TWEET_LIMIT - seg.text.length)}>
                     {TWEET_LIMIT - seg.text.length}
                   </span>
                 </span>
@@ -768,7 +802,7 @@ export function ComposerPanel({
             <label className="field" key={i}>
               <span>
                 {i + 1}/{segments.length}
-                <span className={`counter${TWEET_LIMIT - seg.length < 0 ? ' over' : ''}`}>
+                <span className={counterClass(TWEET_LIMIT - seg.length)}>
                   {TWEET_LIMIT - seg.length}
                 </span>
               </span>
@@ -809,7 +843,7 @@ export function ComposerPanel({
         <label className="field">
           <span>
             Text
-            <span className={`counter${TWEET_LIMIT - text.length < 0 ? ' over' : ''}`}>
+            <span className={counterClass(TWEET_LIMIT - text.length)}>
               {TWEET_LIMIT - text.length}
             </span>
           </span>
@@ -877,112 +911,143 @@ export function ComposerPanel({
         </div>
       )}
 
-      {isSinglePost && !isLocked && (
-        <div className="publish-mode">
-          <span className="muted">Publish</span>
-          <div className="segmented">
-            <button
-              type="button"
-              className={manualMode ? '' : 'active'}
-              onClick={() => setManualMode(false)}
-              title="Stratus publishes it automatically at the slot"
-            >
-              API
-            </button>
-            <button
-              type="button"
-              className={manualMode ? 'active' : ''}
-              onClick={() => setManualMode(true)}
-              title="You paste it in X yourself at the slot — $0, and links are fine (no $0.20 surcharge)"
-            >
-              Manual (you paste)
-            </button>
-          </div>
-        </div>
-      )}
-
-      <label className="field">
-        <span>Scheduled for (local time)</span>
-        <div className="row schedule-row">
-          <input
-            type="datetime-local"
-            value={scheduledFor}
-            onChange={(e) => setScheduledFor(e.target.value)}
-            disabled={isLocked}
+      <Section
+        title="Schedule"
+        actions={
+          <SettingsGear
+            editor={editor}
+            keys={CADENCE_SETTING_KEYS}
+            label="Configure the posting cadence"
+            note={CADENCE_NOTE}
           />
-          {!isLocked && (
-            <>
+        }
+      >
+        {isSinglePost && !isLocked && (
+          <div className="publish-mode">
+            <span className="muted">Publish</span>
+            <div className="segmented">
               <button
                 type="button"
-                onClick={() => void suggestSlot(true)}
-                disabled={suggesting}
-                title="Fill the highest-scoring open anchor (jittered, never top-of-hour)"
+                className={manualMode ? '' : 'active'}
+                onClick={() => setManualMode(false)}
+                title="Stratus publishes it automatically at the slot"
               >
-                {suggesting ? '…' : 'Best time'}
+                API
               </button>
               <button
                 type="button"
-                onClick={() => void suggestSlot(false)}
-                disabled={suggesting}
-                title="Fill the earliest open anchor"
+                className={manualMode ? 'active' : ''}
+                onClick={() => setManualMode(true)}
+                title="You paste it in X yourself at the slot — $0, and links are fine (no $0.20 surcharge)"
               >
-                Next slot
+                Manual (you paste)
               </button>
-            </>
-          )}
-          {scheduledFor && !isLocked && (
-            <button type="button" onClick={() => setScheduledFor('')} title="Clear → save as draft">
-              ✕
-            </button>
-          )}
-        </div>
-        {!isLocked &&
-          (topSlots.length > 0 ? (
-            <div className="best-times muted">
-              Best {WEEKDAYS[selectedWeekday]}:{' '}
-              {topSlots.map((c, i) => (
-                <span key={`${c.weekday}:${c.hour}`} className="best-time-cell">
-                  {i > 0 && ' · '}
-                  {fmtHour(c.hour)} <strong>{fmtViews(c.avgViewsPerDay ?? c.avgViews ?? 0)}</strong>
-                  /day (n={c.posts})
-                </span>
-              ))}
             </div>
-          ) : (
-            <div className="best-times muted">
-              No measured best-time for {WEEKDAYS[selectedWeekday]} yet (need ≥3 posts in a slot).
-            </div>
-          ))}
-        {!isLocked && audiencePeaks.length > 0 && (
-          <div className="best-times muted">
-            Audience peak {WEEKDAYS[selectedWeekday]}:{' '}
-            {audiencePeaks.map((h) => fmtHour(h)).join(', ')}
           </div>
         )}
-        {!isLocked && audienceStale && <div className="best-times muted">{audienceStale}</div>}
-        <small className="muted">
-          {isManualSingle
-            ? scheduledFor
-              ? 'Manual — you paste it in X at this minute; nothing auto-publishes.'
-              : 'Manual mode needs a time — that is the slot you paste it at.'
-            : scheduledFor
-              ? 'Will save as pending and ship at this minute.'
-              : 'Empty → saved as draft.'}
-        </small>
-      </label>
 
-      {isManualSingle ? (
-        <div className="cost-preview">
-          $0 <span className="muted">· you paste it</span>
-        </div>
-      ) : (
-        costPreview.usd > 0 && (
-          <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
-            ≈ ${costPreview.usd.toFixed(3)}
-            {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
+        <label className="field">
+          <span>Scheduled for (local time)</span>
+          <div className="row schedule-row">
+            <input
+              type="datetime-local"
+              value={scheduledFor}
+              onChange={(e) => setScheduledFor(e.target.value)}
+              disabled={isLocked}
+            />
+            {!isLocked && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void suggestSlot(true)}
+                  disabled={suggesting}
+                  title="Fill the highest-scoring open anchor (jittered, never top-of-hour)"
+                >
+                  {suggesting ? '…' : 'Best time'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void suggestSlot(false)}
+                  disabled={suggesting}
+                  title="Fill the earliest open anchor"
+                >
+                  Next slot
+                </button>
+              </>
+            )}
+            {scheduledFor && !isLocked && (
+              <button
+                type="button"
+                onClick={() => setScheduledFor('')}
+                title="Clear → save as draft"
+              >
+                ✕
+              </button>
+            )}
           </div>
-        )
-      )}
+          {!isLocked &&
+            (topSlots.length > 0 ? (
+              <div className="best-times muted">
+                Best {WEEKDAYS[selectedWeekday]}:{' '}
+                {topSlots.map((c, i) => (
+                  <span key={`${c.weekday}:${c.hour}`} className="best-time-cell">
+                    {i > 0 && ' · '}
+                    {fmtHour(c.hour)}{' '}
+                    <strong>{fmtViews(c.avgViewsPerDay ?? c.avgViews ?? 0)}</strong>
+                    /day (n={c.posts})
+                  </span>
+                ))}
+              </div>
+            ) : thinSlots.length > 0 ? (
+              // Measured, but under the gate — dimmed and labelled with its n, so
+              // it can never be mistaken for advice (§7.19).
+              <div className="best-times muted">
+                {WEEKDAYS[selectedWeekday]} so far:{' '}
+                {thinSlots.map((c, i) => (
+                  <span key={`${c.weekday}:${c.hour}`} className="best-time-cell best-time-thin">
+                    {i > 0 && ' · '}
+                    {fmtHour(c.hour)} (n={c.posts})
+                  </span>
+                ))}{' '}
+                — need {server.bestTimeMinN} in a slot before it counts as advice.
+              </div>
+            ) : (
+              <div className="best-times muted">
+                No measured best-time for {WEEKDAYS[selectedWeekday]} yet (need ≥
+                {server.bestTimeMinN} posts in a slot).
+              </div>
+            ))}
+          {!isLocked && audiencePeaks.length > 0 && (
+            <div className="best-times muted">
+              Audience peak {WEEKDAYS[selectedWeekday]}:{' '}
+              {audiencePeaks.map((h) => fmtHour(h)).join(', ')}
+            </div>
+          )}
+          {!isLocked && audienceStale && <div className="best-times muted">{audienceStale}</div>}
+          <small className="muted">
+            {isManualSingle
+              ? scheduledFor
+                ? 'Manual — you paste it in X at this minute; nothing auto-publishes.'
+                : 'Manual mode needs a time — that is the slot you paste it at.'
+              : scheduledFor
+                ? 'Will save as pending and ship at this minute.'
+                : 'Empty → saved as draft.'}
+          </small>
+        </label>
+
+        {isManualSingle ? (
+          <div className="cost-preview">
+            $0 <span className="muted">· you paste it</span>
+          </div>
+        ) : (
+          costPreview.usd > 0 && (
+            <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
+              ≈ ${costPreview.usd.toFixed(3)}
+              {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
+            </div>
+          )
+        )}
+      </Section>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="ok">{notice}</div>}
@@ -1030,119 +1095,120 @@ export function ComposerPanel({
       </div>
 
       {!isEditing && (
-        <section className="drafter">
-          <h3>{threadMode ? 'Draft a thread with AI (§8.2)' : 'Draft with Grok (§8.1)'}</h3>
-          {remixTweetId && (
-            <div className="status-line">
-              remixing structure of tweet <code>{remixTweetId}</code>{' '}
-              <button type="button" onClick={onClearRemix}>
-                ✕
-              </button>
-            </div>
-          )}
-          <label className="field">
-            <span>Pillar</span>
-            <select value={pillar} onChange={(e) => setPillar(e.target.value)}>
-              {pillarOpts.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {openIdeas.length > 0 && (
+        <div className="drafter">
+          <Section title={threadMode ? 'Draft a thread with AI' : 'Draft with AI'}>
+            {remixTweetId && (
+              <div className="status-line">
+                remixing structure of tweet <code>{remixTweetId}</code>{' '}
+                <button type="button" onClick={onClearRemix}>
+                  ✕
+                </button>
+              </div>
+            )}
             <label className="field">
-              <span>Seed from Idea Inbox (optional)</span>
-              <select
-                value={selectedIdeaId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  setSelectedIdeaId(id);
-                  const picked = openIdeas.find((i) => i.id === id);
-                  if (picked) setIdea(picked.text);
-                }}
-              >
-                <option value="">— free-typed / none —</option>
-                {openIdeas.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.text.length > 80 ? `${i.text.slice(0, 79)}…` : i.text}
+              <span>Pillar</span>
+              <select value={pillar} onChange={(e) => setPillar(e.target.value)}>
+                {pillarOpts.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
                   </option>
                 ))}
               </select>
             </label>
-          )}
-          <label className="field">
-            <span>Idea (optional, Romanian OK)</span>
-            <textarea
-              value={idea}
-              onChange={(e) => {
-                setIdea(e.target.value);
-                // Emptying the box drops the inbox link; tweaking keeps it —
-                // the picked idea still seeded whatever ships.
-                if (e.target.value.trim() === '') setSelectedIdeaId('');
-              }}
-              rows={2}
-              maxLength={2000}
-              placeholder="seed for the three drafts…"
-            />
-          </label>
-          <button
-            type="button"
-            onClick={() => void (threadMode ? draftThread() : generateDrafts())}
-            disabled={drafting}
-          >
-            {drafting
-              ? 'Drafting…'
-              : threadMode
-                ? 'Draft thread with AI (~$0.01)'
-                : drafts.length > 0
-                  ? 'Regenerate 3 drafts (~$0.01)'
-                  : 'Generate 3 drafts (~$0.01)'}
-          </button>
+            {openIdeas.length > 0 && (
+              <label className="field">
+                <span>Seed from Idea Inbox (optional)</span>
+                <select
+                  value={selectedIdeaId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedIdeaId(id);
+                    const picked = openIdeas.find((i) => i.id === id);
+                    if (picked) setIdea(picked.text);
+                  }}
+                >
+                  <option value="">— free-typed / none —</option>
+                  {openIdeas.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.text.length > 80 ? `${i.text.slice(0, 79)}…` : i.text}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="field">
+              <span>Idea (optional, Romanian OK)</span>
+              <textarea
+                value={idea}
+                onChange={(e) => {
+                  setIdea(e.target.value);
+                  // Emptying the box drops the inbox link; tweaking keeps it —
+                  // the picked idea still seeded whatever ships.
+                  if (e.target.value.trim() === '') setSelectedIdeaId('');
+                }}
+                rows={2}
+                maxLength={2000}
+                placeholder="seed for the three drafts…"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void (threadMode ? draftThread() : generateDrafts())}
+              disabled={drafting}
+            >
+              {drafting
+                ? 'Drafting…'
+                : threadMode
+                  ? 'Draft thread with AI (~$0.01)'
+                  : drafts.length > 0
+                    ? 'Regenerate 3 drafts (~$0.01)'
+                    : 'Generate 3 drafts (~$0.01)'}
+            </button>
 
-          {drafts.length > 0 ? (
-            <div className="draft-cards">
-              {draftMeta && (
-                <div className="muted draft-meta">
-                  {drafts.length} drafts · {draftMeta.winnersUsed} winners as voice anchors · $
-                  {draftMeta.costUsd.toFixed(4)}. Pick one to set a time, or regenerate.
-                </div>
-              )}
-              {drafts.map((d) => (
-                <div className="draft-card" key={d.id}>
-                  <div className="draft-card-head">
-                    {d.register && (
-                      <span className={`badge badge-register badge-${d.register}`}>
-                        {REGISTER_LABEL[d.register]}
-                      </span>
-                    )}
-                    {d.pillar && <span className="badge badge-pillar">{d.pillar}</span>}
-                    <span className="counter">{d.text.length}</span>
+            {drafts.length > 0 ? (
+              <div className="draft-cards">
+                {draftMeta && (
+                  <div className="muted draft-meta">
+                    {drafts.length} drafts · {draftMeta.winnersUsed} winners as voice anchors · $
+                    {draftMeta.costUsd.toFixed(4)}. Pick one to set a time, or regenerate.
                   </div>
-                  <div className="draft-card-text">{d.text}</div>
-                  <div className="row draft-card-actions">
-                    <button type="button" className="primary" onClick={() => useDraft(d.id)}>
-                      Use this →
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void generateDrafts(d.text)}
-                      disabled={drafting}
-                      title="Feed this draft back as the seed for three fresh takes"
-                    >
-                      More like this
-                    </button>
+                )}
+                {drafts.map((d) => (
+                  <div className="draft-card" key={d.id}>
+                    <div className="draft-card-head">
+                      {d.register && (
+                        <span className={`badge badge-register badge-${d.register}`}>
+                          {REGISTER_LABEL[d.register]}
+                        </span>
+                      )}
+                      {d.pillar && <span className="badge badge-pillar">{d.pillar}</span>}
+                      <span className="counter">{d.text.length}</span>
+                    </div>
+                    <div className="draft-card-text">{d.text}</div>
+                    <div className="row draft-card-actions">
+                      <button type="button" className="primary" onClick={() => useDraft(d.id)}>
+                        Use this →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void generateDrafts(d.text)}
+                        disabled={drafting}
+                        title="Feed this draft back as the seed for three fresh takes"
+                      >
+                        More like this
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <small className="muted">
-              One plain, one spicy, one reflective — pick one inline to schedule, the rest stay as
-              calendar drafts. Nothing posts until you schedule it.
-            </small>
-          )}
-        </section>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                line="One plain, one spicy, one reflective — pick one inline to schedule."
+                hint="The other two stay as calendar drafts. Nothing posts until you schedule it."
+              />
+            )}
+          </Section>
+        </div>
       )}
     </form>
   );

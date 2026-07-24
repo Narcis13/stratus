@@ -6,6 +6,7 @@ import {
   ANCHORS_4,
   BEST_TIME_MIN_N,
   CADENCE_DEFAULTS,
+  CADENCE_SETTING_KEYS,
   audiencePeakHours,
   bestTimeCellScore,
   estimatePostCostUsd,
@@ -16,6 +17,7 @@ import {
   splitIntoThread,
   suggestBestSlotDate,
   suggestSlotDate,
+  thinCellsForWeekday,
   topCellsForWeekday,
 } from './composerLogic.ts';
 
@@ -126,6 +128,32 @@ describe('best-times slot picker (S0.4)', () => {
     expect(topCellsForWeekday(cells, 4, 2).map((c) => c.hour)).toEqual([13, 18]);
     // A weekday with no gated cells yields nothing (→ "no data" in the UI).
     expect(topCellsForWeekday(cells, 0)).toEqual([]);
+  });
+
+  test('thinCellsForWeekday returns the sub-gate cells, thickest first (UI.13)', () => {
+    const cells = [
+      cell(4, 9, 2, 300),
+      cell(4, 13, 1, 900),
+      cell(4, 20, 2, 100), // ties on n → earlier hour first
+      cell(4, 18, 5, 600), // clears the gate — never "thin"
+      cell(4, 8, 0, null), // never measured — not a thin cell either
+      cell(5, 12, 1, 5000), // wrong weekday
+    ];
+    expect(thinCellsForWeekday(cells, 4).map((c) => c.hour)).toEqual([9, 20, 13]);
+    expect(thinCellsForWeekday(cells, 4, 2).map((c) => c.hour)).toEqual([9, 20]);
+    // The two halves partition the weekday's measured cells at the gate, so
+    // raising it moves a cell from one line to the other and never loses it.
+    expect(topCellsForWeekday(cells, 4, 9, 6).map((c) => c.hour)).toEqual([]);
+    expect(thinCellsForWeekday(cells, 4, 9, 6).map((c) => c.hour)).toEqual([18, 9, 20, 13]);
+  });
+
+  test('CADENCE_SETTING_KEYS names the registry knobs behind CadenceConfig', () => {
+    expect(CADENCE_SETTING_KEYS).toEqual([
+      'x.doctrine.anchors3',
+      'x.doctrine.anchors4',
+      'x.doctrine.ladderSwitchAt',
+      'x.gates.bestTimeMinN',
+    ]);
   });
 
   test('suggestBestSlotDate picks the highest-scoring open anchor, jittered', () => {

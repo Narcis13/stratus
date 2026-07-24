@@ -79,6 +79,8 @@ The faint, empty tiles in each column are **ghost slots** — hours stratus thin
 
 Ghost slots aren't posts and never publish anything on their own. They only become clickable once you **arm a draft** (below).
 
+**The hours themselves are configurable.** The **⚙** on the **This week** heading opens the cadence ladder — the 3/day anchor hours, the 4/day anchor hours, the filled-slot count that switches between them, and the best-time gate. It's the same gear (and the same four settings) as the Composer's **Schedule** section, so the board's openings and the Composer's **Best time** can never drift apart. What the gear deliberately *doesn't* control is which of those hours is worth posting into: that comes from your own measured posts.
+
 ### Scheduling a draft from the tray
 
 Each draft in the tray has two quick actions:
@@ -133,7 +135,7 @@ The **Refresh** button re-loads the board so you see the latest state — handy 
 ## States you'll see
 
 - **Loading.** The Refresh button reads **"Loading…"** while stratus fetches posts.
-- **Empty.** With nothing scheduled, columns still show their ghost slots (openings to fill); with no drafts, the tray doesn't appear.
+- **Empty.** With nothing scheduled all week, a line above the board says so — *"Nothing scheduled in the next seven days."* — and the columns still show their ghost slots, because those are the answer to it. A day with neither posts nor openings left (today, after its last anchor hour) reads *"Anchors have passed."* With no unscheduled drafts, the tray doesn't appear.
 - **Error.** If the board can't load (server unreachable, token needs re-entering), a red message appears — check connection/settings and Refresh.
 
 ---

@@ -108,7 +108,9 @@ function renderControl(entry: SettingEntry, onChange: (v: unknown) => void): JSX
 }
 
 /** numberArray editor — comma-separated, committed on blur so partial input
- *  (a trailing comma mid-type) doesn't fire a patch. */
+ *  (a trailing comma mid-type) doesn't fire a patch. Enter commits too: this row
+ *  can sit inside a `<form>` (UI.13 put the cadence gear in the Composer), where
+ *  Enter in a text field would otherwise submit that form and save a post. */
 function NumberArrayInput({
   entry,
   onChange,
@@ -139,6 +141,11 @@ function NumberArrayInput({
       placeholder="e.g. 9, 13, 18"
       onChange={(e) => setText(e.target.value)}
       onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        commit();
+      }}
     />
   );
 }

@@ -26,7 +26,7 @@ When you open the Composer fresh, you are in single-post mode: one tweet, one te
 
 ### The text area and the counter
 
-Type your post into the large **Text** box. Next to the "Text" label is a **counter** showing how many characters you have left out of X's 280-character limit. As you type it counts down; if you go past 280 it turns red and shows a negative number.
+Type your post into the large **Text** box. Next to the "Text" label is a **counter** showing how many characters you have left out of X's 280-character limit. As you type it counts down: it turns amber inside the last 20 characters, then red with a negative number once you're past 280.
 
 You can paste more than 280 characters (the box accepts a long blob on purpose). When a single post is over the limit, a warning appears:
 
@@ -40,17 +40,22 @@ Under the text box is an **Improve with AI** button. It takes whatever you've wr
 
 ### Scheduling controls
 
-Below the text is **Scheduled for (local time)** — all times are shown and entered in *your* local time zone.
+The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.
+
+Below the text is **Scheduled for (local time)**.
 
 - **The date/time picker** — click it to choose any date and time by hand.
 - **Best time** — fills in the best open posting slot based on how your past posts at different times actually performed (see "How slots are chosen" below). The minute is always slightly randomized (for example 17:14, never 17:00) so your posts never look robot-scheduled. A short note tells you which slot it picked and its average views.
 - **Next slot** — fills in the *earliest* open posting slot, ignoring performance history. Use this when you just want the next available time.
 - **The ✕ button** (appears once a time is set) — clears the time. A post with no time is saved as a **draft**.
 
-Under the picker you'll see one of two hints for the day you're scheduling:
+Under the picker you'll see one of three hints for the day you're scheduling:
 
 - A **best-times line**, e.g. *"Best Wed: 17:xx **2.1k**/day (n=6) · 09:xx **1.4k**/day (n=4)"* — the top-performing hours for that weekday, with `n` being how many of your posts were measured in that slot. The `xx` in the hour is a reminder that the exact minute will be jittered.
-- Or *"No measured best-time for Wed yet (need ≥3 posts in a slot)"* — shown until you have enough measured history. stratus deliberately won't give you "advice" from thin data.
+- A **"so far" line** when hours *have* been measured but none has enough posts to clear the gate yet, e.g. *"Wed so far: 17:xx (n=2) · 09:xx (n=1) — need 3 in a slot before it counts as advice."* Those hours are shown dimmed on purpose: they're evidence that data is accumulating, not a recommendation.
+- Or *"No measured best-time for Wed yet (need ≥3 posts in a slot)"* — shown when that weekday has no measured posts at all. stratus deliberately won't give you "advice" from thin data.
+
+The number in both lines is the **best-time gate** (3 by default) and it's editable — it's one of the knobs behind the ⚙ on the Schedule heading, and the same number the Today tab's cadence gaps use.
 
 Below the measured hint you may also see **audience** lines, drawn from the X Analytics activity heatmap you captured (see [Settings → Sightings/passive capture](./settings-tab.md)):
 
@@ -70,7 +75,17 @@ The toggle never appears in **thread** mode — threads are always API-published
 
 #### How slots are chosen
 
-stratus works from a light daily cadence of a few posts at set anchor hours — roughly **3 posts a day at 9:00 / 13:00 / 18:00**, or **4 a day at 8:00 / 12:00 / 16:00 / 20:00** once a day already has four posts queued. Both **Best time** and **Next slot** look at what you already have scheduled over the next 7 days, figure out which anchor hours are still open, and pick one — Best time by past performance, Next slot by earliest. If every anchor for the next week is already taken, you'll get a message saying there's no open slot.
+stratus works from a light daily cadence of a few posts at set anchor hours — by default **3 posts a day at 9:00 / 13:00 / 18:00**, or **4 a day at 8:00 / 12:00 / 16:00 / 20:00** once a day already has four posts queued. Both **Best time** and **Next slot** look at what you already have scheduled over the next 7 days, figure out which anchor hours are still open, and pick one — Best time by past performance, Next slot by earliest. If every anchor for the next week is already taken, you'll get a message saying there's no open slot.
+
+#### Tuning the cadence from the Composer
+
+The **⚙** on the **Schedule** heading opens the four numbers that drive all of the above, without a trip to Settings:
+
+- **3/day anchor hours** and **4/day anchor hours** — comma-separated local hours (e.g. `9, 13, 18`). They commit when you click away or press Enter.
+- **Ladder switch-at** — how many filled slots a day needs before the 4/day ladder takes over.
+- **Best-time cell gate** — measured posts an hour needs before it can be recommended.
+
+These are the same knobs as **Settings → Tuning**, written to the same place: change one here and the Calendar's ghost slots, the Today tab's cadence gaps and the daily brief all move with it (the panel picks the change up within a few minutes, or immediately when you reopen it). A note in the popover states what the gear *doesn't* hold: these are the anchor **hours**, not the quota — how many originals a day you owe lives in Today's quests, and the reply band comes from your niche.
 
 ### The cost preview
 
@@ -239,6 +254,6 @@ A post that has already **posted** or is currently **publishing** is locked: its
 - **AI drafting costs about a cent per click.** Each **Generate 3 drafts** (and each **More like this**) is one Grok call, roughly $0.01. The exact cost is shown after each generation. Publishing itself is separate (~$0.015 per tweet).
 - **Watch the link surcharge.** A link in your main post costs **$0.20** vs **$0.015** without one — the single biggest per-post cost. Use **Move link to first reply** (single posts) or put the link in a later thread segment to pay the cheap price. The Composer warns you before you save.
 - **Minute jitter is intentional.** Best time and Next slot always pick a slightly off-the-hour minute (like 8:17 instead of 8:00) so your schedule doesn't look automated. That's why the best-times hints show the hour as `HH:xx`.
-- **Best-times advice needs history.** Time recommendations only appear once a weekday-and-hour slot has at least three measured posts. Until then you'll see "no measured best-time yet," and **Best time** simply falls back to the earliest open slot.
+- **Best-times advice needs history.** Time recommendations only appear once a weekday-and-hour slot has at least three measured posts (the gate, editable from the Schedule ⚙). Until then you'll see the dimmed "so far" hours or "no measured best-time yet," and **Best time** falls back to audience peaks, then to the earliest open slot.
 - **Ideas from the Inbox get tracked.** Seeding a draft from an Idea Inbox pick marks that idea consumed and links it to the resulting post, so you can trace where a published post's idea came from. Free-typed ideas aren't tracked this way.
 - **Regenerating cleans up after itself.** Generating a new set of drafts removes the previous unpicked ones, so your Calendar doesn't accumulate throwaway drafts.
