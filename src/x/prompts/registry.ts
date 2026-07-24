@@ -21,6 +21,7 @@
 
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
+import { ARTICLE_PROMPT_TEMPLATE } from '../articles/prompt.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
 import { DM_PROMPT_TEMPLATE } from '../people/dm.ts';
@@ -47,6 +48,7 @@ export const PROMPT_KEYS = [
   'icebreaker',
   'reply-list',
   'dm',
+  'article',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -160,6 +162,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: DM_PROMPT_TEMPLATE,
     required: ['{{GROUNDING}}'],
     optional: ['{{IDEA}}', '{{PURPOSE}}'],
+  },
+  article: {
+    name: 'Article assist',
+    description:
+      'The long-form Writer prompt behind POST /x/articles/:id/assist — outline / section / polish / full drafting for standalone X articles, any-language input, English out.',
+    defaultBody: ARTICLE_PROMPT_TEMPLATE,
+    required: ['{{PILLARS}}', '{{WINNERS}}', '{{GUIDANCE}}', '{{ARTICLE}}', '{{INSTRUCTION}}'],
+    optional: [],
   },
 };
 

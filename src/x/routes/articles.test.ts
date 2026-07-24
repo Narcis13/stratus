@@ -4,7 +4,7 @@
 // publish stamp, the discarded freeze, autosave partials, and 404s. Rows are
 // cleared per test so ordering/count assertions own the whole population.
 
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
@@ -53,6 +53,21 @@ async function getOne(id: string): Promise<{ status: number; body: Record<string
 
 async function list(query = ''): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await app.request(`/x/articles${query}`);
+  return {
+    status: res.status,
+    body: (await res.json().catch(() => ({}))) as Record<string, unknown>,
+  };
+}
+
+async function assist(
+  id: string,
+  body: unknown,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await app.request(`/x/articles/${id}/assist`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
   return {
     status: res.status,
     body: (await res.json().catch(() => ({}))) as Record<string, unknown>,
@@ -223,5 +238,72 @@ describe('articles CRUD (A3.11)', () => {
 
     const again = await app.request(`/x/articles/${id}`, { method: 'DELETE' });
     expect(again.status).toBe(404);
+  });
+});
+
+// The assist route's $0 refusal ladder (A3.12). The paid Grok path is left to
+// the A3.15 --live smoke (no mock harness — the A3.9 DM convention): forcing both
+// provider keys off makes a valid request hit the 503 refusal instead of spending.
+describe('articles assist guards (A3.12)', () => {
+  let savedXai: string | undefined;
+  let savedOr: string | undefined;
+
+  beforeAll(() => {
+    savedXai = process.env.XAI_API_KEY;
+    savedOr = process.env.OPENROUTER_API_KEY;
+    process.env.XAI_API_KEY = '';
+    process.env.OPENROUTER_API_KEY = '';
+  });
+
+  afterAll(() => {
+    process.env.XAI_API_KEY = savedXai ?? '';
+    process.env.OPENROUTER_API_KEY = savedOr ?? '';
+  });
+
+  test('invalid id → 400', async () => {
+    const r = await assist('not-a-uuid', { mode: 'outline', idea: 'x' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('invalid_id');
+  });
+
+  test('unknown mode → 400 invalid_mode (before any DB lookup)', async () => {
+    const created = await post({ title: 'a' });
+    const r = await assist(created.body.id as string, { mode: 'nope', idea: 'x' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe('invalid_mode');
+  });
+
+  test('per-mode required seed → 400', async () => {
+    const created = await post({ title: 'a' });
+    const id = created.body.id as string;
+    expect((await assist(id, { mode: 'outline' })).body.error).toBe('idea_required');
+    expect((await assist(id, { mode: 'full' })).body.error).toBe('idea_required');
+    expect((await assist(id, { mode: 'section' })).body.error).toBe('heading_required');
+    expect((await assist(id, { mode: 'polish' })).body.error).toBe('selection_required');
+  });
+
+  test('unknown article → 404 (valid mode + seed)', async () => {
+    const r = await assist(MISSING_ID, { mode: 'outline', idea: 'x' });
+    expect(r.status).toBe(404);
+    expect(r.body.error).toBe('not_found');
+  });
+
+  test('discarded article → 409 discarded_locked (before the key check, never spends)', async () => {
+    const created = await post({ title: 'doomed' });
+    const id = created.body.id as string;
+    await patch(id, { status: 'discarded' });
+    const r = await assist(id, { mode: 'polish', selection: 'some prose' });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toBe('discarded_locked');
+  });
+
+  test('valid request, no LLM provider → 503 (never a silent fabrication)', async () => {
+    const created = await post({ title: 'ready' });
+    const r = await assist(created.body.id as string, {
+      mode: 'outline',
+      idea: 'how I ship weekly',
+    });
+    expect(r.status).toBe(503);
+    expect(r.body.error).toBe('grok_not_configured');
   });
 });

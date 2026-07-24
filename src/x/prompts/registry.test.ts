@@ -5,6 +5,7 @@
 
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { db } from '../../db/client.ts';
+import { ARTICLE_PROMPT_TEMPLATE } from '../articles/prompt.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
 import { DM_PROMPT_TEMPLATE } from '../people/dm.ts';
@@ -65,6 +66,7 @@ describe('prompt registry (AI.3)', () => {
       'icebreaker',
       'reply-list',
       'dm',
+      'article',
     ]);
     expect(isPromptKey('reply')).toBe(true);
     expect(isPromptKey('reply-batch')).toBe(true);
@@ -75,6 +77,7 @@ describe('prompt registry (AI.3)', () => {
     expect(isPromptKey('ideas')).toBe(true);
     expect(isPromptKey('reply-list')).toBe(true);
     expect(isPromptKey('dm')).toBe(true);
+    expect(isPromptKey('article')).toBe(true);
     expect(isPromptKey('nonsense')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);
@@ -87,6 +90,7 @@ describe('prompt registry (AI.3)', () => {
     expect(PROMPT_SPECS.icebreaker.defaultBody).toBe(ICEBREAKER_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['reply-list'].defaultBody).toBe(REPLY_LIST_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.dm.defaultBody).toBe(DM_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS.article.defaultBody).toBe(ARTICLE_PROMPT_TEMPLATE);
     // Every spec's own default must validate clean — required present, no
     // unknown tokens (the optional niche placeholders are known).
     for (const key of PROMPT_KEYS) {

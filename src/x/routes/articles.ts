@@ -19,13 +19,26 @@
 import { type SQL, desc, eq, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import { type AskLlmResult, askLLM, llmConfigured, llmErrorPayload } from '../../llm/index.ts';
+import {
+  ASSIST_SCHEMAS,
+  type ArticleAssistContext,
+  type OutlineProposal,
+  buildArticleAssistInput,
+  isArticleAssistMode,
+  parseAssist,
+} from '../articles/prompt.ts';
 import { articles } from '../db/schema.ts';
 import { parsePillar } from '../posts/pillars.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
+import { topWinners } from './drafter.ts';
 import { getActivePillars } from './pillars.ts';
+import { loadPostGuidanceSafe } from './playbook.ts';
 
 const STATUSES = ['draft', 'published', 'discarded'] as const;
 type ArticleStatus = (typeof STATUSES)[number];
 
+const DEFAULT_TITLE = 'Untitled';
 const MAX_TITLE_LEN = 300;
 const MAX_SUBTITLE_LEN = 500;
 // Articles are long-form; a generous ceiling that still fences runaway bodies.
@@ -34,6 +47,18 @@ const MAX_PUBLISHED_URL_LEN = 400;
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 500;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Assist (A3.12): per-field input ceilings + the Grok call house defaults. A
+// full draft gets more room than a section/polish/outline; effort stays low —
+// the model is grounded, not reasoning from scratch. askLLM merges DB AI
+// settings over these (opts > settings > these).
+const MAX_ASSIST_IDEA_LEN = 4000;
+const MAX_ASSIST_HEADING_LEN = 500;
+const MAX_ASSIST_SELECTION_LEN = 40_000;
+const ASSIST_MAX_OUTPUT_TOKENS = 1200;
+const ASSIST_MAX_OUTPUT_TOKENS_FULL = 3000;
+const ASSIST_TEMPERATURE = 0.7;
+const ASSIST_REASONING = 'low' as const;
 
 // Explicit list columns — everything EXCEPT body_md, plus a cheap char count so
 // the writer rail can show length without shipping every article's full text.
@@ -88,7 +113,7 @@ articlesRouter.post('/articles', async (c) => {
   const body = raw as Record<string, unknown>;
 
   // title defaults 'Untitled'; a supplied one is trimmed and length-checked.
-  let title = 'Untitled';
+  let title = DEFAULT_TITLE;
   if (body.title !== undefined && body.title !== null) {
     if (typeof body.title !== 'string') return c.json({ error: 'invalid_title' }, 400);
     const trimmed = body.title.trim();
@@ -222,6 +247,132 @@ articlesRouter.delete('/articles/:id', async (c) => {
     .returning({ id: articles.id });
   if (result.length === 0) return c.json({ error: 'not_found' }, 404);
   return c.body(null, 204);
+});
+
+// Grok-backed writing assist (A3.12). One LLM call per click, LLM-gated at
+// runtime (askLLM + llmConfigured, D5). The refusal ladder is entirely $0 and
+// decided BEFORE any spend (§7.4): validation → 404 → discarded 409 → 503 →
+// loaders → Grok. Only the `outline` mode WRITES (persists the structured
+// outline + fills default title/subtitle); section/polish/full return text the
+// editor inserts, so the human stays in control of the body.
+articlesRouter.post('/articles/:id/assist', async (c) => {
+  const id = c.req.param('id');
+  if (!UUID_RE.test(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!isArticleAssistMode(body.mode)) return c.json({ error: 'invalid_mode' }, 400);
+  const mode = body.mode;
+
+  // idea/heading/selection are optional any-language free text (parseNullableText
+  // trims, empty → null, over-length → 'invalid').
+  const idea = parseNullableText(body.idea, MAX_ASSIST_IDEA_LEN);
+  if (idea === 'invalid') return c.json({ error: 'invalid_idea' }, 400);
+  const heading = parseNullableText(body.heading, MAX_ASSIST_HEADING_LEN);
+  if (heading === 'invalid') return c.json({ error: 'invalid_heading' }, 400);
+  const selection = parseNullableText(body.selection, MAX_ASSIST_SELECTION_LEN);
+  if (selection === 'invalid') return c.json({ error: 'invalid_selection' }, 400);
+
+  // Each mode needs its seed (refuse-before-spend): outline/full an idea, section
+  // a heading, polish a selection.
+  if ((mode === 'outline' || mode === 'full') && !idea) {
+    return c.json({ error: 'idea_required' }, 400);
+  }
+  if (mode === 'section' && !heading) return c.json({ error: 'heading_required' }, 400);
+  if (mode === 'polish' && !selection) return c.json({ error: 'selection_required' }, 400);
+
+  const [existing] = await db.select().from(articles).where(eq(articles.id, id)).limit(1);
+  if (!existing) return c.json({ error: 'not_found' }, 404);
+  // A discarded article is frozen (A3.11) — revive it before assisting. Refused
+  // before the key check so it never spends.
+  if (existing.status === 'discarded') return c.json({ error: 'discarded_locked' }, 409);
+
+  // The any-provider gate is the last cheap check before the paid call.
+  if (!llmConfigured()) return c.json({ error: 'grok_not_configured' }, 503);
+
+  // $0 grounding loaders — the same few-shot discipline as the post/thread
+  // drafter; guidance is best-effort (never blocks a draft).
+  const [pillars, winners, guidance] = await Promise.all([
+    getActivePillars(),
+    topWinners(),
+    loadPostGuidanceSafe(),
+  ]);
+  const prompt = loadPromptSafe('article');
+
+  const ctx: ArticleAssistContext = {
+    pillars,
+    winners,
+    guidance,
+    article: {
+      title: existing.title,
+      subtitle: existing.subtitle,
+      outline: existing.outline,
+      bodyMd: existing.bodyMd,
+    },
+    idea,
+    heading,
+    selection,
+  };
+
+  let result: AskLlmResult;
+  try {
+    result = await askLLM(
+      {
+        messages: buildArticleAssistInput(mode, ctx, prompt.body),
+        jsonSchema: { name: `article_${mode}`, schema: ASSIST_SCHEMAS[mode] },
+        promptCacheKey: prompt.cacheKey,
+      },
+      {
+        defaults: {
+          reasoningEffort: ASSIST_REASONING,
+          maxOutputTokens:
+            mode === 'full' ? ASSIST_MAX_OUTPUT_TOKENS_FULL : ASSIST_MAX_OUTPUT_TOKENS,
+          temperature: ASSIST_TEMPERATURE,
+        },
+      },
+    );
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/articles/:id/assist failed:', detail);
+    return c.json({ error: 'assist_failed', detail }, 502);
+  }
+
+  const proposal = parseAssist(mode, result.text);
+  if (!proposal) return c.json({ error: 'assist_parse_error', requestId: result.requestId }, 502);
+
+  let persisted = false;
+  if (mode === 'outline') {
+    const outline = proposal as OutlineProposal;
+    const updates: Partial<typeof articles.$inferInsert> = { outline, updatedAt: new Date() };
+    // Fill title/subtitle only while they're still at their defaults — never
+    // clobber a title the human already set.
+    if (existing.title === DEFAULT_TITLE && outline.title.trim() !== '') {
+      updates.title = outline.title.trim().slice(0, MAX_TITLE_LEN);
+    }
+    if (
+      (existing.subtitle === null || existing.subtitle === '') &&
+      outline.subtitle.trim() !== ''
+    ) {
+      updates.subtitle = outline.subtitle.trim().slice(0, MAX_SUBTITLE_LEN);
+    }
+    await db.update(articles).set(updates).where(eq(articles.id, id));
+    persisted = true;
+  }
+
+  return c.json({
+    mode,
+    proposal,
+    persisted,
+    costUsd: result.costUsd,
+    model: result.model,
+    requestId: result.requestId,
+  });
 });
 
 // ---------------------------------------------------------------- helpers
