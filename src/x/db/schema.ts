@@ -983,3 +983,38 @@ export const dmDrafts = sqliteTable(
   },
   (t) => [index('dm_drafts_handle_created_idx').on(t.handle, t.createdAt)],
 );
+
+// Articles (Authoring 3.0 / the Writer, A3.11): long-form originals drafted in
+// the standalone /writer page. `body_md` is Markdown; there is no API article
+// publish — posting is a manual "Copy for X" into X's article composer, and
+// `published_url` records where it landed. `outline` is JSON persisted by the
+// A3.12 outline assist (shape owned there). Lifecycle: draft → published (stamps
+// published_at) | discarded; published → draft re-opens for editing (the publish
+// stamp stays as the historical record); a discarded row is frozen except status
+// back to draft. `pillar` is validated against the active niche slugs at write
+// time (stored free-text — a niche can retire a slug after the fact).
+export const articles = sqliteTable(
+  'articles',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    subtitle: text('subtitle'),
+    bodyMd: text('body_md').notNull().default(''),
+    pillar: text('pillar'),
+    status: text('status').notNull().default('draft'), // draft | published | discarded
+    // JSON structured outline (headings/beats) written by the outline assist.
+    outline: text('outline', { mode: 'json' }).$type<unknown>(),
+    publishedUrl: text('published_url'),
+    publishedAt: integer('published_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  // List is `WHERE status ORDER BY updated_at DESC` — same shape as ideas.
+  (t) => [index('articles_status_updated_idx').on(t.status, t.updatedAt)],
+);

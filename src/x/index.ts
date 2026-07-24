@@ -12,6 +12,7 @@ export { registerXTools } from './mcp.ts';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
 import { analyticsRouter } from './routes/analytics.ts';
+import { articlesRouter } from './routes/articles.ts';
 import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
@@ -106,6 +107,9 @@ export function mountX(app: Hono): void {
   // C6: Idea Inbox — pure SQL, always mounted; consumption happens inside the
   // Grok-gated draft routes, but capture/list/reopen must work without the key.
   app.route('/x', ideasRouter);
+  // A3.11: Articles — long-form Markdown originals for the /writer page. Pure-SQL
+  // CRUD, always mounted, every route $0 (the Grok assist route is A3.12).
+  app.route('/x', articlesRouter);
   // RL: reply lists — premade canned replies. CRUD (and later /use) are pure SQL
   // and always mounted; only /generate (RL.4) needs an LLM and checks at runtime.
   app.route('/x', replyListsRouter);
