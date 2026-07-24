@@ -21,6 +21,11 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["chrome", "vite/client"]
   },
-  "include": ["src/**/*", "../src/shared/replyBand.ts", "../src/shared/channelSuggest.ts"],
+  "include": [
+    "src/**/*",
+    "../src/shared/replyBand.ts",
+    "../src/shared/channelSuggest.ts",
+    "../src/shared/activeTimes.ts"
+  ],
   "exclude": ["src/**/*.test.ts"]
 }
