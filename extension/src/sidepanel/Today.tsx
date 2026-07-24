@@ -10,6 +10,7 @@ import { DigestSection } from './Digest.tsx';
 import { DoNextSection } from './DoNext.tsx';
 import { FansSection } from './Fans.tsx';
 import { LaunchRoomSection } from './LaunchRoom.tsx';
+import { ManualPostCardSection } from './ManualPostCard.tsx';
 import { RadarSection } from './Radar.tsx';
 import { TargetsSection } from './Targets.tsx';
 import {
@@ -70,6 +71,11 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
       {/* Launch Room (C7) — takes the top slot for 30 min after a scheduled
           post fires; renders nothing outside that window. */}
       <LaunchRoomSection settings={settings} onOpenPerson={onOpenPerson} />
+
+      {/* A3.8 — a "Time to post" card per manual slot that just came due (the
+          background alarms it + notifies); copy the text, paste in X, mark
+          posted. Renders nothing when nothing is due. */}
+      <ManualPostCardSection settings={settings} />
 
       {/* Today's quests + streak (C9) — gentle checkmarks, never guilt. The
           GR.8 debt line rides underneath: what the daily commitment asked for

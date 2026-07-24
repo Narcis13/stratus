@@ -7,11 +7,21 @@ import {
   LAUNCH_ALARM_PREFIX,
   LAUNCH_GRACE_MS,
   LAUNCH_ROOM_MS,
+  MANUAL_ALARM_PREFIX,
+  MANUAL_CARD_TTL_MS,
+  MANUAL_MISS_GRACE_MS,
+  type ManualDue,
   computeLaunchAlarms,
+  computeManualAlarms,
+  isManualDueList,
   launchIsLive,
+  manualCardVisible,
+  manualNotificationText,
   mergeEarlyReplies,
+  mergeManualDue,
   notificationText,
   parseLaunchAlarm,
+  parseManualAlarm,
   retryAlarmName,
   threadLinkInFirstReply,
 } from './launch.ts';
@@ -151,5 +161,126 @@ describe('notificationText', () => {
     const msg = notificationText('a'.repeat(200));
     expect(msg.endsWith('» just went live — open the Launch Room')).toBe(true);
     expect(msg.includes('…')).toBe(true);
+  });
+});
+
+// --- A3.8 manual-publish reminders -----------------------------------------
+
+describe('computeManualAlarms', () => {
+  test('fires AT scheduledFor exactly (no grace, unlike launch), sorted by when', () => {
+    const alarms = computeManualAlarms(
+      [post('b', 'manual', 120 * MIN), post('a', 'manual', 10 * MIN)],
+      NOW,
+    );
+    expect(alarms.map((a) => a.name)).toEqual([
+      `${MANUAL_ALARM_PREFIX}a`,
+      `${MANUAL_ALARM_PREFIX}b`,
+    ]);
+    // No LAUNCH_GRACE_MS added — the manual slot fires at the minute itself.
+    expect(alarms[0]?.when).toBe(NOW + 10 * MIN);
+  });
+
+  test('non-manual and unscheduled rows are filtered out', () => {
+    const alarms = computeManualAlarms(
+      [
+        post('pending', 'pending', 10 * MIN),
+        post('posted', 'posted', 10 * MIN),
+        post('draft', 'draft', 10 * MIN),
+        post('unsched', 'manual', null),
+      ],
+      NOW,
+    );
+    expect(alarms).toEqual([]);
+  });
+
+  test('a recently-missed slot (≤30 min) clamps to just ahead of now', () => {
+    const alarms = computeManualAlarms([post('late', 'manual', -10 * MIN)], NOW);
+    expect(alarms.length).toBe(1);
+    expect(alarms[0]?.when).toBe(NOW + 1000);
+  });
+
+  test('a slot older than the miss grace is dropped (the overdue chip owns it)', () => {
+    const gone = -(MANUAL_MISS_GRACE_MS + MIN);
+    expect(computeManualAlarms([post('gone', 'manual', gone)], NOW)).toEqual([]);
+  });
+
+  test('invalid scheduledFor is skipped', () => {
+    expect(
+      computeManualAlarms([{ id: 'x', status: 'manual', scheduledFor: 'not-a-date' }], NOW),
+    ).toEqual([]);
+  });
+});
+
+describe('parseManualAlarm', () => {
+  test('round-trips a uuid postId and rejects foreign alarms', () => {
+    const id = 'a1b2c3d4-0000-1111-2222-333344445555';
+    expect(parseManualAlarm(MANUAL_ALARM_PREFIX + id)).toBe(id);
+    expect(parseManualAlarm(`${LAUNCH_ALARM_PREFIX}nope`)).toBeNull();
+    expect(parseManualAlarm('stratus-launch-sync')).toBeNull();
+  });
+});
+
+describe('mergeManualDue', () => {
+  const due = (postId: string, firedAt = '2026-07-04T12:00:00Z'): ManualDue => ({
+    postId,
+    text: `t-${postId}`,
+    mediaNote: null,
+    scheduledFor: null,
+    firedAt,
+  });
+
+  test('prepends newest first', () => {
+    const out = mergeManualDue([due('1')], due('2'));
+    expect(out.map((e) => e.postId)).toEqual(['2', '1']);
+  });
+
+  test('a re-fire of the same postId refreshes rather than stacks', () => {
+    const out = mergeManualDue([due('1', 'old'), due('2')], due('1', 'new'));
+    expect(out.map((e) => e.postId)).toEqual(['1', '2']);
+    expect(out[0]?.firedAt).toBe('new');
+  });
+
+  test('caps at the newest entries', () => {
+    const existing = [due('4'), due('3'), due('2'), due('1'), due('0')];
+    const out = mergeManualDue(existing, due('5'));
+    expect(out.length).toBe(5);
+    expect(out.map((e) => e.postId)).toEqual(['5', '4', '3', '2', '1']);
+  });
+});
+
+describe('manualCardVisible', () => {
+  test('true within 60 min of firedAt, false after', () => {
+    const firedAt = new Date(NOW).toISOString();
+    expect(manualCardVisible(firedAt, NOW + 1)).toBe(true);
+    expect(manualCardVisible(firedAt, NOW + MANUAL_CARD_TTL_MS - 1)).toBe(true);
+    expect(manualCardVisible(firedAt, NOW + MANUAL_CARD_TTL_MS)).toBe(false);
+    expect(manualCardVisible('nope', NOW)).toBe(false);
+  });
+});
+
+describe('manualNotificationText', () => {
+  test('prefixes "Time to post" and clips long text in guillemets', () => {
+    expect(manualNotificationText('ship it')).toBe('Time to post: «ship it»');
+    const long = manualNotificationText('a'.repeat(200));
+    expect(long.startsWith('Time to post: «')).toBe(true);
+    expect(long.includes('…')).toBe(true);
+  });
+});
+
+describe('isManualDueList', () => {
+  test('accepts well-formed entries and rejects malformed ones', () => {
+    expect(
+      isManualDueList([
+        { postId: 'p', text: 't', mediaNote: null, scheduledFor: null, firedAt: 'x' },
+        { postId: 'q', text: 't', mediaNote: 'v', scheduledFor: 'y', firedAt: 'z' },
+      ]),
+    ).toBe(true);
+    expect(isManualDueList('nope')).toBe(false);
+    expect(isManualDueList([{ postId: 'p', text: 't' }])).toBe(false);
+    expect(
+      isManualDueList([
+        { postId: 1, text: 't', mediaNote: null, scheduledFor: null, firedAt: 'x' },
+      ]),
+    ).toBe(false);
   });
 });

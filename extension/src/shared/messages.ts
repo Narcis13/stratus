@@ -241,6 +241,21 @@ export function isLaunchDismiss(msg: unknown): msg is LaunchDismiss {
   return (msg as Record<string, unknown>).type === 'stratus/launch-dismiss';
 }
 
+/** Panel → background (A3.8): a manual post was pasted-and-marked, or its card
+ *  was dismissed — drop its `manual:due` entry. Carries the postId (unlike the
+ *  param-less LaunchDismiss — there can be several due cards at once). The
+ *  background stays the single writer of the session key (§7.24). */
+export interface ManualDismiss {
+  type: 'stratus/manual-dismiss';
+  postId: string;
+}
+
+export function isManualDismiss(msg: unknown): msg is ManualDismiss {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/manual-dismiss' && typeof m.postId === 'string';
+}
+
 // --- Notifications surface (C10) — content script → background, the whole
 // augmentation payload for x.com/notifications in one round trip: the mention
 // rows stratus already pulled (keyed by the REPLY's tweet id, carrying my

@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type ManualDismiss,
   type NotifContextGet,
   type RadarConfirm,
   type RadarVariantPasted,
   type RadarVariantsGet,
+  isManualDismiss,
   isNotifContextGet,
   isRadarConfirm,
   isRadarVariantPasted,
@@ -76,5 +78,20 @@ describe('isNotifContextGet', () => {
     expect(isNotifContextGet({ force: true })).toBe(false);
     expect(isNotifContextGet(null)).toBe(false);
     expect(isNotifContextGet('stratus/notif-context')).toBe(false);
+  });
+});
+
+describe('isManualDismiss', () => {
+  test('accepts a well-formed manual-dismiss message', () => {
+    const msg: ManualDismiss = { type: 'stratus/manual-dismiss', postId: 'p1' };
+    expect(isManualDismiss(msg)).toBe(true);
+  });
+
+  test('rejects the wrong type, a missing/non-string postId, and junk', () => {
+    expect(isManualDismiss({ type: 'stratus/launch-dismiss', postId: 'p1' })).toBe(false);
+    expect(isManualDismiss({ type: 'stratus/manual-dismiss' })).toBe(false);
+    expect(isManualDismiss({ type: 'stratus/manual-dismiss', postId: 1 })).toBe(false);
+    expect(isManualDismiss(null)).toBe(false);
+    expect(isManualDismiss('stratus/manual-dismiss')).toBe(false);
   });
 });

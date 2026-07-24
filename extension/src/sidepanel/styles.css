@@ -2396,6 +2396,62 @@ button.danger:hover:not(:disabled) {
   background: var(--accent-hover);
 }
 
+/* A3.8 — the Today "Time to post" card for a due manual slot. Launch-room
+   shape, warn-toned because it needs a human paste, not a live celebration. */
+.manual-card {
+  border: 1px solid var(--strat-warn);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--strat-warn-fill);
+}
+
+.manual-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manual-card-head h3 {
+  margin: 0;
+  flex: 1;
+}
+
+.manual-card-slot {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--strat-warn);
+}
+
+.manual-card-dismiss {
+  padding: 0 7px;
+  color: var(--muted);
+}
+
+.manual-card-text {
+  margin: 8px 0 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.manual-card-media {
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.manual-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.manual-card-open {
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+
 .launch-checklist {
   margin: 8px 0;
   padding-left: 18px;

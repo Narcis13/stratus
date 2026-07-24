@@ -15,13 +15,22 @@ import {
   LAUNCH_ROOM_MS,
   LAUNCH_SYNC_ALARM,
   LAUNCH_SYNC_PERIOD_MIN,
+  MANUAL_ALARM_PREFIX,
+  MANUAL_DUE_KEY,
+  MANUAL_MISS_GRACE_MS,
+  type ManualDue,
   computeLaunchAlarms,
+  computeManualAlarms,
   isActiveLaunch,
   isEarlyReplies,
+  isManualDueList,
   launchIsLive,
+  manualNotificationText,
   mergeEarlyReplies,
+  mergeManualDue,
   notificationText,
   parseLaunchAlarm,
+  parseManualAlarm,
   retryAlarmName,
   threadLinkInFirstReply,
 } from './shared/launch.ts';
@@ -35,6 +44,7 @@ import {
   isLaunchGet,
   isLaunchReport,
   isLaunchSync,
+  isManualDismiss,
   isNotifContextGet,
   isOpenPerson,
   isOpenPersonClear,
@@ -612,14 +622,117 @@ async function recordEarlyReplies(tweetId: string, replies: EarlyReply[]): Promi
   );
 }
 
+// ------------------------------------------- manual-publish reminders (A3.8)
+//
+// A `manual` scheduled post is pasted into X by hand at its slot (Studio
+// visuals, link posts at $0 — nothing auto-publishes). We can't watch for it
+// to go live, so — unlike the Launch Room — there is no grace and no retry:
+// one alarm AT scheduledFor, and at fire time we re-check the row is still
+// `manual`, drop a due entry for the Today card (single writer, its own
+// promise chain since `manual:due` is a distinct key family), and notify. This
+// piggybacks on the launch sync's three triggers (worker start, panel
+// `stratus/launch-sync`, the 15-min periodic alarm).
+
+let manualChain: Promise<void> = Promise.resolve();
+function enqueueManual(fn: () => Promise<void>): Promise<void> {
+  const next = manualChain.then(fn);
+  manualChain = next.catch((err) => console.error('[stratus] manual write failed', err));
+  return next;
+}
+
+async function syncManualAlarms(): Promise<void> {
+  // Recently-past window included so a missed slot (browser was closed) still
+  // fires a clamped alarm; the 24h forward reach covers the rest of today.
+  const from = new Date(Date.now() - MANUAL_MISS_GRACE_MS).toISOString();
+  const to = new Date(Date.now() + 24 * 3_600_000).toISOString();
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/posts/scheduled',
+    query: { status: 'manual', from, to },
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] manual sync failed', res.code);
+    return;
+  }
+  const posts = Array.isArray(res.data) ? (res.data as ScheduledPost[]) : [];
+  const wanted = computeManualAlarms(posts, Date.now());
+  const wantedNames = new Set(wanted.map((w) => w.name));
+
+  // Drop manual alarms for rows that moved/posted/cancelled; scoped to our
+  // prefix so launch fire/retry/sync alarms are never touched.
+  const existing = await chrome.alarms.getAll();
+  for (const a of existing) {
+    if (a.name.startsWith(MANUAL_ALARM_PREFIX) && !wantedNames.has(a.name)) {
+      await chrome.alarms.clear(a.name);
+    }
+  }
+  for (const w of wanted) chrome.alarms.create(w.name, { when: w.when });
+}
+
+async function handleManualFire(postId: string): Promise<void> {
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: `/x/posts/scheduled/${postId}`,
+  });
+  // Best-effort: a transient failure just skips this nudge — the next sync
+  // re-creates the alarm while the slot is still inside the miss window.
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] manual fire fetch failed', res.code);
+    return;
+  }
+  const row = res.data as ScheduledPost;
+  // Posted (marked or reconciled), cancelled, or edited back to draft/pending
+  // meanwhile — nothing to nudge, drop silently.
+  if (row.status !== 'manual') return;
+
+  const entry: ManualDue = {
+    postId: row.id,
+    text: row.text,
+    mediaNote: row.mediaNote,
+    scheduledFor: row.scheduledFor,
+    firedAt: new Date().toISOString(),
+  };
+  await enqueueManual(async () => {
+    const out = await chrome.storage.session.get(MANUAL_DUE_KEY);
+    const existing = isManualDueList(out[MANUAL_DUE_KEY]) ? out[MANUAL_DUE_KEY] : [];
+    await chrome.storage.session.set({ [MANUAL_DUE_KEY]: mergeManualDue(existing, entry) });
+  });
+  // Same notification id on a re-fire replaces rather than stacks (the card
+  // dedups too), so an unposted slot re-nudges without piling up.
+  chrome.notifications.create(`stratus-manual-note:${row.id}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: 'stratus — post now',
+    message: manualNotificationText(row.text),
+    priority: 2,
+  });
+}
+
+async function dismissManualDue(postId: string): Promise<void> {
+  const out = await chrome.storage.session.get(MANUAL_DUE_KEY);
+  const existing = isManualDueList(out[MANUAL_DUE_KEY]) ? out[MANUAL_DUE_KEY] : [];
+  await chrome.storage.session.set({
+    [MANUAL_DUE_KEY]: existing.filter((e) => e.postId !== postId),
+  });
+}
+
 // Runs on every service-worker start; re-creating the periodic alarm is
 // idempotent (same name replaces).
 chrome.alarms.create(LAUNCH_SYNC_ALARM, { periodInMinutes: LAUNCH_SYNC_PERIOD_MIN });
 void syncLaunchAlarms();
+void syncManualAlarms();
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === LAUNCH_SYNC_ALARM) {
     void syncLaunchAlarms();
+    void syncManualAlarms();
+    return;
+  }
+  const manualId = parseManualAlarm(alarm.name);
+  if (manualId) {
+    void handleManualFire(manualId);
     return;
   }
   const fire = parseLaunchAlarm(alarm.name);
@@ -629,7 +742,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // A notification click is a user gesture, which sidePanel.open needs. Best
 // effort — if Chrome disagrees, the panel is one action-click away.
 chrome.notifications.onClicked.addListener((id) => {
-  if (!id.startsWith('stratus-launch-note:')) return;
+  // Both the launch and the manual-post notifications open the side panel.
+  if (!id.startsWith('stratus-launch-note:') && !id.startsWith('stratus-manual-note:')) return;
   chrome.notifications.clear(id);
   chrome.windows.getLastFocused((win) => {
     if (win?.id !== undefined) {
@@ -818,7 +932,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (isLaunchSync(msg)) {
-    void syncLaunchAlarms().then(
+    // Panel mount re-syncs both the launch and the manual reminder alarms.
+    void Promise.all([syncLaunchAlarms(), syncManualAlarms()]).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );
@@ -846,6 +961,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     void enqueueLaunch(async () => {
       await chrome.storage.session.remove([LAUNCH_ACTIVE_KEY, LAUNCH_REPLIES_KEY]);
     }).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isManualDismiss(msg)) {
+    void enqueueManual(() => dismissManualDue(msg.postId)).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );
