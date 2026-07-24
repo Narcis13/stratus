@@ -47,6 +47,11 @@ import {
   type DigestFacts,
   type DigestResponse,
   type DigestScorecard,
+  type DmDraft,
+  type DmDraftResult,
+  type DmPatchBody,
+  type DmStatus,
+  type DmsListResponse,
   type FanItem,
   type FansResponse,
   type FollowingListOpts,
@@ -237,6 +242,10 @@ export type {
   DigestFacts,
   DigestResponse,
   DigestScorecard,
+  DmDraft,
+  DmDraftResult,
+  DmPatchBody,
+  DmStatus,
   IcebreakersResponse,
   Channel,
   ChannelAggregate,
@@ -988,6 +997,30 @@ export const api = {
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
       return request<FansResponse>(s, `/x/people/fans${qs ? `?${qs}` : ''}`);
+    },
+  },
+
+  // A3.9/A3.10 — grounded outbound DM drafts. draft() spends one Grok call
+  // (~$0.005) behind the icebreaker refusal ladder (404 unknown_person → 422
+  // no_shared_context → 503 grok_not_configured); list()/patch() are $0. Sending
+  // stays manual in X — patch(id, { status: 'sent' }) logs manual_dm_logged into
+  // the person timeline. Drafts persist (dm_drafts) so the dossier keeps history.
+  dms: {
+    draft(s: Settings, handle: string, idea?: string, purpose?: string): Promise<DmDraftResult> {
+      const body: Record<string, unknown> = { handle };
+      if (idea !== undefined) body.idea = idea;
+      if (purpose !== undefined) body.purpose = purpose;
+      return request<DmDraftResult>(s, '/x/dms/draft', { method: 'POST', body });
+    },
+
+    list(s: Settings, handle: string): Promise<DmDraft[]> {
+      return request<DmsListResponse>(s, `/x/dms?handle=${encodeURIComponent(handle)}`).then(
+        (r) => r.dms,
+      );
+    },
+
+    patch(s: Settings, id: string, body: DmPatchBody): Promise<DmDraft> {
+      return request<DmDraft>(s, `/x/dms/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
   },
 

@@ -161,6 +161,17 @@ export function DoNextSection({
                       >
                         draft
                       </button>
+                    ) : item.kind === 'dm_ready' ? (
+                      // A3.10 — deep-link to the dossier's "Draft DM" section
+                      // (keep DoNext light: the drafting flow lives there).
+                      <button
+                        type="button"
+                        className="donext-opener"
+                        title="Draft a DM in their dossier (A3.10)"
+                        onClick={() => onOpenPerson(item.handle)}
+                      >
+                        draft DM
+                      </button>
                     ) : (
                       <button
                         type="button"

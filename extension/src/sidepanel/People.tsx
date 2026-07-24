@@ -9,6 +9,8 @@ import { ChannelTagPicker } from './ChannelTags.tsx';
 import { IcebreakerBox } from './Icebreakers.tsx';
 import {
   ApiError,
+  type DmDraft,
+  type DmDraftResult,
   type FollowingPatchBody,
   type FollowingQueueResponse,
   type FollowingRow,
@@ -806,6 +808,14 @@ function Dossier({
         <IcebreakerBox settings={settings} handle={person.handle} />
       </section>
 
+      {/* A3.10 — a grounded outbound DM, same grounding + refusal ladder as
+          Openers. Sending stays manual; "Mark sent" logs the timeline event, so
+          the dossier reload (onChanged) surfaces it below. */}
+      <section className="brief-section">
+        <h3>Draft DM</h3>
+        <DmBox settings={settings} handle={person.handle} onSent={onChanged} />
+      </section>
+
       {replies.count > 0 && (
         <section className="brief-section">
           <h3>
@@ -884,6 +894,160 @@ function Dossier({
       </section>
     </>
   );
+}
+
+// A3.10 — draft a grounded outbound DM from the dossier. One explicit-button
+// Grok call (~$0.005) behind the icebreaker refusal ladder; the draft persists
+// (dm_drafts) so history survives. Sending stays manual: Copy → paste in X →
+// "Mark sent" logs manual_dm_logged (onSent reloads the dossier so it shows).
+function DmBox({
+  settings,
+  handle,
+  onSent,
+}: {
+  settings: Settings;
+  handle: string;
+  onSent: () => void;
+}): JSX.Element {
+  const [idea, setIdea] = useState('');
+  const [draft, setDraft] = useState<DmDraftResult | null>(null);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showGrounding, setShowGrounding] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [prior, setPrior] = useState<DmDraft[]>([]);
+
+  const loadPrior = useCallback(async () => {
+    try {
+      setPrior(await api.dms.list(settings, handle));
+    } catch {
+      /* prior history is best-effort — drafting still works without it */
+    }
+  }, [settings, handle]);
+
+  useEffect(() => {
+    void loadPrior();
+  }, [loadPrior]);
+
+  const generate = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setShowGrounding(false);
+    try {
+      const res = await api.dms.draft(settings, handle, idea.trim() || undefined);
+      setDraft(res);
+      setText(res.text);
+    } catch (e) {
+      setError(dmError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // "Mark sent" persists the (possibly edited) text first so the logged timeline
+  // line matches what I actually pasted, then flips status. "Discard" just closes
+  // the draft out. Both reload the prior list; sent also reloads the dossier.
+  const finish = async (status: 'sent' | 'discarded'): Promise<void> => {
+    if (!draft) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const edited = text.trim();
+      if (status === 'sent' && edited !== '' && edited !== draft.text) {
+        await api.dms.patch(settings, draft.id, { text: edited });
+      }
+      await api.dms.patch(settings, draft.id, { status });
+      setDraft(null);
+      setText('');
+      setIdea('');
+      await loadPrior();
+      if (status === 'sent') onSent();
+    } catch (e) {
+      setError(dmError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="dm-box">
+      {!draft && (
+        <div className="dm-compose">
+          <input
+            type="text"
+            className="dm-idea"
+            placeholder="idea — any language, DM comes out in English (optional)"
+            value={idea}
+            disabled={busy}
+            onChange={(e) => setIdea(e.target.value)}
+          />
+          <button type="button" disabled={busy} onClick={() => void generate()}>
+            {busy ? 'Drafting…' : 'Draft DM'}
+          </button>
+        </div>
+      )}
+      {error && <div className="muted">{error}</div>}
+      {draft && (
+        <>
+          <textarea
+            className="dm-text"
+            rows={4}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="dm-foot">
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(text).then(() => {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1500);
+                });
+              }}
+            >
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button type="button" disabled={busy} onClick={() => void finish('sent')}>
+              Mark sent
+            </button>
+            <button type="button" disabled={busy} onClick={() => void finish('discarded')}>
+              Discard
+            </button>
+            <button type="button" onClick={() => setShowGrounding((v) => !v)}>
+              {showGrounding ? 'Hide grounding' : 'What it knew'}
+            </button>
+            <span className="muted">${draft.costUsd.toFixed(4)}</span>
+          </div>
+          {showGrounding && <pre className="dm-grounding">{draft.grounding}</pre>}
+        </>
+      )}
+      {prior.length > 0 && (
+        <ul className="dm-prior">
+          {prior.map((d) => (
+            <li key={d.id} className="dm-prior-row">
+              <span className={`dm-status dm-status-${d.status}`}>{d.status}</span>
+              <span className="dm-prior-text">{d.text}</span>
+              <span className="people-ago">{fmtAgo(d.sentAt ?? d.createdAt)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Same friendly mapping as the Openers box: a thin dossier refuses at 422
+// before any spend, Grok-off is 503.
+function dmError(e: unknown): string {
+  if (e instanceof ApiError) {
+    if (e.status === 422) {
+      return 'No shared context yet — save their tweets or exchange replies first.';
+    }
+    if (e.status === 503) return 'Grok is not configured on the server.';
+    return `DM draft failed: ${e.message}`;
+  }
+  return 'DM draft failed';
 }
 
 function StagePicker({

@@ -2866,6 +2866,87 @@ button.danger:hover:not(:disabled) {
   margin-top: 4px;
 }
 
+/* ------------------------------------------------------ A3.10: DM drafts */
+
+.dm-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.dm-compose {
+  display: flex;
+  gap: 6px;
+}
+
+.dm-idea {
+  flex: 1;
+  min-width: 0;
+}
+
+.dm-text {
+  width: 100%;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.dm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.dm-grounding {
+  margin: 0;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.dm-prior {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dm-prior-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.dm-status {
+  flex-shrink: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.dm-status-sent {
+  color: var(--ok);
+}
+
+.dm-prior-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
 /* ---- Studio (SURFACES S3): brand kit, template picker, live preview ---- */
 .badge-media {
   background: color-mix(in srgb, var(--strat-warn) 18%, transparent);

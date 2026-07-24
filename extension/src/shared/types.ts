@@ -1375,6 +1375,49 @@ export interface IcebreakersResponse {
   costUsd: number;
 }
 
+// ------------------------------------------------------------ DM drafts (A3.9)
+
+// Grounded outbound direct messages (src/x/routes/dms.ts). Drafting spends one
+// Grok call behind the same refusal ladder as icebreakers; list/patch are $0.
+// Sending stays manual in X — patch(status:'sent') just logs the timeline event.
+export type DmStatus = 'draft' | 'sent' | 'discarded';
+
+/** A stored dm_drafts row (GET /x/dms, PATCH /x/dms/:id). Dates are ISO
+ *  strings; `grounding` is the {block, idea} snapshot the draft was built on. */
+export interface DmDraft {
+  id: string;
+  handle: string;
+  text: string;
+  purpose: string | null;
+  status: DmStatus;
+  grounding: { block: string; idea: string | null } | null;
+  costUsd: number | null;
+  createdAt: string;
+  updatedAt: string;
+  sentAt: string | null;
+}
+
+export interface DmsListResponse {
+  count: number;
+  dms: DmDraft[];
+}
+
+/** POST /x/dms/draft — the fresh draft plus the grounding block it was allowed
+ *  to see (a plain string here, unlike the stored row's {block, idea} object). */
+export interface DmDraftResult {
+  id: string;
+  text: string;
+  grounding: string;
+  costUsd: number;
+  model: string;
+  requestId: string;
+}
+
+export interface DmPatchBody {
+  text?: string;
+  status?: 'sent' | 'discarded';
+}
+
 // ---------------------------------------------------------------- people (C1)
 
 // Circles CRM rows (src/x/routes/people.ts). Stage describes reciprocity only.
