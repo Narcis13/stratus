@@ -6,10 +6,10 @@
 //
 //   bun run scripts/smoke-me.ts
 
-import { inArray } from 'drizzle-orm';
+import { desc, inArray, isNotNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../src/db/client.ts';
-import { meEntries, meGoals } from '../src/x/db/schema.ts';
+import { accountSnapshots, meEntries, meGoals } from '../src/x/db/schema.ts';
 import { me } from '../src/x/routes/me.ts';
 
 const app = new Hono();
@@ -89,11 +89,21 @@ if (listedEmotion?.inWindow !== true) fail('fresh emotion should be in window');
 console.log('window: 40d event out, fresh emotion in — inWindow computed server-side');
 
 // 3. Goals: a followers goal (auto-progress from account_snapshots, may be null
-// on a fresh DB) and an mrr goal (deterministic manual progress).
+// on a fresh DB) and an mrr goal (deterministic manual progress). The followers
+// target is set above the live baseline — POST refuses a target at or below a
+// known baseline (GR.7), and this smoke runs against the real DB.
+const [latestSnap] = db
+  .select({ n: accountSnapshots.followersCount })
+  .from(accountSnapshots)
+  .where(isNotNull(accountSnapshots.followersCount))
+  .orderBy(desc(accountSnapshots.snapshotAt))
+  .limit(1)
+  .all();
+const followersTarget = (latestSnap?.n ?? 0) + 1000;
 const followers = await post<{ id: string }>('/x/me/goals', {
-  label: 'smoke: reach 1000 followers',
+  label: `smoke: reach ${followersTarget} followers`,
   kind: 'followers',
-  target: 1000,
+  target: followersTarget,
 });
 goalIds.push(followers.id);
 const mrr = await post<{ id: string }>('/x/me/goals', {

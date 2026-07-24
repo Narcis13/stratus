@@ -8,7 +8,8 @@
 //   POST   /me/entries                  { kind, text ≤1000, happenedAt?, pinned? } → 201
 //   PATCH  /me/entries/:id              partial { kind?, text?, happenedAt?, pinned?, active? }
 //   DELETE /me/entries/:id              { ok:true } / 404
-//   POST   /me/goals                    { label, kind, target>0, unit?, deadline?, currentValue? } → 201
+//   POST   /me/goals                    { label, kind, target>0, unit?, deadline? (future), currentValue? } → 201
+//                                       400 deadline_in_past | target_not_above_baseline (GR.7)
 //   PATCH  /me/goals/:id                partial incl. currentValue + status → 200 / 404 / 400
 //   DELETE /me/goals/:id                { ok:true } / 404
 //   GET    /me/context?mode=post|reply  { mode, block: string|null } — the exact injected block (§7.18)
@@ -215,11 +216,20 @@ me.post('/me/goals', async (c) => {
   }
   const deadline = parseDate(b.deadline);
   if (!deadline.ok) return c.json({ error: 'invalid_deadline' }, 400);
+  const now = new Date();
+  // GR.7: undated goals are fine (ME.1), but a dated one whose deadline already
+  // passed would flip to `missed` on the very next read — refuse it here.
+  if (deadline.value !== null && deadline.value.getTime() <= now.getTime())
+    return c.json({ error: 'deadline_in_past' }, 400);
 
   // GR.7: stamp where this goal starts. Without a baseline the counted kinds
   // would measure all of history and a followers goal could never say how far
   // it has moved since I set it.
-  const baseline = await stampBaseline(kind, currentValue, new Date());
+  const baseline = await stampBaseline(kind, currentValue, now);
+  // GR.7: a known baseline at or past the target would flip to `achieved` on
+  // the very next read. Null baseline = unknown (§7.11), never refused.
+  if (baseline.baselineValue !== null && b.target <= baseline.baselineValue)
+    return c.json({ error: 'target_not_above_baseline' }, 400);
 
   const [row] = await db
     .insert(meGoals)

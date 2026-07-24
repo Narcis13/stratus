@@ -31,7 +31,7 @@ Each goal is a card with a progress bar. There are five kinds:
 
 Every goal shows `current / target (pct%)` and, if you set a **deadline**, how many days are left (or how many days overdue, in amber). Buttons let you mark a goal **achieved**, **drop** it, **reactivate** a closed one, or **delete** it. Achieved and dropped goals sink to the bottom, dimmed — they stay for the record but are never injected into drafts.
 
-**Add a goal** with the **+ Add goal** button: label, kind, target, optional unit, optional deadline.
+**Add a goal** with the **+ Add goal** button: label, kind, target, optional unit, optional deadline. A deadline must be in the future, and the target must sit above the current baseline (a goal that is already met or already overdue is refused with `deadline_in_past` / `target_not_above_baseline` rather than silently settling on the next read).
 
 **Goals close themselves.** A goal that reaches its target becomes **achieved**; one whose deadline passes becomes **missed**. That happens the next time anything reads your goals — opening Today, opening the Sunday digest, or asking an agent for `x_goals` — not on a timer. Both are one click to undo (**reactivate**). The Me tab deliberately shows what is *stored* rather than settling anything itself, so a goal can read `active` here a moment before Today settles it.
 

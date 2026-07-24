@@ -156,6 +156,38 @@ describe('POST /x/me/goals stamps a baseline (GR.7)', () => {
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_kind');
   });
+
+  test('a past deadline is refused — it would flip to missed on the next read', async () => {
+    const { status, body } = await send<{ error: string }>('/x/me/goals', 'POST', {
+      label: 'gr7 already over',
+      kind: 'custom',
+      target: 10,
+      currentValue: 1,
+      deadline: new Date(Date.now() - DAY).toISOString(),
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('deadline_in_past');
+  });
+
+  test('a target at or below a known baseline is refused', async () => {
+    // The seeded snapshot puts followers at 1070 — a 1000 target is already met.
+    const followers = await send<{ error: string }>('/x/me/goals', 'POST', {
+      label: 'gr7 already achieved',
+      kind: 'followers',
+      target: 1000,
+    });
+    expect(followers.status).toBe(400);
+    expect(followers.body.error).toBe('target_not_above_baseline');
+
+    const manual = await send<{ error: string }>('/x/me/goals', 'POST', {
+      label: 'gr7 manual already achieved',
+      kind: 'mrr',
+      target: 500,
+      currentValue: 800,
+    });
+    expect(manual.status).toBe(400);
+    expect(manual.body.error).toBe('target_not_above_baseline');
+  });
 });
 
 describe('GET /x/goals pacing', () => {
@@ -228,13 +260,19 @@ describe('GET /x/goals pacing', () => {
 
 describe('GET /x/goals settles goals on read (lazy flip)', () => {
   test('active → achieved once the metric passes target', async () => {
+    // POST refuses a goal already at target (GR.7), so create it short and
+    // move the value over the line through PATCH.
     const created = await createGoal({
       label: 'gr7 achieved',
       kind: 'custom',
       target: 100,
-      currentValue: 100,
+      currentValue: 10,
     });
     expect(created.status).toBe('active');
+    const patched = await send<GoalView>(`/x/me/goals/${created.id}`, 'PATCH', {
+      currentValue: 100,
+    });
+    expect(patched.status).toBe(200);
 
     const goal = findGoal((await getGoals()).goals, created.id);
     expect(goal.status).toBe('achieved');
@@ -245,13 +283,19 @@ describe('GET /x/goals settles goals on read (lazy flip)', () => {
   });
 
   test('active → missed once the deadline is behind us, and it stays put', async () => {
+    // POST refuses a past deadline (GR.7); PATCH is the deliberate escape
+    // hatch, so backdate through it.
     const created = await createGoal({
       label: 'gr7 missed',
       kind: 'custom',
       target: 100,
       currentValue: 5,
+      deadline: new Date(Date.now() + 30 * DAY).toISOString(),
+    });
+    const patched = await send<GoalView>(`/x/me/goals/${created.id}`, 'PATCH', {
       deadline: new Date(Date.now() - 2 * DAY).toISOString(),
     });
+    expect(patched.status).toBe(200);
     expect(findGoal((await getGoals()).goals, created.id).status).toBe('missed');
 
     // A second read is idempotent — the flip only ever advances an active row.

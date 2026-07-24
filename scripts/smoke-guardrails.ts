@@ -635,7 +635,8 @@ console.log(
 
 // The lazy ratchet, both directions. Reading is what settles them (§7.10).
 await req<GoalBody>(`/x/me/goals/${goalId}`, jsonInit('PATCH', { currentValue: 120 }));
-const overdueRes = await req<{ id: string }>(
+// POST refuses a past deadline outright (GR.7 validation)…
+const refused = await req<{ error: string }>(
   '/x/me/goals',
   jsonInit('POST', {
     label: `${TEXT_PREFIX} — goal past its deadline`,
@@ -645,8 +646,26 @@ const overdueRes = await req<{ id: string }>(
     deadline: new Date(now0 - DAY_MS).toISOString(),
   }),
 );
+check(refused.status === 400, `POST past-deadline goal returned ${refused.status}, expected 400`);
+check(refused.body.error === 'deadline_in_past', `past-deadline error ${refused.body.error}`);
+// …so create it dated tomorrow and backdate the deadline directly — the same
+// idiom as the baseline backdate above.
+const overdueRes = await req<{ id: string }>(
+  '/x/me/goals',
+  jsonInit('POST', {
+    label: `${TEXT_PREFIX} — goal past its deadline`,
+    kind: 'custom',
+    target: 100,
+    currentValue: 5,
+    deadline: new Date(now0 + DAY_MS).toISOString(),
+  }),
+);
 check(overdueRes.status === 201, `POST overdue goal returned ${overdueRes.status}`);
 const overdueId = overdueRes.body.id;
+await db
+  .update(meGoals)
+  .set({ deadline: new Date(now0 - DAY_MS) })
+  .where(eq(meGoals.id, overdueId));
 
 const goals2 = await req<GoalsBody>('/x/goals');
 const settled = goals2.body.goals.find((g) => g.id === goalId);
