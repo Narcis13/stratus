@@ -6,6 +6,10 @@ import type { TweetSignals } from '../replyBand.ts';
 export type PostStatus =
   | 'draft'
   | 'pending'
+  // A3.5: scheduled, but the USER pastes it at the slot — the publisher never
+  // claims it; → posted via POST /posts/scheduled/:id/mark-posted or the
+  // daily reconcile.
+  | 'manual'
   | 'segment'
   | 'publishing'
   | 'posted'
@@ -52,7 +56,8 @@ export interface ScheduledPostWithThread extends ScheduledPost {
 export interface CreateBody {
   text: string;
   scheduledFor?: string | null;
-  status?: 'draft' | 'pending';
+  /** `manual` requires scheduledFor and skips the URL surcharge guard (A3.5). */
+  status?: 'draft' | 'pending' | 'manual';
   mediaIds?: string[] | null;
   mediaNote?: string;
 }
@@ -509,7 +514,8 @@ export interface PostDraftResponse {
 export interface UpdateBody {
   text?: string;
   scheduledFor?: string | null;
-  status?: 'draft' | 'pending' | 'cancelled';
+  /** `manual` is rejected on thread members (manual_threads_unsupported). */
+  status?: 'draft' | 'pending' | 'manual' | 'cancelled';
   mediaIds?: string[] | null;
   /** S3 "visual made" marker; null clears it. */
   mediaNote?: string | null;

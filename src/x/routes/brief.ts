@@ -438,7 +438,9 @@ brief.get('/brief', async (c) => {
         and(
           gte(scheduledPosts.scheduledFor, todayStart),
           lt(scheduledPosts.scheduledFor, tomorrowStart),
-          inArray(scheduledPosts.status, ['pending', 'posted', 'failed']),
+          // A3.5: a `manual` row is a filled slot like any pending one — it
+          // shows in the plan and its anchor must not be re-proposed as a gap.
+          inArray(scheduledPosts.status, ['pending', 'manual', 'posted', 'failed']),
         ),
       )
       .orderBy(asc(scheduledPosts.scheduledFor)),
@@ -605,8 +607,9 @@ brief.get('/brief', async (c) => {
     .sort((a, b) => (b.metrics?.profileVisits ?? 0) - (a.metrics?.profileVisits ?? 0))
     .slice(0, LEADER_COUNT);
 
-  // Gaps compare against pending/posted only — a failed row still occupies the
-  // list (so the user sees what to fix) but its slot reads as unfilled.
+  // Gaps compare against pending/manual/posted only — a failed row still
+  // occupies the list (so the user sees what to fix) but its slot reads as
+  // unfilled.
   const slotted = scheduled.filter((s) => s.status !== 'failed' && s.scheduledFor !== null);
   const anchors = pickAnchors(slotted.length);
   const gapHours = findScheduleGaps(

@@ -96,7 +96,11 @@ interface BriefBody {
   pinnedWatch: PinnedWatchBody;
   monitor: MonitorBlock;
   replyQuota: { postedToday: number; target: { min: number; max: number } };
-  today: { anchors: number[]; gaps: BriefGap[] };
+  today: {
+    anchors: number[];
+    gaps: BriefGap[];
+    scheduled: Array<{ id: string; status: string }>;
+  };
   quests: {
     day: string;
     items: Quest[];
@@ -267,6 +271,43 @@ describe('brief quests (C9)', () => {
     const body = await getBrief();
     expect(body.quests.day).toBe(dayKey);
     expect(typeof body.quests.streak.current).toBe('number');
+  });
+});
+
+// A3.5 — a `manual` row is a filled slot: it must show in today's plan and its
+// anchor must vanish from the gap list. This is the one fixture in the file
+// that sits INSIDE the today-window on purpose; it is status 'manual', so the
+// monitor's pending-only cluster rule never sees it, and it is deleted before
+// the suite ends.
+describe('brief manual slots (A3.5)', () => {
+  const MANUAL_ID = 'a35-brief-manual-slot';
+
+  afterAll(async () => {
+    await db.delete(scheduledPosts).where(eq(scheduledPosts.id, MANUAL_ID));
+  });
+
+  test('a manual row shows in the plan and fills its anchor', async () => {
+    const before = await getBrief();
+    // Loud, never vacuous: with every suite cleaning its today-window calendar
+    // rows, at least one anchor is open here. A failure means a leaked fixture.
+    expect(before.today.gaps.length).toBeGreaterThan(0);
+    const hour = (before.today.gaps[0] as BriefGap).hour;
+
+    // tzOffsetMin=0 → today's local midnight is UTC midnight.
+    const utcMidnight = new Date(new Date().setUTCHours(0, 0, 0, 0));
+    await db.insert(scheduledPosts).values({
+      id: MANUAL_ID,
+      text: 'a35 manual slot fixture',
+      scheduledFor: new Date(utcMidnight.getTime() + hour * 3_600_000 + 12 * 60_000),
+      status: 'manual',
+      source: 'test',
+    });
+
+    const after = await getBrief();
+    const mine = after.today.scheduled.find((s) => s.id === MANUAL_ID);
+    expect(mine?.status).toBe('manual');
+    // The slot claims its nearest anchor, so that hour is no longer a gap.
+    expect(after.today.gaps.every((g) => g.hour !== hour)).toBe(true);
   });
 });
 

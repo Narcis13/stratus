@@ -195,3 +195,186 @@ describe('schedule-time advisory (GR.6)', () => {
     expect(res.body.warnings).toEqual([]);
   });
 });
+
+// A3.5 manual publish. Fixtures sit ~150 days out — clear of the GR.6 advisory
+// fixtures above (90–130 d) and the brief suite's monitor pair (~200 d), so no
+// cluster window overlaps another suite's rows.
+describe('manual publish (A3.5)', () => {
+  const DAY_MS = 24 * 3_600_000;
+  const at = (days: number, minutes = 0): string =>
+    new Date(Date.now() + days * DAY_MS + minutes * 60_000).toISOString();
+  const URL_TEXT = 'a35 manual link post, read this: https://example.com/essay';
+
+  async function createManual(text: string, when: string): Promise<Row & { updatedAt: string }> {
+    const res = await send<Row & { updatedAt: string }>('/x/posts/scheduled', 'POST', {
+      text,
+      scheduledFor: when,
+      status: 'manual',
+    });
+    expect(res.status).toBe(201);
+    createdIds.push(res.body.id);
+    return res.body;
+  }
+
+  test('create requires scheduledFor, exactly like pending', async () => {
+    const res = await send<{ error: string }>('/x/posts/scheduled', 'POST', {
+      text: 'a35 manual without a slot',
+      status: 'manual',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('scheduled_for_required_when_pending');
+  });
+
+  test('an unknown create status names manual in its error', async () => {
+    const res = await send<{ error: string }>('/x/posts/scheduled', 'POST', {
+      text: 'a35 bad status',
+      status: 'whenever',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('create_status_must_be_draft_pending_or_manual');
+  });
+
+  test('a URL is accepted at create — no API call, no surcharge (decision 5)', async () => {
+    const row = await createManual(URL_TEXT, at(150));
+    expect(row.status).toBe('manual');
+    expect(Array.isArray(row.warnings)).toBe(true);
+  });
+
+  test('a URL is accepted at PATCH while the row stays manual', async () => {
+    const row = await createManual('a35 manual, url arrives later', at(151));
+    const patched = await send<Row>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      text: `${URL_TEXT} v2`,
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body.status).toBe('manual');
+  });
+
+  test('manual→pending promotion re-checks the URL guard', async () => {
+    const row = await createManual(URL_TEXT, at(152));
+    const rejected = await send<{ error: string }>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      status: 'pending',
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toBe('url_in_text');
+    // Without the URL the same promotion goes through.
+    const promoted = await send<Row>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      text: 'a35 promoted back to the API path, link removed',
+      status: 'pending',
+    });
+    expect(promoted.status).toBe(200);
+    expect(promoted.body.status).toBe('pending');
+  });
+
+  test('manual PATCH final-state still requires scheduledFor', async () => {
+    const row = await createManual('a35 manual losing its slot', at(153));
+    const res = await send<{ error: string }>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      scheduledFor: null,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('scheduled_for_required_when_pending');
+  });
+
+  test('mark-posted flips manual→posted; a second call 409s on the posted row', async () => {
+    const row = await createManual('a35 manual, pasted and confirmed', at(154));
+    const marked = await send<Row & { postedTweetId: string | null }>(
+      `/x/posts/scheduled/${row.id}/mark-posted`,
+      'POST',
+    );
+    expect(marked.status).toBe(200);
+    expect(marked.body.status).toBe('posted');
+    // Decision 6 (checkpoint trap): the flip must never invent a tweet id —
+    // linking is the daily reconcile's job.
+    expect(marked.body.postedTweetId).toBeNull();
+
+    const again = await send<{ error: string }>(`/x/posts/scheduled/${row.id}/mark-posted`, 'POST');
+    expect(again.status).toBe(409);
+    expect(again.body.error).toBe('not_manual');
+
+    // Worker-owned lock still applies after the flip (§7.23).
+    const edit = await send<{ error: string }>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      text: 'too late',
+    });
+    expect(edit.status).toBe(409);
+  });
+
+  test('mark-posted refuses pending and draft rows', async () => {
+    const pending = await send<Row>('/x/posts/scheduled', 'POST', {
+      text: 'a35 pending row, publisher territory',
+      scheduledFor: at(156),
+      status: 'pending',
+    });
+    createdIds.push(pending.body.id);
+    const onPending = await send<{ error: string }>(
+      `/x/posts/scheduled/${pending.body.id}/mark-posted`,
+      'POST',
+    );
+    expect(onPending.status).toBe(409);
+    expect(onPending.body.error).toBe('not_manual');
+
+    const draft = await send<Row>('/x/posts/scheduled', 'POST', { text: 'a35 draft row' });
+    createdIds.push(draft.body.id);
+    const onDraft = await send<{ error: string }>(
+      `/x/posts/scheduled/${draft.body.id}/mark-posted`,
+      'POST',
+    );
+    expect(onDraft.status).toBe(409);
+    expect(onDraft.body.error).toBe('not_manual');
+  });
+
+  test('mark-posted: 400 on a malformed id, 404 on an absent one', async () => {
+    const bad = await send<{ error: string }>('/x/posts/scheduled/not-a-uuid/mark-posted', 'POST');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_id');
+
+    const gone = await send<{ error: string }>(
+      '/x/posts/scheduled/00000000-0000-4000-8000-00000000a350/mark-posted',
+      'POST',
+    );
+    expect(gone.status).toBe(404);
+    expect(gone.body.error).toBe('not_found');
+  });
+
+  test('posted stays un-PATCHable directly — mark-posted is the only transition', async () => {
+    const row = await createManual('a35 regression: no posted via PATCH', at(157));
+    const res = await send<{ error: string }>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      status: 'posted',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('status_not_settable_via_patch');
+  });
+
+  test('threads reject manual at create and at promotion (decision 7)', async () => {
+    const created = await send<{ error: string }>('/x/posts/threads', 'POST', {
+      segments: ['a35 thread head', 'a35 thread tail'],
+      scheduledFor: at(158),
+      status: 'manual',
+    });
+    expect(created.status).toBe(400);
+    expect(created.body.error).toBe('manual_threads_unsupported');
+
+    // The PATCH promotion path is closed too — a manual thread member would
+    // strand its tails (mark-posted flips one row; tails ride a pending head).
+    const thread = await send<{ segments: Array<{ id: string }> }>('/x/posts/threads', 'POST', {
+      segments: ['a35 draft thread head', 'a35 draft thread tail'],
+    });
+    expect(thread.status).toBe(201);
+    for (const s of thread.body.segments) createdIds.push(s.id);
+    const head = thread.body.segments[0] as { id: string };
+    const flipped = await send<{ error: string }>(`/x/posts/scheduled/${head.id}`, 'PATCH', {
+      scheduledFor: at(159),
+      status: 'manual',
+    });
+    expect(flipped.status).toBe(400);
+    expect(flipped.body.error).toBe('manual_threads_unsupported');
+  });
+
+  test('a manual row stays cancellable and deletable until posted', async () => {
+    const row = await createManual('a35 manual, cancelled then deleted', at(160));
+    const cancelled = await send<Row>(`/x/posts/scheduled/${row.id}`, 'PATCH', {
+      status: 'cancelled',
+    });
+    expect(cancelled.status).toBe(200);
+    const deleted = await send<undefined>(`/x/posts/scheduled/${row.id}`, 'DELETE');
+    expect(deleted.status).toBe(204);
+  });
+});

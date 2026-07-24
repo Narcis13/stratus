@@ -3,6 +3,11 @@
 // Status lifecycle:
 //   draft       no scheduled_for; not eligible for the publisher worker
 //   pending     scheduled_for set; publisher will pick it up at that minute
+//   manual      scheduled_for set; the USER posts it by hand at that minute
+//               (A3.5). The publisher claims `status='pending'` only, so a
+//               manual row is unclaimable by construction — no publish_mode
+//               column, no publisher edit. → posted via mark-posted below, or
+//               via the daily text-match reconcile.
 //   segment     thread tail row (§8.2, thread_position ≥ 2) — never claimed
 //               directly; the publisher drives it after the thread head posts.
 //               Text is editable until then; schedule/status ride with the head.
@@ -42,6 +47,7 @@ import { getActivePillars } from './pillars.ts';
 const STATUSES = [
   'draft',
   'pending',
+  'manual',
   'segment',
   'publishing',
   'posted',
@@ -51,7 +57,7 @@ const STATUSES = [
 type Status = (typeof STATUSES)[number];
 // States a client may write. `publishing`/`posted` are worker-owned;
 // `segment` rows are created only by POST /posts/threads.
-const WRITABLE_STATUSES = ['draft', 'pending', 'failed', 'cancelled'] as const;
+const WRITABLE_STATUSES = ['draft', 'pending', 'manual', 'failed', 'cancelled'] as const;
 
 const MAX_THREAD_SEGMENTS = 25;
 
@@ -73,15 +79,19 @@ calendar.post('/posts/scheduled', async (c) => {
   let status: Status;
   if (body.status === undefined || body.status === null) {
     status = scheduledFor ? 'pending' : 'draft';
-  } else if (body.status === 'draft' || body.status === 'pending') {
+  } else if (body.status === 'draft' || body.status === 'pending' || body.status === 'manual') {
     status = body.status;
   } else {
-    return c.json({ error: 'create_status_must_be_draft_or_pending' }, 400);
+    return c.json({ error: 'create_status_must_be_draft_pending_or_manual' }, 400);
   }
 
-  if (status === 'pending' && !scheduledFor) {
+  // A manual slot is still a slot — without a time there is nothing to remind.
+  if ((status === 'pending' || status === 'manual') && !scheduledFor) {
     return c.json({ error: 'scheduled_for_required_when_pending' }, 400);
   }
+  // Deliberately `pending` only, NOT `manual` (decision 5): the surcharge is
+  // billed on the API call, and a manual row is pasted by hand — no API call
+  // ever happens. Manual mode IS the sanctioned $0 link-post path.
   if (status === 'pending' && containsUrl(text)) {
     return c.json(
       {
@@ -263,6 +273,10 @@ calendar.post('/posts/threads', async (c) => {
   let status: Status;
   if (body.status === undefined || body.status === null) {
     status = scheduledFor ? 'pending' : 'draft';
+  } else if (body.status === 'manual') {
+    // Decision 7: manual mode v1 is single posts only — a manual thread is
+    // segment-by-segment paste choreography nobody asked for yet.
+    return c.json({ error: 'manual_threads_unsupported' }, 400);
   } else if (body.status === 'draft' || body.status === 'pending') {
     status = body.status;
   } else {
@@ -411,16 +425,26 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     if (!(WRITABLE_STATUSES as readonly string[]).includes(body.status)) {
       return c.json({ error: 'status_not_settable_via_patch' }, 400);
     }
+    // Decision 7 by construction: POST /posts/threads refuses `manual`, and a
+    // thread member flipped manual via PATCH would strand its tail segments
+    // (mark-posted flips one row; the publisher drives tails off a `pending`
+    // head only) — so the promotion path is closed here too.
+    if (body.status === 'manual' && existing.threadId) {
+      return c.json({ error: 'manual_threads_unsupported' }, 400);
+    }
     updates.status = body.status;
   }
 
   const finalStatus = updates.status ?? existing.status;
   const finalScheduledFor =
     updates.scheduledFor !== undefined ? updates.scheduledFor : existing.scheduledFor;
-  if (finalStatus === 'pending' && !finalScheduledFor) {
+  if ((finalStatus === 'pending' || finalStatus === 'manual') && !finalScheduledFor) {
     return c.json({ error: 'scheduled_for_required_when_pending' }, 400);
   }
   const finalText = updates.text ?? existing.text;
+  // `pending` only, NOT `manual` (decision 5): no API call, no surcharge — a
+  // URL rides free in a hand-pasted post. A manual→pending flip lands here
+  // with finalStatus 'pending', so promotion back to API publishing re-checks.
   if (finalStatus === 'pending' && containsUrl(finalText)) {
     return c.json(
       {
@@ -440,6 +464,30 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     .where(eq(scheduledPosts.id, id))
     .returning();
 
+  return c.json(row);
+});
+
+// The one sanctioned manual→posted transition (§7.23): the user pasted the
+// text into X and is telling us so. It flips status ONLY — it must NEVER
+// insert into posts_published (decision 6, the discovery-checkpoint trap):
+// discovery's since_id is max(posts_published.tweet_id), so writing a
+// user-supplied or DOM-known id here would silently skip every tweet posted
+// between that id and the real head. The daily pass discovers the tweet and
+// the manual reconcile (A3.6) links it back to this row by text match.
+// No body is read — there is deliberately no tweetId parameter to accept.
+calendar.post('/posts/scheduled/:id/mark-posted', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const [existing] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, id));
+  if (!existing) return c.json({ error: 'not_found' }, 404);
+  if (existing.status !== 'manual') return c.json({ error: 'not_manual' }, 409);
+
+  const [row] = await db
+    .update(scheduledPosts)
+    .set({ status: 'posted', updatedAt: new Date() })
+    .where(eq(scheduledPosts.id, id))
+    .returning();
   return c.json(row);
 });
 
