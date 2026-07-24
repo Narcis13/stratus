@@ -5,11 +5,13 @@ import {
   type RadarConfirm,
   type RadarVariantPasted,
   type RadarVariantsGet,
+  type SettingsSync,
   isManualDismiss,
   isNotifContextGet,
   isRadarConfirm,
   isRadarVariantPasted,
   isRadarVariantsGet,
+  isSettingsSync,
 } from './messages.ts';
 
 describe('isRadarConfirm', () => {
@@ -93,5 +95,19 @@ describe('isManualDismiss', () => {
     expect(isManualDismiss({ type: 'stratus/manual-dismiss', postId: 1 })).toBe(false);
     expect(isManualDismiss(null)).toBe(false);
     expect(isManualDismiss('stratus/manual-dismiss')).toBe(false);
+  });
+});
+
+describe('isSettingsSync', () => {
+  test('accepts a well-formed settings-sync message', () => {
+    const msg: SettingsSync = { type: 'stratus/settings-sync' };
+    expect(isSettingsSync(msg)).toBe(true);
+  });
+
+  test('rejects the wrong type and junk', () => {
+    expect(isSettingsSync({ type: 'stratus/launch-sync' })).toBe(false);
+    expect(isSettingsSync({})).toBe(false);
+    expect(isSettingsSync(null)).toBe(false);
+    expect(isSettingsSync('stratus/settings-sync')).toBe(false);
   });
 });

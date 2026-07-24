@@ -1,4 +1,5 @@
 import { type JSX, useEffect, useState } from 'react';
+import type { SettingsSync } from '../shared/messages.ts';
 import { CalendarPanel } from './Calendar.tsx';
 import { ChannelsPanel } from './Channels.tsx';
 import { ComposerPanel } from './Composer.tsx';
@@ -129,6 +130,13 @@ export function App(): JSX.Element {
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+
+  // UI.6: pull the mirrored settings blob once per panel open. Asking here
+  // rather than in the hook keeps it to ONE $0 GET however many consumers mount.
+  useEffect(() => {
+    const msg: SettingsSync = { type: 'stratus/settings-sync' };
+    void chrome.runtime.sendMessage(msg).catch(() => {});
   }, []);
 
   const configured = isConfigured(settings);

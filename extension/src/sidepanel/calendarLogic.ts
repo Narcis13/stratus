@@ -7,6 +7,8 @@
 import { type ActiveTimesGrid, audienceScoreFor } from '../shared/activeTimes.ts';
 import type { BestTimeCell, ScheduledPost } from '../shared/types.ts';
 import {
+  CADENCE_DEFAULTS,
+  type CadenceConfig,
   bestTimeCellScore,
   findScheduleGaps,
   jitterMinutes,
@@ -125,13 +127,17 @@ export function slotDateFor(dayStart: Date, hour: number, rand: () => number = M
 // anchors) and the drafts tray (newest first). `posts` are the windowed rows of
 // any status; `drafts` are the unscheduled drafts (caller filters `scheduledFor`
 // out). `audience` is the captured heatmap (a superset of ActiveTimesGrid, so
-// AudienceCapture feeds straight in), null when nothing was captured.
+// AudienceCapture feeds straight in), null when nothing was captured. `cfg` is
+// the mirrored cadence/gate config (UI.6) — the board's ghost anchors and the
+// Composer's "Best time" must read the same configured ladder or the two
+// surfaces disagree about which hours are open.
 export function buildWeekBoard(
   now: Date,
   posts: ScheduledPost[],
   drafts: ScheduledPost[],
   cells: BestTimeCell[],
   audience: ActiveTimesGrid | null,
+  cfg: CadenceConfig = CADENCE_DEFAULTS,
 ): WeekBoard {
   const nowMs = now.getTime();
   const today = startOfLocalDay(now);
@@ -149,7 +155,7 @@ export function buildWeekBoard(
     // anchors already claimed by a slot-holding post. Ghosts show only for
     // still-future hours (a past top-of-hour today isn't schedulable).
     const dayOccupied = occupied.filter((d) => isSameLocalDay(d, day));
-    const anchors = pickAnchors(dayOccupied.length);
+    const anchors = pickAnchors(dayOccupied.length, cfg);
     const openHours = findScheduleGaps(
       dayOccupied.map((d) => d.getHours() * 60 + d.getMinutes()),
       anchors,
@@ -170,9 +176,9 @@ export function buildWeekBoard(
       const audienceSignal = audienceScore != null && audienceScore > 0 ? audienceScore : null;
       ghosts.push({
         hour,
-        ownScore: bestTimeCellScore(cell),
+        ownScore: bestTimeCellScore(cell, cfg.bestTimeMinN),
         audienceScore,
-        hint: slotHint(cell, audienceSignal),
+        hint: slotHint(cell, audienceSignal, cfg.bestTimeMinN),
       });
     }
 

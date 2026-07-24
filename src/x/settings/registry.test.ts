@@ -315,6 +315,26 @@ describe('registry adapter + grouping', () => {
     }
   });
 
+  // The mirrored set is the extension's whole wire contract (UI.6): the
+  // background ships exactly these keys and `extension/src/shared/
+  // serverSettings.ts` holds the matching baked fallback for each. Asserting the
+  // exact list means a new mirrored key can't be added without also giving the
+  // panel/page something to fall back to — otherwise the knob silently does
+  // nothing on the client side.
+  test('the mirrored scope is exactly the keys the extension mirrors', () => {
+    const mirrored = SETTINGS_REGISTRY.filter((d) => d.scope === 'mirrored').map((d) => d.key);
+    expect(mirrored).toEqual([
+      'x.doctrine.anchors3',
+      'x.doctrine.anchors4',
+      'x.doctrine.ladderSwitchAt',
+      'x.gates.bestTimeMinN',
+      'x.mentions.panelRefreshCap',
+    ]);
+    // The server's own refresh cap is the real limit and stays server-side —
+    // the panel budget degrading to its baked value must never widen it.
+    expect(mirrored).not.toContain('x.mentions.serverRefreshCap');
+  });
+
   test('validation honors UI.3 ranges (fractional outperform ratio + bounds)', () => {
     expect(settingsRegistry.validate('x.people.mutualExchangeDays', 3)).toBeNull();
     expect(settingsRegistry.validate('x.people.mutualExchangeDays', 0)).toBe('out_of_range');

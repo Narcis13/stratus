@@ -105,6 +105,27 @@ describe('buildWeekBoard — ghost slots', () => {
     const late = buildWeekBoard(new Date(2026, 6, 20, 14, 0), [], [], [], null);
     expect(late.columns[0]?.ghosts.map((g) => g.hour)).toEqual([18]);
   });
+
+  test('ghosts follow the mirrored cadence config (UI.6)', () => {
+    // The board and the Composer must open the same hours: a configured ladder
+    // moves the ghosts, not just the "Best time" button.
+    const cfg = {
+      anchors3: [7, 12, 20],
+      anchors4: [6, 10, 15, 22],
+      ladderSwitchAt: 2,
+      bestTimeMinN: 3,
+    };
+    const board = buildWeekBoard(NOW, [], [], [], null, cfg);
+    expect(board.columns[1]?.ghosts.map((g) => g.hour)).toEqual([7, 12, 20]);
+    // Two claimed slots hit the configured switch → the 4/day ladder.
+    const posts = [
+      post({ id: 'a', status: 'pending', scheduledFor: localIso(NOW, 1, 6, 20) }),
+      post({ id: 'b', status: 'pending', scheduledFor: localIso(NOW, 1, 10, 20) }),
+    ];
+    expect(
+      buildWeekBoard(NOW, posts, [], [], null, cfg).columns[1]?.ghosts.map((g) => g.hour),
+    ).toEqual([15, 22]);
+  });
 });
 
 describe('buildWeekBoard — tier shading (hint propagation)', () => {

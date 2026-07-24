@@ -5,6 +5,7 @@ import {
   ANCHORS_3,
   ANCHORS_4,
   BEST_TIME_MIN_N,
+  CADENCE_DEFAULTS,
   audiencePeakHours,
   bestTimeCellScore,
   estimatePostCostUsd,
@@ -206,6 +207,57 @@ describe('audience-blended slots (A3.4)', () => {
     expect(audiencePeakHours(aud, 4)).toEqual([18, 21]); // tie → earlier first
     expect(audiencePeakHours(aud, 4, 1)).toEqual([18]);
     expect(audiencePeakHours(aud, 0)).toEqual([]); // Sunday is all-cold → no peaks
+  });
+});
+
+describe('mirrored cadence config (UI.6)', () => {
+  const fixedJitter = () => 0;
+  const custom = {
+    anchors3: [7, 12, 20],
+    anchors4: [6, 10, 15, 22],
+    ladderSwitchAt: 2,
+    bestTimeMinN: 6,
+  };
+
+  test('CADENCE_DEFAULTS reproduces the baked ladder', () => {
+    expect(CADENCE_DEFAULTS.anchors3).toEqual(ANCHORS_3);
+    expect(CADENCE_DEFAULTS.anchors4).toEqual(ANCHORS_4);
+    expect(CADENCE_DEFAULTS.bestTimeMinN).toBe(BEST_TIME_MIN_N);
+  });
+
+  test('a custom ladderSwitchAt flips the ladder at its own fill count', () => {
+    expect(pickAnchors(1, custom)).toEqual(custom.anchors3);
+    expect(pickAnchors(2, custom)).toEqual(custom.anchors4); // baked switch is 4
+    expect(pickAnchors(2)).toEqual(ANCHORS_3); // omitting cfg is unchanged
+  });
+
+  test('suggestSlotDate walks the configured anchors', () => {
+    const now = new Date(2026, 5, 18, 5, 0); // Thu 05:00, before every anchor
+    expect(suggestSlotDate(now, [], 7, fixedJitter, custom)?.getHours()).toBe(7);
+    expect(suggestSlotDate(now, [], 7, fixedJitter)?.getHours()).toBe(9);
+  });
+
+  test('suggestBestSlotDate ranks over the configured anchors and gate', () => {
+    const now = new Date(2026, 5, 18, 5, 0);
+    // n=5 clears the baked gate of 3 but not the configured gate of 6, so the
+    // same cells rank the slot under the custom config and don't under it.
+    const cells = [cell(4, 20, 5, 900), cell(4, 12, 5, 300)];
+    expect(
+      suggestBestSlotDate(now, [], cells, 0, fixedJitter, null, {
+        ...custom,
+        bestTimeMinN: 3,
+      })?.getHours(),
+    ).toBe(20);
+    // Gate at 6 → nothing is measured → earliest configured anchor wins.
+    expect(suggestBestSlotDate(now, [], cells, 0, fixedJitter, null, custom)?.getHours()).toBe(7);
+  });
+
+  test('a raised gate hides a cell from both the score and the hint', () => {
+    const c = cell(4, 9, 5, 300);
+    expect(bestTimeCellScore(c, custom.bestTimeMinN)).toBeNull();
+    expect(slotHint(c, 0.9, custom.bestTimeMinN)).toBe('audience');
+    expect(topCellsForWeekday([c], 4, 3, custom.bestTimeMinN)).toEqual([]);
+    expect(topCellsForWeekday([c], 4)).toEqual([c]); // baked gate still passes it
   });
 });
 

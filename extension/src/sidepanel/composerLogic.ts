@@ -7,18 +7,37 @@
 // logic stays deterministic in tests.
 
 import { type ActiveTimesGrid, audienceScoreFor } from '../shared/activeTimes.ts';
+import { SERVER_DEFAULTS } from '../shared/serverSettings.ts';
 import type { BestTimeCell } from '../shared/types.ts';
 import { addDays, isSameLocalDay, startOfLocalDay } from './datetime.ts';
 
-// Cadence anchors mirror md_to_schedule.ts / brief.ts — 3/day and 4/day local
-// hours. Kept in sync by hand (both are tiny constant ladders).
-export const ANCHORS_3 = [9, 13, 18];
-export const ANCHORS_4 = [8, 12, 16, 20];
+// Cadence anchors — 3/day and 4/day local hours. These are the module DEFAULTS;
+// UI.6 made them the mirrored x.doctrine.anchors3/anchors4/ladderSwitchAt
+// settings, so a caller holding the blob (Composer, Calendar) passes the
+// configured ladder in and the hand-sync with brief.ts / md_to_schedule.ts is
+// gone. The baked values live in shared/serverSettings.ts — one owner.
+export const ANCHORS_3 = SERVER_DEFAULTS.anchors3;
+export const ANCHORS_4 = SERVER_DEFAULTS.anchors4;
 
-// 4+ posts already slotted that day means the 4/day ladder, else 3/day —
-// identical rule to brief.pickAnchors so the Composer and the brief agree.
-export function pickAnchors(filledSlotCount: number): number[] {
-  return filledSlotCount >= 4 ? ANCHORS_4 : ANCHORS_3;
+/** The mirrored knobs the cadence + best-time helpers read. Structurally a
+ *  subset of ServerConfig, so the hook's value passes straight in. */
+export interface CadenceConfig {
+  anchors3: number[];
+  anchors4: number[];
+  ladderSwitchAt: number;
+  bestTimeMinN: number;
+}
+
+export const CADENCE_DEFAULTS: CadenceConfig = SERVER_DEFAULTS;
+
+// `ladderSwitchAt`+ posts already slotted that day means the 4/day ladder, else
+// 3/day — identical rule (and identical config shape) to brief.pickAnchors so
+// the Composer, the Calendar board and the brief agree.
+export function pickAnchors(
+  filledSlotCount: number,
+  cfg: CadenceConfig = CADENCE_DEFAULTS,
+): number[] {
+  return filledSlotCount >= cfg.ladderSwitchAt ? cfg.anchors4 : cfg.anchors3;
 }
 
 // Assign each post (minutes-of-day) to its nearest anchor hour; the anchors left
@@ -49,11 +68,12 @@ export function suggestSlotDate(
   scheduledLocal: Date[],
   horizonDays = 7,
   rand: () => number = Math.random,
+  cfg: CadenceConfig = CADENCE_DEFAULTS,
 ): Date | null {
   for (let d = 0; d <= horizonDays; d++) {
     const day = startOfLocalDay(addDays(now, d));
     const dayPosts = scheduledLocal.filter((s) => isSameLocalDay(s, day));
-    const anchors = pickAnchors(dayPosts.length);
+    const anchors = pickAnchors(dayPosts.length, cfg);
     const gaps = findScheduleGaps(
       dayPosts.map((p) => p.getHours() * 60 + p.getMinutes()),
       anchors,
@@ -71,8 +91,10 @@ export function suggestSlotDate(
 // ------------------------------------------------------------- best times S0.4
 
 // Advice gate: a cell with fewer measured posts is "no data", not a
-// recommendation — mirrors BEST_TIME_MIN_N on the server.
-export const BEST_TIME_MIN_N = 3;
+// recommendation. The DEFAULT — UI.6 mirrors x.gates.bestTimeMinN, the very key
+// /metrics/best-times and the brief's cadence gaps read, so the panel can't sit
+// on a thinner bar than the page.
+export const BEST_TIME_MIN_N = SERVER_DEFAULTS.bestTimeMinN;
 
 // The one scalar a cell is ranked by — age-normalized rate, else raw views.
 // Null below the n gate or with no view data.
@@ -114,12 +136,13 @@ export function suggestBestSlotDate(
   horizonDays = 7,
   rand: () => number = Math.random,
   audience?: ActiveTimesGrid | null,
+  cfg: CadenceConfig = CADENCE_DEFAULTS,
 ): Date | null {
   const candidates: Array<{ date: Date; score: number | null; audienceScore: number | null }> = [];
   for (let d = 0; d <= horizonDays; d++) {
     const day = startOfLocalDay(addDays(now, d));
     const dayPosts = scheduledLocal.filter((s) => isSameLocalDay(s, day));
-    const anchors = pickAnchors(dayPosts.length);
+    const anchors = pickAnchors(dayPosts.length, cfg);
     const gaps = findScheduleGaps(
       dayPosts.map((p) => p.getHours() * 60 + p.getMinutes()),
       anchors,
@@ -131,7 +154,7 @@ export function suggestBestSlotDate(
       const cell = cells.find((c) => c.weekday === day.getDay() && c.hour === hour);
       candidates.push({
         date: cand,
-        score: bestTimeCellScore(cell),
+        score: bestTimeCellScore(cell, cfg.bestTimeMinN),
         audienceScore: audience ? audienceScoreFor(audience, day.getDay(), hour) : null,
       });
     }
@@ -164,8 +187,9 @@ export function suggestBestSlotDate(
 export function slotHint(
   cell: BestTimeCell | undefined,
   audienceScore: number | null,
+  minN = BEST_TIME_MIN_N,
 ): 'measured' | 'audience' | null {
-  if (bestTimeCellScore(cell) != null) return 'measured';
+  if (bestTimeCellScore(cell, minN) != null) return 'measured';
   if (audienceScore != null) return 'audience';
   return null;
 }

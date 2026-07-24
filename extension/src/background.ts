@@ -56,6 +56,7 @@ import {
   isRadarReport,
   isRadarVariantPasted,
   isRadarVariantsGet,
+  isSettingsSync,
 } from './shared/messages.ts';
 import {
   RADAR_DISMISSED_KEY,
@@ -69,6 +70,7 @@ import {
   mergeSightings,
   stampTiers,
 } from './shared/radar.ts';
+import { SERVER_SETTINGS_KEY } from './shared/serverSettings.ts';
 import type {
   MentionsResponse,
   ReplyVariant,
@@ -211,6 +213,53 @@ async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
     data = undefined;
   }
   return { ok: true, status: r.status, data };
+}
+
+// ------------------------------------------------- mirrored settings (UI.6)
+//
+// The server-side knobs marked scope:'mirrored' ride to the panel and the page
+// through one flat blob in chrome.storage.local. The background is the only
+// fetcher (it owns the Authorization header) and the only writer (§7.24/7.25);
+// readers resolve the blob through shared/serverSettings.ts.
+//
+// Refresh cadence mirrors the rank map: a 5-min TTL checked on demand, so the
+// service-worker start and the 15-min periodic alarm cost at most one $0 GET
+// per window. A `stratus/settings-sync` message FORCES a refresh — it rides on
+// panel mount and on every settings write, which is what makes a saved knob
+// visible without a rebuild or a restart.
+const SERVER_SETTINGS_TTL_MS = 5 * 60 * 1000;
+let serverSettingsAt = 0;
+let serverSettingsInflight: Promise<void> | null = null;
+
+async function syncServerSettings(force: boolean): Promise<void> {
+  if (force) {
+    // A save must not be answered by a pull that started before it: let any
+    // in-flight refresh settle, then invalidate and fetch again.
+    if (serverSettingsInflight) await serverSettingsInflight.catch(() => {});
+    serverSettingsAt = 0;
+  }
+  if (Date.now() - serverSettingsAt < SERVER_SETTINGS_TTL_MS) return;
+  if (serverSettingsInflight) return serverSettingsInflight;
+  serverSettingsInflight = (async () => {
+    const res = await handleApiRequest({
+      type: 'stratus/api',
+      method: 'GET',
+      path: '/x/settings/values',
+      query: { scope: 'mirrored' },
+    });
+    // An unconfigured or unreachable server keeps the last good blob (and, on a
+    // cold start, none at all) — every reader falls back to baked defaults, so
+    // a dead server never breaks a suggestion. Only a success advances the
+    // stamp, so a failure retries on the next trigger instead of going quiet.
+    if (!res.ok) return;
+    const values = res.data;
+    if (typeof values !== 'object' || values === null || Array.isArray(values)) return;
+    await chrome.storage.local.set({ [SERVER_SETTINGS_KEY]: values });
+    serverSettingsAt = Date.now();
+  })().finally(() => {
+    serverSettingsInflight = null;
+  });
+  return serverSettingsInflight;
 }
 
 // --------------------------------------------------------------- radar (§7.2)
@@ -723,11 +772,15 @@ async function dismissManualDue(postId: string): Promise<void> {
 chrome.alarms.create(LAUNCH_SYNC_ALARM, { periodInMinutes: LAUNCH_SYNC_PERIOD_MIN });
 void syncLaunchAlarms();
 void syncManualAlarms();
+void syncServerSettings(false);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === LAUNCH_SYNC_ALARM) {
     void syncLaunchAlarms();
     void syncManualAlarms();
+    // TTL-guarded, so riding the 15-min alarm costs nothing when a panel mount
+    // already forced a refresh — the settings blob has no alarm of its own.
+    void syncServerSettings(false);
     return;
   }
   const manualId = parseManualAlarm(alarm.name);
@@ -968,6 +1021,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (isManualDismiss(msg)) {
     void enqueueManual(() => dismissManualDue(msg.postId)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isSettingsSync(msg)) {
+    void syncServerSettings(true).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );

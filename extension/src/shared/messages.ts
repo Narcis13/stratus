@@ -256,6 +256,21 @@ export function isManualDismiss(msg: unknown): msg is ManualDismiss {
   return m.type === 'stratus/manual-dismiss' && typeof m.postId === 'string';
 }
 
+// --- Mirrored server settings (UI.6). The background is the single fetcher and
+// the single writer of the `settings:server` blob; this message asks it to
+// refresh NOW rather than wait for its TTL. Sent on panel mount and after every
+// settings write (settingsClient), so a saved knob reaches the panel and the
+// page without a rebuild or a browser restart.
+
+export interface SettingsSync {
+  type: 'stratus/settings-sync';
+}
+
+export function isSettingsSync(msg: unknown): msg is SettingsSync {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/settings-sync';
+}
+
 // --- Notifications surface (C10) — content script → background, the whole
 // augmentation payload for x.com/notifications in one round trip: the mention
 // rows stratus already pulled (keyed by the REPLY's tweet id, carrying my

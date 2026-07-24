@@ -35,6 +35,7 @@ import {
   localInputToIso,
   startOfLocalDay,
 } from './datetime.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
 import type { Settings } from './storage.ts';
 
 interface Props {
@@ -128,6 +129,10 @@ export function ComposerPanel({
   onEdit,
   onMakeVisual,
 }: Props): JSX.Element {
+  // The mirrored cadence ladder + best-time gate (UI.6) — same numbers the
+  // brief and /metrics/best-times read, so a PATCHed anchor moves this picker
+  // after one background sync instead of at the next extension rebuild.
+  const server = useServerSettings();
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
   const [segments, setSegments] = useState<string[]>(['', '']);
@@ -296,7 +301,7 @@ export function ComposerPanel({
     }
     return new Date().getDay();
   })();
-  const topSlots = topCellsForWeekday(bestCells, selectedWeekday);
+  const topSlots = topCellsForWeekday(bestCells, selectedWeekday, 3, server.bestTimeMinN);
 
   // A3.4 — captured audience peaks for the scheduling day (presence, not
   // measured advice — always labeled "audience") + a staleness/absence nudge.
@@ -373,8 +378,16 @@ export function ComposerPanel({
       const now = new Date();
       const slotted = await readSlottedPending(now);
       const slot = best
-        ? suggestBestSlotDate(now, slotted, bestCells, SLOT_HORIZON_DAYS, Math.random, audience)
-        : suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS);
+        ? suggestBestSlotDate(
+            now,
+            slotted,
+            bestCells,
+            SLOT_HORIZON_DAYS,
+            Math.random,
+            audience,
+            server,
+          )
+        : suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS, Math.random, server);
       if (!slot) {
         setError(`No open slot in the next ${SLOT_HORIZON_DAYS} days — every anchor is filled.`);
         return;
@@ -387,13 +400,13 @@ export function ComposerPanel({
         const audScore = audience
           ? audienceScoreFor(audience, slot.getDay(), slot.getHours())
           : null;
-        const hint = slotHint(cell, audScore);
+        const hint = slotHint(cell, audScore, server.bestTimeMinN);
         const where = `${WEEKDAYS[slot.getDay()]} ${fmtHour(slot.getHours())}`;
         // Label WHY the slot won (§7.19/decision 10): measured own-data, else
         // captured audience presence, else the earliest-open fallback.
         setNotice(
           hint === 'measured'
-            ? `Best open slot: ${where} · ${fmtViews(bestTimeCellScore(cell) ?? 0)} avg views/day (n=${cell?.posts}).`
+            ? `Best open slot: ${where} · ${fmtViews(bestTimeCellScore(cell, server.bestTimeMinN) ?? 0)} avg views/day (n=${cell?.posts}).`
             : hint === 'audience'
               ? `Best open slot: ${where} · audience peak (no measured data yet).`
               : 'No measured best-time yet — filled the earliest open slot instead.',

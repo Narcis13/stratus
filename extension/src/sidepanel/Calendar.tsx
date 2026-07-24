@@ -11,6 +11,7 @@ import {
 } from './calendarLogic.ts';
 import { suggestBestSlotDate } from './composerLogic.ts';
 import { addDays, formatDayLabel, formatTime, startOfLocalDay } from './datetime.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
 import type { Settings } from './storage.ts';
 
 interface Props {
@@ -38,6 +39,9 @@ function ghostLabel(g: GhostSlot): string {
 }
 
 export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
+  // The mirrored cadence ladder + best-time gate (UI.6) — the board's ghost
+  // anchors and the Composer's "Best time" read the same configured numbers.
+  const server = useServerSettings();
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
   const [drafts, setDrafts] = useState<ScheduledPost[]>([]);
   const [bestCells, setBestCells] = useState<BestTimeCell[]>([]);
@@ -133,7 +137,7 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
     [settings, load],
   );
 
-  const board = buildWeekBoard(new Date(), posts, drafts, bestCells, audience);
+  const board = buildWeekBoard(new Date(), posts, drafts, bestCells, audience, server);
 
   // "→ best slot": the audience-blended ranking over every open anchor (§7.19 —
   // own measured cells first, captured audience second, earliest third).
@@ -145,6 +149,7 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
       BOARD_DAYS,
       Math.random,
       audience,
+      server,
     );
     if (!slot) {
       setError(`No open slot in the next ${BOARD_DAYS} days — every anchor is filled.`);
