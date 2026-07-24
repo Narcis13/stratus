@@ -16,6 +16,7 @@ import {
   replyDrafts,
   scheduledPosts,
 } from '../db/schema.ts';
+import { getSetting } from '../settings/registry.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 
@@ -370,12 +371,16 @@ metrics.get('/metrics/best-times', async (c) => {
   }
 
   const { measuredPosts, cells } = await loadBestTimeCells(tzOffsetMin);
+  // UI.4: the advice gate is settings-backed (`x.gates.bestTimeMinN`, default
+  // BEST_TIME_MIN_N). Sync store read at request time; the brief's cadence gaps
+  // read the same key so both surfaces gate identically.
+  const minN = getSetting<number>('x.gates.bestTimeMinN');
 
   return c.json({
     measuredPosts,
     tzOffsetMin,
-    minN: BEST_TIME_MIN_N,
-    top: rankBestTimes(cells).slice(0, 5),
+    minN,
+    top: rankBestTimes(cells, minN).slice(0, 5),
     cells,
   });
 });

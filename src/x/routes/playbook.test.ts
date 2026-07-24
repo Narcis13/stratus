@@ -24,6 +24,7 @@ import {
 import { buildIdeaEffectiveness } from '../playbook.ts';
 import { buildPostDraftInput } from '../posts/prompt.ts';
 import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
+import { getSetting, resetSettings, setSettings } from '../settings/registry.ts';
 import {
   loadIdeaRows,
   loadPostGuidance,
@@ -828,4 +829,67 @@ describe('loadTimelineFunnel (HV.5)', () => {
     const f = await funnel();
     expect(f.cells.every((c) => c.rate === null)).toBe(true);
   });
+});
+
+// UI.4: `x.gates.minCellN` is the DEFAULT gate for a bare read; `?minN=` still
+// wins per read. Demonstrated on the funnel because its population is entirely
+// this block's own rows (the HV.5 block above deleted its own in afterAll), so
+// a 12-sample cell is buildable without moving any other suite's medians. Last
+// in the file for the same reason the HV.5 block is.
+describe('x.gates.minCellN is the default playbook gate', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000f3';
+
+  beforeAll(async () => {
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: 'timeline', mode: 'timeline', scope: 'passive' })
+      .onConflictDoNothing();
+    // 12 distinct sightings, all banding the same way — one cell, n = 12.
+    await db.insert(harvestRows).values(
+      Array.from({ length: 12 }, (_, i) => ({
+        runId: RUN_ID,
+        tweetId: `ui4_${i}`,
+        handle: 'ui4_author',
+        mode: 'timeline',
+        text: 'a plain statement about shipping',
+        views: 5000,
+        comments: 3,
+        tweetTime: at(150 + i),
+        capturedAt: at(120 + i),
+      })),
+    );
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+    resetSettings({ keys: ['x.gates.minCellN'] });
+  });
+
+  test('PATCHing the gate to 10 flips the 12-sample cell to sufficient', async () => {
+    const thin = await funnelCells();
+    expect(thin.some((c) => c.seen >= 12)).toBe(true);
+    expect(thin.every((c) => c.rate === null)).toBe(true); // default gate 20
+
+    setSettings({ 'x.gates.minCellN': 10 });
+    const open = await funnelCells();
+    expect(open.find((c) => c.seen >= 12)?.rate).not.toBeNull();
+
+    // …and an explicit ?minN= still overrides the configured baseline.
+    const strict = await funnelCells(20);
+    expect(strict.every((c) => c.rate === null)).toBe(true);
+  });
+
+  async function funnelCells(
+    minN?: number,
+  ): Promise<Array<{ band: string | null; seen: number; rate: number | null }>> {
+    const res = await app.request(`/x/playbook${minN === undefined ? '' : `?minN=${minN}`}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      minN: number;
+      timelineFunnel: { cells: Array<{ band: string | null; seen: number; rate: number | null }> };
+    };
+    expect(body.minN).toBe(minN ?? getSetting<number>('x.gates.minCellN'));
+    return body.timelineFunnel.cells;
+  }
 });

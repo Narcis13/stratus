@@ -45,6 +45,7 @@ import { replyListsRouter } from './routes/replyLists.ts';
 import { settingsRouter } from './routes/settings.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
+import { getSetting } from './settings/registry.ts';
 import { DAILY_METRICS_HEARTBEAT, startDailyMetrics } from './workers/dailyMetrics.ts';
 import { PUBLISHER_HEARTBEAT, startPublisher } from './workers/publisher.ts';
 
@@ -184,18 +185,28 @@ export function startXWorkers(): XWorkers {
   const stops: Array<() => void | Promise<void>> = [];
   const heartbeats: string[] = [];
 
+  // UI.4: worker cadence is settings-backed, read ONCE here (`appliesOn:'restart'`
+  // — decision 10). No hot-reloading timers: a PATCH shows a "takes effect on
+  // restart" hint in the Settings tab and lands on the next boot.
+  const publisherIntervalSec = getSetting<number>('x.workers.publisherIntervalSec');
+  const dailyMetricsHourUtc = getSetting<number>('x.workers.dailyMetricsHourUtc');
+  console.log(
+    `workers: publisher every ${publisherIntervalSec}s, ` +
+      `daily pass at ${String(dailyMetricsHourUtc).padStart(2, '0')}:00 UTC (restart to change)`,
+  );
+
   // Heartbeats: /healthz flags (503) when a worker stops beating — a dead
   // publisher must page the deploy check, not fail silently.
   registerHeartbeat(PUBLISHER_HEARTBEAT, 5 * 60_000);
   heartbeats.push(PUBLISHER_HEARTBEAT);
-  stops.push(startPublisher(cfg));
+  stops.push(startPublisher({ ...cfg, intervalMs: publisherIntervalSec * 1000 }));
 
   // One daily 03:00 UTC pass that discovers own tweets/replies and snapshots
   // each once at ~24h (replaces the old 60s metricsPoll + 24h ownReconcile).
   if (process.env.DAILY_METRICS_ENABLED !== 'false') {
     registerHeartbeat(DAILY_METRICS_HEARTBEAT, 25 * 60 * 60_000);
     heartbeats.push(DAILY_METRICS_HEARTBEAT);
-    stops.push(startDailyMetrics(cfg));
+    stops.push(startDailyMetrics({ ...cfg, hourUtc: dailyMetricsHourUtc }));
   } else {
     console.log(
       'dailyMetrics: timer disabled via DAILY_METRICS_ENABLED=false (manual POST /x/posts/reconcile still works)',

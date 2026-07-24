@@ -359,6 +359,17 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
     async () => route('/x/me'),
   );
 
+  server.registerTool(
+    'x_settings',
+    {
+      title: 'Settings catalog',
+      description:
+        'Every tunable knob with its group, label, description, valid range, current value and whether it is still the default — doctrine cadence, quest targets, follow-up windows, stat gates, radar TTL, worker cadence, display limits. Read this before changing anything: the description carries the "why" and the range is the hard bound. Free, local read.',
+      inputSchema: {},
+    },
+    async () => route('/x/settings'),
+  );
+
   // -------------------------------------------------------------- Write tier
   // Tiny, never X-billed. The write ceiling is a DRAFT calendar row — MCP can
   // propose, only the human promotes it to `pending`.
@@ -463,5 +474,21 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
       if (scheduledFor !== undefined) body.scheduledFor = scheduledFor;
       return route('/x/posts/scheduled', { method: 'POST', body });
     },
+  );
+
+  server.registerTool(
+    'x_update_setting',
+    {
+      title: 'Change one setting',
+      description:
+        'Set a single knob to a new value (see x_settings for keys, ranges and what each one does). The route validates against the registry, so a value outside the knob’s range is refused with a 400 — the money and policy ceilings are not negotiable from here, and the guards that are never settings (URL surcharge, retire-before-snapshot, claim-before-call, token rotation) have no key at all. Free, local write.',
+      inputSchema: {
+        key: z.string().describe('Dot-namespaced setting key, e.g. x.gates.minCellN.'),
+        value: z
+          .union([z.number(), z.boolean(), z.string(), z.array(z.number())])
+          .describe('The new value; its type must match the knob’s declared type.'),
+      },
+    },
+    async ({ key, value }) => route('/x/settings', { method: 'PATCH', body: { [key]: value } }),
   );
 }

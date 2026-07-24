@@ -9,6 +9,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { Hono } from 'hono';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { metrics } from './metrics.ts';
 
 const app = new Hono();
@@ -78,5 +79,19 @@ describe('GET /x/metrics/best-times (S0.4)', () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toBe('invalid_tz_offset_min');
+  });
+
+  // UI.4: the advice gate is `x.gates.bestTimeMinN`. Raising it can only shrink
+  // `top`, which holds for any DB contents — the assertion this file can make.
+  test('honors a PATCHed best-time gate', async () => {
+    try {
+      setSettings({ 'x.gates.bestTimeMinN': 20 });
+      const res = await app.request('/x/metrics/best-times?tzOffsetMin=0');
+      const body = (await res.json()) as BestTimesBody;
+      expect(body.minN).toBe(20);
+      expect(body.top.every((c) => c.posts >= 20)).toBe(true);
+    } finally {
+      resetSettings({ keys: ['x.gates.bestTimeMinN'] });
+    }
   });
 });

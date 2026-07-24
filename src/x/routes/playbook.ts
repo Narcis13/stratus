@@ -74,6 +74,7 @@ import {
 } from '../playbook.ts';
 import { loadPromptSafe, renderPrompt } from '../prompts/registry.ts';
 import type { PostContext, ReplyVariant } from '../replies/prompt.ts';
+import { getSetting } from '../settings/registry.ts';
 import {
   TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
   TEMPLATE_SCHEMA,
@@ -511,17 +512,28 @@ async function loadOriginRows(): Promise<{
 
 // -------------------------------------------------------- guidance loaders
 
+/** UI.4: the configured per-cell sample gate (`x.gates.minCellN`), read from the
+ *  settings store at request time — sync, Map-cached, no new billed read. The
+ *  registry default is DEFAULT_MIN_CELL_N; `?minN=` still overrides per read. */
+function configuredMinCellN(): number {
+  return getSetting<number>('x.gates.minCellN');
+}
+
 /** Reply-prompt guidance line (gated topAngles over the full posted history).
- *  Always uses the DEFAULT gate — a prompt must never be steered by a lower
- *  bar than the page shows. */
+ *  Always uses the CONFIGURED gate, never a lower one — a prompt must not be
+ *  steered by a thinner bar than the page shows. */
 export async function loadReplyGuidance(): Promise<string | null> {
   const rows = await loadReplyRows();
-  return topAngles(buildAngleEffectiveness(toAngleRows(rows, new Map())).overall);
+  return topAngles(
+    buildAngleEffectiveness(toAngleRows(rows, new Map()), configuredMinCellN()).overall,
+  );
 }
 
 /** Post-drafter guidance line (gated topStructures over own-winner templates). */
 export async function loadPostGuidance(): Promise<string | null> {
-  return topStructures(buildStructureEffectiveness(await loadStructureRows()));
+  return topStructures(
+    buildStructureEffectiveness(await loadStructureRows(), configuredMinCellN()),
+  );
 }
 
 /** The playbook informs a draft; it never blocks one. Same discipline as the
@@ -555,7 +567,10 @@ export async function loadPostGuidanceSafe(): Promise<string | null> {
 export const playbook = new Hono();
 
 playbook.get('/playbook', async (c) => {
-  let minN = DEFAULT_MIN_CELL_N;
+  // UI.4: the store-configured gate is the default; `?minN=` still wins for a
+  // one-off exploratory read (the plan's contract — the knob moves the baseline,
+  // the query param moves this request).
+  let minN = configuredMinCellN();
   const minNStr = c.req.query('minN');
   if (minNStr !== undefined) {
     const n = Number(minNStr);
@@ -614,7 +629,7 @@ playbook.get('/playbook', async (c) => {
       new Date(),
       minN,
     ),
-    // What the prompts would inject right now (always the default gate).
+    // What the prompts would inject right now (at this read's gate).
     guidance: {
       reply: topAngles(angleEffectiveness.overall),
       post: topStructures(structures),

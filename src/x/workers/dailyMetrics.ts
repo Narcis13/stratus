@@ -58,6 +58,7 @@ import type { XTweet } from '../endpoints.ts';
 import { getMe, getTweetsByIds, getUserTweets } from '../endpoints.ts';
 import { pullMentions } from '../mentions.ts';
 import { matchManualRows } from '../posts/manualReconcile.ts';
+import { getSetting } from '../settings/registry.ts';
 import { getValidAccessToken } from '../token-store.ts';
 
 export interface DailyMetricsDeps {
@@ -76,6 +77,12 @@ export interface RunOptions {
   fullScan?: boolean;
   /** Max tweets to discover this pass. Default 500 (X timeline cap is 3,200). */
   maxResults?: number;
+  /** UI.4 winner re-read bounds. Omitted → read from the settings store at the
+   *  start of the run (`x.workers.winnerRereadMinViews` / `…Cap`), so a change
+   *  lands on the next daily pass without a restart. Explicit values are for
+   *  tests and one-off manual runs. */
+  winnerRereadMinViews?: number;
+  winnerRereadCap?: number;
 }
 
 export interface RunResult {
@@ -115,11 +122,12 @@ const DEFAULT_MAX_RESULTS = 500;
 const SNAPSHOT_BATCH = 100; // GET /2/tweets?ids= accepts ≤100 ids
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_HOUR_UTC = 3;
-// Bounded winner re-read (§8.4): tweets whose first snapshot cleared this view
-// count get ONE extra read at day 7+ — which content compounds is worth
-// exactly ≤ 5 × $0.001/day, no more.
-const WINNER_REREAD_MIN_VIEWS = Number(process.env.WINNER_REREAD_MIN_VIEWS ?? '500');
-const WINNER_REREAD_CAP = 5;
+// Bounded winner re-read (§8.4): tweets whose first snapshot cleared a view
+// floor get ONE extra read at day 7+ — which content compounds is worth exactly
+// ≤ cap × $0.001/day, no more. UI.4: the floor and the cap are settings
+// (`x.workers.winnerRereadMinViews` / `…Cap`, the floor defaulting from
+// WINNER_REREAD_MIN_VIEWS), read at the start of each run. The 7-day age is not
+// a knob — it's what makes the series comparable across posts.
 const WINNER_REREAD_MIN_AGE_MS = 7 * DAY_MS;
 // X nulls non_public/organic on owned posts after 30 days and can return them
 // unstorable past that. Now that we snapshot regardless of age, only request the
@@ -181,7 +189,10 @@ export async function runDailyMetrics(
   }
 
   await snapshotDue(token, result);
-  await rereadWinners(token, result);
+  await rereadWinners(token, result, {
+    minViews: runOpts.winnerRereadMinViews ?? getSetting<number>('x.workers.winnerRereadMinViews'),
+    cap: runOpts.winnerRereadCap ?? getSetting<number>('x.workers.winnerRereadCap'),
+  });
 
   // Mention inbox pull (§7.5) — after discover so the answered backfill sees
   // replies I made from the X app that discovery just found. A failed pull is
@@ -545,13 +556,21 @@ function ageMinutes(postedAt: Date | undefined, at: Date): number | null {
 }
 
 // Bounded winner re-read (§8.4): tweets whose one-and-only snapshot cleared
-// WINNER_REREAD_MIN_VIEWS get exactly one more read at day 7+ — the
+// `opts.minViews` get exactly one more read at day 7+, ≤ `opts.cap` a run — the
 // "which content compounds" series. Same money discipline as snapshotDue, but
 // claim-BEFORE-read: candidates require poll_count = 1, so bumping the count
 // in a committed txn before the billed call removes them from the candidate
 // set forever. A crash between claim and read loses one re-read (≤ $0.005),
 // never repeats one.
-async function rereadWinners(token: string, result: RunResult): Promise<void> {
+async function rereadWinners(
+  token: string,
+  result: RunResult,
+  opts: { minViews: number; cap: number },
+): Promise<void> {
+  // Cap 0 disables the re-read entirely — short-circuit BEFORE the candidate
+  // query and its claim write, so "off" costs nothing and claims nothing (§7.3).
+  if (opts.cap <= 0) return;
+
   const now = new Date();
   const cutoff = new Date(now.getTime() - WINNER_REREAD_MIN_AGE_MS);
 
@@ -574,13 +593,13 @@ async function rereadWinners(token: string, result: RunResult): Promise<void> {
           // Stay inside the 30-day private-fields window; a candidate older
           // than that missed its re-read on purpose (bounded by design).
           gte(postsPublished.postedAt, new Date(now.getTime() - PRIVATE_FIELDS_MAX_AGE_MS)),
-          sql`CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER) >= ${WINNER_REREAD_MIN_VIEWS}`,
+          sql`CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER) >= ${opts.minViews}`,
         ),
       )
       .orderBy(
         sql`CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER) desc`,
       )
-      .limit(WINNER_REREAD_CAP);
+      .limit(opts.cap);
   } catch (err) {
     console.error(`dailyMetrics: winner re-read candidate query failed: ${describe(err)}`);
     return;

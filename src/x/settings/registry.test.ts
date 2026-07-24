@@ -122,6 +122,9 @@ describe('registry adapter + grouping', () => {
       'followups',
       'pinned',
       'digest',
+      'gates',
+      'radar',
+      'workers',
       'display',
     ]);
     expect(groups.map((g) => g.label)).toEqual([
@@ -131,6 +134,9 @@ describe('registry adapter + grouping', () => {
       'Follow-ups',
       'Pinned watch',
       'Digest',
+      'Stat gates',
+      'Radar',
+      'Workers',
       'Display',
     ]);
 
@@ -180,6 +186,59 @@ describe('registry adapter + grouping', () => {
     const allKeys = SETTINGS_REGISTRY.map((d) => d.key);
     expect(allKeys).not.toContain('x.people.targetBandMinX');
     expect(allKeys).not.toContain('x.people.targetBandMaxX');
+  });
+
+  test('UI.4 groups carry the gate / radar / worker knobs', () => {
+    const groups = settingsByGroup();
+    const keysOf = (id: string) => groups.find((g) => g.id === id)?.defs.map((d) => d.key) ?? [];
+
+    expect(keysOf('gates')).toEqual(['x.gates.minCellN', 'x.gates.bestTimeMinN']);
+    expect(keysOf('radar')).toEqual(['x.radar.draftTtlH']);
+    expect(keysOf('workers')).toEqual([
+      'x.workers.dailyMetricsHourUtc',
+      'x.workers.publisherIntervalSec',
+      'x.workers.winnerRereadMinViews',
+      'x.workers.winnerRereadCap',
+    ]);
+
+    // The best-time gate is mirrored — the composer chips gate client-side on
+    // the same number (UI.6 ships the mirror); everything else here is server-only.
+    expect(settingsRegistry.get('x.gates.bestTimeMinN')?.scope).toBe('mirrored');
+    expect(settingsRegistry.get('x.gates.minCellN')?.scope).toBe('server');
+  });
+
+  test('only the worker CADENCE knobs are restart-scoped (decision 10)', () => {
+    const restart = SETTINGS_REGISTRY.filter((d) => d.appliesOn === 'restart').map((d) => d.key);
+    expect(restart).toEqual(['x.workers.dailyMetricsHourUtc', 'x.workers.publisherIntervalSec']);
+    // The winner re-read bounds are read at the start of each daily pass, so a
+    // change lands on the next 03:00 run without a restart.
+    const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
+    expect(byKey.get('x.workers.winnerRereadCap')?.appliesOn).toBeUndefined();
+  });
+
+  test('validation honors UI.4 ranges (gate floors, TTL, worker bounds)', () => {
+    expect(settingsRegistry.validate('x.gates.minCellN', 5)).toBeNull();
+    expect(settingsRegistry.validate('x.gates.minCellN', 4)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.gates.minCellN', 101)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.gates.bestTimeMinN', 1)).toBeNull();
+    expect(settingsRegistry.validate('x.gates.bestTimeMinN', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.radar.draftTtlH', 168)).toBeNull();
+    expect(settingsRegistry.validate('x.radar.draftTtlH', 169)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.workers.dailyMetricsHourUtc', 23)).toBeNull();
+    expect(settingsRegistry.validate('x.workers.dailyMetricsHourUtc', 24)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.workers.publisherIntervalSec', 29)).toBe('out_of_range');
+    // 0 is a legal cap — it disables the re-read; 11 is past the money ceiling.
+    expect(settingsRegistry.validate('x.workers.winnerRereadCap', 0)).toBeNull();
+    expect(settingsRegistry.validate('x.workers.winnerRereadCap', 11)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.workers.winnerRereadMinViews', 99)).toBe('out_of_range');
+  });
+
+  // The env default must itself be inside the knob's range — an env typo can
+  // never hand the store a default its own validator would reject.
+  test('every registry default validates against its own def', () => {
+    for (const d of SETTINGS_REGISTRY) {
+      expect([d.key, validateSettingValue(d, d.default)]).toEqual([d.key, null]);
+    }
   });
 
   test('validation honors UI.3 ranges (fractional outperform ratio + bounds)', () => {

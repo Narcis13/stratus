@@ -38,7 +38,13 @@ import {
 } from '../quests.ts';
 import { getSetting } from '../settings/registry.ts';
 import { type CommitmentView, loadCommitmentsWithDebt, loadGoalsWithPacing } from './goals.ts';
-import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
+import {
+  BEST_TIME_MIN_N,
+  type BestTimeCell,
+  bestTimeCellFor,
+  bestTimeScore,
+  loadBestTimeCells,
+} from './metrics.ts';
 import { loadMonitorInputs } from './monitor.ts';
 import { targetBand } from './voice.ts';
 
@@ -142,11 +148,14 @@ export function annotateGaps(
   cells: BestTimeCell[],
   localWeekday: number,
   audience?: ActiveTimesGrid | null,
+  // UI.4: the advice gate, settings-backed at the route (`x.gates.bestTimeMinN`).
+  // Defaulted to today's constant so every existing caller/test is unchanged.
+  minN = BEST_TIME_MIN_N,
 ): AnnotatedGap[] {
   return gapHours
     .map((hour) => {
       const cell = bestTimeCellFor(cells, localWeekday, hour);
-      const score = bestTimeScore(cell);
+      const score = bestTimeScore(cell, minN);
       return {
         hour,
         n: cell?.posts ?? 0,
@@ -400,6 +409,9 @@ brief.get('/brief', async (c) => {
   };
   const neglectedTargetDays = getSetting<number>('x.quests.neglectedTargetDays');
   const launchAttendWindowMs = getSetting<number>('x.quests.launchAttendWindowMin') * 60_000;
+  // UI.4: the same advice gate GET /x/metrics/best-times uses — one owner, two
+  // consumers, so a raised bar hides thin cells on Today and in the list alike.
+  const bestTimeMinN = getSetting<number>('x.gates.bestTimeMinN');
 
   const now = new Date();
   const todayStart = localDayStart(now, tzOffsetMin);
@@ -668,7 +680,13 @@ brief.get('/brief', async (c) => {
   // A3.4: the newest capture is a full audience_activity row — a structural
   // superset of ActiveTimesGrid, so audienceScoreFor reads it directly.
   const audienceGrid: ActiveTimesGrid | null = audienceRows[0] ?? null;
-  const gaps = annotateGaps(gapHours, bestTimes.cells, todayLocalWeekday, audienceGrid);
+  const gaps = annotateGaps(
+    gapHours,
+    bestTimes.cells,
+    todayLocalWeekday,
+    audienceGrid,
+    bestTimeMinN,
+  );
 
   const weekReplies = published.filter((p) => p.isReply).length;
   const weekPosts = published.length - weekReplies;

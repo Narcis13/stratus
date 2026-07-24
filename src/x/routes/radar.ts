@@ -20,6 +20,7 @@ import { db } from '../../db/client.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
 import { radarDrafts, replyDrafts } from '../db/schema.ts';
 import type { BatchTweet, PostContext, PostSignals } from '../replies/prompt.ts';
+import { getSetting } from '../settings/registry.ts';
 import { parseChannelTags } from './channels.ts';
 
 export const RADAR_DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
@@ -33,9 +34,14 @@ const MAX_LIST_LIMIT = 200;
 const MAX_PATCH_IDS = 200;
 
 // Pure — exported for unit tests. A draft is past its useful life 48h after
-// drafting; expiry flips status, it never deletes.
-export function radarDraftExpired(draftedAt: Date, nowMs: number): boolean {
-  return nowMs - draftedAt.getTime() >= RADAR_DRAFT_TTL_MS;
+// drafting; expiry flips status, it never deletes. UI.4: the TTL is a param
+// defaulted to today's constant; the route passes `x.radar.draftTtlH`.
+export function radarDraftExpired(
+  draftedAt: Date,
+  nowMs: number,
+  ttlMs = RADAR_DRAFT_TTL_MS,
+): boolean {
+  return nowMs - draftedAt.getTime() >= ttlMs;
 }
 
 // The batch endpoint's tweets, optionally carrying the Radar's capture-time
@@ -150,15 +156,15 @@ radar.get('/radar/drafts', async (c) => {
     limit = Math.min(MAX_LIST_LIMIT, n);
   }
 
-  // Lazy expiry: flip stale ready rows before serving any view of them.
+  // Lazy expiry: flip stale ready rows before serving any view of them. UI.4:
+  // the window is settings-backed (`x.radar.draftTtlH`) — raising it resurrects
+  // nothing, since expiry is a one-way status flip already applied on past reads.
+  const ttlMs = getSetting<number>('x.radar.draftTtlH') * 60 * 60 * 1000;
   await db
     .update(radarDrafts)
     .set({ status: 'expired' })
     .where(
-      and(
-        eq(radarDrafts.status, 'ready'),
-        lt(radarDrafts.draftedAt, new Date(Date.now() - RADAR_DRAFT_TTL_MS)),
-      ),
+      and(eq(radarDrafts.status, 'ready'), lt(radarDrafts.draftedAt, new Date(Date.now() - ttlMs))),
     );
 
   // An explicit status wins. Otherwise a tweetId query (the on-page chip

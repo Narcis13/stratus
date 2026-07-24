@@ -47,6 +47,21 @@ export interface SettingDef {
 
 // --------------------------------------------------------------- the catalog
 
+/** A registry default sourced from an env var (UI.4): precedence is
+ *  override row > env > baked default. An env value that isn't a finite number
+ *  inside the knob's own range is ignored — a typo in the unit file must never
+ *  hand the store a default its own validator would reject. */
+function envNumberDefault(name: string, fallback: number, min: number, max: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    console.warn(`settings: ignoring out-of-range ${name}=${raw} (using ${fallback})`);
+    return fallback;
+  }
+  return n;
+}
+
 // Doctrine — the cadence ladder (OVERHAUL-PLAN §9). Only the anchor hours and the
 // ladder switch-point live here. The reply band (min/max), the week reply-ratio,
 // and the 2–10x band multipliers are owned by the ACTIVE NICHE (niches.doctrine,
@@ -361,6 +376,117 @@ const DIGEST: SettingDef[] = [
   },
 ];
 
+// Stat gates (§7.19) — the minimum-sample bars below which a measured cell is
+// "no data", never advice. The knob exists so exploration is possible; the
+// doctrine lives in the description copy, not in a lock.
+const GATES: SettingDef[] = [
+  {
+    key: 'x.gates.minCellN',
+    group: 'gates',
+    label: 'Playbook cell gate',
+    description:
+      'Measured samples a Playbook cell needs before it reads as evidence rather than "insufficient data". Below 20 is exploration, not evidence — the `?minN=` query param still overrides per read.',
+    type: 'number',
+    default: 20,
+    min: 5,
+    max: 100,
+    scope: 'server',
+  },
+  {
+    key: 'x.gates.bestTimeMinN',
+    group: 'gates',
+    label: 'Best-time cell gate',
+    description:
+      'Measured posts a (weekday, hour) cell needs before it can be recommended as a slot — in the best-times list and in the Today cadence gaps.',
+    type: 'number',
+    default: 3,
+    min: 1,
+    max: 20,
+    scope: 'mirrored',
+  },
+];
+
+// Radar (CIRCLES-PLAN C0) — how long a batch-drafted reply stays useful. Expiry
+// is a lazy status flip on read, never a delete, so raising this resurrects
+// nothing: rows already flipped to `expired` stay expired.
+const RADAR: SettingDef[] = [
+  {
+    key: 'x.radar.draftTtlH',
+    group: 'radar',
+    label: 'Draft time-to-live',
+    description:
+      'Hours a radar reply draft stays in the ready queue before it is flipped to expired (a reply to a post that has been dead this long is worthless anyway).',
+    type: 'number',
+    default: 48,
+    min: 6,
+    max: 168,
+    unit: 'h',
+    scope: 'server',
+  },
+];
+
+// Workers — cadence and the bounded winner re-read. The two cadence knobs are
+// `appliesOn:'restart'`: startXWorkers reads them ONCE to arm its timers
+// (decision 10 — no hot-reloading timers). The winner knobs are read at the
+// start of each daily pass instead, so they land on the next 03:00 run without
+// a restart; both are money bounds (≤ cap × $0.001/day) checked before any
+// billed call, and cap 0 disables re-reads entirely.
+const WORKERS: SettingDef[] = [
+  {
+    key: 'x.workers.dailyMetricsHourUtc',
+    group: 'workers',
+    label: 'Daily pass hour',
+    description:
+      'UTC hour the once-daily discovery + snapshot pass fires. Snapshots must stay well inside the 30-day private-metrics window — this moves the time of day, never the cadence.',
+    type: 'number',
+    default: 3,
+    min: 0,
+    max: 23,
+    unit: 'h UTC',
+    scope: 'server',
+    appliesOn: 'restart',
+  },
+  {
+    key: 'x.workers.publisherIntervalSec',
+    group: 'workers',
+    label: 'Publisher interval',
+    description:
+      'Seconds between publisher ticks. A due post waits at most this long; every tick is $0 until a row is actually due.',
+    type: 'number',
+    default: 60,
+    min: 30,
+    max: 600,
+    unit: 's',
+    scope: 'server',
+    appliesOn: 'restart',
+  },
+  {
+    key: 'x.workers.winnerRereadMinViews',
+    group: 'workers',
+    label: 'Winner re-read floor',
+    description:
+      'Views a post’s first snapshot must have cleared to earn one extra day-7 read (the "which content compounds" series). Defaults from WINNER_REREAD_MIN_VIEWS when that env var is set.',
+    type: 'number',
+    default: envNumberDefault('WINNER_REREAD_MIN_VIEWS', 500, 100, 100_000),
+    min: 100,
+    max: 100_000,
+    unit: 'views',
+    scope: 'server',
+  },
+  {
+    key: 'x.workers.winnerRereadCap',
+    group: 'workers',
+    label: 'Winner re-reads per day',
+    description:
+      'Most day-7 re-reads the daily pass may buy in one run, at $0.001 each. 0 disables re-reads entirely (the pass short-circuits before claiming anything).',
+    type: 'number',
+    default: 5,
+    min: 0,
+    max: 10,
+    scope: 'server',
+  },
+];
+
 // Display — soft presentation limits the brief applies to already-collected data;
 // they never change what is measured or billed, only how much of it is shown.
 const DISPLAY: SettingDef[] = [
@@ -396,6 +522,9 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...FOLLOWUPS,
   ...PINNED,
   ...DIGEST,
+  ...GATES,
+  ...RADAR,
+  ...WORKERS,
   ...DISPLAY,
 ];
 
@@ -407,6 +536,9 @@ export const GROUP_LABELS: Record<string, string> = {
   followups: 'Follow-ups',
   pinned: 'Pinned watch',
   digest: 'Digest',
+  gates: 'Stat gates',
+  radar: 'Radar',
+  workers: 'Workers',
   display: 'Display',
 };
 

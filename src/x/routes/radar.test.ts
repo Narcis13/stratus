@@ -7,6 +7,7 @@ import { inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { radarDrafts, replyDrafts } from '../db/schema.ts';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { radar } from './radar.ts';
 
 const app = new Hono();
@@ -17,8 +18,9 @@ const T_WITH = '991000000000000001'; // full signals + 3 variants + model
 const T_NULL = '991000000000000002'; // CLI-shaped: null signals/variants/model
 const T_OTHER = '991000000000000003'; // filter-isolation sentinel
 const T_MANUAL = '991000000000000004'; // RU.8: band='manual' + signals
+const T_TTL = '991000000000000005'; // UI.4: 10h-old row for the TTL knob
 const T_UNKNOWN = '991999999999999999'; // no row — 404
-const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL];
+const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL];
 
 const PRIMARY_TEXT = 'v1 extends: I shipped mine in 3 days';
 const VARIANTS = [
@@ -133,6 +135,47 @@ describe('GET /radar/drafts?tweetId=', () => {
     );
     expect(status).toBe(400);
     expect(body.error).toBe('invalid_tweet_id');
+  });
+});
+
+// UI.4: the lazy-expiry window is `x.radar.draftTtlH`. The seeded row is 10h
+// old, so it survives the 48h default and dies at a 6h TTL — and the flip is
+// one-way, so restoring the default does NOT bring it back.
+describe('GET /radar/drafts expiry honors x.radar.draftTtlH', () => {
+  test('a 10h-old ready draft survives 48h and expires at 6h', async () => {
+    await db.insert(radarDrafts).values({
+      tweetId: T_TTL,
+      url: `https://x.com/carol/status/${T_TTL}`,
+      handle: 'carol',
+      author: null,
+      snippet: 'ttl fixture',
+      band: 'warm',
+      signals: null,
+      replyText: 'still fresh at the default window',
+      angle: 'extends',
+      variants: null,
+      model: null,
+      draftedAt: new Date(Date.now() - 10 * 60 * 60 * 1000),
+    });
+
+    const alive = await send<{ drafts: DraftRow[] }>(`/x/radar/drafts?tweetId=${T_TTL}`, 'GET');
+    expect(alive.body.drafts[0]?.status).toBe('ready');
+
+    try {
+      setSettings({ 'x.radar.draftTtlH': 6 });
+      await send<{ drafts: DraftRow[] }>('/x/radar/drafts', 'GET');
+    } finally {
+      resetSettings({ keys: ['x.radar.draftTtlH'] });
+    }
+
+    // A bare tweetId list hides expired rows; ask for them explicitly.
+    const gone = await send<{ drafts: DraftRow[] }>(`/x/radar/drafts?tweetId=${T_TTL}`, 'GET');
+    expect(gone.body.drafts).toHaveLength(0);
+    const dead = await send<{ drafts: DraftRow[] }>(
+      `/x/radar/drafts?tweetId=${T_TTL}&status=expired`,
+      'GET',
+    );
+    expect(dead.body.drafts[0]?.status).toBe('expired');
   });
 });
 
