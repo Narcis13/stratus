@@ -60,7 +60,8 @@ const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
 // and this weekly list. The handler reads all three via getSetting and passes
 // them to loadNeglectedTargets / loadNeglectedAllies.
 const STAGE_TRANSITION_CAP = 10;
-const DIGEST_MAX_OUTPUT_TOKENS = 700;
+// The narration's token ceiling is settings-backed (`x.ai.digestMaxOutputTokens`,
+// UI.5) — the registry owns the number, read per request at the call site.
 
 export const digest = new Hono();
 
@@ -145,7 +146,9 @@ digest.get('/digest', async (c) => {
       {
         defaults: {
           reasoningEffort: 'low',
-          maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS,
+          // UI.5: settings-backed ceiling for the one narration call, read per
+          // request (the facts around it are free SQL).
+          maxOutputTokens: getSetting<number>('x.ai.digestMaxOutputTokens'),
           temperature: 0.7,
         },
       },

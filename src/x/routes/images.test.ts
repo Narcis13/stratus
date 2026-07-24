@@ -7,6 +7,7 @@ import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { images } from './images.ts';
 
 const app = new Hono();
@@ -24,11 +25,14 @@ async function gen<T>(body: unknown): Promise<{ status: number; body: T }> {
 // '' is treated as "unset" everywhere the key is read (falsy) — same pattern as
 // digest/icebreakers tests, which keeps biome's noDelete rule happy.
 const savedKey = process.env.XAI_API_KEY;
-const savedBudget = process.env.XAI_IMAGE_DAILY_BUDGET_USD;
 
+// UI.5: the budget is a setting now (XAI_IMAGE_DAILY_BUDGET_USD only seeds its
+// registry default, read once at module load), so these tests PATCH the store
+// instead of the env — deterministic whatever the dev's .env says. The store is
+// process-global across test files, so the override is always dropped.
 afterEach(() => {
   process.env.XAI_API_KEY = savedKey ?? '';
-  process.env.XAI_IMAGE_DAILY_BUDGET_USD = savedBudget ?? '';
+  resetSettings({ group: 'budgets' });
 });
 
 describe('POST /x/images/generate — guards', () => {
@@ -57,7 +61,7 @@ describe('POST /x/images/generate — guards', () => {
     });
 
     test("over-budget → 429 before any spend (a paint session can't melt the wallet)", async () => {
-      process.env.XAI_IMAGE_DAILY_BUDGET_USD = '0.50';
+      setSettings({ 'x.budgets.imageDailyUsd': 0.5 });
       const marker = `test-budget-${Date.now()}`;
       // Seed today's image spend past the cap.
       db.insert(costEvents)
@@ -86,6 +90,21 @@ describe('POST /x/images/generate — guards', () => {
         // Don't leak spend into the shared in-memory DB's other suites.
         db.delete(costEvents).where(eq(costEvents.requestId, marker)).run();
       }
+    });
+
+    // UI.5 done-when: the budget AMOUNT is a knob, the CHECK never is
+    // (Decision 5). 0 is a real value — it turns image generation off with zero
+    // spend today, where the old env read silently fell back to $0.50.
+    test('a PATCHed budget of 0 → 429 before any network call, no spend needed', async () => {
+      setSettings({ 'x.budgets.imageDailyUsd': 0 });
+      const { status, body } = await gen<{
+        error: string;
+        spentUsd: number;
+        budgetUsd: number;
+      }>({ prompt: 'a muted flat-vector background' });
+      expect(status).toBe(429);
+      expect(body.error).toBe('image_budget_exceeded');
+      expect(body.budgetUsd).toBe(0);
     });
   });
 });

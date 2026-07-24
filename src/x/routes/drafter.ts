@@ -52,14 +52,16 @@ import {
   parseThreadDraft,
 } from '../posts/threadPrompt.ts';
 import { loadPromptSafe } from '../prompts/registry.ts';
+import { getSetting } from '../settings/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
 import { loadMeContextSafe } from './me.ts';
 import { getActivePillars } from './pillars.ts';
 import { loadPostGuidanceSafe } from './playbook.ts';
 
-// Three posts of JSON run ~300 tokens; xAI doesn't count reasoning tokens
-// against the cap (verified live on the reply route under a 350 cap).
-const MAX_OUTPUT_TOKENS = 600;
+// The post drafter's own ceiling moved to `x.ai.drafterMaxOutputTokens` (UI.5)
+// — the registry is its single owner. Sizing rationale kept there: three posts
+// of JSON run ~300 tokens, and xAI doesn't count reasoning tokens against the
+// cap (verified live on the reply route under a 350 cap).
 // A thread is up to 8 tweets of text plus JSON — much larger than 3 short posts.
 const THREAD_MAX_OUTPUT_TOKENS = 2000;
 const MIN_THREAD_TWEETS = 3;
@@ -494,7 +496,9 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
       {
         defaults: {
           temperature: DEFAULT_TEMPERATURE,
-          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          // UI.5: the post drafter's ceiling is settings-backed, read per
+          // request. Thread and rewrite keep their own baked (larger) caps.
+          maxOutputTokens: getSetting<number>('x.ai.drafterMaxOutputTokens'),
           reasoningEffort: DEFAULT_REASONING,
         },
       },

@@ -18,6 +18,7 @@ import { costEvents } from '../src/db/shared-schema.ts';
 import { mediaAssets } from '../src/x/db/schema.ts';
 import { assets } from '../src/x/routes/assets.ts';
 import { images } from '../src/x/routes/images.ts';
+import { resetSettings, resolveSetting, setSettings } from '../src/x/settings/registry.ts';
 
 const LIVE = process.argv.includes('--live');
 
@@ -25,7 +26,16 @@ const app = new Hono();
 app.route('/x', assets);
 app.route('/x', images);
 
+// Set while the smoke holds a settings override, so a mid-run failure still
+// puts the operator's real budget back (fail() exits — no finally would run).
+let restoreSettings: (() => void) | null = null;
+
 function fail(msg: string): never {
+  try {
+    restoreSettings?.();
+  } catch (err) {
+    console.error(`  (settings restore failed: ${err instanceof Error ? err.message : err})`);
+  }
   console.error(`FAIL: ${msg}`);
   process.exit(1);
 }
@@ -92,9 +102,18 @@ ok('2MB cap enforced (413)');
 // 5. Budget refusal (429) — seed today's image spend over the cap, with a key
 //    set so the 503 gate passes and the budget check runs before any network.
 const prevKey = process.env.XAI_API_KEY;
-const prevBudget = process.env.XAI_IMAGE_DAILY_BUDGET_USD;
 if (!LIVE) process.env.XAI_API_KEY = 'smoke-key';
-process.env.XAI_IMAGE_DAILY_BUDGET_USD = '0.50';
+// UI.5: the cap is a SETTING now (the env var only seeds its registry default,
+// read once at import), so pin it through the store. This runs against the real
+// DB, so snapshot the operator's own override and put it back — never assume a
+// reset is the right restore (the GR.10 rule for a smoke that writes rows it
+// did not create).
+const prevBudget = resolveSetting('x.budgets.imageDailyUsd');
+setSettings({ 'x.budgets.imageDailyUsd': 0.5 });
+restoreSettings = (): void => {
+  if (prevBudget.isDefault) resetSettings({ keys: ['x.budgets.imageDailyUsd'] });
+  else setSettings({ 'x.budgets.imageDailyUsd': prevBudget.value });
+};
 const marker = `smoke-studio-budget-${Date.now()}`;
 db.insert(costEvents)
   .values({
@@ -118,8 +137,9 @@ if (refused.status !== 429 || refused.json.error !== 'image_budget_exceeded')
   );
 ok(`budget refusal (429) fires at $${refused.json.spentUsd} ≥ $${refused.json.budgetUsd}`);
 db.delete(costEvents).where(eq(costEvents.requestId, marker)).run();
-// Restore budget ('' reads as unset → route default); leave the key for --live.
-process.env.XAI_IMAGE_DAILY_BUDGET_USD = prevBudget ?? '';
+// Put the operator's own budget back; leave the key for --live.
+restoreSettings();
+restoreSettings = null;
 if (!LIVE) process.env.XAI_API_KEY = prevKey ?? '';
 
 // 6. Delete.

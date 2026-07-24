@@ -51,25 +51,41 @@ import {
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
+import { getSetting } from '../settings/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
 import { loadMeContextSafe } from './me.ts';
 import { getActivePillars } from './pillars.ts';
 import { loadReplyGuidanceSafe } from './playbook.ts';
 import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 
-// Safety ceiling, not a length lever — reply length is enforced by the prompt
-// (~280 chars/variant). Three variants of JSON run ~225 output tokens; xAI does
-// not count reasoning tokens against this cap (verified live under the old 350
-// cap for two variants), so 520 leaves headroom for the third variant.
-const MAX_OUTPUT_TOKENS = 520;
-const DEFAULT_TEMPERATURE = 0.7;
-const DEFAULT_REASONING: LlmReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
 // Both cache keys come from the registry (AI.3 single, AI.5 batch): a sha of
 // the effective prompt body, so a customized prompt never shares a cached
 // prefix with the default; the niche suffix still busts on niche edits.
 // Batch (Radar §7.2): one LLM call drafts a reply per queued hot/warm tweet.
+// Settings-backed too (`x.ai.batchReplyCap`, ceiling 50); this is the pure default.
 const MAX_BATCH_TWEETS = 25;
+
+/** The house-default tier askLLM merges LAST (request body > the global `ai`
+ *  blob > these). Read per request so a settings PATCH binds the next draft;
+ *  exported for tests. Shared by the single and batch reply paths — one owner,
+ *  two consumers, so the two can't drift on temperature or effort.
+ *
+ *  The token cap is a safety ceiling, not a length lever (length is enforced by
+ *  the prompt, ~280 chars/variant): three variants of JSON measure ~225 output
+ *  tokens and xAI does not count reasoning tokens against the cap (verified live
+ *  under the old 350/two-variant cap), so the 520 default leaves real headroom. */
+export function replyLlmDefaults(): {
+  temperature: number;
+  maxOutputTokens: number;
+  reasoningEffort: LlmReasoningEffort;
+} {
+  return {
+    temperature: getSetting<number>('x.ai.replyTemperature'),
+    maxOutputTokens: getSetting<number>('x.ai.replyMaxOutputTokens'),
+    reasoningEffort: getSetting<LlmReasoningEffort>('x.ai.replyReasoningEffort'),
+  };
+}
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -259,13 +275,7 @@ replies.post('/replies/generate', async (c) => {
         // prefix on either a prompt override edit or a niche edit (grok-only).
         promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
       },
-      {
-        defaults: {
-          temperature: DEFAULT_TEMPERATURE,
-          maxOutputTokens: MAX_OUTPUT_TOKENS,
-          reasoningEffort: DEFAULT_REASONING,
-        },
-      },
+      { defaults: replyLlmDefaults() },
     );
 
   let result: AskLlmResult;
@@ -366,7 +376,7 @@ replies.post('/replies/generate-batch', async (c) => {
   }
   const body = raw as BatchBody;
 
-  const parsed = parseBatchTweets(body.tweets);
+  const parsed = parseBatchTweets(body.tweets, getSetting<number>('x.ai.batchReplyCap'));
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
   const tweets = parsed.tweets;
 
@@ -456,7 +466,9 @@ replies.post('/replies/generate-batch', async (c) => {
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
   // single-reply path (user-accepted, RU.3). Scale with the batch, capped. A
   // stored AI-settings maxOutputTokens overrides this computed cap (D44
-  // precedence) — clear the setting if batches start truncating.
+  // precedence) — clear the setting if batches start truncating. The cap stays
+  // COMPUTED (not `x.ai.replyMaxOutputTokens`, which sizes one reply): it must
+  // grow with the batch or a 25-tweet call truncates.
   const maxOutputTokens = Math.min(9000, 200 + tweets.length * 420);
 
   let result: AskLlmResult;
@@ -472,13 +484,7 @@ replies.post('/replies/generate-batch', async (c) => {
         // the cached prefix on a prompt override edit or a niche edit.
         promptCacheKey: `${batchPrompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
       },
-      {
-        defaults: {
-          temperature: DEFAULT_TEMPERATURE,
-          maxOutputTokens,
-          reasoningEffort: DEFAULT_REASONING,
-        },
-      },
+      { defaults: { ...replyLlmDefaults(), maxOutputTokens } },
     );
   } catch (err) {
     const mapped = llmErrorPayload(err);
@@ -529,13 +535,16 @@ replies.post('/replies/generate-batch', async (c) => {
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
 // Optional band/signals (C0) carry the Radar's capture-time verdict into
-// `radar_drafts`; they never reach the Grok prompt.
+// `radar_drafts`; they never reach the Grok prompt. `maxTweets` is defaulted to
+// today's constant (Decision 6) so every existing caller and test stays valid;
+// the route passes `x.ai.batchReplyCap`.
 export function parseBatchTweets(
   value: unknown,
+  maxTweets = MAX_BATCH_TWEETS,
 ): { tweets: RadarBatchTweet[] } | { error: string } {
   if (!Array.isArray(value)) return { error: 'invalid_tweets' };
   if (value.length === 0) return { error: 'empty_tweets' };
-  if (value.length > MAX_BATCH_TWEETS) return { error: 'too_many_tweets' };
+  if (value.length > maxTweets) return { error: 'too_many_tweets' };
 
   const tweets: RadarBatchTweet[] = [];
   const seen = new Set<string>();

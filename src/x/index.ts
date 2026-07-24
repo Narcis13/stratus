@@ -176,9 +176,12 @@ export interface XWorkers {
 
 export function startXWorkers(): XWorkers {
   // Install before any worker tick so the very first X call is logged. The
-  // daily budget watchdog rides on the same callback ($0.15/day soft cap).
+  // daily budget watchdog rides on the same callback. UI.5: the amount is a
+  // GETTER over `x.budgets.xSoftDailyUsd` (env X_DAILY_BUDGET_USD is that
+  // knob's default) — resolved per cost event and per /cost read, so a PATCH
+  // moves the watchdog without a restart. Still soft: it logs, never blocks.
   setDefaultOnCost(
-    makeOnCost('x', { dailyBudgetUsd: Number(process.env.X_DAILY_BUDGET_USD ?? '0.15') }),
+    makeOnCost('x', { dailyBudgetUsd: () => getSetting<number>('x.budgets.xSoftDailyUsd') }),
   );
 
   const cfg = loadConfig();

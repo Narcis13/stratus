@@ -22,16 +22,34 @@ const priceTables: Record<string, PriceFn> = {
 
 // Soft daily budgets by platform, registered via makeOnCost opts. Soft = log
 // loudly and flag in /cost responses; never block a call (one wallet, one user
-// — the dashboard is the cap).
-const dailyBudgets = new Map<string, number>();
+// — the dashboard is the cap). A platform may register a GETTER instead of a
+// number (UI.5: X passes one reading `x.budgets.xSoftDailyUsd`) so a settings
+// PATCH moves the watchdog and /cost/today with no restart — the value is
+// resolved per read, never captured at registration.
+const dailyBudgets = new Map<string, number | (() => number)>();
 
 export function getDailyBudgetUsd(platform: string): number | null {
-  return dailyBudgets.get(platform) ?? null;
+  const entry = dailyBudgets.get(platform);
+  if (entry == null) return null;
+  if (typeof entry === 'number') return entry;
+  // A getter that throws (a settings read against a broken DB) must degrade to
+  // "no budget configured", never take down /cost or the cost hook itself.
+  try {
+    const v = entry();
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch (err) {
+    console.error(
+      'costTracker: daily budget getter failed:',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
 }
 
 export interface OnCostOptions {
-  /** Soft daily (UTC) budget in USD — crossing it logs loudly, never blocks. */
-  dailyBudgetUsd?: number;
+  /** Soft daily (UTC) budget in USD — crossing it logs loudly, never blocks.
+   *  A function is resolved per read, so a settings change applies immediately. */
+  dailyBudgetUsd?: number | (() => number);
 }
 
 export function makeOnCost(platform: string, opts: OnCostOptions = {}): (info: CostInfo) => void {
@@ -39,7 +57,8 @@ export function makeOnCost(platform: string, opts: OnCostOptions = {}): (info: C
   if (!price) throw new Error(`costTracker: no price table for platform '${platform}'`);
 
   const budget = opts.dailyBudgetUsd;
-  if (budget != null && budget > 0) dailyBudgets.set(platform, budget);
+  if (typeof budget === 'function') dailyBudgets.set(platform, budget);
+  else if (budget != null && budget > 0) dailyBudgets.set(platform, budget);
 
   return (info) => {
     // `info.items` is the result count xFetch read off the response body, so
@@ -87,7 +106,7 @@ export function makeOnCost(platform: string, opts: OnCostOptions = {}): (info: C
 }
 
 async function checkBudget(platform: string): Promise<void> {
-  const budget = dailyBudgets.get(platform);
+  const budget = getDailyBudgetUsd(platform);
   if (budget == null) return;
 
   const from = new Date();

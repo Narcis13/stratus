@@ -43,7 +43,7 @@ export interface PullMentionsResult {
 export async function pullMentions(
   token: string,
   selfXUserId: string,
-  opts: { maxResults?: number } = {},
+  opts: { maxResults?: number; pullMax?: number } = {},
 ): Promise<PullMentionsResult> {
   const result: PullMentionsResult = { scanned: 0, inserted: 0, selfSkipped: 0, answered: 0 };
 
@@ -67,7 +67,12 @@ export async function pullMentions(
     inReplyToTweetId: string | null;
   }> = [];
 
-  const pageMax = opts.maxResults ?? DEFAULT_PULL_MAX;
+  // UI.5: `pullMax` is the CONFIGURED page size (x.mentions.pullMax) and must
+  // stay a separate opt from `maxResults` — the latter is the caller-intent flag
+  // that switches maxTotal off the 800 hard cap below. Passing the knob as
+  // maxResults would silently re-cap every incremental pull at one page, which
+  // is exactly the bug CA.1 fixed (50 mentions/day dropped in prod).
+  const pageMax = opts.maxResults ?? opts.pullMax ?? DEFAULT_PULL_MAX;
   // CA.1: an incremental pull (live since_id) pages to X's 800 hard cap so a
   // >50-mention day never strands its tail below the next pull's checkpoint —
   // before this, prod dropped every mention past 50 permanently on busy days.

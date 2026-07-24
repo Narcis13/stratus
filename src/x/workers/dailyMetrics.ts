@@ -198,7 +198,11 @@ export async function runDailyMetrics(
   // replies I made from the X app that discovery just found. A failed pull is
   // a stale inbox until tomorrow (or a manual refresh), never a crashed run.
   try {
-    const pulled = await pullMentions(token, deps.selfXUserId);
+    // Same page-size knob the manual refresh reads (one owner, two consumers) —
+    // read per run, so a PATCH lands on the next pass without a restart.
+    const pulled = await pullMentions(token, deps.selfXUserId, {
+      pullMax: getSetting<number>('x.mentions.pullMax'),
+    });
     result.mentionsScanned = pulled.scanned;
     result.mentionsNew = pulled.inserted;
     result.mentionsAnswered = pulled.answered;

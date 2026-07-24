@@ -19,6 +19,7 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { mentions, postsPublished, replyDrafts } from '../db/schema.ts';
 import { pullMentions } from '../mentions.ts';
+import { getSetting } from '../settings/registry.ts';
 import { getValidAccessToken } from '../token-store.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
@@ -33,7 +34,9 @@ const MAX_LIST_LIMIT = 200;
 // Server-side backstop for the panel's client-side limit: a runaway client
 // can't spend more than this many pulls/day (~$0.05 each worst case).
 // In-memory is fine — single process; a restart resetting the counter is
-// harmless at these stakes.
+// harmless at these stakes. UI.5 made the number configurable
+// (`x.mentions.serverRefreshCap`, ceiling 12); this stays the pure default the
+// route overrides per request, so takeRefreshSlot remains testable without a store.
 export const MAX_REFRESHES_PER_DAY = 6;
 
 export interface RefreshLimiter {
@@ -123,10 +126,14 @@ export function createMentionsRouter(cfg: MentionsConfig): Hono {
       }
     }
 
-    const slot = takeRefreshSlot(limiter, new Date());
+    // UI.5: both money bounds are read per request, before the token fetch and
+    // the billed pull — refuse-before-spend. A cap of 0 refuses every manual
+    // refresh (the daily pass is unaffected).
+    const maxPerDay = getSetting<number>('x.mentions.serverRefreshCap');
+    const slot = takeRefreshSlot(limiter, new Date(), maxPerDay);
     limiter = slot.state;
     if (!slot.ok) {
-      return c.json({ error: 'refresh_limit', maxPerDay: MAX_REFRESHES_PER_DAY }, 429);
+      return c.json({ error: 'refresh_limit', maxPerDay }, 429);
     }
 
     const token = await getValidAccessToken({
@@ -135,6 +142,7 @@ export function createMentionsRouter(cfg: MentionsConfig): Hono {
     });
     const result = await pullMentions(token, cfg.selfXUserId, {
       ...(maxResults !== undefined ? { maxResults } : {}),
+      pullMax: getSetting<number>('x.mentions.pullMax'),
     });
     return c.json({ ...result, refreshesRemaining: slot.remaining });
   });

@@ -89,7 +89,7 @@ import {
   rankBestTimes,
 } from './x/routes/metrics.ts';
 import { type RadarBatchTweet, buildRadarDraftRows, radarDraftExpired } from './x/routes/radar.ts';
-import { parseBatchTweets } from './x/routes/replies.ts';
+import { parseBatchTweets, replyLlmDefaults } from './x/routes/replies.ts';
 import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
 import {
   type FollowerSnapshotPoint,
@@ -97,6 +97,7 @@ import {
   rankTargets,
   targetBand,
 } from './x/routes/voice.ts';
+import { resetSettings, setSettings } from './x/settings/registry.ts';
 import { EXTRACT_PROMPT_TEMPLATE, parseExtractedTemplate } from './x/voice/extractPrompt.ts';
 import { ingestPulledTweet, maxTweetId, msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
@@ -822,6 +823,49 @@ describe('batch replies (Radar §7.2)', () => {
         Array.from({ length: 26 }, (_, i) => ({ tweetId: String(i), handle: 'a', text: 'x' })),
       ),
     ).toEqual({ error: 'too_many_tweets' });
+  });
+
+  // UI.5: the cap is `x.ai.batchReplyCap` (ceiling 50); the constant survives
+  // only as this pure param's default, so both directions must hold.
+  test('parseBatchTweets honors a configured batch cap in both directions', () => {
+    const batch = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ tweetId: String(i), handle: 'a', text: 'x' }));
+
+    const raised = parseBatchTweets(batch(26), 50);
+    if ('error' in raised) throw new Error(raised.error);
+    expect(raised.tweets.length).toBe(26);
+
+    expect(parseBatchTweets(batch(6), 5)).toEqual({ error: 'too_many_tweets' });
+    // A refusal, never a silent truncation — the caller learns the batch was
+    // too big instead of paying for a call that drops tweets.
+    const atCap = parseBatchTweets(batch(5), 5);
+    if ('error' in atCap) throw new Error(atCap.error);
+    expect(atCap.tweets.length).toBe(5);
+  });
+
+  // UI.5: the reply house defaults askLLM merges last (body > `ai` blob > these).
+  test('replyLlmDefaults reads the x.ai knobs and moves with a PATCH', () => {
+    expect(replyLlmDefaults()).toEqual({
+      temperature: 0.7,
+      maxOutputTokens: 520,
+      reasoningEffort: 'low',
+    });
+    try {
+      setSettings({
+        'x.ai.replyTemperature': 1.2,
+        'x.ai.replyMaxOutputTokens': 900,
+        'x.ai.replyReasoningEffort': 'medium',
+      });
+      expect(replyLlmDefaults()).toEqual({
+        temperature: 1.2,
+        maxOutputTokens: 900,
+        reasoningEffort: 'medium',
+      });
+    } finally {
+      // Process-global store — never leave the override for another suite.
+      resetSettings({ group: 'ai' });
+    }
+    expect(replyLlmDefaults().maxOutputTokens).toBe(520);
   });
 
   test('parseBatchTweets carries band + signals through (C0) and rejects junk', () => {

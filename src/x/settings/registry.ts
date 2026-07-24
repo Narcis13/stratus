@@ -487,6 +487,171 @@ const WORKERS: SettingDef[] = [
   },
 ];
 
+// Budgets (§8) — the two spend ceilings, both read at REQUEST time inside the
+// refuse-before-spend ladder so a PATCH binds the very next call with no
+// restart. Env vars stay the default source (precedence: override row > env >
+// baked), validated through envNumberDefault so a typo can't seed an invalid
+// default. The CHECKS themselves are never settings (Decision 5): the X
+// watchdog always logs, the image gate always refuses — only the amounts move.
+const BUDGETS: SettingDef[] = [
+  {
+    key: 'x.budgets.xSoftDailyUsd',
+    group: 'budgets',
+    label: 'X soft daily budget',
+    description:
+      'Daily (UTC) X-API spend that trips the watchdog. SOFT: it logs loudly and flags /cost/today — it never blocks a call. Defaults from X_DAILY_BUDGET_USD when that env var is set.',
+    type: 'number',
+    default: envNumberDefault('X_DAILY_BUDGET_USD', 0.15, 0.01, 1),
+    min: 0.01,
+    max: 1,
+    step: 0.01,
+    unit: 'usd',
+    scope: 'server',
+  },
+  {
+    key: 'x.budgets.imageDailyUsd',
+    group: 'budgets',
+    label: 'Image hard daily budget',
+    description:
+      'Daily (UTC) image-generation spend, checked BEFORE the paid call — at or over it, /x/images/generate refuses with 429. Unlike the X watchdog this one blocks; 0 disables image generation entirely. Defaults from XAI_IMAGE_DAILY_BUDGET_USD.',
+    type: 'number',
+    default: envNumberDefault('XAI_IMAGE_DAILY_BUDGET_USD', 0.5, 0, 2),
+    min: 0,
+    max: 2,
+    step: 0.05,
+    unit: 'usd',
+    scope: 'server',
+  },
+];
+
+// AI call params — the per-surface HOUSE DEFAULTS askLLM merges last. Precedence
+// is unchanged (request body > the global `ai` blob from Settings → AI > these),
+// so these knobs tune exactly the tier the `ai` blob defers to when its own
+// fields are null. They are request params, not prompt text: raising a token cap
+// raises cost per draft ~linearly but leaves the cacheable prefix (§7.15) alone.
+const AI: SettingDef[] = [
+  {
+    key: 'x.ai.replyMaxOutputTokens',
+    group: 'ai',
+    label: 'Reply token cap',
+    description:
+      'Output-token ceiling for a single reply draft. A safety ceiling, not a length lever — length is enforced by the prompt. Three variants of JSON measure ~225 tokens, so the floor leaves headroom: too low truncates the third variant, which costs a paid call and returns a parse error.',
+    type: 'number',
+    default: 520,
+    min: 300,
+    max: 2000,
+    unit: 'tokens',
+    scope: 'server',
+  },
+  {
+    key: 'x.ai.replyTemperature',
+    group: 'ai',
+    label: 'Reply temperature',
+    description:
+      'Sampling temperature for reply drafting (single and batch). A request-body value still wins, as does a temperature set in Settings → AI.',
+    type: 'number',
+    default: 0.7,
+    min: 0,
+    max: 1.5,
+    step: 0.1,
+    scope: 'server',
+  },
+  {
+    key: 'x.ai.replyReasoningEffort',
+    group: 'ai',
+    label: 'Reply reasoning effort',
+    description:
+      'How much the model may think before drafting a reply. Higher costs more per call for little gain at this length — raise it only if drafts read as shallow.',
+    type: 'enum',
+    default: 'low',
+    options: ['none', 'low', 'medium', 'high'],
+    scope: 'server',
+  },
+  {
+    key: 'x.ai.drafterMaxOutputTokens',
+    group: 'ai',
+    label: 'Post-draft token cap',
+    description:
+      'Output-token ceiling for an original post draft. The thread and rewrite surfaces keep their own (larger) baked ceilings — this is the single-post drafter.',
+    type: 'number',
+    default: 600,
+    min: 200,
+    max: 3000,
+    unit: 'tokens',
+    scope: 'server',
+  },
+  {
+    key: 'x.ai.digestMaxOutputTokens',
+    group: 'ai',
+    label: 'Digest token cap',
+    description:
+      'Output-token ceiling for the weekly digest narration. The facts are free SQL — this bounds only the one narration call.',
+    type: 'number',
+    default: 700,
+    min: 200,
+    max: 3000,
+    unit: 'tokens',
+    scope: 'server',
+  },
+  {
+    key: 'x.ai.batchReplyCap',
+    group: 'ai',
+    label: 'Batch reply cap',
+    description:
+      'Most tweets one batch-drafting call may cover (a bigger batch is refused, not truncated). Cost scales with the batch: one call, ~420 output tokens per tweet.',
+    type: 'number',
+    default: 25,
+    min: 5,
+    max: 50,
+    scope: 'server',
+  },
+];
+
+// Mentions (§7.5) — the inbox pull bounds. Owned reads bill $0.001 per result,
+// so these are money knobs: the two refresh caps bound how often a human can
+// buy a pull, and pullMax is the per-request page size (invariant #5 — it is
+// max_results that caps cost, never a JS-side slice). Raising pullMax does not
+// raise an incremental pull's bill (since_id already floors the walk); it does
+// raise the first-ever cold pull, which is bounded by pullMax alone.
+const MENTIONS: SettingDef[] = [
+  {
+    key: 'x.mentions.serverRefreshCap',
+    group: 'mentions',
+    label: 'Server refresh cap',
+    description:
+      'Most on-demand mention pulls the server will run per UTC day — the backstop behind the panel button, so a runaway client cannot spend. 0 refuses every manual refresh (the daily pass still runs).',
+    type: 'number',
+    default: 6,
+    min: 0,
+    max: 12,
+    scope: 'server',
+  },
+  {
+    key: 'x.mentions.panelRefreshCap',
+    group: 'mentions',
+    label: 'Panel refresh cap',
+    description:
+      'How many refreshes the inbox panel offers per rolling day before greying the button. Keep it at or below the server cap — the server one is the real limit.',
+    type: 'number',
+    default: 4,
+    min: 0,
+    max: 8,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.mentions.pullMax',
+    group: 'mentions',
+    label: 'Mentions per page',
+    description:
+      'Page size for a mention pull (X bills every result in the response body). An incremental pull still walks to X’s 800 hard cap from the since_id checkpoint; this only sizes each request, and bounds the first-ever pull.',
+    type: 'number',
+    default: 50,
+    min: 10,
+    max: 100,
+    scope: 'server',
+  },
+];
+
 // Display — soft presentation limits the brief applies to already-collected data;
 // they never change what is measured or billed, only how much of it is shown.
 const DISPLAY: SettingDef[] = [
@@ -525,6 +690,9 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...GATES,
   ...RADAR,
   ...WORKERS,
+  ...BUDGETS,
+  ...AI,
+  ...MENTIONS,
   ...DISPLAY,
 ];
 
@@ -539,6 +707,9 @@ export const GROUP_LABELS: Record<string, string> = {
   gates: 'Stat gates',
   radar: 'Radar',
   workers: 'Workers',
+  budgets: 'Budgets',
+  ai: 'AI calls',
+  mentions: 'Mentions',
   display: 'Display',
 };
 
