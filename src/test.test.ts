@@ -1292,6 +1292,47 @@ describe('replies band gate (§7.3)', () => {
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_override');
   });
+
+  // UI.7: the gate classifies with the CONFIGURED thresholds, read per request.
+  // Both assertions stay on the refusal side of the ladder on purpose — the
+  // loosening direction would run the real Grok call, so "a PATCH lets a post
+  // through" is proven in replyBand.test.ts (pure) and by the browser check,
+  // never by spending here. The store is process-global across test files, so
+  // the override is reset in `finally` (UI.2 gotcha).
+  describe('configurable thresholds (UI.7)', () => {
+    // 1500 views / 8 replies / 60 min: 'hot' under the shipped defaults, as the
+    // pure cases above assert. Raising the view floor past it must gate it.
+    test('a raised view floor turns a hot post into a 422', async () => {
+      try {
+        setSettings({ 'x.band.bigViews': 5000 });
+        const res = await post({ context: ctx() });
+        expect(res.status).toBe(422);
+        const out = (await res.json()) as { error: string; band: unknown };
+        expect(out.error).toBe('band_gate');
+        expect(out.band).toBeNull();
+      } finally {
+        resetSettings({ group: 'band' });
+      }
+    });
+
+    // The same context, two refusals, a different VERDICT each time — which is
+    // what proves the route read the store rather than a constant.
+    test('the buried cutoff moves the reported band without spending', async () => {
+      const buried = ctx({ metrics: { views: 50, replies: 150, reposts: 0, likes: 1 } });
+      const bandOf = async (): Promise<unknown> => {
+        const res = await post({ context: buried });
+        expect(res.status).toBe(422);
+        return ((await res.json()) as { band: unknown }).band;
+      };
+      expect(await bandOf()).toBe('skip');
+      try {
+        setSettings({ 'x.band.midReplies': 200 });
+        expect(await bandOf()).toBeNull();
+      } finally {
+        resetSettings({ group: 'band' });
+      }
+    });
+  });
 });
 
 describe('buildReplyOutcomes', () => {

@@ -24,6 +24,7 @@ import {
   llmConfigured,
 } from '../../llm/index.ts';
 import { OpenRouterApiError } from '../../openrouter/index.ts';
+import { BAND, type BandThresholds } from '../../shared/replyBand.ts';
 import {
   accountSnapshots,
   harvestRows,
@@ -74,6 +75,7 @@ import {
 } from '../playbook.ts';
 import { loadPromptSafe, renderPrompt } from '../prompts/registry.ts';
 import type { PostContext, ReplyVariant } from '../replies/prompt.ts';
+import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
 import { getSetting } from '../settings/registry.ts';
 import {
   TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
@@ -406,7 +408,10 @@ const PASSIVE_HARVEST_MODE = 'timeline';
  *  Unwindowed row volume is structurally bounded (HV.1's 2,000-rows/day cap ×
  *  the 30-day window), so no extra limit is worth a truncated denominator.
  *  $0: nothing on this path can reach xFetch. */
-export async function loadTimelineFunnel(minN = DEFAULT_MIN_CELL_N): Promise<TimelineFunnel> {
+export async function loadTimelineFunnel(
+  minN = DEFAULT_MIN_CELL_N,
+  thresholds: BandThresholds = BAND,
+): Promise<TimelineFunnel> {
   const since = new Date(Date.now() - TIMELINE_FUNNEL_WINDOW_MS);
   const seen = await db
     .select({
@@ -420,7 +425,7 @@ export async function loadTimelineFunnel(minN = DEFAULT_MIN_CELL_N): Promise<Tim
     .from(harvestRows)
     .where(and(eq(harvestRows.mode, PASSIVE_HARVEST_MODE), gte(harvestRows.capturedAt, since)))
     .groupBy(harvestRows.tweetId);
-  if (seen.length === 0) return buildTimelineFunnel([], new Set(), minN);
+  if (seen.length === 0) return buildTimelineFunnel([], new Set(), minN, thresholds);
 
   // Posted drafts only — the paste-time reading every other cell uses. The set
   // is unwindowed; intersecting it with `seen` is what bounds it.
@@ -440,6 +445,7 @@ export async function loadTimelineFunnel(minN = DEFAULT_MIN_CELL_N): Promise<Tim
     })),
     new Set(replied.map((r) => r.sourceTweetId)),
     minN,
+    thresholds,
   );
 }
 
@@ -623,7 +629,7 @@ playbook.get('/playbook', async (c) => {
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
-    timelineFunnel: await loadTimelineFunnel(minN),
+    timelineFunnel: await loadTimelineFunnel(minN, bandThresholdsFromSettings()),
     rosterCoverage: await loadRosterCoverage(
       new Date(Date.now() - ROSTER_WINDOW_MS),
       new Date(),

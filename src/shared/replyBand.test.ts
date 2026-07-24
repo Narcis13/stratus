@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { BAND, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
+import {
+  BAND,
+  type BandThresholds,
+  classifyBand,
+  formatCount,
+  textLooksLikeReplyBait,
+} from './replyBand.ts';
 
 // Signals reconstructed from evals/reply-eval-20260604-201909.md:
 // (original-post views, replies already on it, age = reply_time - post_time).
@@ -45,6 +51,100 @@ describe('classifyBand', () => {
     expect(BAND.baitViews).toBeLessThan(BAND.bigViews);
     expect(BAND.earlyReplies).toBeLessThan(BAND.midReplies);
     expect(BAND.baitVPM).toBeLessThan(BAND.risingVPM);
+  });
+});
+
+// UI.7: the same signals must be able to land in different bands under
+// different thresholds — that is the whole point of the knobs, and both sides
+// of the wire (the server gate, the on-page badge) reach the classifier through
+// this argument. Omitting it keeps every pre-UI.7 call site byte-valid, which
+// the block above is the regression proof of.
+describe('classifyBand with configured thresholds', () => {
+  const strict = (over: Partial<BandThresholds>): BandThresholds => ({ ...BAND, ...over });
+
+  test('raising the view floor downgrades a mid-size post to nothing', () => {
+    // The Task-7 done-when, in pure form: 500 views, 5 replies, an hour old.
+    const s = sig(500, 5, 60);
+    expect(classifyBand(s)).toBe('hot');
+    expect(classifyBand(s, strict({ bigViews: 1000 }))).toBeNull();
+  });
+
+  test('the buried cutoff moves both ways on one number', () => {
+    const s = sig(50, 150, 1440); // tiny, slow, and deep in a thread
+    expect(classifyBand(s)).toBe('skip');
+    // Past 200 the thread is no longer "buried", so the dead-zone rule decides.
+    expect(classifyBand(s, strict({ midReplies: 200 }))).toBeNull();
+  });
+
+  test('the early/mid split alone flips hot to warm', () => {
+    const s = sig(5000, 30, 90);
+    expect(classifyBand(s)).toBe('hot');
+    expect(classifyBand(s, strict({ earlyReplies: 10 }))).toBe('warm');
+  });
+
+  test('the bait floors are independent of the plain ones', () => {
+    const s = sig(220, 10, 40, true);
+    expect(classifyBand(s)).toBe('hot');
+    // Bait posts get their own floor: raising it kills them without touching
+    // what a plain post needs.
+    expect(classifyBand(s, strict({ baitViews: 400 }))).toBeNull();
+    expect(classifyBand(sig(500, 5, 60), strict({ baitViews: 400 }))).toBe('hot');
+  });
+
+  test('velocity knobs decide the fresh paths', () => {
+    const rising = sig(250, 5, 8); // sub-floor views, 31 vpm, fresh
+    expect(classifyBand(rising)).toBe('hot');
+    expect(classifyBand(rising, strict({ risingVPM: 50 }))).toBe('warm'); // falls to the watch path
+    expect(classifyBand(rising, strict({ risingVPM: 50, watchVPM: 50 }))).toBeNull();
+    // Shrinking the freshness window closes both velocity paths at once.
+    expect(classifyBand(rising, strict({ freshMin: 5 }))).toBeNull();
+  });
+
+  test('the watch path has its own reply ceiling', () => {
+    const s = sig(100, 22, 10); // fresh, 10 vpm: promising but unproven
+    expect(classifyBand(s)).toBe('warm');
+    expect(classifyBand(s, strict({ watchReplyCeiling: 20 }))).toBeNull();
+  });
+
+  // Hoisting the dead-zone literals into knobs surfaced a property worth
+  // pinning: AT THE SHIPPED DEFAULTS that early return decides nothing. It only
+  // fires when views < tooSmallViews (== bigViews) and ageMin > tooSmallAgeMin
+  // (> freshMin), and a post failing both of those can never clear the view
+  // floor or reach a velocity path — so it is a short-circuit, not a verdict.
+  // That is exactly why raising the view floor alone cannot widen the dead
+  // zone, and why the two shadowing knobs are separate.
+  test('at shipped defaults the dead-zone branch never changes a verdict', () => {
+    const cases = [
+      sig(1541, 8, 56),
+      sig(70000, 168, 136),
+      sig(51000, 94, 107),
+      sig(13, 1, 4),
+      sig(250, 5, 8),
+      sig(220, 10, 40, true),
+      sig(280, 3, 30),
+      sig(400, 3, 30),
+      sig(50, 150, 1440),
+    ];
+    // tooSmallViews: 0 makes `views < tooSmallViews` unsatisfiable, i.e. the
+    // branch is switched off entirely.
+    const off = strict({ tooSmallViews: 0 });
+    for (const s of cases) expect([s, classifyBand(s, off)]).toEqual([s, classifyBand(s)]);
+  });
+
+  test('the dead-zone knobs bite once they diverge from the floors', () => {
+    // Pushed ABOVE the view floor, the dead zone starts refusing posts that
+    // clear it — all three conditions have to hold, so the velocity knob is
+    // what completes the kill here.
+    const aged = sig(500, 3, 30); // 16.7 vpm
+    expect(classifyBand(aged)).toBe('hot');
+    expect(classifyBand(aged, strict({ tooSmallViews: 1000 }))).toBe('hot'); // vpm still clears
+    expect(classifyBand(aged, strict({ tooSmallViews: 1000, tooSmallVpm: 20 }))).toBeNull();
+
+    // Pulled BELOW the freshness window, it starts refusing fresh posts the
+    // watch path would otherwise keep.
+    const young = sig(100, 3, 10); // 10 vpm, fresh
+    expect(classifyBand(young)).toBe('warm');
+    expect(classifyBand(young, strict({ tooSmallAgeMin: 5 }))).toBeNull();
   });
 });
 

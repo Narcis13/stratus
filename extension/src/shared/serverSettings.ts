@@ -14,6 +14,16 @@
 // Only keys the server registry marks `scope:'mirrored'` belong here — check
 // `GET /x/settings/values?scope=mirrored` before adding one, and add the
 // matching baked fallback in the same edit.
+//
+// The ONE import (UI.7) is `../replyBand.ts`, the shim over the shared
+// classifier: content.ts already inlines that module into the IIFE, and BAND
+// is the canonical owner of the band defaults on BOTH sides of the wire, so
+// re-typing its twelve numbers here would be the second-owner bug this file
+// exists to prevent. The rule this module actually lives by is "nothing that
+// can't be inlined into the content-script IIFE" (§7.26) — no React, no
+// sidepanel module, nothing with its own dependencies.
+
+import { BAND, type BandThresholds } from '../replyBand.ts';
 
 /** chrome.storage.local key the background writes the flat blob to. */
 export const SERVER_SETTINGS_KEY = 'settings:server';
@@ -35,6 +45,9 @@ export interface ServerConfig {
    *  Deliberately NOT the server's own cap: that one is the real limit, this is
    *  only the panel's budget, so a missing blob still degrades gracefully. */
   panelRefreshCap: number;
+  /** x.band.* — every threshold the on-page badge classifies with (UI.7). The
+   *  server gate reads the same twelve knobs, so one number moves both sides. */
+  band: BandThresholds;
 }
 
 export const SERVER_DEFAULTS: ServerConfig = {
@@ -43,6 +56,7 @@ export const SERVER_DEFAULTS: ServerConfig = {
   ladderSwitchAt: 4,
   bestTimeMinN: 3,
   panelRefreshCap: 4,
+  band: BAND,
 };
 
 // Ranges/steps were already enforced by the registry when the value was
@@ -61,6 +75,27 @@ function readHours(blob: ServerSettingsBlob, key: string, fallback: number[]): n
   return v;
 }
 
+// Same per-key discipline as the scalars above: a corrupt `bigViews` must not
+// drop the other eleven thresholds back to baked, because a half-configured
+// band would classify differently from the server's gate — the one thing the
+// mirror exists to prevent.
+function readBand(blob: ServerSettingsBlob): BandThresholds {
+  return {
+    bigViews: readNumber(blob, 'x.band.bigViews', BAND.bigViews),
+    baitViews: readNumber(blob, 'x.band.baitViews', BAND.baitViews),
+    earlyReplies: readNumber(blob, 'x.band.earlyReplies', BAND.earlyReplies),
+    midReplies: readNumber(blob, 'x.band.midReplies', BAND.midReplies),
+    freshMin: readNumber(blob, 'x.band.freshMin', BAND.freshMin),
+    risingVPM: readNumber(blob, 'x.band.risingVPM', BAND.risingVPM),
+    baitVPM: readNumber(blob, 'x.band.baitVPM', BAND.baitVPM),
+    watchVPM: readNumber(blob, 'x.band.watchVPM', BAND.watchVPM),
+    watchReplyCeiling: readNumber(blob, 'x.band.watchReplyCeiling', BAND.watchReplyCeiling),
+    tooSmallAgeMin: readNumber(blob, 'x.band.tooSmallAgeMin', BAND.tooSmallAgeMin),
+    tooSmallViews: readNumber(blob, 'x.band.tooSmallViews', BAND.tooSmallViews),
+    tooSmallVpm: readNumber(blob, 'x.band.tooSmallVpm', BAND.tooSmallVpm),
+  };
+}
+
 /** Resolve a stored blob (or anything at all) into a usable config. A missing,
  *  malformed or partial blob yields the baked defaults for whatever it can't
  *  supply — reading settings never throws and never returns undefined. */
@@ -77,5 +112,6 @@ export function readServerConfig(raw: unknown): ServerConfig {
       'x.mentions.panelRefreshCap',
       SERVER_DEFAULTS.panelRefreshCap,
     ),
+    band: readBand(blob),
   };
 }

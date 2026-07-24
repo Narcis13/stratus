@@ -51,6 +51,7 @@ import {
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
+import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
 import { getSetting } from '../settings/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
 import { loadMeContextSafe } from './me.ts';
@@ -209,8 +210,11 @@ replies.post('/replies/generate', async (c) => {
   // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
   // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
   // escape hatch (the extension arms it on a second deliberate click).
+  // UI.7: the thresholds are read from the store per request (the same numbers
+  // the badge got through the mirrored blob), so tightening the band takes
+  // effect on the next call — and can only ever REFUSE more, never spend more.
   const gateSignals = gateSignalsFor(ctx, Date.now());
-  const band = classifyBand(gateSignals);
+  const band = classifyBand(gateSignals, bandThresholdsFromSettings());
   if ((band === null || band === 'skip') && !override) {
     return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
   }

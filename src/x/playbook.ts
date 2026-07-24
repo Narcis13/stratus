@@ -7,7 +7,13 @@
 // Pure on purpose: no DB, no clock. routes/playbook.ts loads the rows and
 // calls these; fixtures drive the tests.
 
-import { type Band, classifyBand, textLooksLikeReplyBait } from '../shared/replyBand.ts';
+import {
+  BAND,
+  type Band,
+  type BandThresholds,
+  classifyBand,
+  textLooksLikeReplyBait,
+} from '../shared/replyBand.ts';
 
 /** Default per-cell minimum sample before a stat is allowed to claim anything.
  *  Same spirit as the BAND ≥100 rule, scaled to per-cell granularity. */
@@ -298,7 +304,15 @@ export interface ScoredReply {
 
 /** Derive a ScoredReply from an outcome row: capture-time signals when
  *  stamped, else derived from contextSnapshot metrics + draft-creation age
- *  (same fallback as the eval script). Null when unmeasurable. */
+ *  (same fallback as the eval script). Null when unmeasurable.
+ *
+ *  UI.7 deliberately did NOT make this fallback read the configured thresholds
+ *  (unlike buildTimelineFunnel). Most rows here carry the band STAMPED at
+ *  capture time, and this table is the evidence a recalibration is judged on
+ *  (§7.19); relabelling the unstamped minority with today's numbers would mix
+ *  two vintages inside one crosstab and make the evidence move whenever the
+ *  knob does. The shipped defaults are the closest thing to "the thresholds
+ *  those rows were captured under". */
 export function scoreReplyOutcome(row: {
   signals: {
     band: Band;
@@ -902,16 +916,22 @@ export type TimelineBand = Band | 'unknown';
 
 const TIMELINE_BAND_ORDER: TimelineBand[] = ['hot', 'warm', 'skip', null, 'unknown'];
 
-export function deriveTimelineBand(row: TimelineSeenRow): TimelineBand {
+export function deriveTimelineBand(
+  row: TimelineSeenRow,
+  thresholds: BandThresholds = BAND,
+): TimelineBand {
   if (row.tweetTimeMs === null || !Number.isFinite(row.tweetTimeMs)) return 'unknown';
   const ageMin = Math.max(0, (row.capturedAtMs - row.tweetTimeMs) / 60_000);
-  return classifyBand({
-    views: row.views,
-    replies: row.comments,
-    ageMin,
-    vpm: row.views / Math.max(ageMin, 1),
-    bait: textLooksLikeReplyBait(row.text),
-  });
+  return classifyBand(
+    {
+      views: row.views,
+      replies: row.comments,
+      ageMin,
+      vpm: row.views / Math.max(ageMin, 1),
+      bait: textLooksLikeReplyBait(row.text),
+    },
+    thresholds,
+  );
 }
 
 export interface FunnelCell {
@@ -939,11 +959,18 @@ export interface TimelineFunnel {
  *  First sighting per tweet is the band that mattered (the moment it was still
  *  replyable); later re-sightings of the same id are the longitudinal view curve
  *  and must never re-band it, so rows are deduped by earliest capture here as
- *  well as in the loader's SQL. */
+ *  well as in the loader's SQL.
+ *
+ *  UI.7: the band is derived at read time (§7.12 — never stored), so it takes
+ *  the CONFIGURED thresholds. This cell measures how well you capture what the
+ *  badge highlights, and it would describe a badge you never saw if it stayed
+ *  on the shipped defaults after you tuned them. The band CROSSTAB above is the
+ *  opposite case — see scoreReplyOutcome. */
 export function buildTimelineFunnel(
   rows: TimelineSeenRow[],
   repliedTweetIds: Set<string>,
   minN = DEFAULT_MIN_CELL_N,
+  thresholds: BandThresholds = BAND,
 ): TimelineFunnel {
   const firstByTweet = new Map<string, TimelineSeenRow>();
   for (const r of rows) {
@@ -954,7 +981,7 @@ export function buildTimelineFunnel(
   const byBand = new Map<TimelineBand, { seen: number; replied: number }>();
   let totalReplied = 0;
   for (const [tweetId, row] of firstByTweet) {
-    const band = deriveTimelineBand(row);
+    const band = deriveTimelineBand(row, thresholds);
     const cell = byBand.get(band) ?? { seen: 0, replied: 0 };
     cell.seen++;
     if (repliedTweetIds.has(tweetId)) {

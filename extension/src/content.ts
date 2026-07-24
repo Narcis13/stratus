@@ -23,7 +23,7 @@
 import { suggestChannels } from './channelSuggest.ts';
 import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
 import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
-import type { TweetSignals } from './replyBand.ts';
+import type { BandThresholds, TweetSignals } from './replyBand.ts';
 import {
   type ExtractedActiveTimes,
   extractActiveTimesSection,
@@ -61,6 +61,7 @@ import {
 } from './shared/passiveHarvest.ts';
 import { personTierFor } from './shared/radar.ts';
 import type { PersonTier, RadarBand, RadarSighting, RankMap } from './shared/radar.ts';
+import { SERVER_DEFAULTS, SERVER_SETTINGS_KEY, readServerConfig } from './shared/serverSettings.ts';
 import {
   type HoverCardData,
   type PersonSighting,
@@ -1107,7 +1108,7 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     postedAt,
     metrics,
     topComments,
-    ...(sig ? { signals: { band: classifyBand(sig), ...sig } } : {}),
+    ...(sig ? { signals: { band: classifyBand(sig, bandThresholds), ...sig } } : {}),
   };
 }
 
@@ -1415,6 +1416,30 @@ async function onVariantChipClick(
 // replying to early. Every signal is read from the DOM ($0). The scoring model
 // lives in replyBand.ts; the rationale is in evals/reply-eval-*.md.
 
+// UI.7: the thresholds come from the mirrored settings blob the background
+// writes (§7.24/7.25 — the page never fetches them itself), so the badge and
+// the server's /x/replies/generate gate classify with the same twelve numbers.
+// Baked defaults until the first read resolves: an unconfigured, offline or
+// half-loaded profile bands exactly as it did before this knob existed, never
+// blank.
+let bandThresholds: BandThresholds = SERVER_DEFAULTS.band;
+
+function initBandThresholds(): void {
+  chrome.storage.local
+    .get(SERVER_SETTINGS_KEY)
+    .then((out) => {
+      bandThresholds = readServerConfig(out[SERVER_SETTINGS_KEY]).band;
+    })
+    .catch(() => {
+      /* keep defaults */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[SERVER_SETTINGS_KEY];
+    if (change) bandThresholds = readServerConfig(change.newValue).band;
+  });
+}
+
 function looksLikeReplyBait(article: Element): boolean {
   const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
   if (textLooksLikeReplyBait(text)) return true;
@@ -1447,7 +1472,7 @@ function readTweetSignals(article: Element): TweetSignals | null {
 
 function applyBand(article: HTMLElement): void {
   const sig = readTweetSignals(article);
-  const band = sig ? classifyBand(sig) : null;
+  const band = sig ? classifyBand(sig, bandThresholds) : null;
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
   if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
@@ -2830,6 +2855,7 @@ function start(): void {
   initPassiveCaptureSetting();
   initPassiveHarvestSetting();
   initContextCollapsed();
+  initBandThresholds();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });
