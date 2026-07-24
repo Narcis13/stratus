@@ -98,6 +98,57 @@ describe('computeQuests', () => {
     const hit = byKey(computeQuests({ ...BASE, launchesToday: 2, launchesAttended: 1 }));
     expect(hit.get('launch')?.done).toBe(true);
   });
+
+  // UI.2: the configurable quest targets. opts default to the shipped constants, so
+  // every test above (which passes no opts) is unchanged.
+  test('opts.originalsTarget sets the default when no commitment is present', () => {
+    const q = byKey(
+      computeQuests(
+        { ...BASE, originalsPostedToday: 1 },
+        { originalsTarget: 2, neglectedTargetsCount: 2 },
+      ),
+    );
+    expect(q.get('original')?.target).toBe(2);
+    expect(q.get('original')?.label).toBe('2 original posts');
+    expect(q.get('original')?.done).toBe(false);
+    // An explicit input (the GR.8 commitment path) still overrides the opts default.
+    const overridden = byKey(
+      computeQuests(
+        { ...BASE, originalsTarget: 1 },
+        { originalsTarget: 5, neglectedTargetsCount: 2 },
+      ),
+    );
+    expect(overridden.get('original')?.target).toBe(1);
+  });
+
+  test('originalsTarget 0 makes the quest optional — vacuously done with a note', () => {
+    const q = byKey(computeQuests(BASE, { originalsTarget: 0, neglectedTargetsCount: 2 }));
+    const original = q.get('original');
+    expect(original?.target).toBe(0);
+    expect(original?.done).toBe(true);
+    expect(original?.note).toContain('no originals target');
+    expect(original?.label).toBe('originals optional');
+  });
+
+  test('opts.neglectedTargetsCount caps the targets quest', () => {
+    // 5 neglected, configured count 3 → target 3.
+    const q = byKey(
+      computeQuests(
+        { ...BASE, neglectedTargetsAtDayStart: 5, neglectedTargetsTouched: 2 },
+        { originalsTarget: 1, neglectedTargetsCount: 3 },
+      ),
+    );
+    expect(q.get('targets')?.target).toBe(3);
+    // count 0 → vacuously done no matter how many are neglected.
+    const off = byKey(
+      computeQuests(
+        { ...BASE, neglectedTargetsAtDayStart: 5 },
+        { originalsTarget: 1, neglectedTargetsCount: 0 },
+      ),
+    );
+    expect(off.get('targets')?.target).toBe(0);
+    expect(off.get('targets')?.done).toBe(true);
+  });
 });
 
 describe('computeStreak', () => {
@@ -162,6 +213,14 @@ describe('neglectedTargetsAtDayStart', () => {
     const out = neglectedTargetsAtDayStart(['fresh', 'stale', 'never'], prior, todayStart);
     expect(out).toEqual(new Set(['stale', 'never']));
   });
+
+  test('a custom neglected window moves the cutoff (UI.2)', () => {
+    const prior = new Map<string, Date>([['h', new Date(todayStart.getTime() - 4 * DAY_MS)]]);
+    // Default 7-day window: a reply 4 days ago is still fresh.
+    expect(neglectedTargetsAtDayStart(['h'], prior, todayStart)).toEqual(new Set());
+    // 3-day window: the same reply is now stale → neglected.
+    expect(neglectedTargetsAtDayStart(['h'], prior, todayStart, 3)).toEqual(new Set(['h']));
+  });
 });
 
 describe('launchesAttended', () => {
@@ -172,5 +231,13 @@ describe('launchesAttended', () => {
     expect(launchesAttended([launch], [inside])).toBe(1);
     expect(launchesAttended([launch], [outside])).toBe(0);
     expect(launchesAttended([launch], [])).toBe(0);
+  });
+
+  test('a custom window widens attendance (UI.2)', () => {
+    const at40 = new Date(launch.getTime() + 40 * 60_000);
+    // Default 30-min window: a paste 40 min late misses.
+    expect(launchesAttended([launch], [at40])).toBe(0);
+    // A 60-min window now counts it.
+    expect(launchesAttended([launch], [at40], 60 * 60_000)).toBe(1);
   });
 });

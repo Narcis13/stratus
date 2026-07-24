@@ -18,7 +18,7 @@ export { SettingsError } from '../../settings/store.ts';
 export type SettingType = 'number' | 'boolean' | 'string' | 'enum' | 'numberArray';
 
 export interface SettingDef {
-  /** Dot-namespaced, e.g. 'x.doctrine.replyTargetMin'. */
+  /** Dot-namespaced, e.g. 'x.doctrine.anchors3'. */
   key: string;
   /** Group id — the tab section it renders under. */
   group: string;
@@ -47,44 +47,15 @@ export interface SettingDef {
 
 // --------------------------------------------------------------- the catalog
 
-// Doctrine numbers (OVERHAUL-PLAN §9) — the reply-band cadence the whole product
-// measures against. Consumers (brief quota/ratio/gaps, composer ladder) are wired
-// in UI.2; here they are inert defaults only.
+// Doctrine — the cadence ladder (OVERHAUL-PLAN §9). Only the anchor hours and the
+// ladder switch-point live here. The reply band (min/max), the week reply-ratio,
+// and the 2–10x band multipliers are owned by the ACTIVE NICHE (niches.doctrine,
+// N.5) and read via loadDoctrine() — NOT the settings store. UI.2 dropped the three
+// duplicate band keys UI.1 had seeded so there is exactly one owner (D2/D30c); the
+// Settings tab (UI.11) links those to the Niche card. The anchors + ladder switch
+// are consumed by brief.ts (gaps + ladder pick) and mirrored to the extension
+// composer (UI.6); here they are inert defaults until UI.2 wires the brief.
 const DOCTRINE: SettingDef[] = [
-  {
-    key: 'x.doctrine.replyTargetMin',
-    group: 'doctrine',
-    label: 'Reply target (min)',
-    description: 'Low end of the daily band-gated reply quota (the 10–20/day doctrine).',
-    type: 'number',
-    default: 10,
-    min: 1,
-    max: 100,
-    scope: 'server',
-  },
-  {
-    key: 'x.doctrine.replyTargetMax',
-    group: 'doctrine',
-    label: 'Reply target (max)',
-    description: 'High end of the daily band-gated reply quota.',
-    type: 'number',
-    default: 20,
-    min: 1,
-    max: 100,
-    scope: 'server',
-  },
-  {
-    key: 'x.doctrine.weekReplyTargetPct',
-    group: 'doctrine',
-    label: 'Weekly reply %',
-    description: 'Target share of the week that is replies vs originals (70/30 doctrine).',
-    type: 'number',
-    default: 70,
-    min: 40,
-    max: 95,
-    unit: '%',
-    scope: 'server',
-  },
   {
     key: 'x.doctrine.anchors3',
     group: 'doctrine',
@@ -127,11 +98,97 @@ const DOCTRINE: SettingDef[] = [
   },
 ];
 
-export const SETTINGS_REGISTRY: SettingDef[] = [...DOCTRINE];
+// Quests (CIRCLES-PLAN C9) — the daily-quest targets computeQuests() reads. There
+// is deliberately NO x.quests.replyQuestTarget: the reply quest derives from the
+// niche reply band (or an active commitment that outranks it — GR.8), so a settings
+// key here would be a second, silent owner of the same number.
+const QUESTS: SettingDef[] = [
+  {
+    key: 'x.quests.originalsTarget',
+    group: 'quests',
+    label: 'Originals per day',
+    description:
+      'Default daily target for the "original post" quest when no active commitment raises it. 0 makes the quest optional (vacuously done).',
+    type: 'number',
+    default: 1,
+    min: 0,
+    max: 10,
+    scope: 'server',
+  },
+  {
+    key: 'x.quests.neglectedTargetsCount',
+    group: 'quests',
+    label: 'Neglected targets per day',
+    description:
+      'How many neglected roster targets the daily quest asks you to reply to (capped by how many are actually neglected).',
+    type: 'number',
+    default: 2,
+    min: 0,
+    max: 10,
+    scope: 'server',
+  },
+  {
+    key: 'x.quests.neglectedTargetDays',
+    group: 'quests',
+    label: 'Neglected after',
+    description: 'Days without a reply from you before a roster target counts as neglected.',
+    type: 'number',
+    default: 7,
+    min: 1,
+    max: 60,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.quests.launchAttendWindowMin',
+    group: 'quests',
+    label: 'Launch attend window',
+    description:
+      'Minutes after a post goes live during which a pasted reply still counts as attending its launch room.',
+    type: 'number',
+    default: 30,
+    min: 5,
+    max: 120,
+    unit: 'min',
+    scope: 'server',
+  },
+];
+
+// Display — soft presentation limits the brief applies to already-collected data;
+// they never change what is measured or billed, only how much of it is shown.
+const DISPLAY: SettingDef[] = [
+  {
+    key: 'x.display.sparklineDays',
+    group: 'display',
+    label: 'Follower sparkline days',
+    description: 'How many days of follower history the Today sparkline spans.',
+    type: 'number',
+    default: 14,
+    min: 7,
+    max: 60,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.display.leaderCount',
+    group: 'display',
+    label: 'Profile-click leaders',
+    description: 'How many top profile-click tweets the Today brief lists.',
+    type: 'number',
+    default: 3,
+    min: 1,
+    max: 10,
+    scope: 'server',
+  },
+];
+
+export const SETTINGS_REGISTRY: SettingDef[] = [...DOCTRINE, ...QUESTS, ...DISPLAY];
 
 /** Human labels for each group id, in the order they should render. */
 export const GROUP_LABELS: Record<string, string> = {
   doctrine: 'Doctrine',
+  quests: 'Quests',
+  display: 'Display',
 };
 
 // ------------------------------------------------------------- validation

@@ -21,6 +21,20 @@ export const LAUNCH_ATTEND_WINDOW_MS = 30 * 60_000;
 export const NEGLECTED_TARGET_DAYS = 7;
 export const NEGLECTED_TARGETS_QUEST_TARGET = 2;
 
+/** Configurable quest targets the brief route resolves from the settings store
+ *  (UI.2, `x.quests.*`) and passes in. Kept as an opts object defaulted to the
+ *  shipped constants so every pure test that calls computeQuests(inputs) with no
+ *  opts is unchanged (Decision 6). `originalsTarget` is only the DEFAULT bar — an
+ *  active `originals` commitment still overrides it via QuestInputs.originalsTarget. */
+export interface QuestOpts {
+  originalsTarget: number;
+  neglectedTargetsCount: number;
+}
+export const QUEST_DEFAULTS: QuestOpts = {
+  originalsTarget: 1,
+  neglectedTargetsCount: NEGLECTED_TARGETS_QUEST_TARGET,
+};
+
 export interface Quest {
   key: QuestKey;
   label: string;
@@ -39,10 +53,11 @@ export interface QuestInputs {
   repliesTarget: number;
   /** Non-reply posts_published with postedAt inside today. */
   originalsPostedToday: number;
-  /** GR.8: the active `originals` commitment's daily target. Absent = the
-   *  shipped default of one post a day. A commitment can only raise this bar
-   *  (its minimum is 1), so no existing streak can be retroactively broken. */
-  originalsTarget?: number;
+  /** GR.8: the active `originals` commitment's daily target. Absent ⇒ the
+   *  configured default (QuestOpts.originalsTarget, UI.2). A commitment can only
+   *  raise this bar (its minimum is 1), so no existing streak can be retroactively
+   *  broken. Explicit `| undefined` for exactOptionalPropertyTypes pass-through. */
+  originalsTarget?: number | undefined;
   /** Targets that were already neglected when the day started. */
   neglectedTargetsAtDayStart: number;
   /** Of those, how many got a reply today. */
@@ -57,10 +72,10 @@ export interface QuestInputs {
   launchesAttended: number;
 }
 
-export function computeQuests(i: QuestInputs): Quest[] {
-  const targetsTarget = Math.min(NEGLECTED_TARGETS_QUEST_TARGET, i.neglectedTargetsAtDayStart);
+export function computeQuests(i: QuestInputs, opts: QuestOpts = QUEST_DEFAULTS): Quest[] {
+  const targetsTarget = Math.min(opts.neglectedTargetsCount, i.neglectedTargetsAtDayStart);
   const loopVacuous = i.loopsClosedToday === 0 && i.openLoopsNow === 0;
-  const originalsTarget = i.originalsTarget ?? 1;
+  const originalsTarget = i.originalsTarget ?? opts.originalsTarget;
   return [
     {
       key: 'replies',
@@ -71,12 +86,20 @@ export function computeQuests(i: QuestInputs): Quest[] {
       note: null,
     },
     {
+      // A configured target of 0 makes originals optional: vacuously done with a
+      // note, never a fake "0/0" win — the same forgiving shape as the loop/launch
+      // quests on a quiet day (the streak never punishes a target you turned off).
       key: 'original',
-      label: originalsTarget === 1 ? '1 original post' : `${originalsTarget} original posts`,
+      label:
+        originalsTarget === 0
+          ? 'originals optional'
+          : originalsTarget === 1
+            ? '1 original post'
+            : `${originalsTarget} original posts`,
       n: i.originalsPostedToday,
       target: originalsTarget,
       done: i.originalsPostedToday >= originalsTarget,
-      note: null,
+      note: originalsTarget === 0 ? 'no originals target set' : null,
     },
     {
       key: 'targets',
@@ -159,8 +182,9 @@ export function neglectedTargetsAtDayStart(
   targetHandles: Iterable<string>,
   priorOutboundByHandle: Map<string, Date>,
   todayStart: Date,
+  neglectedDays = NEGLECTED_TARGET_DAYS,
 ): Set<string> {
-  const cutoff = todayStart.getTime() - NEGLECTED_TARGET_DAYS * DAY_MS;
+  const cutoff = todayStart.getTime() - neglectedDays * DAY_MS;
   const out = new Set<string>();
   for (const h of targetHandles) {
     const prior = priorOutboundByHandle.get(h);
@@ -171,11 +195,15 @@ export function neglectedTargetsAtDayStart(
 
 /** Attendance: a launch counts as attended when at least one reply was pasted
  *  inside its 30-minute window. */
-export function launchesAttended(launchPostedAts: Date[], replyPastedAts: Date[]): number {
+export function launchesAttended(
+  launchPostedAts: Date[],
+  replyPastedAts: Date[],
+  windowMs = LAUNCH_ATTEND_WINDOW_MS,
+): number {
   let attended = 0;
   for (const p of launchPostedAts) {
     const from = p.getTime();
-    const to = from + LAUNCH_ATTEND_WINDOW_MS;
+    const to = from + windowMs;
     if (replyPastedAts.some((r) => r.getTime() >= from && r.getTime() <= to)) attended++;
   }
   return attended;

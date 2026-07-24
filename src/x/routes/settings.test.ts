@@ -59,10 +59,10 @@ describe('GET /x/settings', () => {
     const doctrine = body.groups.find((g) => g.id === 'doctrine');
     expect(doctrine?.label).toBe('Doctrine');
 
-    const min = findSetting(body.groups, 'x.doctrine.replyTargetMin');
-    expect(min?.value).toBe(10);
-    expect(min?.isDefault).toBe(true);
-    expect(min?.type).toBe('number');
+    const ladder = findSetting(body.groups, 'x.doctrine.ladderSwitchAt');
+    expect(ladder?.value).toBe(4);
+    expect(ladder?.isDefault).toBe(true);
+    expect(ladder?.type).toBe('number');
 
     const anchors = findSetting(body.groups, 'x.doctrine.anchors3');
     expect(anchors?.value).toEqual([9, 13, 18]);
@@ -80,8 +80,8 @@ describe('GET /x/settings/values', () => {
     expect(body['x.doctrine.anchors3']).toEqual([9, 13, 18]);
     expect(body['x.doctrine.anchors4']).toEqual([8, 12, 16, 20]);
     expect(body['x.doctrine.ladderSwitchAt']).toBe(4);
-    // Server-scope keys are NOT in the mirror payload.
-    expect('x.doctrine.replyTargetMin' in body).toBe(false);
+    // Server-scope keys are NOT in the mirror payload (the display group is server).
+    expect('x.display.sparklineDays' in body).toBe(false);
   });
 
   test('bad scope → 400', async () => {
@@ -94,18 +94,18 @@ describe('PATCH /x/settings', () => {
     const patched = await send<{ updated: { key: string; value: unknown }[] }>(
       '/x/settings',
       'PATCH',
-      { 'x.doctrine.replyTargetMin': 15, 'x.doctrine.anchors3': [8, 14, 19] },
+      { 'x.doctrine.ladderSwitchAt': 6, 'x.doctrine.anchors3': [8, 14, 19] },
     );
     expect(patched.status).toBe(200);
     expect(patched.body.updated).toEqual([
-      { key: 'x.doctrine.replyTargetMin', value: 15 },
+      { key: 'x.doctrine.ladderSwitchAt', value: 6 },
       { key: 'x.doctrine.anchors3', value: [8, 14, 19] },
     ]);
 
     const { body } = await send<{ groups: Group[] }>('/x/settings', 'GET');
-    const min = findSetting(body.groups, 'x.doctrine.replyTargetMin');
-    expect(min?.value).toBe(15);
-    expect(min?.isDefault).toBe(false);
+    const ladder = findSetting(body.groups, 'x.doctrine.ladderSwitchAt');
+    expect(ladder?.value).toBe(6);
+    expect(ladder?.isDefault).toBe(false);
     const anchors = findSetting(body.groups, 'x.doctrine.anchors3');
     expect(anchors?.value).toEqual([8, 14, 19]);
     expect(anchors?.isDefault).toBe(false);
@@ -117,16 +117,16 @@ describe('PATCH /x/settings', () => {
 
   test('atomicity: one bad key in a 2-key patch writes nothing', async () => {
     const res = await send<{ error: string; key: string }>('/x/settings', 'PATCH', {
-      'x.doctrine.replyTargetMin': 12,
-      'x.doctrine.replyTargetMax': 999, // > max 100
+      'x.doctrine.ladderSwitchAt': 6, // valid
+      'x.doctrine.anchors3': [25], // hour > max 23
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_setting_value');
-    expect(res.body.key).toBe('x.doctrine.replyTargetMax');
+    expect(res.body.key).toBe('x.doctrine.anchors3');
 
     // The good key must NOT have been written.
     const { body } = await send<{ groups: Group[] }>('/x/settings', 'GET');
-    expect(findSetting(body.groups, 'x.doctrine.replyTargetMin')?.isDefault).toBe(true);
+    expect(findSetting(body.groups, 'x.doctrine.ladderSwitchAt')?.isDefault).toBe(true);
   });
 
   test('unknown key → 400 unknown_setting', async () => {
@@ -137,7 +137,7 @@ describe('PATCH /x/settings', () => {
 
   test('out-of-range number → 400 invalid_setting_value', async () => {
     const res = await send<{ error: string }>('/x/settings', 'PATCH', {
-      'x.doctrine.replyTargetMin': 0,
+      'x.doctrine.ladderSwitchAt': 0, // < min 2
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_setting_value');
@@ -161,28 +161,28 @@ describe('PATCH /x/settings', () => {
 
 describe('POST /x/settings/reset', () => {
   test('reset by key restores the default and clears the dot', async () => {
-    await send('/x/settings', 'PATCH', { 'x.doctrine.replyTargetMin': 15 });
+    await send('/x/settings', 'PATCH', { 'x.doctrine.ladderSwitchAt': 6 });
     const reset = await send<{ reset: string[] }>('/x/settings/reset', 'POST', {
-      keys: ['x.doctrine.replyTargetMin'],
+      keys: ['x.doctrine.ladderSwitchAt'],
     });
     expect(reset.status).toBe(200);
-    expect(reset.body.reset).toEqual(['x.doctrine.replyTargetMin']);
+    expect(reset.body.reset).toEqual(['x.doctrine.ladderSwitchAt']);
 
     const { body } = await send<{ groups: Group[] }>('/x/settings', 'GET');
-    const min = findSetting(body.groups, 'x.doctrine.replyTargetMin');
-    expect(min?.value).toBe(10);
-    expect(min?.isDefault).toBe(true);
+    const ladder = findSetting(body.groups, 'x.doctrine.ladderSwitchAt');
+    expect(ladder?.value).toBe(4);
+    expect(ladder?.isDefault).toBe(true);
   });
 
   test('reset by group restores every knob in the group', async () => {
     await send('/x/settings', 'PATCH', {
-      'x.doctrine.replyTargetMin': 15,
-      'x.doctrine.weekReplyTargetPct': 80,
+      'x.doctrine.ladderSwitchAt': 6,
+      'x.doctrine.anchors3': [8, 14, 19],
     });
     await send('/x/settings/reset', 'POST', { group: 'doctrine' });
     const { body } = await send<{ groups: Group[] }>('/x/settings', 'GET');
-    expect(findSetting(body.groups, 'x.doctrine.replyTargetMin')?.isDefault).toBe(true);
-    expect(findSetting(body.groups, 'x.doctrine.weekReplyTargetPct')?.isDefault).toBe(true);
+    expect(findSetting(body.groups, 'x.doctrine.ladderSwitchAt')?.isDefault).toBe(true);
+    expect(findSetting(body.groups, 'x.doctrine.anchors3')?.isDefault).toBe(true);
   });
 
   test('reset guards: nothing to reset, bad keys type', async () => {

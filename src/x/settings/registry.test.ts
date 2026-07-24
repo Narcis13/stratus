@@ -94,20 +94,46 @@ describe('registry adapter + grouping', () => {
   });
 
   test('known key validates through its def', () => {
-    expect(settingsRegistry.validate('x.doctrine.replyTargetMin', 15)).toBeNull();
-    expect(settingsRegistry.validate('x.doctrine.replyTargetMin', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.doctrine.ladderSwitchAt', 4)).toBeNull();
+    expect(settingsRegistry.validate('x.doctrine.ladderSwitchAt', 1)).toBe('out_of_range');
+    // anchors are mirrored to the extension; the quest knobs are server-only.
     expect(settingsRegistry.get('x.doctrine.anchors3')?.scope).toBe('mirrored');
-    expect(settingsRegistry.get('x.doctrine.replyTargetMin')?.scope).toBe('server');
+    expect(settingsRegistry.get('x.quests.originalsTarget')?.scope).toBe('server');
   });
 
-  test('settingsByGroup returns the doctrine group with a label and all its defs', () => {
+  // D2/D30c: the reply band (min/max), week-reply-% and 2–10x multipliers are
+  // owned by the active niche, NOT the settings store — UI.2 dropped those keys.
+  test('the niche-owned doctrine band keys are absent from the registry', () => {
+    for (const gone of [
+      'x.doctrine.replyTargetMin',
+      'x.doctrine.replyTargetMax',
+      'x.doctrine.weekReplyTargetPct',
+    ]) {
+      expect(settingsRegistry.get(gone)).toBeUndefined();
+    }
+  });
+
+  test('settingsByGroup returns doctrine, quests and display in order, each labelled', () => {
     const groups = settingsByGroup();
+    expect(groups.map((g) => g.id)).toEqual(['doctrine', 'quests', 'display']);
+    expect(groups.map((g) => g.label)).toEqual(['Doctrine', 'Quests', 'Display']);
+
     const doctrine = groups.find((g) => g.id === 'doctrine');
-    expect(doctrine).toBeDefined();
-    expect(doctrine?.label).toBe('Doctrine');
-    const keys = doctrine?.defs.map((d) => d.key) ?? [];
-    expect(keys).toContain('x.doctrine.replyTargetMin');
-    expect(keys).toContain('x.doctrine.anchors3');
-    expect(keys.length).toBe(SETTINGS_REGISTRY.filter((d) => d.group === 'doctrine').length);
+    const dkeys = doctrine?.defs.map((d) => d.key) ?? [];
+    // Only the cadence ladder survives in the doctrine group.
+    expect(dkeys).toEqual([
+      'x.doctrine.anchors3',
+      'x.doctrine.anchors4',
+      'x.doctrine.ladderSwitchAt',
+    ]);
+
+    const quests = groups.find((g) => g.id === 'quests');
+    expect(quests?.defs.map((d) => d.key)).toContain('x.quests.originalsTarget');
+    const display = groups.find((g) => g.id === 'display');
+    expect(display?.defs.map((d) => d.key)).toContain('x.display.sparklineDays');
+
+    // Every def belongs to exactly one of the three groups (no orphan groups).
+    const grouped = groups.reduce((n, g) => n + g.defs.length, 0);
+    expect(grouped).toBe(SETTINGS_REGISTRY.length);
   });
 });

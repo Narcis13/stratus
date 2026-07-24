@@ -36,6 +36,7 @@ import {
   localDayKey,
   neglectedTargetsAtDayStart,
 } from '../quests.ts';
+import { getSetting } from '../settings/registry.ts';
 import { type CommitmentView, loadCommitmentsWithDebt, loadGoalsWithPacing } from './goals.ts';
 import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
 import { loadMonitorInputs } from './monitor.ts';
@@ -43,12 +44,14 @@ import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Cadence anchors from md_to_schedule.ts — 3/day and 4/day local hours.
+// Cadence anchors from md_to_schedule.ts — 3/day and 4/day local hours. These are
+// the module DEFAULTS; the brief route overrides them per request from the mirrored
+// x.doctrine.anchors3/anchors4/ladderSwitchAt settings (UI.2). The former
+// SPARKLINE_DAYS / LEADER_COUNT constants now live in the settings store's `display`
+// group (x.display.sparklineDays / x.display.leaderCount).
 const ANCHORS_3 = [9, 13, 18];
 const ANCHORS_4 = [8, 12, 16, 20];
-
-const SPARKLINE_DAYS = 14;
-const LEADER_COUNT = 3;
+const LADDER_SWITCH_AT = 4;
 
 // S0.1 conversion needs a longer horizon than the 14-day sparkline: the 28-day
 // window wants a follower baseline ~28d old (fetch a little extra for it) plus
@@ -78,10 +81,27 @@ export function localMinuteOfDay(t: Date, tzOffsetMin: number): number {
   return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
 }
 
+/** The cadence config the brief passes down — anchor hours for each ladder and the
+ *  filled-slot count at which the 4/day ladder takes over. Defaults are the module
+ *  constants; the route overrides them from the settings store (UI.2). */
+export interface AnchorConfig {
+  anchors3: number[];
+  anchors4: number[];
+  ladderSwitchAt: number;
+}
+const ANCHOR_DEFAULTS: AnchorConfig = {
+  anchors3: ANCHORS_3,
+  anchors4: ANCHORS_4,
+  ladderSwitchAt: LADDER_SWITCH_AT,
+};
+
 /** Compare today's filled slots against the cadence that best matches them —
- *  4+ filled slots means the 4/day ladder, otherwise the 3/day one. */
-export function pickAnchors(filledSlotCount: number): number[] {
-  return filledSlotCount >= 4 ? ANCHORS_4 : ANCHORS_3;
+ *  `ladderSwitchAt`+ filled slots means the 4/day ladder, otherwise the 3/day one. */
+export function pickAnchors(
+  filledSlotCount: number,
+  cfg: AnchorConfig = ANCHOR_DEFAULTS,
+): number[] {
+  return filledSlotCount >= cfg.ladderSwitchAt ? cfg.anchors4 : cfg.anchors3;
 }
 
 /** Assign each scheduled time (local minutes since midnight) to its nearest
@@ -360,6 +380,23 @@ brief.get('/brief', async (c) => {
   const doctrine = loadDoctrine();
   const replyTarget = { min: doctrine.replyTargetMin, max: doctrine.replyTargetMax };
 
+  // UI.2: display, cadence and quest knobs from the settings store (app_settings).
+  // The reply band/ratio above stay NICHE-owned (loadDoctrine); these are genuinely
+  // app-level. Sync Map lookups (override cache), no new reads billed.
+  const sparklineDays = getSetting<number>('x.display.sparklineDays');
+  const leaderCount = getSetting<number>('x.display.leaderCount');
+  const anchorCfg: AnchorConfig = {
+    anchors3: getSetting<number[]>('x.doctrine.anchors3'),
+    anchors4: getSetting<number[]>('x.doctrine.anchors4'),
+    ladderSwitchAt: getSetting<number>('x.doctrine.ladderSwitchAt'),
+  };
+  const questOpts = {
+    originalsTarget: getSetting<number>('x.quests.originalsTarget'),
+    neglectedTargetsCount: getSetting<number>('x.quests.neglectedTargetsCount'),
+  };
+  const neglectedTargetDays = getSetting<number>('x.quests.neglectedTargetDays');
+  const launchAttendWindowMs = getSetting<number>('x.quests.launchAttendWindowMin') * 60_000;
+
   const now = new Date();
   const todayStart = localDayStart(now, tzOffsetMin);
   const tomorrowStart = new Date(todayStart.getTime() + DAY_MS);
@@ -388,7 +425,7 @@ brief.get('/brief', async (c) => {
         followersCount: accountSnapshots.followersCount,
       })
       .from(accountSnapshots)
-      .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
+      .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - sparklineDays * DAY_MS)))
       .orderBy(asc(accountSnapshots.snapshotAt)),
     // S0.1: follower series over the conversion horizon (superset of the
     // sparkline window, so the 28d baseline exists). S0.9 rides on the same
@@ -605,13 +642,13 @@ brief.get('/brief', async (c) => {
   const profileClickLeaders = weekTweets
     .filter((t) => (t.metrics?.profileVisits ?? 0) > 0)
     .sort((a, b) => (b.metrics?.profileVisits ?? 0) - (a.metrics?.profileVisits ?? 0))
-    .slice(0, LEADER_COUNT);
+    .slice(0, leaderCount);
 
   // Gaps compare against pending/manual/posted only — a failed row still
   // occupies the list (so the user sees what to fix) but its slot reads as
   // unfilled.
   const slotted = scheduled.filter((s) => s.status !== 'failed' && s.scheduledFor !== null);
-  const anchors = pickAnchors(slotted.length);
+  const anchors = pickAnchors(slotted.length, anchorCfg);
   const gapHours = findScheduleGaps(
     slotted.map((s) => localMinuteOfDay(s.scheduledFor as Date, tzOffsetMin)),
     anchors,
@@ -704,7 +741,12 @@ brief.get('/brief', async (c) => {
       .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`);
     for (const r of priorRows) priorOutbound.set(r.handle, r.last);
   }
-  const neglectedAtStart = neglectedTargetsAtDayStart(targetHandles, priorOutbound, todayStart);
+  const neglectedAtStart = neglectedTargetsAtDayStart(
+    targetHandles,
+    priorOutbound,
+    todayStart,
+    neglectedTargetDays,
+  );
   const repliedTodayHandles = new Set(
     postedDraftRows.map((d) => d.sourceAuthorUsername.toLowerCase()),
   );
@@ -719,21 +761,27 @@ brief.get('/brief', async (c) => {
   const repliesCommitment = activeCommitment('replies');
   const originalsCommitment = activeCommitment('originals');
 
-  const questItems = computeQuests({
-    repliesPostedToday: postedDraftRows.length,
-    repliesTarget: repliesCommitment?.dailyTarget ?? replyTarget.min,
-    originalsPostedToday: originalsToday.length,
-    originalsTarget: originalsCommitment?.dailyTarget ?? 1,
-    neglectedTargetsAtDayStart: neglectedAtStart.size,
-    neglectedTargetsTouched: targetsTouched,
-    loopsClosedToday: Number(answeredToday?.n ?? 0),
-    openLoopsNow: Number(unansweredNow?.n ?? 0),
-    launchesToday: originalsToday.length,
-    launchesAttended: launchesAttended(
-      originalsToday.map((p) => p.postedAt),
-      replyPasteTimes,
-    ),
-  });
+  const questItems = computeQuests(
+    {
+      repliesPostedToday: postedDraftRows.length,
+      repliesTarget: repliesCommitment?.dailyTarget ?? replyTarget.min,
+      originalsPostedToday: originalsToday.length,
+      // Undefined ⇒ computeQuests falls back to questOpts.originalsTarget (the
+      // configured default); an active commitment still overrides it (GR.8).
+      originalsTarget: originalsCommitment?.dailyTarget,
+      neglectedTargetsAtDayStart: neglectedAtStart.size,
+      neglectedTargetsTouched: targetsTouched,
+      loopsClosedToday: Number(answeredToday?.n ?? 0),
+      openLoopsNow: Number(unansweredNow?.n ?? 0),
+      launchesToday: originalsToday.length,
+      launchesAttended: launchesAttended(
+        originalsToday.map((p) => p.postedAt),
+        replyPasteTimes,
+        launchAttendWindowMs,
+      ),
+    },
+    questOpts,
+  );
 
   // Idempotent per day: every brief read overwrites today's row with the
   // freshest quest state — the streak table is a diary, not an event log.

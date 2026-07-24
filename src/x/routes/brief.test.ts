@@ -2,7 +2,7 @@
 // The DB is shared across test files, so assertions check this file's
 // distinctive rows and structural invariants, never exact totals.
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
@@ -16,6 +16,7 @@ import {
   streaks,
 } from '../db/schema.ts';
 import { localDayKey } from '../quests.ts';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { brief } from './brief.ts';
 
 const app = new Hono();
@@ -420,5 +421,39 @@ describe('brief accountability blocks (GR.8)', () => {
     expect(g?.pacing.requiredPerDay).toBeCloseTo(2, 5);
     expect(g?.pacing.actualPerDay).toBeCloseTo(4, 1);
     expect(g?.pacing.verdict).toBe('ahead');
+  });
+});
+
+// UI.2 — the brief reads the doctrine cadence + quest knobs from the settings store
+// at request time. Each test resets the group it touched: the store is process-global
+// (shared over the in-memory DB), so an override left behind would leak into another
+// suite. The niche-owned reply band is NOT a store key (D2/D30c) — it is not asserted
+// here; the store-owned consumers below are what UI.2 wired.
+describe('brief honors store settings (UI.2)', () => {
+  afterEach(() => {
+    resetSettings({ group: 'quests' });
+    resetSettings({ group: 'doctrine' });
+  });
+
+  test('a patched x.quests.originalsTarget moves the original quest default', async () => {
+    await db.delete(commitments); // no commitment ⇒ the configured default applies
+    setSettings({ 'x.quests.originalsTarget': 3 });
+    const body = await getBrief();
+    const original = body.quests.items.find((q) => q.key === 'original');
+    expect(original?.target).toBe(3);
+    expect(original?.label).toBe('3 original posts');
+  });
+
+  test('patched anchors flow into today.anchors', async () => {
+    setSettings({
+      'x.doctrine.anchors3': [7, 11, 15],
+      'x.doctrine.anchors4': [6, 10, 14, 17],
+    });
+    const body = await getBrief();
+    // pickAnchors returns one ladder or the other depending on how many slots are
+    // filled today, but it must be one of the two PATCHed arrays — never the module
+    // defaults — which proves the store value reached the route.
+    const anchors = JSON.stringify(body.today.anchors);
+    expect([JSON.stringify([7, 11, 15]), JSON.stringify([6, 10, 14, 17])]).toContain(anchors);
   });
 });
