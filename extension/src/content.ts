@@ -24,6 +24,12 @@ import { suggestChannels } from './channelSuggest.ts';
 import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
 import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
 import type { TweetSignals } from './replyBand.ts';
+import {
+  type ExtractedActiveTimes,
+  extractActiveTimesSection,
+  gridsEqual,
+  parseHeatColors,
+} from './shared/activeTimes.ts';
 import { parseEarlyReplies } from './shared/earlyReplies.ts';
 import { GLANCE_TTL_MS, buildPersonChips } from './shared/glance.ts';
 import type { GlanceMap } from './shared/glance.ts';
@@ -2228,6 +2234,148 @@ function flushPassiveHarvest(): void {
   })();
 }
 
+// ---------------------------------------- active-times capture (A3.3)
+//
+// x.com/i/account_analytics renders the audience "Active times" heat grid —
+// presence data the Composer's best-slot ranking blends in below own measured
+// cells (A3.4). Captured passively whenever the user happens to visit the
+// page ($0, no tab automation — decision 3): once per visit, parsed by the
+// A3.1 shared module (§7.27 — one parser), shipped through ApiRequest. The
+// server route is append-only and never suppresses (a duplicate POST is
+// harmless); the only chatter gate is client-side — skip when the grid is
+// unchanged AND the last send is under 12h old, stamped in
+// chrome.storage.local. A failed send retries on the next mutation scan.
+
+// Verify live on first run — X owns this path; sub-tabs (Audience) share the prefix.
+const ACTIVE_TIMES_PATH_PREFIX = '/i/account_analytics';
+// Duplicated from the shared DOM extractor (module-private there): only used
+// to anchor the metric-dropdown read next to the same section.
+const ACTIVE_TIMES_HEADING_SELECTOR = 'h1, h2, h3, h4, [role="heading"]';
+const ACTIVE_TIMES_HEADING_RE = /active times/i;
+const ACTIVE_TIMES_METRIC_SELECTOR = 'select, [role="combobox"]';
+const ACTIVE_TIMES_METRIC_HOPS = 8;
+/** Mirrors the server's metric length clamp (routes/analytics.ts). */
+const ACTIVE_TIMES_METRIC_MAX = 40;
+const ACTIVE_TIMES_FALLBACK_METRIC = 'likes';
+const ACTIVE_TIMES_LAST_SENT_KEY = 'activeTimes:lastSent';
+const ACTIVE_TIMES_RESEND_MS = 12 * 60 * 60 * 1000;
+
+interface ActiveTimesLastSent {
+  grid: number[][];
+  sentAt: number;
+}
+
+let activeTimesDone = false; // sent or suppressed this visit
+let activeTimesInFlight = false;
+let activeTimesFailLogged = false;
+
+function parseActiveTimesLastSent(raw: unknown): ActiveTimesLastSent | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const rec = raw as { grid?: unknown; sentAt?: unknown };
+  if (!Array.isArray(rec.grid) || typeof rec.sentAt !== 'number') return null;
+  return { grid: rec.grid as number[][], sentAt: rec.sentAt };
+}
+
+function dropdownLabel(el: Element | null): string | null {
+  if (!el) return null;
+  const text =
+    el instanceof HTMLSelectElement
+      ? el.selectedOptions[0]?.textContent || el.value
+      : el.textContent;
+  return text?.trim().toLowerCase().slice(0, ACTIVE_TIMES_METRIC_MAX) || null;
+}
+
+// The analytics dropdown names which metric the heatmap is showing ('likes',
+// …). Best-effort: the capture is worth storing even when the label isn't
+// readable, so an unfound dropdown falls back rather than blocking.
+function readActiveTimesMetric(): string {
+  const headings = [...document.querySelectorAll(ACTIVE_TIMES_HEADING_SELECTOR)];
+  const heading = headings.find((h) => ACTIVE_TIMES_HEADING_RE.test(h.textContent ?? ''));
+  let container: Element | null = heading?.parentElement ?? null;
+  for (let hop = 0; hop < ACTIVE_TIMES_METRIC_HOPS && container; hop++) {
+    const label = dropdownLabel(container.querySelector(ACTIVE_TIMES_METRIC_SELECTOR));
+    if (label) return label;
+    container = container.parentElement;
+  }
+  // Live (verified 2026-07-24): the metric combobox ("Likes") sits above the
+  // whole Audience tab, outside every ≤8-hop ancestor of the section heading,
+  // and it is that page's only combobox — the page-level read is unambiguous.
+  return (
+    dropdownLabel(document.querySelector(ACTIVE_TIMES_METRIC_SELECTOR)) ??
+    ACTIVE_TIMES_FALLBACK_METRIC
+  );
+}
+
+async function sendActiveTimes(extracted: ExtractedActiveTimes, grid: number[][]): Promise<void> {
+  let last: ActiveTimesLastSent | null = null;
+  try {
+    const out = await chrome.storage.local.get(ACTIVE_TIMES_LAST_SENT_KEY);
+    last = parseActiveTimesLastSent(out[ACTIVE_TIMES_LAST_SENT_KEY]);
+  } catch {
+    // Unreadable stamp = never sent; worst case is one early re-send.
+  }
+  if (last && gridsEqual(last.grid, grid) && Date.now() - last.sentAt < ACTIVE_TIMES_RESEND_MS) {
+    activeTimesDone = true; // unchanged and fresh — nothing new to store
+    return;
+  }
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/analytics/active-times',
+    body: {
+      metric: readActiveTimesMetric(),
+      tzOffsetMin: -new Date().getTimezoneOffset(),
+      cols: extracted.cols,
+      rows: extracted.rows,
+      grid,
+    },
+  };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+    if (res?.ok) {
+      activeTimesDone = true;
+      const stamp: ActiveTimesLastSent = { grid, sentAt: Date.now() };
+      void chrome.storage.local.set({ [ACTIVE_TIMES_LAST_SENT_KEY]: stamp }).catch(() => {});
+      return;
+    }
+    if (res && res.code === 'unconfigured') {
+      activeTimesDone = true; // no server to talk to — stop asking this visit
+      return;
+    }
+    if (!activeTimesFailLogged) {
+      activeTimesFailLogged = true;
+      console.warn('[stratus] active-times capture failed', res?.code);
+    }
+  } catch (err) {
+    if (!activeTimesFailLogged) {
+      activeTimesFailLogged = true;
+      console.warn('[stratus] active-times capture failed', err);
+    }
+  }
+}
+
+function syncActiveTimesCapture(): void {
+  // Pathname re-read per scan, not once: X navigates without reloading. The
+  // off-page branch is also the visit reset — returning later captures again.
+  if (!location.pathname.startsWith(ACTIVE_TIMES_PATH_PREFIX)) {
+    activeTimesDone = false;
+    activeTimesFailLogged = false;
+    return;
+  }
+  if (!passiveCaptureEnabled) return;
+  if (activeTimesDone || activeTimesInFlight) return;
+  // Gate order is the perf contract (HV.2): the flags above settle for free;
+  // the DOM walk below runs only on the analytics page while uncaptured.
+  const extracted = extractActiveTimesSection(document);
+  if (!extracted) return; // section still rendering — next mutation scan retries
+  const grid = parseHeatColors(extracted.colors, extracted.cols, extracted.rows);
+  if (!grid) return;
+  activeTimesInFlight = true;
+  void sendActiveTimes(extracted, grid).finally(() => {
+    activeTimesInFlight = false;
+  });
+}
+
 // --------------------------------------------------------- launch room (C7)
 //
 // While a Launch Room is live and the user has the launched tweet open, the
@@ -2655,6 +2803,7 @@ function scan(root: ParentNode): void {
   syncAuthorButton();
   capturePassiveHoverCards();
   captureLaunchReplies();
+  syncActiveTimesCapture();
   if (onNotifications) {
     syncNotifContext();
     scanNotificationCells();

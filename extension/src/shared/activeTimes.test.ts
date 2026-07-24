@@ -73,6 +73,47 @@ describe('extractActiveTimesSection', () => {
     expect(grid?.[0]?.[0]).toBeCloseTo(0, 5);
   });
 
+  test('live palette: constant color, intensity on element opacity (flat grid)', () => {
+    // The live markup (verified 2026-07-24): every cell carries the SAME
+    // background color and the ramp rides on the element's opacity (0.2..1).
+    // cellColor folds that opacity into an rgba alpha so parseHeatColors'
+    // alpha mode reads it; without the fold the grid is all-equal noise.
+    let cells = '';
+    for (let i = 0; i < 7 * 24; i++) {
+      const col = i % 7;
+      const row = (i - col) / 7;
+      const opacity = col === 6 && row === 3 ? 1 : col === 1 && row === 2 ? 0.625 : 0.25;
+      cells += `<div style="background-color: rgb(30, 156, 241); opacity: ${opacity}"></div>`;
+    }
+    const doc = sectionFor(`<div class="grid">${cells}</div>`);
+    const extracted = extractActiveTimesSection(doc);
+    expect(extracted?.cols).toBe(7);
+    expect(extracted?.rows).toBe(24);
+    if (!extracted) return;
+    const grid = parseHeatColors(extracted.colors, extracted.cols, extracted.rows);
+    expect(grid?.[6]?.[3]).toBeCloseTo(1, 5);
+    expect(grid?.[1]?.[2]).toBeCloseTo(0.5, 5);
+    expect(grid?.[0]?.[0]).toBeCloseTo(0, 5);
+  });
+
+  test('element opacity multiplies an existing rgba alpha', () => {
+    // A translucent color under a translucent element compounds: the folded
+    // alpha is color-alpha × element-opacity, keeping relative order intact.
+    const doc = sectionFor(
+      columnsGrid(24, (col, row) => (col === 0 && row === 0 ? 0.8 : 0.4)).replaceAll(
+        'style="background-color: rgba(29, 155, 240, 0.8)"',
+        'style="background-color: rgba(29, 155, 240, 0.8); opacity: 0.5"',
+      ),
+    );
+    const extracted = extractActiveTimesSection(doc);
+    expect(extracted).not.toBeNull();
+    if (!extracted) return;
+    // col 0 row 0: 0.8 × 0.5 = 0.4 — identical to every other cell → all-equal.
+    const grid = parseHeatColors(extracted.colors, extracted.cols, extracted.rows);
+    expect(grid?.[0]?.[0]).toBeCloseTo(0.5, 5);
+    expect(grid?.[3]?.[9]).toBeCloseTo(0.5, 5);
+  });
+
   test('legend swatches next to the grid do not break the column count', () => {
     const legend = `<div class="legend">${'abcde'
       .split('')

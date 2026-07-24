@@ -28,11 +28,35 @@ export interface ExtractedActiveTimes {
   rows: number;
 }
 
+/** rgb()/rgba() surgery for folding element opacity into the color's alpha. */
+const RGB_PARTS_RE =
+  /^rgba?\((\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})(?:\s*[,/]\s*([\d.]+))?\s*\)$/i;
+
+function withOpacity(color: string, opacity: number): string {
+  const m = color.match(RGB_PARTS_RE);
+  if (!m) return color;
+  const base = m[4] === undefined ? 1 : Number(m[4]);
+  return `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${(Number.isFinite(base) ? base : 1) * opacity})`;
+}
+
 function cellColor(el: Element): string | null {
-  const inline = (el as { style?: { backgroundColor?: string } }).style?.backgroundColor;
-  if (inline) return inline;
-  const computed = el.ownerDocument?.defaultView?.getComputedStyle(el).backgroundColor;
-  return computed || null;
+  const style = (el as { style?: { backgroundColor?: string; opacity?: string } }).style;
+  const view = el.ownerDocument?.defaultView;
+  const inline = style?.backgroundColor;
+  // Live palette (verified 2026-07-24): cells carry `background-color:
+  // hsl(var(--color-blue-500))` — a var() only the computed style resolves
+  // to a parseable rgb().
+  const color =
+    inline && !inline.includes('var(')
+      ? inline
+      : view?.getComputedStyle(el).backgroundColor || inline || null;
+  if (!color) return null;
+  // Live palette: intensity rides on the ELEMENT's opacity (0.2..1), not the
+  // color — fold it into the alpha so parseHeatColors' alpha mode reads it.
+  const rawOpacity = style?.opacity || view?.getComputedStyle(el).opacity;
+  const opacity = rawOpacity ? Number(rawOpacity) : 1;
+  if (!Number.isFinite(opacity) || opacity < 0 || opacity >= 1) return color;
+  return withOpacity(color, opacity);
 }
 
 function collectGrid(container: Element): ExtractedActiveTimes | null {
