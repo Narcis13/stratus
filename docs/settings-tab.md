@@ -113,6 +113,29 @@ These three are stored locally in the extension, like the connection fields — 
 
 The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
 
+### The fourteen groups
+
+Today the registry holds **61 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
+
+| Group | Knobs | What it decides | Where the change shows |
+|---|---|---|---|
+| **Doctrine** | 3 | The cadence ladder: the 3/day and 4/day anchor hours, and how many filled slots switches you from one to the other. | Today's gaps, the Composer's slot suggestions, the Calendar's ghost anchors. |
+| **Quests** | 4 | The daily bar: originals target, how many neglected targets count, the neglect window, the launch-room attendance window. | Today's quest checklist and the streak. |
+| **People** | 3 | The CRM stage ladder's promotion windows (mutual, ally, ally window). | Stages on People, and every stage-aware draft. |
+| **Follow-ups** | 8 | The follow-up queue's windows: chain freshness, DM readiness, neglected target/ally days, momentum %, re-up age range, unacknowledged-fan days. | Do next, Targets, Top fans, the dossier queue. |
+| **Pinned watch** | 2 | When a pinned post reads as stale, and the ratio that says something outperforms it. | Today's pinned-watch card. |
+| **Digest** | 1 | How many neglected people the Sunday digest names. | The weekly digest. |
+| **Reply band** | 12 | The reply-band **classifier** thresholds — views, replies, freshness, views-per-minute, the too-small floors. | The on-page badge *and* the server's draft gate — same numbers, both sides. |
+| **Stat gates** | 2 | How much data a Playbook cell and a best-time cell need before they read as evidence. | The Playbook's `insufficient data (n=…/N)` cells; the best-time advice. |
+| **Radar** | 1 | How long a radar draft stays clickable. | The Radar strip on Today. |
+| **Workers** | 4 | The daily-metrics hour, the publisher tick, and the winner re-read floor/cap. | Background only. The first two are `restart` knobs. |
+| **Budgets** | 2 | The soft X daily watchdog and the **hard** image-generation cap. | A refused image generation; the cost log's warnings. |
+| **AI calls** | 6 | Per-surface LLM defaults: reply/drafter/digest token caps, reply temperature and effort, the batch-reply ceiling. | Every AI draft — unless **Settings → AI** overrides them globally. |
+| **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
+| **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
+
+Twenty-seven of the 61 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
+
 ### How a row works
 
 Each row shows the knob's **name**, a one-line **description** carrying the *why* (and the warning, where there is one), and a control picked to fit: a **slider** for a bounded number, a plain number box for an unbounded one, a checkbox, a dropdown, or a comma-separated list for things like the posting-hour anchors.

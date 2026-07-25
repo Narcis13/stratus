@@ -43,7 +43,7 @@ A recurring theme you'll see everywhere: **stratus drafts, you post.** Actual po
 | **[Replies](./replies-tab.md)** | "Reply Master" — AI-draft strong replies to the right tweets (band-gated to save money), then paste them yourself. |
 | **[Ideas](./ideas-tab.md)** | The Idea Inbox — capture post/reply ideas (even by right-click on any page) so none get lost. |
 | **[Playbook](./playbook-tab.md)** | Your personal "what's working" analytics report, gated so it never lies on thin data. |
-| **[Settings](./settings-tab.md)** | Connect the extension to your server; privacy and behavior toggles. **Configure this first.** |
+| **[Settings](./settings-tab.md)** | Connect the extension to your server; privacy, behavior and appearance; and **Tuning** — the 61 knobs stratus makes its decisions with, searchable, with the bounds and reasoning attached. **Configure this first.** |
 
 ---
 

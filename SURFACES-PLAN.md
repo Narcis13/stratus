@@ -496,6 +496,54 @@ paste (watch X's paste normalization vs the doubled-space typo variant) and the 
 
 ---
 
+## 5e. Phase S8 — Cockpit overhaul: design system + the configurability moat — SHIPPED 2026-07-25
+
+> **Status: done.** Full build plan in **`plans/2026-07-17-ui-overhaul-settings-moat.md`**
+> (tasks UI.1–UI.17, executed through `plans/MASTERPLAN.md` as Wave 5); see
+> **[docs/settings-tab.md](./docs/settings-tab.md)** for the registry map and every other
+> `docs/*-tab.md` for the per-tab polish. Phase entries in
+> **[docs/PHASE-HISTORY.md](./docs/PHASE-HISTORY.md)**.
+
+**Job:** make the panel a polished instrument *and* make its numbers the user's, not the
+build's. Two workstreams, one plan — no new capability, no new spend.
+
+- **The settings platform.** `app_settings` (key/value/updated_at, migration `0013`,
+  overrides only) → a sync read-through store `src/settings/store.ts` (platform-agnostic)
+  → the typed catalog `src/x/settings/registry.ts` → `src/x/routes/settings.ts`
+  (`GET /settings`, `GET /settings/values?scope=mirrored`, `PATCH`, `POST /reset`).
+  **61 knobs in 14 groups.** Validation is registry-driven, and **the floors and ceilings
+  ARE the money guard** (image budget hard-capped at $2.00, mention pull ≤100) — the same
+  wall an agent hits through the `x_settings` / `x_update_setting` MCP tools.
+- **Pure modules stay pure.** Routes and workers are the only store consumers; pure
+  functions gained trailing defaulted parameter objects, so every pre-existing test and
+  fixture is byte-valid and the store is mockable.
+- **One number, both sides.** 27 knobs are `scope:'mirrored'`; the background service
+  worker is the single fetcher/writer of the `settings:server` blob, so the on-page band
+  badge and the server's draft gate read the identical thresholds — no rebuild, no fork.
+- **The design system.** `styles.css` runs on the `--strat-*` tokens lifted from
+  `Stratus Design System/`, with a light theme, a density and a scale setting; a `ui/`
+  primitive set (Section, EmptyState, SubTabs, SettingRow, Slider, GearPopover) and a
+  grouped tab rail; one `.chip` family; the injected on-page overlays on their own
+  theme-neutral `--stratus-*` block, and `/explorer` + `/writer` on `light-dark()`.
+- **Config where the feature is.** A crowded, searchable Settings → Tuning subtab plus
+  **eleven inline ⚙ affordances** editing the very same keys with the same discipline
+  (optimistic, debounced, server-refused values snap back).
+
+**Cost:** $0 recurring, $0 X API, no LLM. Settings can *raise* existing ceilings, never
+past the registry's hard bounds; the checks themselves were never made toggleable.
+**Done when:** `GET /x/settings` returns ≥55 knobs across ≥12 groups and
+`bun run scripts/smoke-settings.ts` passes — which it does, restoring every override it
+wrote and writing no rows at all.
+
+**Tests:** `src/x/settings/registry.test.ts` (the store's behavior is covered through the
+bound registry) + `src/x/routes/settings.test.ts` — the exact group/key/scope/mirrored
+lists, so a mirrored key with no `ServerConfig` field fails;
+`extension/src/shared/serverSettings.test.ts`,
+`extension/src/sidepanel/{comingSoon,settingsClient}.test.ts`;
+`scripts/smoke-settings.ts` ($0, real DB, no `--live` — nothing paid exists to verify).
+
+---
+
 ## 6. Explicitly NOT doing (this plan)
 
 - **OAuth 1.0a media upload** — no API-attached images, no auto-posted visuals. The
