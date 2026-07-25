@@ -3,7 +3,7 @@
 
 import { xFetch } from './client.ts';
 import { XApiError } from './errors.ts';
-import { defaultPostParams } from './fields.ts';
+import { MENTION_EXPANSIONS, defaultPostParams } from './fields.ts';
 import type { Page } from './pagination.ts';
 import { paginate } from './pagination.ts';
 import { OWNED_READ_USD, POST_CREATE_USD, URL_POST_CREATE_USD } from './pricing.ts';
@@ -220,7 +220,9 @@ export async function* getUserMentions(
         query: {
           max_results: pageSize,
           ...(opts.sinceId ? { since_id: opts.sinceId } : {}),
-          ...defaultPostParams(),
+          // The only read in the repo that consumes `includes` — the author
+          // handles collected below. Every other call site expands nothing.
+          ...defaultPostParams({ expansions: MENTION_EXPANSIONS }),
           ...(nextToken ? { pagination_token: nextToken } : {}),
         },
       },

@@ -200,7 +200,13 @@ export function startXWorkers(): XWorkers {
 
   // Heartbeats: /healthz flags (503) when a worker stops beating — a dead
   // publisher must page the deploy check, not fail silently.
-  registerHeartbeat(PUBLISHER_HEARTBEAT, 5 * 60_000);
+  // The window is derived from the configured interval, never hardcoded: the
+  // publisher beats once per tick, so a fixed 5min window would mark a healthy
+  // worker stale for any interval past 300s and permanently 503 /healthz — which
+  // also fails deploy.sh's closing health check. 3x the interval (floor 5min)
+  // keeps the two in step whatever the knob is set to, including an override
+  // already stored in app_settings from before the registry cap.
+  registerHeartbeat(PUBLISHER_HEARTBEAT, Math.max(5 * 60_000, publisherIntervalSec * 3_000));
   heartbeats.push(PUBLISHER_HEARTBEAT);
   stops.push(startPublisher({ ...cfg, intervalMs: publisherIntervalSec * 1000 }));
 

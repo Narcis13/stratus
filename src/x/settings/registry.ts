@@ -615,7 +615,10 @@ const WORKERS: SettingDef[] = [
     type: 'number',
     default: 60,
     min: 30,
-    max: 600,
+    // Capped at 300s so /healthz keeps its 5-minute floor as a meaningful liveness
+    // check (startXWorkers scales the staleness window off this value, so a longer
+    // interval would only make a dead publisher take longer to notice).
+    max: 300,
     unit: 's',
     scope: 'server',
     appliesOn: 'restart',

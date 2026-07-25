@@ -10,7 +10,7 @@ import { metricsSnapshots, postsPublished } from './x/db/schema.ts';
 import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
-import { defaultPostParams } from './x/fields.ts';
+import { MENTION_EXPANSIONS, defaultPostParams } from './x/fields.ts';
 import { DEFAULT_NICHE } from './x/niche/defaults.ts';
 import {
   IDEAS_PROMPT_TEMPLATE,
@@ -124,6 +124,37 @@ describe('defaultPostParams', () => {
   test('default omits private metrics', () => {
     const p = defaultPostParams();
     expect(p['tweet.fields']).not.toContain('non_public_metrics');
+  });
+
+  // CA.2: an expansion hydrates whole extra objects into `includes.*`, X bills
+  // every object in the body, and `itemCount` only counts `data` — so a stray
+  // expansion is billed AND invisible to /cost/today. Expanding by default cost
+  // ~90 unread parent tweets ($0.005 each) on a 90-reply day. Lock it at zero.
+  test('expands nothing by default — an unread `includes` object is pure spend', () => {
+    for (const p of [defaultPostParams(), defaultPostParams({ ownedPrivate: true })]) {
+      expect(p.expansions).toBeUndefined();
+      // These only shape objects an expansion would have put in `includes`.
+      expect(p['user.fields']).toBeUndefined();
+      expect(p['media.fields']).toBeUndefined();
+    }
+  });
+
+  test('dropping the expansions keeps the free tweet FIELDS that back has_media', () => {
+    // `attachments`/`referenced_tweets` ride the tweet itself at no extra cost —
+    // only the hydrated parent-tweet/media objects went away, so the has_media
+    // baseline (`tweet.attachments?.media_keys?.length`) still works.
+    const p = defaultPostParams();
+    expect(p['tweet.fields']).toContain('attachments');
+    expect(p['tweet.fields']).toContain('referenced_tweets');
+  });
+
+  test('mentions opt in to author_id — the one includes.* the repo reads', () => {
+    const p = defaultPostParams({ expansions: MENTION_EXPANSIONS });
+    expect(p.expansions).toBe('author_id');
+    // getUserMentions resolves handles out of includes.users, so the shaping
+    // param has to ride along with the expansion.
+    expect(p['user.fields']).toContain('username');
+    expect(p.expansions).not.toContain('referenced_tweets');
   });
 });
 
