@@ -1,7 +1,8 @@
-# MASTERPLAN — unified execution order for the 12 feature plans
+# MASTERPLAN — unified execution order for the 15 feature plans
 
 > **Created:** 2026-07-17. Combines every plan in `plans/` into one dependency-correct
 > execution order with per-task reasoning levels and parallel lanes.
+> **Extended 2026-07-25:** Wave 6 (SC / GT / JD — the x-builder-derived backlog plans).
 > **Execution state lives in `.claude/skills/masterplan/STATE.md`** — this file is the
 > static plan; never mark progress here.
 > **Driven by the `/masterplan` skill** — one task per session, codemap-first, state
@@ -23,6 +24,9 @@
 | GR | `2026-07-17-guardrails.md` | 10 | Following curation queue, activity monitor, goals/commitments/scorecard |
 | A3 | `2026-07-17-authoring-3.md` | 15 | Audience-aware slots, manual publishing, DM drafts, the Writer |
 | ST | `2026-07-16-studio-2.md` | 9 | Studio 2.0: mascot, 6 new templates, patterns, presets |
+| SC | `2026-07-22-static-coach.md` | 9 | Deterministic pre-publish coach, format classifier, fitted reach band |
+| GT | `2026-07-22-mika-growth-tactics.md` | 9 | Reciprocity lane, reply-bait formats, launch seeding, milestone nudge, cooldown |
+| JD | `2026-07-22-llm-judge.md` | 8 | On-demand 13-dimension draft judge, anchored fixes, falsification cell |
 
 Task IDs are `<code>.<n>` matching "Task n" in the source plan. **The source plan's task
 block is the implementation spec** — this file only fixes order, reasoning level, and
@@ -110,6 +114,29 @@ the cross-plan adaptations below.
 - **D10 — Knob registry groups (UI.3–5) run in Wave 5**, after RU/HV/GR/A3 exist, so the
   registry catalogs the FINAL constant set (radar caps, passive-harvest caps, unfollow cadence,
   monitor thresholds, manual-alarm windows) instead of being retrofitted.
+
+**Wave-6 seeds** (numbered D140+ — STATE.md's live register was at D139 when Wave 6 was
+added; STATE continues from D144):
+
+- **D140 — Composer.tsx is Wave 6's choke point.** Four tasks add blocks to it, in one
+  fixed serial lane: **SC.3 → SC.6 → SC.8 → JD.6**. Each later task reads the Composer
+  *as the previous one left it* (the coach column, cooldown chip and reach line all sit
+  under the textarea; the judge block lands below the AI.8 rewrite section). No GT task
+  touches Composer (GT.5 is skipped per D141; GT.4's "draft it" button lives in Today.tsx).
+- **D141 — GT.5 is superseded by SC.6, never build it.** Both plans document the collision
+  (SC plan header: "SC.6 supersedes that task"). The format classifier reads the text, so
+  SC.6's cooldown covers hand-written posts — the register/pillar-keyed GT.5 cannot. GT.5
+  is `[s]` in the ledger from day one; GT.9's smoke drops its cooldown assertion (SC.9's
+  smoke owns cooldown arithmetic); the `GET /x/posts/cooldowns` route is built once, by SC.6.
+- **D142 — `src/x/replies/*` serializes.** GT.1 → JD.1 in that order: both edit
+  `src/x/replies/prompt.ts`, and JD.1's requirement that the byte-synced templates stay
+  *unchanged* must be checked against the post-GT.1 templates, not the pre-edit ones.
+  Likewise GT.6 → GT.8 (both edit `routes/replies.ts`). GT.1/GT.2 are the wave's only
+  byte-sync prompt edits — regenerate the TS literals with the .md in the same commit.
+- **D143 — SC.10/SC.11 are referenced, not scheduled.** The JD plan assigns two follow-ups
+  to the SC plan (`scoreDraft` as a drafter structural validator with one conditional
+  retry; a `format` parameter on the drafter). No task blocks exist for them, so they are
+  NOT in Wave 6 — write them into the SC plan first if wanted, then append to the wave.
 
 ---
 
@@ -324,6 +351,59 @@ touch pre-masterplan tabs (**D7**).
 
 ---
 
+## Wave 6 — Coach, judge & growth tactics (the x-builder harvest)
+
+Rationale: three backlog plans distilled from the x-builder/i_mika_el code studies, all
+$0 recurring (JD adds ~$0.003–0.007 per human click). Order: the two shared pure modules
+first (SC.1/SC.2 — everything else in the wave reads them), the byte-sync prompt edits
+early and serial (D142 — one prefix-cache bust each, and JD.1's "templates unchanged"
+check needs the post-GT.1 ground), then the SC surfaces, the GT reciprocity lane, and
+the JD chain last — it holds the wave's only migration (JD.4; plan text says "0018",
+rule 1 applies — the journal assigns the real number) and its Composer/playbook surfaces
+need the SC tasks to have released those files (D140). GT.5 is never built (D141).
+
+| Order | ID | Task | Depends | Reasoning |
+|---|---|---|---|---|
+| 6.1 | SC.1 | `src/shared/postCoach.ts` — deterministic check engine (~29 rules + score) | — | high |
+| 6.2 | SC.2 | `src/shared/postFormat.ts` — format classifier + real-corpus fixtures | — | high |
+| 6.3 | GT.1 | Echo-anchor rule in reply prompt (byte-sync + batch anti-drift) | — | **xhigh** |
+| 6.4 | GT.2 | Reply-bait skeletons in post prompt (byte-sync, §9 stable prefix) | — | high |
+| 6.5 | JD.1 | Few-shot machine-draft dilution + trust markers (**D142**: after GT.1) | GT.1 | **xhigh** |
+| 6.6 | GT.3 | Launch Room seed-first-comment checklist + one-click draft | — | high |
+| 6.7 | GT.4 | Milestone nudge: brief `milestoneWatch` + Today card | — | high |
+| 6.8 | SC.3 | Composer live coach column (client-side, no fetch) | SC.1 | high |
+| 6.9 | SC.4 | Coach score chips on reply variants + Radar rows | SC.1, SC.3 | high |
+| 6.10 | SC.5 | Playbook `formatEffectiveness` + `coachScoreEffectiveness` cells | SC.1, SC.2 | high |
+| 6.11 | SC.6 | Format cooldown route + Composer chip (**D141**: supersedes GT.5) | SC.2, SC.3 | high |
+| 6.12 | SC.7 | Niche-scoped coach lexicon (`GET /x/coach/lexicon`) | SC.1, SC.3 | high |
+| 6.13 | GT.6 | Band-gate roster exemption + `reciprocityTargetMin` doctrine knob | — | **xhigh** |
+| 6.14 | GT.7 | Daily reciprocity quest (6th quest) | GT.6 | high |
+| 6.15 | GT.8 | Roster sightings into Radar (content.ts + `'roster'` band; **D142**: after GT.6) | GT.6 | **xhigh** |
+| 6.16 | GT.9 | GT docs-sync + `smoke-growth-tactics.ts` (**D141**: no cooldown assertion) | all GT | high |
+| 6.17 | SC.8 | Fitted reach band — architecture only, no invented numbers | SC.2, SC.5 | **xhigh** |
+| 6.18 | SC.9 | SC docs-sync + `smoke-coach.ts` | SC.1–SC.8 | high |
+| 6.19 | JD.2 | `src/shared/judge.ts` — verdict types + annotation locator | — | high |
+| 6.20 | JD.3 | `src/x/judge/prompt.ts` — rubric, schema, parser, registry key | JD.2 | high |
+| 6.21 | JD.4 | `draft_judgments` migration + `POST /x/judge` (migration — runs alone) | JD.3 | **xhigh** |
+| 6.22 | JD.5 | `POST /x/judge/apply` — never-worse guard, 404/409 before spend | JD.4 | **xhigh** |
+| 6.23 | JD.6 | Composer judge panel + anchored-fix selection (**D140**: after SC.3/6/8) | JD.4, JD.5 | high |
+| 6.24 | JD.7 | Playbook `judgeEffectiveness` falsification cell (after SC.5 — playbook lock) | JD.4 | high |
+| 6.25 | JD.8 | JD docs-sync + `smoke-judge.ts` | all JD | high |
+
+Parallelizable inside Wave 6: SC.1/SC.2 alongside GT.1–GT.4 (disjoint files); JD.2/JD.3
+(pure modules) alongside anything; the GT.6→GT.7→GT.8 reciprocity chain alongside the SC
+surface chain. Serial constraints: Composer.tsx SC.3 → SC.6 → SC.8 → JD.6 (**D140**);
+playbook.ts + routes/playbook.ts SC.5 → JD.7; `src/x/replies/*` GT.1 → JD.1 and
+GT.6 → GT.8 (**D142**); JD.4 is the wave's only migration and never runs in a parallel
+lane. Reasoning-level notes: no task here is **max** — the two prompt edits are additive
+bullets guarded by byte-sync/equivalence tests, not the structural surgery the Wave-1
+chain was; the **xhigh** set is where a subtle mistake passes tests but breaks an
+invariant (GT.1's embedded-batch parity, JD.1's markers beside byte-synced literals,
+GT.6's money-gate carve-out, GT.8's content.ts + band coercion, SC.8's fit arithmetic,
+JD.4/JD.5's refuse-before-spend ladders and the never-worse guard).
+
+---
+
 ## Parallelism model (how many sessions at once)
 
 Practical ceiling: **2–3 concurrent sessions**, each owning a lane, coordinated through
@@ -337,6 +417,9 @@ STATE.md's hot-file locks:
 - **Wave 3:** HV chain ∥ GR server chain ∥ GR goals chain.
 - **Wave 4:** analytics ∥ manual-publish ∥ DM/articles (migrations serialize).
 - **Wave 5:** knob groups UI.3/UI.4 parallel; polish passes UI.13/14/15 parallel.
+- **Wave 6:** SC pure/surface chain ∥ GT reciprocity chain ∥ JD pure modules (JD.2/JD.3);
+  Composer.tsx, playbook.ts and `src/x/replies/*` serialize per D140/D142; JD.4
+  (migration) runs alone.
 
 Rules: a lane claims its hot files in STATE.md before starting and releases on commit;
 migration tasks always run alone; when in doubt, serialize — a merge conflict in

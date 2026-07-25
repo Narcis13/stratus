@@ -1,7 +1,7 @@
 # Masterplan execution state
 
 > Dynamic memory for `/masterplan`. Updated after EVERY task, in the task's own commit.
-> Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10).
+> Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10 + Wave-6 seeds D140–D143).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 > History: `.claude/skills/masterplan/STATE-ARCHIVE.md` (frozen, grep-only — closed-wave deviations + gotchas).
 
@@ -48,6 +48,40 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 - [x] UI.15 Replies/Playbook/Harvest/Studio polish (high) — subject `feat(ui): Replies/Playbook/Harvest/Studio polish + persistent gate stepper (UI.15)`, parent `3a0fc46`, 2026-07-25 (no sha by design — D97). **Registry 60→61 knobs, mirrored 26→27 (`x.display.repliesListLimit`); the Playbook gate needed NO registry edit; `SubTabs` gained `disabled`; `.reply-variant` aliased, not renamed. Closes the Wave-5 polish lane. See D139.**
 - [x] UI.16 Content-script + explorer tokens (high) — subject `feat(ui): overlay token consolidation + explorer/writer light-dark restyle (UI.16)`, parent `8b56613`, 2026-07-25 (no sha by design — D97). **Taken out of lane order (dep is UI.8✓ only, MASTERPLAN row 5.12); UI.14/UI.15 are untouched and still `[ ]`.** No registry/mirror change — 57 knobs, 23 mirrored, MCP 23. See **D137**.
 - [x] UI.17 UI docs+smoke (high) — subject `docs(ui): cockpit overhaul docs-sync + $0 smoke-settings.ts (UI.17)`, parent `7b10239`, 2026-07-25 (no sha by design — D97). **Closes Wave 5, the UI plan, and the masterplan at 106/106.** No src/extension/schema/registry/route/MCP change — 14 groups / 61 knobs, 27 mirrored, MCP 23, suite 1563 unchanged. NEW `scripts/smoke-settings.ts`; the plan's `x.doctrine.replyTargetMin` smoke step was dead (dropped at UI.2) and was replaced by the anchors. See **D140**.
+
+### Wave 6 — Coach, judge & growth tactics (added 2026-07-25; opens after UI.17 closes Wave 5)
+
+Order/deps/reasoning: MASTERPLAN Wave-6 table + seeds **D140–D143** (Composer serial lane
+SC.3→SC.6→SC.8→JD.6; GT.5 superseded by SC.6; `src/x/replies/*` serialization GT.1→JD.1,
+GT.6→GT.8; SC.10/SC.11 not scheduled). JD.4 is the wave's only migration (journal assigns
+the number — plan text's "0018" is stale). STATE's live deviation register continues from **D144**.
+
+- [ ] SC.1 postCoach check engine (high)
+- [ ] SC.2 postFormat classifier (high)
+- [ ] GT.1 echo-anchor reply prompt (xhigh)
+- [ ] GT.2 reply-bait skeletons post prompt (high)
+- [ ] JD.1 few-shot dilution + trust markers — after GT.1, D142 (xhigh)
+- [ ] GT.3 launch seed comment (high)
+- [ ] GT.4 milestone nudge (high)
+- [ ] SC.3 Composer coach column (high)
+- [ ] SC.4 reply-variant coach chips (high)
+- [ ] SC.5 playbook format + coach-score cells (high)
+- [ ] SC.6 format cooldown — supersedes GT.5, D141 (high)
+- [ ] SC.7 niche coach lexicon (high)
+- [ ] GT.6 band-gate roster exemption + doctrine knob (xhigh)
+- [ ] GT.7 reciprocity quest (high)
+- [ ] GT.8 roster sightings into Radar — after GT.6, D142 (xhigh)
+- [ ] GT.9 GT docs-sync + smoke — no cooldown assertion, D141 (high)
+- [ ] SC.8 fitted reach band (xhigh)
+- [ ] SC.9 SC docs-sync + smoke (high)
+- [ ] JD.2 shared/judge.ts (high)
+- [ ] JD.3 judge rubric prompt/schema/parser (high)
+- [ ] JD.4 draft_judgments migration + POST /x/judge — migration, runs alone (xhigh)
+- [ ] JD.5 POST /x/judge/apply never-worse guard (xhigh)
+- [ ] JD.6 Composer judge panel — after SC.3/SC.6/SC.8, D140 (high)
+- [ ] JD.7 playbook judgeEffectiveness cell — after SC.5 (high)
+- [ ] JD.8 JD docs-sync + smoke (high)
+- [s] GT.5 register/pillar cooldown — **skipped by design: superseded by SC.6 (D141)**
 
 ## Hot-file locks
 
