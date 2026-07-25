@@ -14,7 +14,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
   --header "Authorization: Bearer $STRATUS_TOKEN"
 ```
 
-From then on, an agent has **16 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make three tiny non-billed writes (add an idea, add a person note, draft a post). No session state, no SSH, no exported CSV.
+From then on, an agent has **23 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make five tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, change one setting). No session state, no SSH, no exported CSV.
 
 The MCP client *is* the intelligence — there are deliberately **no Grok tools**. And the write ceiling is a `draft` calendar row, so **no MCP call can ever reach `createPost` or any billed X endpoint.**
 
@@ -73,7 +73,7 @@ CIRCLES gave stratus a rich, measured CRM. But the only consumer was the side pa
 
 ## The tools — `src/x/mcp.ts`
 
-**16 tools, three tiers, all $0.**
+**23 tools, three tiers, all $0.**
 
 ### Schema tier (3) — the S1 core, verbatim
 
@@ -85,7 +85,7 @@ These call the read-only `inspect.ts` core directly (`tokens`-blind, 500-row cap
 | `x_describe_table` | `table` | One table's columns (name/type/nullability/pk) + row count. |
 | `x_query` | `sql` | A single `SELECT` / `WITH…SELECT`, ≤500 rows. The most powerful tool. |
 
-### Curated tier (10) — zero duplicated logic
+### Curated tier (15) — zero duplicated logic
 
 Each tool calls an existing stratus route **in-process** via Hono's `app.request(path, { headers: { authorization } })`, forwarding the MCP caller's bearer. The routes stay the single source of truth, and every future route improvement is inherited for free.
 
@@ -100,11 +100,16 @@ Each tool calls an existing stratus route **in-process** via Hono's `app.request
 | `x_best_times` | `/x/metrics/best-times?minN=&tzOffsetMin=` | Weekday × hour cells, gated. |
 | `x_cost` | `/cost/daily?days=` | Daily spend per platform. **Reports** past cost — spends nothing. |
 | `x_search_voice` | `/x/voice/tweets?q=` | Substring search of the $0 swipe file. |
-| `x_digest` | `/x/digest?week=&tzOffsetMin=&factsOnly=true` | Weekly digest **facts** — forces `factsOnly=true` so the read never triggers the Grok-billed narration. |
+| `x_digest` | `/x/digest?week=&tzOffsetMin=&factsOnly=true` | Weekly digest **facts** (incl. the GR.9 scorecard) — forces `factsOnly=true` so the read never triggers the Grok-billed narration. **This one writes**: the facts pass settles finished goals. |
+| `x_niche` | `/x/niche` | The active niche + its resolved doctrine (N0.2). |
+| `x_me` | `/x/me` | The living profile — entries + goals with progress (ME.6). |
+| `x_monitor` | `/x/monitor` | The activity monitor's alerts, no inputs (GR.5). |
+| `x_goals` | `/x/goals?tzOffsetMin=` | Goals with pacing + commitments with debt (GR.7). Read-only — goal **writes** stay out of MCP by design: a bad target steers every future draft. |
+| `x_settings` | `/x/settings` | The whole knob catalog with values, ranges and `isDefault` (UI.4). Read this before `x_update_setting` — the description carries the why, the range is the bound. |
 
 Tool descriptions state costs ("Free, local read") so agent callers don't hesitate.
 
-### Write tier (3) — tiny, never X-billed
+### Write tier (5) — tiny, never X-billed
 
 The write ceiling is a **draft**. MCP can propose; only the human promotes.
 
@@ -113,6 +118,8 @@ The write ceiling is a **draft**. MCP can propose; only the human promotes.
 | `x_add_idea` | `text`, `tags?` | `POST /x/ideas` | Idea Inbox only. |
 | `x_add_person_note` | `handle`, `text` | `POST /x/people/:handle/events` `{ type:'note', summary:text }` | Creates the person if unknown. |
 | `x_draft_post` | `text`, `pillar?`, `scheduledFor?` | `POST /x/posts/scheduled` | **`status` is hard-coded to `'draft'`** in the handler. |
+| `x_add_me_entry` | `kind`, `text`, `happenedAt?`, `pinned?` | `POST /x/me/entries` | `kind` is a zod enum over the 4 Me kinds — journal only, **no goal write**. |
+| `x_update_setting` | `key`, `value` | `PATCH /x/settings` | Same registry validation as the UI (UI.4) — an out-of-range value is a 400. The knobs that would matter most (URL surcharge, retire-before-snapshot, claim-before-call, token rotation) have **no key at all**. |
 
 **The draft-forced guard is the whole safety story of the write tier.** The `x_draft_post` schema exposes no `status` field, so a caller can never request `pending`. The handler literally writes `{ text, status: 'draft', … }`. A draft never reaches the publisher or `createPost` — it sits in the Composer until a human promotes it. `scheduledFor` rides along only as a *suggested* slot; the row stays a draft. An invalid `pillar` slug is rejected by the route.
 
@@ -127,6 +134,7 @@ The write ceiling is a **draft**. MCP can propose; only the human promotes.
 | No unauthenticated access | `app.use('/mcp', bearerAuth())` before `mountMcp` |
 | No write reaches a billed X endpoint | Write tier tops out at a `draft` calendar row; `status` hard-coded, not caller-settable |
 | No Grok spend | No Grok tools; `x_digest` forces `factsOnly=true` |
+| No agent can raise a money ceiling | `x_update_setting` goes through the same registry validation as the UI — floors/ceilings are the guard, and the never-settings guards have no key |
 | No secret leak | Schema tier is the S1 `tokens`-blind core |
 | $0 | Reads hit the readonly connection or in-process routes; writes stop at draft |
 | No cross-platform leakage | Bridge is platform-agnostic; X tools live under `src/x/` |
@@ -156,7 +164,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
 - **`src/mcp.test.ts`** — a JSON-RPC round-trip over `app.request`: `initialize` → `tools/list` → `tools/call` for one tool per tier, plus the **draft-forced guard** (a smuggled `pending` is stripped) and a **401 without the bearer**. Adds a `describeTable` check to `inspect.ts` coverage.
 - **`scripts/smoke-mcp.ts`** — rerunnable $0 check on an ephemeral `:memory:` DB: full round-trip including the `tokens` guard and the draft-forced guard.
 
-**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 16 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
+**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 23 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
 
 ---
 

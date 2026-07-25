@@ -13,7 +13,7 @@
 import { type SQL, and, asc, desc, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { type AskLlmResult, askLLM, llmConfigured, llmErrorPayload } from '../../llm/index.ts';
 import {
   channels,
   mentions,
@@ -29,7 +29,15 @@ import {
 } from '../db/schema.ts';
 import { buildAngleCrosstab } from '../people/angles.ts';
 import {
+  ENGAGEMENT_KINDS,
+  type EngagementInput,
+  MAX_ENGAGEMENTS_PER_BATCH,
+  isEngagementKind,
+  recordEngagements,
+} from '../people/engagements.ts';
+import {
   ICEBREAKER_SCHEMA,
+  type IcebreakerGroundingInputs,
   MAX_GROUNDING_EXCHANGES,
   MAX_GROUNDING_TWEETS,
   buildIcebreakerInput,
@@ -51,6 +59,7 @@ import {
   stageRank,
 } from '../people/stage.ts';
 import { normalizePersonHandle, recomputePerson, upsertPerson } from '../people/store.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import type { ReplyVariant } from '../replies/prompt.ts';
 import { buildReplyOutcomes } from './replies.ts';
 import { loadTargetHandles } from './voice.ts';
@@ -191,6 +200,84 @@ peopleRouter.get('/people/rankmap', async (c) => {
   // just don't know its relationship stage, so it reads as a bare target.
   for (const h of targetHandles) {
     if (!map[h]) map[h] = { stage: 'stranger', isTarget: true };
+  }
+
+  return c.json({ count: Object.keys(map).length, map });
+});
+
+// ------------------------------------------------------------------ glance
+
+interface GlanceEntry {
+  stage: Stage;
+  isTarget: boolean;
+  openLoops: number; // unanswered mentions from this author
+  lastOutboundAt: string | null; // my last posted reply to them (ISO)
+  lastInboundAt: string | null; // their last mention/reply to me (ISO)
+  followersCount: number | null;
+}
+
+// The timeline-decoration map (AX.1): every handle stratus knows enough about to
+// draw a chip on. Richer membership than rankmap (all non-retired people, not
+// just engaged+), richer payload (open loops, recency, followers) — but the same
+// $0 pure-SQL shape. The content script fetches it once per session (10 min
+// cache) and stamps chips right of the name row. Handles are keyed lowercased.
+//
+// NOTE: registered before GET /people/:handle so the static path wins the match
+// (same trap rankmap dodges). Rankmap stays untouched — it feeds the radar tier
+// stamping and is deliberately minimal.
+peopleRouter.get('/people/glance', async (c) => {
+  const [personRows, openLoopRows, targetHandles] = await Promise.all([
+    db
+      .select({
+        handle: people.handle,
+        stage: people.stage,
+        lastOutboundAt: people.lastOutboundAt,
+        lastInboundAt: people.lastInboundAt,
+        followersCount: people.followersCount,
+      })
+      .from(people)
+      .where(eq(people.retired, false)),
+    db
+      .select({
+        handle: sql<string>`lower(${mentions.authorUsername})`,
+        n: sql<number>`count(*)`,
+      })
+      .from(mentions)
+      .where(and(eq(mentions.status, 'unanswered'), isNotNull(mentions.authorUsername)))
+      .groupBy(sql`lower(${mentions.authorUsername})`),
+    loadTargetHandles(),
+  ]);
+
+  const targetSet = new Set(targetHandles);
+  const openLoops: Record<string, number> = {};
+  for (const r of openLoopRows) openLoops[r.handle] = Number(r.n);
+
+  const map: Record<string, GlanceEntry> = {};
+  for (const p of personRows) {
+    map[p.handle] = {
+      stage: p.stage as Stage,
+      isTarget: targetSet.has(p.handle),
+      openLoops: openLoops[p.handle] ?? 0,
+      lastOutboundAt: p.lastOutboundAt?.toISOString() ?? null,
+      lastInboundAt: p.lastInboundAt?.toISOString() ?? null,
+      followersCount: p.followersCount ?? null,
+    };
+  }
+  // A target with no people row (or a retired one) still decorates the timeline
+  // as a bare target — same backfill as rankmap. A handle with an unanswered
+  // mention always has a people row (pullMentions upserts it), so openLoops for
+  // these is 0 in practice; `?? 0` keeps it correct if that ever changes.
+  for (const h of targetHandles) {
+    if (!map[h]) {
+      map[h] = {
+        stage: 'stranger',
+        isTarget: true,
+        openLoops: openLoops[h] ?? 0,
+        lastOutboundAt: null,
+        lastInboundAt: null,
+        followersCount: null,
+      };
+    }
   }
 
   return c.json({ count: Object.keys(map).length, map });
@@ -465,6 +552,66 @@ function parseHoverCard(value: unknown): HoverCard | null {
   return { displayName, bio, followersCount, followingCount, xUserId };
 }
 
+// ------------------------------------------------------------ engagements
+
+// Notification-surface harvest (C10): likes, reposts and follows scraped from
+// x.com/notifications cells. $0 — pure DOM data, no X read. Like the sightings
+// route this is a POST, so the §7.20 static-path-vs-`:handle` trap doesn't bite
+// (only `GET /people/:handle` exists). The deterministic-id and fill-only gates
+// live in ../people/engagements.ts.
+peopleRouter.post('/people/engagements', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!Array.isArray(body.engagements) || body.engagements.length === 0) {
+    return c.json({ error: 'invalid_engagements' }, 400);
+  }
+  if (body.engagements.length > MAX_ENGAGEMENTS_PER_BATCH) {
+    return c.json({ error: 'too_many_engagements', max: MAX_ENGAGEMENTS_PER_BATCH }, 400);
+  }
+
+  const inputs: EngagementInput[] = [];
+  for (let i = 0; i < body.engagements.length; i++) {
+    const e = body.engagements[i];
+    if (!e || typeof e !== 'object' || Array.isArray(e)) {
+      return c.json({ error: `invalid_engagement_${i}` }, 400);
+    }
+    const r = e as Record<string, unknown>;
+    // This whitelist is where the parser's `'other'` kind dies: EngagementKind
+    // deliberately can't represent it, so a cell that escaped the client's own
+    // drop is refused here rather than written as a bogus event type.
+    if (!isEngagementKind(r.kind)) {
+      return c.json({ error: `invalid_engagement_kind_${i}`, allowed: ENGAGEMENT_KINDS }, 400);
+    }
+    if (typeof r.handle !== 'string') {
+      return c.json({ error: `invalid_engagement_handle_${i}` }, 400);
+    }
+    if (r.targetText !== undefined && r.targetText !== null && typeof r.targetText !== 'string') {
+      return c.json({ error: `invalid_engagement_target_text_${i}` }, 400);
+    }
+    const seenAt = typeof r.seenAt === 'string' ? new Date(r.seenAt) : null;
+    if (!seenAt || Number.isNaN(seenAt.getTime())) {
+      return c.json({ error: `invalid_engagement_seen_at_${i}` }, 400);
+    }
+    inputs.push({
+      kind: r.kind,
+      handle: r.handle,
+      // A follow cell carries no post; X sometimes renders the new follower's
+      // bio there. The parser already forces null, but recomputing it here
+      // means a stale extension build can't feed a bio to the target matcher.
+      targetText: r.kind === 'follow' ? null : ((r.targetText as string | undefined) ?? null),
+      seenAt,
+    });
+  }
+
+  // An invalid handle is skipped, never fatal — it surfaces in `skipped`.
+  const result = await recordEngagements(inputs);
+  return c.json(result);
+});
+
 // ----------------------------------------------------------- manual events
 
 peopleRouter.post('/people/:handle/events', async (c) => {
@@ -516,16 +663,18 @@ peopleRouter.post('/people/:handle/events', async (c) => {
 
 // ------------------------------------------------------- icebreakers (C9)
 
-// "Suggest an opener": one Grok call (~$0.005) grounded STRICTLY on real
-// shared context. Order matters for $0 paths: unknown person → 404 and no
-// shared context → 422 are decided BEFORE the XAI_API_KEY check, so smoke
-// tests and thin dossiers never risk a Grok call.
-peopleRouter.post('/people/:handle/icebreakers', async (c) => {
-  const handle = normalizePersonHandle(c.req.param('handle'));
-  if (!handle) return c.json({ error: 'invalid_handle' }, 400);
-
+// Assemble the icebreaker grounding INPUTS for a handle — the person row (voice-
+// author bio/name as fallback), past exchanges, their saved tweets, and the
+// channels we share. Returns null only when the person row doesn't exist (the
+// 404). Extracted from the icebreaker route (A3.9) so the DM drafter grounds off
+// exactly the same material — decision 8: DM reuses the icebreaker grounding
+// verbatim, never a second assembly. The renderer (which may still return null
+// for a materially-empty dossier — the 422) stays the caller's step.
+export async function loadIcebreakerGrounding(
+  handle: string,
+): Promise<IcebreakerGroundingInputs | null> {
   const [person] = await db.select().from(people).where(eq(people.handle, handle));
-  if (!person) return c.json({ error: 'not_found' }, 404);
+  if (!person) return null;
 
   const [voiceAuthor] = await db
     .select({ bio: voiceAuthors.bio, displayName: voiceAuthors.displayName })
@@ -559,51 +708,61 @@ peopleRouter.post('/people/:handle/icebreakers', async (c) => {
   for (const t of savedTweets) for (const tag of t.tags ?? []) theirTags.add(tag);
   const sharedChannels = [...theirTags].filter((t) => channelSlugs.has(t));
 
-  const grounding = renderIcebreakerGrounding(
-    {
-      handle,
-      displayName: person.displayName ?? voiceAuthor?.displayName ?? null,
-      stage: person.stage as Stage,
-      bio: person.bio ?? voiceAuthor?.bio ?? null,
-      notes: person.notes,
-      exchanges: exchangeRows.map((e) => ({
-        direction: (INBOUND_TYPES as readonly string[]).includes(e.type)
-          ? ('inbound' as const)
-          : ('outbound' as const),
-        at: e.at,
-        summary: e.summary as string,
-      })),
-      savedTweets: savedTweets.map((t) => ({ text: t.text, createdAt: t.createdAt })),
-      sharedChannels,
-    },
-    new Date(),
-  );
+  return {
+    handle,
+    displayName: person.displayName ?? voiceAuthor?.displayName ?? null,
+    stage: person.stage as Stage,
+    bio: person.bio ?? voiceAuthor?.bio ?? null,
+    notes: person.notes,
+    exchanges: exchangeRows.map((e) => ({
+      direction: (INBOUND_TYPES as readonly string[]).includes(e.type)
+        ? ('inbound' as const)
+        : ('outbound' as const),
+      at: e.at,
+      summary: e.summary as string,
+    })),
+    savedTweets: savedTweets.map((t) => ({ text: t.text, createdAt: t.createdAt })),
+    sharedChannels,
+  };
+}
+
+// "Suggest an opener": one Grok call (~$0.005) grounded STRICTLY on real
+// shared context. Order matters for $0 paths: unknown person → 404 and no
+// shared context → 422 are decided BEFORE the LLM key check, so smoke
+// tests and thin dossiers never risk a Grok call.
+peopleRouter.post('/people/:handle/icebreakers', async (c) => {
+  const handle = normalizePersonHandle(c.req.param('handle'));
+  if (!handle) return c.json({ error: 'invalid_handle' }, 400);
+
+  const inputs = await loadIcebreakerGrounding(handle);
+  if (!inputs) return c.json({ error: 'not_found' }, 404);
+
+  const grounding = renderIcebreakerGrounding(inputs, new Date());
   if (grounding === null) return c.json({ error: 'no_shared_context' }, 422);
 
-  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+  // §7.4 order: 404/422 above already refused for free. This is the cheap
+  // any-provider gate; askLLM enforces the resolved provider's key (503).
+  if (!llmConfigured()) return c.json({ error: 'grok_not_configured' }, 503);
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  // Registry prompt (AI.6): DB override else the shipped default; the grounding
+  // substitutes at {{GROUNDING}} inside buildIcebreakerInput.
+  const prompt = loadPromptSafe('icebreaker');
+
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      messages: buildIcebreakerInput(grounding),
-      reasoningEffort: 'low',
-      maxOutputTokens: 400,
-      temperature: 0.7,
-      jsonSchema: { name: 'icebreakers', schema: ICEBREAKER_SCHEMA },
-      promptCacheKey: 'stratus-icebreaker',
-    });
+    // AI.6: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+    // house floor below — the opener's low-effort defaults).
+    result = await askLLM(
+      {
+        messages: buildIcebreakerInput(grounding, prompt.body),
+        jsonSchema: { name: 'icebreakers', schema: ICEBREAKER_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      { defaults: { reasoningEffort: 'low', maxOutputTokens: 400, temperature: 0.7 } },
+    );
   } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          message: err.message,
-          requestId: err.requestId,
-        },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/people/:handle/icebreakers failed:', detail);
     return c.json({ error: 'icebreakers_failed', detail }, 502);

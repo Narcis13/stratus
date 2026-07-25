@@ -16,10 +16,16 @@
 import { type SQL, and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
-import type { ReasoningEffort } from '../../grok/index.ts';
+import {
+  type AskLlmResult,
+  type LlmProvider,
+  type LlmReasoningEffort,
+  askLLM,
+  llmErrorPayload,
+} from '../../llm/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
+import { loadActiveNicheSafe } from '../niche/store.ts';
 import {
   type RelationshipFacts,
   renderRelationship,
@@ -32,11 +38,11 @@ import {
   snippet,
   upsertPerson,
 } from '../people/store.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
 import {
   BATCH_REPLY_SCHEMA,
   type PostContext,
   type PostSignals,
-  REPLY_PROMPT_TEMPLATE,
   REPLY_VARIANTS_SCHEMA,
   type ReplyVariant,
   buildBatchGrokInput,
@@ -45,25 +51,42 @@ import {
   parseReplyVariants,
   passesSpecificityGate,
 } from '../replies/prompt.ts';
+import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
+import { getSetting } from '../settings/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
+import { loadMeContextSafe } from './me.ts';
 import { getActivePillars } from './pillars.ts';
 import { loadReplyGuidanceSafe } from './playbook.ts';
 import { type RadarBatchTweet, persistRadarDrafts } from './radar.ts';
 
-// Safety ceiling, not a length lever — reply length is enforced by the prompt
-// (~280 chars/variant). Two variants of JSON run ~150 tokens; verified live
-// that xAI does not count reasoning tokens against this cap (a low-effort
-// pass of ~520 reasoning tokens completed fine under a 350 cap).
-const MAX_OUTPUT_TOKENS = 350;
-const DEFAULT_TEMPERATURE = 0.7;
-const DEFAULT_REASONING: ReasoningEffort = 'low';
 const MAX_IDEA_LENGTH = 2000;
-// Stable key so repeat drafts land on the same xAI server — the ~17.5KB
-// template is a cacheable prefix (context + idea sit at the very end).
-const PROMPT_CACHE_KEY = 'stratus-x-reply-draft';
-// Batch (Radar §7.2): one Grok call drafts a reply per queued hot/warm tweet.
-const BATCH_PROMPT_CACHE_KEY = 'stratus-x-reply-batch';
+// Both cache keys come from the registry (AI.3 single, AI.5 batch): a sha of
+// the effective prompt body, so a customized prompt never shares a cached
+// prefix with the default; the niche suffix still busts on niche edits.
+// Batch (Radar §7.2): one LLM call drafts a reply per queued hot/warm tweet.
+// Settings-backed too (`x.ai.batchReplyCap`, ceiling 50); this is the pure default.
 const MAX_BATCH_TWEETS = 25;
+
+/** The house-default tier askLLM merges LAST (request body > the global `ai`
+ *  blob > these). Read per request so a settings PATCH binds the next draft;
+ *  exported for tests. Shared by the single and batch reply paths — one owner,
+ *  two consumers, so the two can't drift on temperature or effort.
+ *
+ *  The token cap is a safety ceiling, not a length lever (length is enforced by
+ *  the prompt, ~280 chars/variant): three variants of JSON measure ~225 output
+ *  tokens and xAI does not count reasoning tokens against the cap (verified live
+ *  under the old 350/two-variant cap), so the 520 default leaves real headroom. */
+export function replyLlmDefaults(): {
+  temperature: number;
+  maxOutputTokens: number;
+  reasoningEffort: LlmReasoningEffort;
+} {
+  return {
+    temperature: getSetting<number>('x.ai.replyTemperature'),
+    maxOutputTokens: getSetting<number>('x.ai.replyMaxOutputTokens'),
+    reasoningEffort: getSetting<LlmReasoningEffort>('x.ai.replyReasoningEffort'),
+  };
+}
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -97,6 +120,9 @@ interface RawBody {
   override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
+  // AI.5: per-request LLM provider override ('grok' | 'openrouter'); absent →
+  // the stored AI setting decides inside askLLM.
+  provider?: unknown;
   reasoningEffort?: unknown;
   // §8.6 opt-in (default off, set by the extension Settings toggle): steer the
   // reply toward one of the active content pillars.
@@ -149,7 +175,17 @@ replies.post('/replies/generate', async (c) => {
     model = body.model;
   }
 
-  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = body.provider;
+  }
+
+  // Only a body-supplied effort rides in opts — the house default goes through
+  // askLLM's defaults tier so the stored AI setting can sit between them (D44).
+  let reasoningEffort: LlmReasoningEffort | undefined;
   if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
     const r = body.reasoningEffort;
     if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
@@ -174,8 +210,11 @@ replies.post('/replies/generate', async (c) => {
   // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
   // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
   // escape hatch (the extension arms it on a second deliberate click).
+  // UI.7: the thresholds are read from the store per request (the same numbers
+  // the badge got through the mirrored blob), so tightening the band takes
+  // effect on the next call — and can only ever REFUSE more, never spend more.
   const gateSignals = gateSignalsFor(ctx, Date.now());
-  const band = classifyBand(gateSignals);
+  const band = classifyBand(gateSignals, bandThresholdsFromSettings());
   if ((band === null || band === 'skip') && !override) {
     return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
   }
@@ -184,6 +223,13 @@ replies.post('/replies/generate', async (c) => {
   // (CLI callers, older extension builds) — every draft stays a labeled
   // training row for the BAND recalibration crosstab (§6.2).
   if (!ctx.signals) ctx.signals = { band, ...gateSignals };
+
+  // N0.4: reply grounding comes from the active niche (server-stamped, never
+  // client-supplied). Loaded AFTER the band gate — a refused call reads
+  // nothing — and stamped into ctx before the insert so contextSnapshot
+  // records which niche grounded this draft (future per-niche crosstab key).
+  const niche = loadActiveNicheSafe();
+  ctx.niche = { slug: niche.slug };
 
   // Relationship block (C3): what the people layer knows about this handle,
   // injected at the variable tail so the prompt stops meeting everyone for the
@@ -196,41 +242,62 @@ replies.post('/replies/generate', async (c) => {
   );
   if (relationship !== '') ctx.relationship = relationship;
 
+  // Me / My Profile brief (M1, ME.3): the dynamic personal-context layer, stamped
+  // into ctx BEFORE the insert (like relationship/niche/guidance) so
+  // contextSnapshot records whether this draft saw it — the Playbook's me-lift
+  // cell (ME.5) reads it back. Best-effort — a me-layer read never blocks a draft.
+  const me = await loadMeContextSafe('reply');
+  if (me) ctx.me = me;
+
   // Playbook guidance (C4): the gated topAngles line, stamped into ctx before
   // the insert (like relationship) so contextSnapshot records whether this
   // draft was steered by measured data. Best-effort; null under the gate.
   const guidance = await loadReplyGuidanceSafe();
   if (guidance) ctx.guidance = guidance;
 
+  // Registry prompt (AI.3): DB override else the shipped default. Loaded after
+  // the band gate (a refused call reads nothing) — a per-request
+  // systemPromptOverride still beats it inside buildGrokInput.
+  const prompt = loadPromptSafe('reply');
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
-  const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs);
+  const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs, {
+    replyPersona: niche.replyPersona,
+    template: prompt.body,
+  });
 
-  const callGrok = (): ReturnType<typeof askGrok> =>
-    askGrok({
-      ...(model !== undefined ? { model } : {}),
-      messages,
-      reasoningEffort,
-      maxOutputTokens: MAX_OUTPUT_TOKENS,
-      temperature: DEFAULT_TEMPERATURE,
-      jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
-      promptCacheKey: PROMPT_CACHE_KEY,
-    });
+  // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+  // house defaults below — precedence encoded once in askLLM, D44).
+  const callLlm = (): Promise<AskLlmResult> =>
+    askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        messages,
+        jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
+        // Sha of the effective prompt body + niche suffix — busts the cached
+        // prefix on either a prompt override edit or a niche edit (grok-only).
+        promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      { defaults: replyLlmDefaults() },
+    );
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  let result: AskLlmResult;
   let costUsd: number;
   let variants: ReplyVariant[] | null;
   try {
-    result = await callGrok();
+    result = await callLlm();
     costUsd = result.costUsd;
     variants = parseReplyVariants(result.text);
 
     // Specificity gate (§7.1): if no variant carries a digit, a first-person
     // marker, or a named tool, burn exactly one regenerate. Both calls are
-    // already cost-logged by askGrok; we just sum the draft's denormalized
-    // costUsd. A second all-generic round ships anyway — the human edits.
+    // already cost-logged by the provider client; we just sum the draft's
+    // denormalized costUsd. A second all-generic round ships anyway — the
+    // human edits.
     const someSpecific = variants?.some((v) => passesSpecificityGate(v.text)) ?? false;
     if (variants === null || !someSpecific) {
-      const retry = await callGrok();
+      const retry = await callLlm();
       costUsd += retry.costUsd;
       const retryVariants = parseReplyVariants(retry.text);
       if (retryVariants !== null) {
@@ -239,19 +306,8 @@ replies.post('/replies/generate', async (c) => {
       }
     }
   } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          type: err.type,
-          code: err.code,
-          message: err.message,
-          requestId: err.requestId,
-        },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/replies/generate failed:', detail);
     return c.json({ error: 'generate_failed', detail }, 502);
@@ -285,6 +341,7 @@ replies.post('/replies/generate', async (c) => {
       costUsd: costUsd.toFixed(5),
       grokRequestId: result.requestId,
       systemPromptOverride: systemOverride ?? null,
+      source: 'reply_master',
       status: 'generated',
     })
     .returning();
@@ -311,6 +368,7 @@ interface BatchBody {
   idea?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
+  provider?: unknown;
   reasoningEffort?: unknown;
   applyPillars?: unknown;
 }
@@ -322,7 +380,7 @@ replies.post('/replies/generate-batch', async (c) => {
   }
   const body = raw as BatchBody;
 
-  const parsed = parseBatchTweets(body.tweets);
+  const parsed = parseBatchTweets(body.tweets, getSetting<number>('x.ai.batchReplyCap'));
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
   const tweets = parsed.tweets;
 
@@ -351,7 +409,15 @@ replies.post('/replies/generate-batch', async (c) => {
     model = body.model;
   }
 
-  let reasoningEffort: ReasoningEffort = DEFAULT_REASONING;
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = body.provider;
+  }
+
+  let reasoningEffort: LlmReasoningEffort | undefined;
   if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
     const r = body.reasoningEffort;
     if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
@@ -388,35 +454,45 @@ replies.post('/replies/generate-batch', async (c) => {
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
   // Playbook guidance (C4): one gated line for the whole batch, variable tail.
   const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
-  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance);
-  // ~280 chars/reply ≈ 90 tokens + JSON overhead; scale with the batch, capped.
-  const maxOutputTokens = Math.min(4000, 200 + tweets.length * 140);
+  // M1 (ME.3): the personal-context brief, loaded once for the whole batch (it
+  // describes me, not the 25 targets). Same 'reply' brief as the single path.
+  const meBrief = (await loadMeContextSafe('reply')) ?? undefined;
+  // N0.4: same niche grounding as the single path — single and batch can't drift.
+  const niche = loadActiveNicheSafe();
+  // Registry prompt (AI.5): the standalone batch default, DB-overridable like
+  // the single-reply key; a per-request systemPromptOverride still beats it.
+  const batchPrompt = loadPromptSafe('reply-batch');
+  const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance, {
+    replyPersona: niche.replyPersona,
+    template: batchPrompt.body,
+    ...(meBrief !== undefined ? { meBrief } : {}),
+  });
+  // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
+  // single-reply path (user-accepted, RU.3). Scale with the batch, capped. A
+  // stored AI-settings maxOutputTokens overrides this computed cap (D44
+  // precedence) — clear the setting if batches start truncating. The cap stays
+  // COMPUTED (not `x.ai.replyMaxOutputTokens`, which sizes one reply): it must
+  // grow with the batch or a 25-tweet call truncates.
+  const maxOutputTokens = Math.min(9000, 200 + tweets.length * 420);
 
-  let result: Awaited<ReturnType<typeof askGrok>>;
+  let result: AskLlmResult;
   try {
-    result = await askGrok({
-      ...(model !== undefined ? { model } : {}),
-      messages,
-      reasoningEffort,
-      maxOutputTokens,
-      temperature: DEFAULT_TEMPERATURE,
-      jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
-      promptCacheKey: BATCH_PROMPT_CACHE_KEY,
-    });
+    result = await askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        messages,
+        jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
+        // Sha of the effective batch body + niche suffix (grok-only) — busts
+        // the cached prefix on a prompt override edit or a niche edit.
+        promptCacheKey: `${batchPrompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      { defaults: { ...replyLlmDefaults(), maxOutputTokens } },
+    );
   } catch (err) {
-    if (err instanceof GrokApiError) {
-      return c.json(
-        {
-          error: 'grok_upstream_error',
-          status: err.status,
-          type: err.type,
-          code: err.code,
-          message: err.message,
-          requestId: err.requestId,
-        },
-        err.status === 429 ? 429 : 502,
-      );
-    }
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
     const detail = err instanceof Error ? err.message : String(err);
     console.error('/x/replies/generate-batch failed:', detail);
     return c.json({ error: 'generate_failed', detail }, 502);
@@ -428,19 +504,28 @@ replies.post('/replies/generate-batch', async (c) => {
   }
 
   // Anchor: keep only replies whose id is one we asked for, first occurrence
-  // wins (a model that doubled up on an id can't shadow the right tweet).
+  // wins (a model that doubled up on an id can't shadow the right tweet). Each
+  // reply carries all 3 angle variants; text/angle stay the primary (variants[0])
+  // so an un-updated panel build still reads them (RU.3).
   const wanted = new Set(tweets.map((t) => t.tweetId));
   const seen = new Set<string>();
-  const out: { tweetId: string; text: string; angle: string }[] = [];
+  const out: { tweetId: string; text: string; angle: string; variants: ReplyVariant[] }[] = [];
   for (const r of batch) {
     if (!wanted.has(r.tweetId) || seen.has(r.tweetId)) continue;
+    const primary = r.variants[0];
+    if (!primary) continue;
     seen.add(r.tweetId);
-    out.push({ tweetId: r.tweetId, text: r.text, angle: r.angle });
+    out.push({
+      tweetId: r.tweetId,
+      text: primary.text,
+      angle: primary.angle,
+      variants: r.variants,
+    });
   }
 
   // C0: the server keeps the copy — the session ring buffer alone lost every
   // draft on browser restart. Never fails the response (money already spent).
-  await persistRadarDrafts(tweets, out);
+  await persistRadarDrafts(tweets, out, result.model);
 
   return c.json({
     replies: out,
@@ -454,13 +539,16 @@ replies.post('/replies/generate-batch', async (c) => {
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
 // Optional band/signals (C0) carry the Radar's capture-time verdict into
-// `radar_drafts`; they never reach the Grok prompt.
+// `radar_drafts`; they never reach the Grok prompt. `maxTweets` is defaulted to
+// today's constant (Decision 6) so every existing caller and test stays valid;
+// the route passes `x.ai.batchReplyCap`.
 export function parseBatchTweets(
   value: unknown,
+  maxTweets = MAX_BATCH_TWEETS,
 ): { tweets: RadarBatchTweet[] } | { error: string } {
   if (!Array.isArray(value)) return { error: 'invalid_tweets' };
   if (value.length === 0) return { error: 'empty_tweets' };
-  if (value.length > MAX_BATCH_TWEETS) return { error: 'too_many_tweets' };
+  if (value.length > maxTweets) return { error: 'too_many_tweets' };
 
   const tweets: RadarBatchTweet[] = [];
   const seen = new Set<string>();
@@ -479,9 +567,14 @@ export function parseBatchTweets(
       return { error: `invalid_tweet_text_${i}` };
     }
 
-    let band: 'hot' | 'warm' | undefined;
+    let band: 'hot' | 'warm' | 'manual' | undefined;
     if (r.band !== undefined && r.band !== null) {
-      if (r.band !== 'hot' && r.band !== 'warm') return { error: `invalid_tweet_band_${i}` };
+      // 'manual' = a ⊕ add (RU.8); stored on radar_drafts.band as queue metadata,
+      // never a classifier verdict — the confirm endpoint coerces it away from
+      // the reply_drafts contextSnapshot signals.
+      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual') {
+        return { error: `invalid_tweet_band_${i}` };
+      }
       band = r.band;
     }
 
@@ -530,10 +623,10 @@ function parseTweetSignals(value: unknown): TweetSignals | null {
 
 // ---------------------------------------------------------------- list/get
 
-// The default Grok system prompt used when no `systemPromptOverride` is set.
-// Surfaced so the extension can show what the override replaces ($0, no Grok).
+// The effective Grok prompt used when no `systemPromptOverride` is set —
+// registry-loaded (AI.3), so a DB override shows here too ($0, no Grok).
 replies.get('/replies/default-prompt', (c) => {
-  return c.json({ prompt: REPLY_PROMPT_TEMPLATE });
+  return c.json({ prompt: loadPromptSafe('reply').body });
 });
 
 replies.get('/replies', async (c) => {

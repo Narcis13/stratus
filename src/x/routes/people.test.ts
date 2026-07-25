@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { accountSnapshots, personEvents, voiceAuthors } from '../db/schema.ts';
+import { accountSnapshots, mentions, people, personEvents, voiceAuthors } from '../db/schema.ts';
 import { logPersonEvents } from '../people/store.ts';
 import { buildAngleCrosstab, peopleRouter } from './people.ts';
 
@@ -186,6 +186,90 @@ describe('GET /people/rankmap (S0.3)', () => {
     // Out-of-band and retired authors never tier.
     expect(body.map.rankmap_toobig).toBeUndefined();
     expect(body.map.rankmap_retired).toBeUndefined();
+  });
+});
+
+describe('GET /people/glance (AX.1)', () => {
+  const OUT_AT = new Date(Date.now() - 3 * DAY_MS);
+  type GlanceEntry = {
+    stage: string;
+    isTarget: boolean;
+    openLoops: number;
+    lastOutboundAt: string | null;
+    lastInboundAt: string | null;
+    followersCount: number | null;
+  };
+
+  beforeAll(async () => {
+    // My size = 1000 → 2–10x band is 2000–10000. Seed here so glance is
+    // independent of rankmap's snapshot; both are 1000 so the band is identical.
+    await db.insert(accountSnapshots).values({
+      followersCount: 1000,
+      followingCount: 100,
+      tweetCount: 500,
+      listedCount: 5,
+    });
+    await db.insert(people).values([
+      {
+        handle: 'glance_person',
+        stage: 'mutual',
+        lastOutboundAt: OUT_AT,
+        followersCount: 3000,
+        retired: false,
+      },
+      { handle: 'glance_retired', stage: 'ally', retired: true },
+    ]);
+    // In-band voice author with no people row → backfilled as a bare target.
+    await db.insert(voiceAuthors).values({ handle: 'glance_target', followersCount: 5000 });
+    // One unanswered mention (mixed-case author, to exercise lower()) counts as
+    // an open loop; an answered one from the same author does not.
+    const now = Date.now();
+    await db.insert(mentions).values([
+      {
+        tweetId: 'glance_m1',
+        authorUsername: 'Glance_Person',
+        text: 'hey',
+        postedAt: new Date(now),
+        status: 'unanswered',
+      },
+      {
+        tweetId: 'glance_m2',
+        authorUsername: 'Glance_Person',
+        text: 'thanks',
+        postedAt: new Date(now - 3_600_000),
+        status: 'answered',
+      },
+    ]);
+  });
+
+  test('maps non-retired people, counts open loops, backfills bare targets; static path beats :handle', async () => {
+    const { status, body } = await getJson<{ count: number; map: Record<string, GlanceEntry> }>(
+      '/x/people/glance',
+    );
+    // Static path wins — glance never 404s as a dossier for handle "glance".
+    expect(status).toBe(200);
+    expect(typeof body.map).toBe('object');
+
+    const person = body.map.glance_person;
+    expect(person).toBeDefined();
+    expect(person?.stage).toBe('mutual');
+    expect(person?.isTarget).toBe(false); // no voice-author row for it
+    expect(person?.openLoops).toBe(1); // unanswered counts, answered doesn't
+    expect(person?.lastOutboundAt).toBe(OUT_AT.toISOString());
+    expect(person?.followersCount).toBe(3000);
+
+    // Retired person is absent.
+    expect(body.map.glance_retired).toBeUndefined();
+
+    // In-band target with no people row is a bare stranger+target.
+    expect(body.map.glance_target).toEqual({
+      stage: 'stranger',
+      isTarget: true,
+      openLoops: 0,
+      lastOutboundAt: null,
+      lastInboundAt: null,
+      followersCount: null,
+    });
   });
 });
 

@@ -97,8 +97,19 @@ describe.if(authed)('MCP transport', () => {
     // schema / curated / write
     expect(names.has('x_query')).toBe(true);
     expect(names.has('x_brief')).toBe(true);
+    expect(names.has('x_niche')).toBe(true);
+    expect(names.has('x_me')).toBe(true);
+    expect(names.has('x_monitor')).toBe(true);
     expect(names.has('x_draft_post')).toBe(true);
     expect(names.has('x_add_idea')).toBe(true);
+    expect(names.has('x_add_me_entry')).toBe(true);
+    expect(names.has('x_goals')).toBe(true);
+    expect(names.has('x_settings')).toBe(true);
+    expect(names.has('x_update_setting')).toBe(true);
+    // 3 schema + 15 curated (incl. x_niche, x_me, x_monitor, x_goals, x_settings)
+    // + 5 write (incl. x_add_me_entry, x_update_setting). Goal WRITES stay out by
+    // design (ME.6): a bad target steers every draft.
+    expect(names.size).toBe(23);
   });
 });
 
@@ -130,6 +141,37 @@ describe.if(authed)('MCP tool tiers', () => {
     expect(typeof data).toBe('object');
   });
 
+  test('curated tier: x_niche returns the active niche + doctrine', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_niche', arguments: {} });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const d = data as { niche?: { slug?: string }; doctrine?: { replyTargetMin?: number } };
+    expect(typeof d.niche?.slug).toBe('string');
+    expect((d.niche?.slug ?? '').length).toBeGreaterThan(0);
+    expect(typeof d.doctrine?.replyTargetMin).toBe('number');
+  });
+
+  // Runs against the real composed app, so this also proves monitorRouter is
+  // mounted — a curated tool is only as callable as its route.
+  test('curated tier: x_monitor returns the alert envelope', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_monitor', arguments: {} });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const d = data as { alerts?: unknown; worst?: unknown; checkedAt?: string };
+    expect(Array.isArray(d.alerts)).toBe(true);
+    expect(Number.isNaN(Date.parse(d.checkedAt ?? ''))).toBe(false);
+  });
+
+  test('curated tier: x_goals returns goals + commitments', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_goals', arguments: { tzOffsetMin: 0 } });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const d = data as { goals?: unknown; commitments?: unknown; checkedAt?: string };
+    expect(Array.isArray(d.goals)).toBe(true);
+    expect(Array.isArray(d.commitments)).toBe(true);
+    expect(Number.isNaN(Date.parse(d.checkedAt ?? ''))).toBe(false);
+  });
+
   test('write tier: x_add_idea creates an open idea', async () => {
     const { env } = await rpc('tools/call', {
       name: 'x_add_idea',
@@ -138,6 +180,107 @@ describe.if(authed)('MCP tool tiers', () => {
     const { data, isError } = toolPayload(env);
     expect(isError).toBe(false);
     expect((data as { status?: string }).status).toBe('open');
+  });
+
+  test('write tier: x_add_me_entry journals an entry readable via x_me', async () => {
+    const marker = 'mcp unit-test emotion';
+    const add = await rpc('tools/call', {
+      name: 'x_add_me_entry',
+      arguments: { kind: 'emotion', text: marker },
+    });
+    const { data, isError } = toolPayload(add.env);
+    expect(isError).toBe(false);
+    const created = data as { id?: string; kind?: string };
+    expect(created.kind).toBe('emotion');
+
+    const list = await rpc('tools/call', { name: 'x_me', arguments: {} });
+    const { data: meData, isError: meErr } = toolPayload(list.env);
+    expect(meErr).toBe(false);
+    const entries = (meData as { entries?: { text: string }[] }).entries ?? [];
+    expect(entries.some((e) => e.text === marker)).toBe(true);
+
+    // Clean up: the :memory: DB is ONE process across every test file, and
+    // me.test.ts asserts an empty profile — leave no lingering active entry.
+    if (created.id) {
+      const del = await app.request(`/x/me/entries/${created.id}`, {
+        method: 'DELETE',
+        headers: { authorization: BEARER },
+      });
+      expect(del.status).toBe(200);
+    }
+  });
+
+  test('write tier: x_add_me_entry rejects an invalid kind at the schema layer', async () => {
+    const { env } = await rpc('tools/call', {
+      name: 'x_add_me_entry',
+      arguments: { kind: 'rant', text: 'not a valid kind' },
+    });
+    // A zod-enum failure never runs the handler — it surfaces as a JSON-RPC error
+    // envelope (schema layer); a route-layer 400 would surface as an isError
+    // result. Accept either so the test is robust to the SDK's rejection path.
+    const rejected = env?.error !== undefined || toolPayload(env).isError;
+    expect(rejected).toBe(true);
+  });
+});
+
+// UI.4 — the settings pair. The registry ceilings are the guard (Decision 5):
+// an agent goes through the same PATCH validation the UI does, so it can raise
+// a knob inside its range and nowhere near past it.
+describe.if(authed)('MCP settings tools', () => {
+  test('x_settings lists groups with values and isDefault', async () => {
+    const { env } = await rpc('tools/call', { name: 'x_settings', arguments: {} });
+    const { data, isError } = toolPayload(env);
+    expect(isError).toBe(false);
+    const groups =
+      (data as { groups?: { id: string; settings: { key: string; isDefault: boolean }[] }[] })
+        .groups ?? [];
+    const gates = groups.find((g) => g.id === 'gates');
+    expect(gates?.settings.some((s) => s.key === 'x.gates.minCellN')).toBe(true);
+  });
+
+  test('x_update_setting moves a knob; an out-of-ceiling value is refused', async () => {
+    try {
+      const ok = await rpc('tools/call', {
+        name: 'x_update_setting',
+        arguments: { key: 'x.gates.minCellN', value: 12 },
+      });
+      const okPayload = toolPayload(ok.env);
+      expect(okPayload.isError).toBe(false);
+      expect((okPayload.data as { updated?: { key: string; value: unknown }[] }).updated).toEqual([
+        { key: 'x.gates.minCellN', value: 12 },
+      ]);
+
+      // …and the change is visible through the read tool.
+      const after = await rpc('tools/call', { name: 'x_settings', arguments: {} });
+      const groups =
+        (
+          toolPayload(after.env).data as {
+            groups?: { id: string; settings: { key: string; value: unknown }[] }[];
+          }
+        ).groups ?? [];
+      const cell = groups
+        .find((g) => g.id === 'gates')
+        ?.settings.find((s) => s.key === 'x.gates.minCellN');
+      expect(cell?.value).toBe(12);
+
+      // Past the registry ceiling: the route's 400 is surfaced as an error result.
+      const bad = await rpc('tools/call', {
+        name: 'x_update_setting',
+        arguments: { key: 'x.workers.winnerRereadCap', value: 500 },
+      });
+      const badPayload = toolPayload(bad.env);
+      expect(badPayload.isError).toBe(true);
+      expect((badPayload.data as { status?: number }).status).toBe(400);
+      expect((badPayload.data as { body?: { error?: string } }).body?.error).toBe(
+        'invalid_setting_value',
+      );
+    } finally {
+      await app.request('/x/settings/reset', {
+        method: 'POST',
+        headers: { authorization: BEARER, 'content-type': 'application/json' },
+        body: JSON.stringify({ keys: ['x.gates.minCellN'] }),
+      });
+    }
   });
 });
 

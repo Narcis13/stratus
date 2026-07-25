@@ -52,14 +52,16 @@ Filters combine: you can, for instance, search text *and* filter to one author *
 When you pick a specific author from the **Author** dropdown, a card for them appears above the tweet list. It shows:
 
 - **Display name** and **@handle**. The handle is clickable and opens that person's file in the **People** tab; the small **↗** opens their profile on X in a new tab.
-- A badge: **enriched** (you captured their full profile with "Save author to stratus") or **tweet-only** (stratus only knows them from a saved tweet — you can enrich them anytime by visiting their profile and clicking "Save author to stratus"). A **retired** badge appears if they're archived.
+- A chip: **enriched** (you captured their full profile with "Save author to stratus") or a quiet **tweet-only** (stratus only knows them from a saved tweet — you can enrich them anytime by visiting their profile and clicking "Save author to stratus"). A **retired** chip appears if they're archived.
 - **Follower / following counts and how many of their tweets you've saved**, e.g. `12.3K followers · 481 following · 7 saved`.
-- Their **bio**, and their **pinned tweet** (marked 📌) if captured.
+- Their **bio**, and their **pinned tweet** (marked ❑) if captured.
 - Buttons: **Retire** / **Unretire** (archive or restore the author) and **Delete**. Delete asks you to **Confirm delete** first. Note: an author can only be deleted once all of their saved tweets are gone — delete or the tweets first if the button won't take.
 
-### What each tweet row shows
+### Saved tweets — the list
 
-Below the controls (and author card, if any) is the list of saved tweets. Each row shows:
+Below the controls (and author card, if any) sits the **Saved tweets (N)** section. Its **⚙** holds one number, **Voice list size** (`x.display.voiceListLimit`, default 100, range 20–500) — how many saved tweets one query fetches, the same knob as Settings → Tuning → Display. The swipe file is DOM-scraped and read with local SQL, so a bigger page costs **$0**; the only thing it buys you is scroll. When the list comes back exactly full, a line under it says so and offers both ways out: narrow the filters, or raise the page size.
+
+Each row shows:
 
 - **Author** — display name and `@handle`, clickable to open that person's file in the **People** tab.
 - **Date** — when the tweet was originally posted.
@@ -111,6 +113,8 @@ A **content pillar** is one of the recurring themes your original posts revolve 
 Crucially, **the AI post drafter writes against these pillars.** When you draft an original post in the Composer, you pick a pillar, and its guidance is fed to the AI so the draft fits that theme. Editing a pillar here changes how the AI drafts. The Composer's pillar dropdown is populated from your **active** pillars here. A note at the top of the subtab reminds you of this: *"The post drafter writes against these. Edits change how Grok drafts — saved to the server."* There's a **Refresh** button to reload.
 
 Each pillar comes seeded with three defaults the first time, but they're entirely yours to change.
+
+Pillars are **owned by your active niche** (see Settings → Niche). The list here — and the Composer's dropdown — shows only the active niche's pillars, so switching your active niche switches which pillars you see and draft against. A brand-new niche starts with no pillars until you add them (the drafter refuses to invent from another niche's pillars).
 
 ### Editing a pillar
 
@@ -173,6 +177,7 @@ On X, visit the profiles of accounts you want to learn from and engage with, and
 
 - **Loading** — while the library loads you'll see **Loading tweets…** (and the Refresh button reads **Loading…**). The Pillars view shows **Loading pillars…**.
 - **Empty library** — if no saved tweets match your current filters you'll see **No saved tweets match these filters.** If that's unexpected, check that filters (search, author, hook, template, show-retired) aren't hiding things. A brand-new library is empty until you start clicking **Save to stratus** on X.
+- **A full page** — when exactly *Voice list size* tweets come back, there are probably more behind them; the line under the list says which knob to move.
 - **Empty pillars** — a fresh install seeds three default pillars, so this is rarely truly empty; if it is, use **+ Add pillar** to create one.
 - **Errors and notices** — failures (a save, extract, or delete that didn't go through) show as a red message; successful batch extraction shows a green notice with the count and cost. Pillar errors are shown in plain language (e.g. the last-active-pillar guard, or *"AI drafting is unavailable"* if the server has no AI key configured).
 

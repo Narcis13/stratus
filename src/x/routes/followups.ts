@@ -30,14 +30,14 @@ import {
   voiceAuthorSnapshots,
   voiceAuthors,
 } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
+import { ENGAGEMENT_EVENT_TYPE } from '../people/engagements.ts';
 import {
-  CHAIN_LIVE_MAX_AGE_MS,
   type ChainInbound,
   type FollowerPoint,
   type FollowupPerson,
+  type FollowupWindows,
   type MomentumCandidate,
-  REUP_MAX_AGE_DAYS,
-  REUP_MIN_AGE_DAYS,
   type ReupCandidate,
   aboutToEnterBand,
   classifyFollowups,
@@ -51,6 +51,7 @@ import {
 } from '../people/followups.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { myReplyTweetIds, normalizePersonHandle } from '../people/store.ts';
+import { getSetting } from '../settings/registry.ts';
 import { authorMomentum, targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -61,9 +62,6 @@ const FANS_DEFAULT_DAYS = 30;
 const FANS_MAX_DAYS = 365;
 const FANS_DEFAULT_LIMIT = 20;
 const FANS_MAX_LIMIT = 100;
-// Same bar the dailyMetrics winner re-read uses (§8.4) — a post only counts as
-// a re-up candidate if a snapshot measured it clearing this view count.
-const REUP_MIN_VIEWS = Number(process.env.WINNER_REREAD_MIN_VIEWS ?? '500');
 const TWEET_ID_RE = /^\d+$/;
 
 export const followups = new Hono();
@@ -72,6 +70,22 @@ export const followups = new Hono();
 
 followups.get('/people/followups', async (c) => {
   const now = new Date();
+
+  // Queue windows are settings-backed (UI.3, the `followups` group). Read once
+  // per request via getSetting (sync, Map-cached) and thread the values down —
+  // the pure classifier/momentum/reup helpers take them as params.
+  const windows: FollowupWindows = {
+    chainLiveMaxAgeMs: getSetting<number>('x.followups.chainLiveMaxAgeH') * 60 * 60 * 1000,
+    dmReadyWindowMs: getSetting<number>('x.followups.dmReadyWindowDays') * DAY_MS,
+    neglectedTargetDays: getSetting<number>('x.followups.neglectedTargetDays'),
+    neglectedAllyDays: getSetting<number>('x.followups.neglectedAllyDays'),
+  };
+  const momentumWeeklyPct = getSetting<number>('x.followups.momentumWeeklyPct');
+  const reupMinAgeDays = getSetting<number>('x.followups.reupMinAgeDays');
+  const reupMaxAgeDays = getSetting<number>('x.followups.reupMaxAgeDays');
+  // Same bar the dailyMetrics winner re-read uses (§8.4) — a post only counts
+  // as a re-up candidate if a snapshot measured it clearing this view count.
+  const reupMinViews = getSetting<number>('x.workers.winnerRereadMinViews');
 
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
@@ -88,7 +102,7 @@ followups.get('/people/followups', async (c) => {
     .where(
       and(
         eq(mentions.status, 'unanswered'),
-        gte(mentions.postedAt, new Date(now.getTime() - CHAIN_LIVE_MAX_AGE_MS)),
+        gte(mentions.postedAt, new Date(now.getTime() - windows.chainLiveMaxAgeMs)),
         isNotNull(mentions.inReplyToTweetId),
       ),
     );
@@ -134,7 +148,11 @@ followups.get('/people/followups', async (c) => {
   const authorDisplayByHandle = new Map(authors.map((a) => [a.handle, a.displayName]));
   const targetHandles = new Set<string>();
   if (myFollowers !== null) {
-    const band = targetBand(myFollowers);
+    const doctrine = loadDoctrine();
+    const band = targetBand(myFollowers, {
+      minX: doctrine.targetBandMinX,
+      maxX: doctrine.targetBandMaxX,
+    });
     for (const a of authors) {
       if (
         a.followersCount !== null &&
@@ -182,7 +200,7 @@ followups.get('/people/followups', async (c) => {
     const person = peopleByHandle.get(handle);
     const latest = points[points.length - 1] as FollowerPoint;
 
-    const inflection = momentumInflection(points, now);
+    const inflection = momentumInflection(points, now, { weeklyPctThreshold: momentumWeeklyPct });
     // Band entry is a mutual-and-up signal — a stranger crossing 2x my size is
     // trivia; an ally doing it means my early replies are about to compound.
     const enteringBand =
@@ -207,19 +225,26 @@ followups.get('/people/followups', async (c) => {
   const snoozeRows = await db.select().from(followupSnoozes);
   const snoozes = new Map(snoozeRows.map((s) => [s.itemKey, s.snoozedUntil]));
 
-  const { items, snoozed } = classifyFollowups({
-    now,
-    chainInbound,
-    people: followupPeople,
-    targetHandles,
-    momentum,
-    snoozes,
-  });
+  const { items, snoozed } = classifyFollowups(
+    {
+      now,
+      chainInbound,
+      people: followupPeople,
+      targetHandles,
+      momentum,
+      snoozes,
+    },
+    windows,
+  );
 
   // reup_candidate (§S0.6): proven own posts (measured views ≥ the winner bar)
   // 14–60d old that haven't been quote-tweeted yet. Not a person item — pick
   // the single best and ranked just above momentum at the queue tail.
-  const reup = pickReupCandidate(await loadReupCandidates(now), snoozes, now);
+  const reup = pickReupCandidate(
+    await loadReupCandidates(now, reupMinAgeDays, reupMaxAgeDays, reupMinViews),
+    snoozes,
+    now,
+  );
   let finalItems = items;
   if (reup.item) {
     const momentumIdx = items.findIndex((i) => i.kind === 'momentum');
@@ -245,9 +270,14 @@ followups.get('/people/followups', async (c) => {
 // the max snapshot impression_count, same read as the dailyMetrics winner
 // re-read. Retired rows are kept: retire-before-snapshot (invariant #7) means
 // nearly every measured tweet is retired, so filtering on it would find nothing.
-async function loadReupCandidates(now: Date): Promise<ReupCandidate[]> {
-  const oldest = new Date(now.getTime() - REUP_MAX_AGE_DAYS * DAY_MS);
-  const newest = new Date(now.getTime() - REUP_MIN_AGE_DAYS * DAY_MS);
+async function loadReupCandidates(
+  now: Date,
+  minAgeDays: number,
+  maxAgeDays: number,
+  minViews: number,
+): Promise<ReupCandidate[]> {
+  const oldest = new Date(now.getTime() - maxAgeDays * DAY_MS);
+  const newest = new Date(now.getTime() - minAgeDays * DAY_MS);
   const winners = await db
     .select({
       tweetId: postsPublished.tweetId,
@@ -268,7 +298,7 @@ async function loadReupCandidates(now: Date): Promise<ReupCandidate[]> {
     )
     .groupBy(postsPublished.tweetId)
     .having(
-      sql`max(CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER)) >= ${REUP_MIN_VIEWS}`,
+      sql`max(CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER)) >= ${minViews}`,
     );
   if (winners.length === 0) return [];
 
@@ -331,6 +361,7 @@ followups.patch('/people/followups', async (c) => {
 
 followups.get('/people/fans', async (c) => {
   const now = new Date();
+  const fanUnackDays = getSetting<number>('x.followups.fanUnacknowledgedDays');
 
   let days = FANS_DEFAULT_DAYS;
   const daysStr = c.req.query('days');
@@ -380,6 +411,14 @@ followups.get('/people/fans', async (c) => {
     limit,
   );
 
+  // C10 decision 1: engagement is DISPLAY-ONLY. The count is read after
+  // rankFans has already fixed the order, over the ranked page only, so a like
+  // storm can never reorder the list — "top fans" keeps meaning "we talked".
+  const engagements = await loadFanEngagementCounts(
+    ranked.map((f) => f.handle),
+    cutoff,
+  );
+
   return c.json({
     days,
     count: ranked.length,
@@ -390,9 +429,32 @@ followups.get('/people/fans', async (c) => {
       stage: f.stage,
       followersCount: f.followersCount,
       inboundCount: f.inboundCount,
+      engagementCount: engagements.get(f.handle) ?? 0,
       lastInboundAt: f.lastInboundAt,
       lastOutboundAt: f.lastOutboundAt,
-      unacknowledged: fanUnacknowledged(f, now),
+      unacknowledged: fanUnacknowledged(f, now, fanUnackDays),
     })),
   });
 });
+
+/** their_like/their_repost/their_follow inside the same window, per handle.
+ *  Deliberately a second query rather than a second aggregate on the fans
+ *  join: keeping it off the ranking input is the whole point (C10 decision 1). */
+async function loadFanEngagementCounts(
+  handles: string[],
+  cutoff: Date,
+): Promise<Map<string, number>> {
+  if (handles.length === 0) return new Map();
+  const rows = await db
+    .select({ handle: personEvents.handle, n: sql<number>`count(*)` })
+    .from(personEvents)
+    .where(
+      and(
+        inArray(personEvents.handle, handles),
+        inArray(personEvents.type, Object.values(ENGAGEMENT_EVENT_TYPE)),
+        gte(personEvents.at, cutoff),
+      ),
+    )
+    .groupBy(personEvents.handle);
+  return new Map(rows.map((r) => [r.handle, Number(r.n)]));
+}

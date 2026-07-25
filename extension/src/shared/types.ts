@@ -6,6 +6,10 @@ import type { TweetSignals } from '../replyBand.ts';
 export type PostStatus =
   | 'draft'
   | 'pending'
+  // A3.5: scheduled, but the USER pastes it at the slot — the publisher never
+  // claims it; → posted via POST /posts/scheduled/:id/mark-posted or the
+  // daily reconcile.
+  | 'manual'
   | 'segment'
   | 'publishing'
   | 'posted'
@@ -35,6 +39,13 @@ export interface ScheduledPost {
   updatedAt: string;
 }
 
+/** POST /x/posts/scheduled answers with the row plus GR.6's schedule-time
+ *  advisory. `warnings` is never a refusal — the row is already saved when they
+ *  are computed; absent when the deployed server predates GR.6. */
+export interface ScheduledPostCreated extends ScheduledPost {
+  warnings?: string[];
+}
+
 /** GET /x/posts/scheduled/:id on a thread member carries its siblings, plus
  *  the Idea Inbox idea that seeded it (C6 provenance), when one backlinks. */
 export interface ScheduledPostWithThread extends ScheduledPost {
@@ -45,7 +56,8 @@ export interface ScheduledPostWithThread extends ScheduledPost {
 export interface CreateBody {
   text: string;
   scheduledFor?: string | null;
-  status?: 'draft' | 'pending';
+  /** `manual` requires scheduledFor and skips the URL surcharge guard (A3.5). */
+  status?: 'draft' | 'pending' | 'manual';
   mediaIds?: string[] | null;
   mediaNote?: string;
 }
@@ -75,6 +87,50 @@ export interface PostDraftBody {
   /** C6: the Idea Inbox row the steer came from — the server consumes it. */
   ideaId?: string;
   voiceTweetId?: string;
+}
+
+// AI.7 — one LLM call drafts a whole thread; the head lands status='draft' and
+// the tails status='segment', sharing a threadId (loads into the thread editor).
+export interface ThreadDraftBody {
+  idea?: string;
+  ideaId?: string;
+  pillar?: PostPillar;
+  /** Target tweet count, clamped 3–8 server-side. */
+  tweetCount?: number;
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+}
+
+export interface ThreadDraftResponse {
+  threadId: string;
+  segments: ScheduledPost[];
+  costUsd: number;
+  model: string;
+  requestId?: string;
+}
+
+// AI.8 — rewrite assist: one LLM call returns three sharper versions of a draft.
+// No DB rows; the Composer applies the picked variant to its own text state.
+export type RewriteKind = 'tightened' | 'rehooked' | 'restructured';
+
+export interface RewriteVariant {
+  text: string;
+  kind: RewriteKind;
+}
+
+export interface RewriteBody {
+  text: string;
+  instruction?: string;
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+export interface RewriteResponse {
+  variants: RewriteVariant[];
+  costUsd: number;
+  model: string;
+  requestId?: string;
 }
 
 // --------------------------------------------------------------- ideas (C6)
@@ -111,6 +167,118 @@ export interface IdeaPatchBody {
   status?: IdeaStatus;
   consumedByTable?: string;
   consumedById?: string;
+}
+
+// AI.9 — idea generator: one LLM call turns pillars + measured winners into
+// post ideas. Writes nothing; the panel saves picked ones via POST /x/ideas.
+export type IdeaAngle = 'observation' | 'stance' | 'story' | 'question';
+
+export interface IdeaGenerateBody {
+  steer?: string;
+  /** 1–10, clamped server-side; default 8. */
+  count?: number;
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+export interface IdeaProposal {
+  text: string;
+  /** A slug from the active pillar set, or null when the model mis-tagged it. */
+  pillar: string | null;
+  angle: IdeaAngle;
+}
+
+export interface IdeaGenerateResponse {
+  ideas: IdeaProposal[];
+  count: number;
+  requested: number;
+  costUsd: number;
+  model: string;
+  requestId?: string;
+}
+
+// ------------------------------------------------------------------ AI / LLM §AI
+
+// AI.10 — Settings → AI panel. The provider config edited via /llm/settings.
+// API keys never live here (Decision 5) — they stay in server env; these are
+// only the routing knobs the panel can change.
+export type LlmProvider = 'grok' | 'openrouter';
+export type LlmReasoningEffort = 'none' | 'low' | 'medium' | 'high';
+
+export interface AiSettings {
+  provider: LlmProvider;
+  openrouterModel: string;
+  /** null = each call site's own house default wins (the merge in askLLM). */
+  temperature: number | null;
+  maxOutputTokens: number | null;
+  reasoningEffort: LlmReasoningEffort | null;
+}
+
+/** GET /llm/settings — the typed settings plus env-key presence flags, so the
+ *  panel can grey out a provider whose key isn't set on the server. */
+export interface AiSettingsResponse extends AiSettings {
+  providers: { grok: boolean; openrouter: boolean };
+}
+
+/** PATCH /llm/settings — partial; an explicit null clears the numeric/effort
+ *  field back to the surface default (blank inputs map to null). */
+export interface AiSettingsPatchBody {
+  provider?: LlmProvider;
+  openrouterModel?: string;
+  temperature?: number | null;
+  maxOutputTokens?: number | null;
+  reasoningEffort?: LlmReasoningEffort | null;
+}
+
+/** GET /llm/models — OpenRouter's free model list. Prices are per-token USD
+ *  strings (as OpenRouter returns them), null when the model is free/unlisted. */
+export interface LlmModel {
+  id: string;
+  name: string;
+  promptPrice: string | null;
+  completionPrice: string | null;
+}
+
+export interface LlmModelsResponse {
+  models: LlmModel[];
+}
+
+/** POST /x/prompts/restore-defaults — deletes every override row. */
+export interface PromptsRestoreResult {
+  restored: number;
+}
+
+/** GET /x/prompts — one row per editable prompt key (AI.11). `customized` is
+ *  structural (an override row exists), never a diff. */
+export interface PromptSummary {
+  key: string;
+  name: string;
+  description: string;
+  required: string[];
+  customized: boolean;
+  updatedAt: number | null;
+}
+
+/** GET /x/prompts/:key — the live body (override or shipped default), the
+ *  default for eyeballing the diff, and the required-placeholder contract. */
+export interface PromptDetail {
+  key: string;
+  body: string;
+  defaultBody: string;
+  required: string[];
+  customized: boolean;
+}
+
+/** PATCH /x/prompts/:key — an override was upserted. `unknownPlaceholders` are
+ *  `{{TOKENS}}` the render will drop (a warning, never fatal). */
+export interface PromptPatchResult {
+  customized: boolean;
+  unknownPlaceholders: string[];
+}
+
+/** POST /x/prompts/:key/reset — the override row was deleted. */
+export interface PromptResetResult {
+  customized: boolean;
 }
 
 export interface PostReupBody {
@@ -160,6 +328,181 @@ export interface PillarDraftResult {
   requestId: string | null;
 }
 
+// ------------------------------------------------------------ me / profile M1
+
+export type MeKind = 'fact' | 'event' | 'emotion' | 'note';
+// GR.7 added the two counted kinds (stratus counts them itself, from the goal's
+// baseline) and the `missed` status the deadline flip writes.
+export type GoalKind = 'followers' | 'mrr' | 'custom' | 'posted_replies' | 'originals';
+export type GoalStatus = 'active' | 'achieved' | 'missed' | 'dropped';
+
+// Date columns serialize as ISO strings over the JSON transport. `inWindow` is
+// server-computed on GET /x/me (never re-derived client-side — §7.27).
+export interface MeEntry {
+  id: string;
+  kind: MeKind;
+  text: string;
+  happenedAt: string | null;
+  pinned: boolean;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  inWindow: boolean;
+}
+
+export interface MeGoalProgress {
+  current: number;
+  pct: number;
+  daysLeft: number | null;
+}
+
+// `progress` is server-computed on GET /x/me (followers goals read the latest
+// account_snapshot; posted_replies/originals are counted from the goal's own
+// baseline; mrr/custom use currentValue).
+export interface MeGoal {
+  id: string;
+  label: string;
+  kind: GoalKind;
+  target: number;
+  unit: string | null;
+  currentValue: number | null;
+  deadline: string | null;
+  status: GoalStatus;
+  // GR.7: where the goal started. Null on goals created before it.
+  baselineValue?: number | null;
+  baselineAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  progress: MeGoalProgress | null;
+}
+
+export interface MeResponse {
+  entries: MeEntry[];
+  goals: MeGoal[];
+}
+
+export interface MeContextResponse {
+  mode: 'post' | 'reply';
+  block: string | null;
+}
+
+export interface MeEntryCreateBody {
+  kind: MeKind;
+  text: string;
+  happenedAt?: string | null;
+  pinned?: boolean;
+}
+
+export interface MeEntryPatchBody {
+  kind?: MeKind;
+  text?: string;
+  happenedAt?: string | null;
+  pinned?: boolean;
+  active?: boolean;
+}
+
+export interface MeGoalCreateBody {
+  label: string;
+  kind: GoalKind;
+  target: number;
+  unit?: string | null;
+  deadline?: string | null;
+  currentValue?: number | null;
+}
+
+export interface MeGoalPatchBody {
+  label?: string;
+  kind?: GoalKind;
+  target?: number;
+  unit?: string | null;
+  deadline?: string | null;
+  currentValue?: number | null;
+  status?: GoalStatus;
+}
+
+// N0 — the niche: first-class identity + strategy container. Persona/beliefs/
+// replyPersona ground the prompts; the 5 doctrine knobs are the REPLY-GUIDE
+// numbers. Exactly one active niche at a time; pillars/channels follow it.
+export interface NicheDoctrine {
+  replyTargetMin: number;
+  replyTargetMax: number;
+  weekReplyTargetPct: number;
+  targetBandMinX: number;
+  targetBandMaxX: number;
+}
+
+export interface Niche {
+  slug: string;
+  label: string;
+  description: string | null;
+  persona: string;
+  beliefs: string;
+  replyPersona: string;
+  doctrine: Partial<NicheDoctrine> | null; // null = all defaults (stored partial)
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// GET /x/niche — the active niche plus its RESOLVED doctrine (all 5 present).
+export interface NicheActive {
+  niche: Niche;
+  doctrine: NicheDoctrine;
+}
+
+export interface NicheCreateBody {
+  slug: string;
+  label: string;
+  persona: string;
+  beliefs: string;
+  replyPersona: string;
+  description?: string;
+  doctrine?: Partial<NicheDoctrine> | null;
+}
+
+export interface NichePatchBody {
+  label?: string;
+  persona?: string;
+  beliefs?: string;
+  replyPersona?: string;
+  description?: string | null;
+  doctrine?: Partial<NicheDoctrine> | null;
+  active?: boolean;
+}
+
+// N0.8 — the wizard proposal: prose → a complete proposed niche. Never persisted
+// by the server; the panel reviews/edits then saves via niche/pillars/channels
+// create routes.
+export interface NichePillarProposal {
+  slug: string;
+  label: string;
+  body: string;
+}
+
+export interface NicheChannelProposal {
+  slug: string;
+  label: string;
+  keywords: string[];
+}
+
+export interface NicheProposal {
+  slug: string;
+  label: string;
+  description: string;
+  persona: string;
+  beliefs: string;
+  replyPersona: string;
+  pillars: NichePillarProposal[];
+  channels: NicheChannelProposal[];
+}
+
+export interface NicheDraftResult {
+  proposal: NicheProposal;
+  model: string;
+  costUsd: number;
+  requestId: string | null;
+}
+
 export interface PostDraftResponse {
   drafts: Array<ScheduledPost & { register: PostRegister | null }>;
   winnersUsed: number;
@@ -171,7 +514,8 @@ export interface PostDraftResponse {
 export interface UpdateBody {
   text?: string;
   scheduledFor?: string | null;
-  status?: 'draft' | 'pending' | 'cancelled';
+  /** `manual` is rejected on thread members (manual_threads_unsupported). */
+  status?: 'draft' | 'pending' | 'manual' | 'cancelled';
   mediaIds?: string[] | null;
   /** S3 "visual made" marker; null clears it. */
   mediaNote?: string | null;
@@ -321,6 +665,40 @@ export interface AuthorProfile {
   profileUrl?: string | null;
 }
 
+// ---------------------------------------------------------------- harvest
+
+// One `GET /x/harvest/runs` row. `mode` is the corpus discriminator: hand-run
+// harvests are 'posts'/'replies', while HV.1's ambient timeline capture hangs
+// its rows off a server-owned 'timeline' run, one per UTC day.
+export interface HarvestRun {
+  id: string;
+  handle: string;
+  mode: string;
+  scope: string;
+  rowCount: number;
+  createdAt: string;
+}
+
+// HV.4 `GET /x/harvest/affinity` — who the algorithm keeps feeding the home
+// timeline, over the mode='timeline' corpus only. `inRoster` is true when the
+// handle already has a people or voice_authors row (retired ones included):
+// what's left with `inRoster: false` is the discovery worth a dossier.
+export interface TimelineAffinityAuthor {
+  handle: string;
+  distinctDays: number;
+  sightings: number;
+  lastSeenAt: string;
+  avgViews: number;
+  stage: PersonStage | null;
+  inRoster: boolean;
+}
+
+export interface TimelineAffinityResponse {
+  days: number;
+  minDays: number;
+  authors: TimelineAffinityAuthor[];
+}
+
 // --------------------------------------------------------------- replies
 
 export type ReplyDraftStatus = 'generated' | 'copied' | 'posted' | 'discarded';
@@ -429,7 +807,9 @@ export interface BatchReplyTweet {
   author: string;
   text: string;
   url?: string;
-  band?: 'hot' | 'warm';
+  // 'manual' = a ⊕ pinned tweet (RU.8); carried through so radar_drafts.band
+  // records it (queue metadata), never sent to Grok.
+  band?: 'hot' | 'warm' | 'manual';
   signals?: TweetSignals;
 }
 
@@ -444,6 +824,8 @@ export interface BatchReplyItem {
   tweetId: string;
   text: string;
   angle: ReplyAngle;
+  // All 3 angle variants (RU.3); text/angle stay the primary (variants[0]).
+  variants: ReplyVariant[];
 }
 
 export interface BatchReplyResponse {
@@ -616,6 +998,43 @@ export interface BestTimesResponse {
   cells: BestTimeCell[];
 }
 
+/** GET /x/analytics/active-times (A3.2) — the newest captured audience heatmap
+ *  row, or null when the user has never visited X Analytics. The full DB row is
+ *  returned: `grid` is number[col][row] (col 0 = Monday, 0..1 intensity) and
+ *  `capturedAt` is an ISO string over the wire. Structurally a superset of the
+ *  shared `ActiveTimesGrid`, so it feeds `audienceScoreFor` directly (A3.4). */
+export interface AudienceCapture {
+  id: number;
+  capturedAt: string;
+  metric: string;
+  tzOffsetMin: number;
+  cols: number;
+  rows: number;
+  grid: number[][];
+}
+
+export interface ActiveTimesResponse {
+  capture: AudienceCapture | null;
+}
+
+// GET /x/metrics/account — the daily follower KPI series (S5.5 milestone card
+// reads it). `snapshotAt` is the JSON-serialized Date (ISO string).
+export interface AccountSeriesPoint {
+  snapshotAt: string;
+  followersCount: number;
+  followingCount: number;
+  tweetCount: number;
+  listedCount: number;
+  deltas: { followers: number; following: number; tweets: number; listed: number } | null;
+  activity: { posts: number; replies: number };
+}
+
+export interface MetricsAccountResponse {
+  count: number;
+  latest: AccountSeriesPoint | null;
+  series: AccountSeriesPoint[];
+}
+
 // S0.4: one empty cadence anchor + its best-times score for today's weekday.
 // `sufficient` is n ≥ the advice gate; below it the UI renders "no data".
 export interface BriefGap {
@@ -655,6 +1074,88 @@ export interface PinnedWatch {
   } | null;
 }
 
+// GR.6: the activity monitor's alerts, mirrored from `src/x/monitor.ts` (§5
+// build isolation — the extension never imports server modules). At most one
+// alert per rule, so `rule` is a safe React key; sorted most-severe first.
+export type MonitorSeverity = 'info' | 'warn' | 'critical';
+
+export interface MonitorAlert {
+  rule: string;
+  severity: MonitorSeverity;
+  message: string;
+  evidence: Record<string, unknown>;
+}
+
+export interface BriefMonitor {
+  alerts: MonitorAlert[];
+  worst: MonitorSeverity | null;
+}
+
+// GR.8: the accountability blocks, mirrored from `src/x/goals.ts` and the
+// `me_goals` / `commitments` rows (§5 build isolation — the extension never
+// imports server modules). Dates arrive as ISO strings over the JSON transport.
+export type GoalVerdict = 'achieved' | 'ahead' | 'on_pace' | 'behind' | 'overdue' | 'unknown';
+
+export interface GoalPacing {
+  /** null = unknown, never a fake 0. */
+  current: number | null;
+  pctComplete: number | null;
+  /** Whole days to the deadline; ≤0 = past it; null = no deadline. */
+  daysLeft: number | null;
+  requiredPerDay: number | null;
+  actualPerDay: number | null;
+  verdict: GoalVerdict;
+  projectedAt: string | null;
+}
+
+/** A `me_goals` row as the brief ships it: the row plus live pacing. Distinct
+ *  from `MeGoal`, which carries the Me tab's own ME.1 `progress` instead. */
+export interface BriefGoal {
+  id: string;
+  label: string;
+  kind: GoalKind;
+  target: number;
+  unit: string | null;
+  currentValue: number | null;
+  deadline: string | null;
+  baselineValue: number | null;
+  baselineAt: string | null;
+  status: GoalStatus;
+  createdAt: string;
+  updatedAt: string;
+  pacing: GoalPacing;
+}
+
+export type CommitmentKey = 'replies' | 'originals';
+
+export interface CommitmentDebt {
+  missedLast7: number;
+  missedLast30: number;
+  /** Days inside the 7-day window the promise was actually live — the honest
+   *  denominator for "N of the last M days". */
+  trackedLast7: number;
+  tier: 0 | 1 | 2 | 3;
+}
+
+export interface Commitment {
+  key: CommitmentKey;
+  dailyTarget: number;
+  active: boolean;
+  activeSince: string;
+  updatedAt: string;
+  debt: CommitmentDebt;
+}
+
+export interface CommitmentsResponse {
+  commitments: Commitment[];
+}
+
+export interface CommitmentPutBody {
+  key: CommitmentKey;
+  dailyTarget: number;
+  active?: boolean;
+}
+
 export interface Brief {
   generatedAt: string;
   tzOffsetMin: number;
@@ -668,6 +1169,13 @@ export interface Brief {
     conversion?: { d7: ConversionWindow; d28: ConversionWindow };
   };
   pinnedWatch: PinnedWatch;
+  // Optional: absent when the deployed server predates GR.6 — the panel must
+  // tolerate a brief payload without it rather than crash (the S0.1 precedent).
+  monitor?: BriefMonitor;
+  // GR.8, same tolerance: active goals with live pacing, and every commitment
+  // (paused ones included) with its debt against the C9 diary.
+  goals?: BriefGoal[];
+  commitments?: Commitment[];
   yesterday: {
     from: string;
     to: string;
@@ -746,6 +1254,15 @@ export interface DigestFacts {
   neglected: { targets: string[]; allies: string[] };
   spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
   quests: { daysAllDone: number; daysTracked: number };
+  // M1 (ME.5): active Me goals with progress. Optional/nullable — digests cached
+  // before ME.5 lack the key; null when there are no active goals.
+  goals?: Array<{
+    label: string;
+    unit: string | null;
+    target: number;
+    current: number | null;
+    pct: number | null;
+  }> | null;
   guidance: { reply: string | null; post: string | null };
   // S0.7: where this week's posted replies landed vs my 2–10x target band.
   rosterCoverage: PlaybookRosterCoverage;
@@ -753,6 +1270,28 @@ export interface DigestFacts {
   // exists to earn. Optional — digests cached before S4 landed lack them.
   imageSpendUsd?: number;
   mediaVsText?: MediaEffectiveness;
+  // GR.9: the week graded 0–100. Optional/nullable on the same contract —
+  // absent on digests cached before GR.9, null whenever the week was tracked
+  // for fewer than 4 days (the server never ships a card it can't stand behind,
+  // so the panel renders the grade or nothing).
+  scorecard?: DigestScorecard | null;
+}
+
+/** GR.9 — mirrors the server's `DigestScorecard`. Components are 0–100 with
+ *  null for "no data this week"; `delta` is null when last week wasn't graded. */
+export interface DigestScorecard {
+  score: number | null;
+  components: {
+    questAdherence: number | null;
+    cadenceConsistency: number | null;
+    replyQuota: number | null;
+    goalPacing: number | null;
+    ratioAdherence: number | null;
+  };
+  sufficient: boolean;
+  daysTracked: number;
+  prevScore: number | null;
+  delta: number | null;
 }
 
 // §S4/§S0.2 — media vs text-only own-originals; the shape the digest and the
@@ -836,6 +1375,49 @@ export interface IcebreakersResponse {
   costUsd: number;
 }
 
+// ------------------------------------------------------------ DM drafts (A3.9)
+
+// Grounded outbound direct messages (src/x/routes/dms.ts). Drafting spends one
+// Grok call behind the same refusal ladder as icebreakers; list/patch are $0.
+// Sending stays manual in X — patch(status:'sent') just logs the timeline event.
+export type DmStatus = 'draft' | 'sent' | 'discarded';
+
+/** A stored dm_drafts row (GET /x/dms, PATCH /x/dms/:id). Dates are ISO
+ *  strings; `grounding` is the {block, idea} snapshot the draft was built on. */
+export interface DmDraft {
+  id: string;
+  handle: string;
+  text: string;
+  purpose: string | null;
+  status: DmStatus;
+  grounding: { block: string; idea: string | null } | null;
+  costUsd: number | null;
+  createdAt: string;
+  updatedAt: string;
+  sentAt: string | null;
+}
+
+export interface DmsListResponse {
+  count: number;
+  dms: DmDraft[];
+}
+
+/** POST /x/dms/draft — the fresh draft plus the grounding block it was allowed
+ *  to see (a plain string here, unlike the stored row's {block, idea} object). */
+export interface DmDraftResult {
+  id: string;
+  text: string;
+  grounding: string;
+  costUsd: number;
+  model: string;
+  requestId: string;
+}
+
+export interface DmPatchBody {
+  text?: string;
+  status?: 'sent' | 'discarded';
+}
+
 // ---------------------------------------------------------------- people (C1)
 
 // Circles CRM rows (src/x/routes/people.ts). Stage describes reciprocity only.
@@ -850,7 +1432,11 @@ export type PersonEventType =
   | 'hover_sighting'
   | 'harvest_seen'
   | 'note'
-  | 'manual_dm_logged';
+  | 'manual_dm_logged'
+  // C10 notification harvest — timeline-only, never a stage or ranking input.
+  | 'their_like'
+  | 'their_repost'
+  | 'their_follow';
 
 export interface Person {
   handle: string;
@@ -1005,6 +1591,8 @@ export interface FanItem {
   stage: PersonStage | null;
   followersCount: number | null;
   inboundCount: number;
+  /** C10 likes/reposts/follows in the same window — display-only, never ranked. */
+  engagementCount: number;
   lastInboundAt: string;
   /** My last outbound to them — the "last acknowledged" reading. */
   lastOutboundAt: string | null;
@@ -1016,6 +1604,69 @@ export interface FansResponse {
   days: number;
   count: number;
   fans: FanItem[];
+}
+
+// ------------------------------------------- following ledger (Guardrails §A)
+
+// The $0 following ledger (src/x/routes/following.ts). Rows arrive from the
+// extension's own /following scrape — no X API anywhere — and unfollowing stays
+// a manual act in the X app, so `status` is a ratchet the user and the scrape
+// advance together, never an action this client performs.
+export type FollowingStatus = 'active' | 'queued' | 'done' | 'confirmed' | 'gone';
+
+export interface FollowingRow {
+  handle: string;
+  displayName: string | null;
+  followsBack: boolean;
+  listPosition: number | null;
+  /** The follow-date proxy (§7.11) — X never exposes the real one. */
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastRunId: string;
+  status: FollowingStatus;
+  keep: boolean;
+  unfollowMarkedAt: string | null;
+}
+
+export interface FollowingListOpts {
+  status?: FollowingStatus;
+  q?: string;
+  limit?: number;
+}
+
+export interface FollowingListResponse {
+  count: number;
+  total: number;
+  lastCompleteRunAt: string | null;
+  following: FollowingRow[];
+}
+
+export interface FollowingQueueItem {
+  handle: string;
+  displayName: string | null;
+  firstSeenAt: string;
+  url: string;
+}
+
+// GET /x/following/queue. `eligibleTotal` is the whole backlog (already-released
+// rows included), not just what's left to release; window/daily counters are the
+// cadence caps the server enforces (15–18 per 6h, 40/day).
+export interface FollowingQueueResponse {
+  batch: FollowingQueueItem[];
+  eligibleTotal: number;
+  releasedNow: number;
+  windowUsed: number;
+  windowCap: number;
+  dailyUsed: number;
+  dailyCeiling: number;
+  lastCompleteRunAt: string | null;
+}
+
+/** `status: 'done'` is the only status a client may set, and only out of
+ *  `queued`; `keep` is an independent pin that moves no status. */
+export interface FollowingPatchBody {
+  status?: 'done';
+  keep?: boolean;
 }
 
 // ---------------------------------------------------------------- playbook (C4)
@@ -1038,6 +1689,21 @@ export interface PlaybookAngleCell extends PlaybookCell {
 
 export interface PlaybookLatencyCell extends PlaybookCell {
   bucket: '<15m' | '15-60m' | '1-6h' | '>6h' | 'unknown';
+}
+
+export interface PlaybookModelCell extends PlaybookCell {
+  model: string;
+}
+
+// Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
+// no tweet time, so no age and no velocity to classify with; it never folds
+// into the null band, which does mean "judged not worth replying to".
+export interface PlaybookFunnelCell {
+  band: 'hot' | 'warm' | 'skip' | null | 'unknown';
+  seen: number;
+  replied: number;
+  rate: number | null;
+  sufficient: boolean;
 }
 
 export interface PlaybookBandCell {
@@ -1097,6 +1763,7 @@ export interface Playbook {
   batchVsSingle: {
     single: PlaybookCell;
     radar: PlaybookCell;
+    canned: PlaybookCell;
     unattributed: number;
   };
   bandCalibration: {
@@ -1110,6 +1777,16 @@ export interface Playbook {
   relationshipLift: {
     withRelationship: PlaybookCell;
     withoutRelationship: PlaybookCell;
+    viewsLift: number | null;
+    profileVisitsLift: number | null;
+  };
+  // Personal-context lift (M1/ME.5): replies that carried the Me brief vs cold
+  // ones. Replies are the only measured surface (posts always inject). Lift only
+  // when both sides clear the gate.
+  meEffectiveness: {
+    withMe: PlaybookCell;
+    withoutMe: PlaybookCell;
+    totalMeasured: number;
     viewsLift: number | null;
     profileVisitsLift: number | null;
   };
@@ -1133,6 +1810,21 @@ export interface Playbook {
     late: PlaybookCell;
     viewsLift: number | null;
     profileVisitsLift: number | null;
+  };
+  // Model effectiveness (AI.12): posted replies grouped by the model that
+  // drafted them — the judge of the OpenRouter experiment. Buckets only, each
+  // independently gated; no lift line (no canonical baseline pair).
+  modelEffectiveness: {
+    cells: PlaybookModelCell[];
+    totalMeasured: number;
+  };
+  // Timeline opportunity-capture funnel (HV.5): of the tweets the algorithm
+  // actually put in front of me (the passive home-timeline corpus), how many did
+  // I reply to, per band at first sighting. Rate is null under the per-cell gate.
+  timelineFunnel: {
+    cells: PlaybookFunnelCell[];
+    totalSeen: number;
+    totalReplied: number;
   };
   // Roster coverage (§S0.7): of the last 7 days' posted replies, how many went
   // to in-band (2–10x) vs above/below/unknown-size authors.
@@ -1272,4 +1964,172 @@ export class ApiError extends Error {
     super(`${status} ${code}`);
     this.name = 'ApiError';
   }
+}
+
+// ---------------------------------------------------------------------------
+// Settings platform (UI.1 server registry → UI.10 primitives). The panel renders
+// entirely from GET /x/settings and never imports the server registry — these
+// types mirror that JSON contract (SettingDef + resolved value + isDefault).
+// ---------------------------------------------------------------------------
+
+export type SettingType = 'number' | 'boolean' | 'string' | 'enum' | 'numberArray';
+
+/** One knob from GET /x/settings: the registry def plus its resolved value and
+ *  whether that value is still the registry default. */
+export interface SettingEntry {
+  key: string;
+  group: string;
+  label: string;
+  description: string;
+  type: SettingType;
+  default: unknown;
+  value: unknown;
+  isDefault: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: string[];
+  unit?: string;
+  appliesOn?: 'immediate' | 'restart';
+  minItems?: number;
+  maxItems?: number;
+  sortedUnique?: boolean;
+}
+
+export interface SettingsGroup {
+  id: string;
+  label: string;
+  settings: SettingEntry[];
+}
+
+export interface SettingsResponse {
+  groups: SettingsGroup[];
+}
+
+export interface SettingsPatchResult {
+  updated: Array<{ key: string; value: unknown }>;
+}
+
+export interface SettingsResetResult {
+  reset: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Reply lists (RL) — premade canned replies, picked + rendered + humanized on
+// the server (Decision 1: the anti-repeat state lives in the DB, never here).
+// The panel only manages the lists and copies the returned text; posting stays
+// a manual paste (§7.28). Mirrors the `/x/reply-lists` JSON — Date columns are
+// ISO strings over the transport.
+
+/** The per-list jitter knobs. A stored config is ALWAYS fully normalized by the
+ *  server, so a non-null value here has every field. `null` on a list means the
+ *  engine defaults apply — PATCH `{humanizer:{}}` to materialize them. */
+export interface HumanizerConfig {
+  prefixes: string[];
+  suffixes: string[];
+  prefixChance: number;
+  suffixChance: number;
+  lowercaseChance: number;
+  dropPeriodChance: number;
+  typoChance: number;
+}
+
+export type ReplyTemplateVar = 'name' | 'first_name' | 'handle';
+export type ReplyListItemSource = 'manual' | 'ai';
+
+export interface ReplyList {
+  id: string;
+  name: string;
+  description: string | null;
+  humanizer: HumanizerConfig | null;
+  active: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The collection GET adds both counts — the rail renders "n items · m on". */
+export interface ReplyListSummary extends ReplyList {
+  itemCount: number;
+  enabledCount: number;
+}
+
+export interface ReplyListItem {
+  id: string;
+  listId: string;
+  text: string;
+  enabled: boolean;
+  source: ReplyListItemSource;
+  /** The anti-repeat watermark — null = never used. */
+  lastUsedAt: string | null;
+  useCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReplyListDetail {
+  list: ReplyList;
+  items: ReplyListItem[];
+}
+
+export interface ReplyListCreateBody {
+  name: string;
+  description?: string;
+  humanizer?: HumanizerConfig | null;
+}
+
+export interface ReplyListPatchBody {
+  name?: string;
+  description?: string | null;
+  /** null clears back to the engine defaults; `{}` materializes them. */
+  humanizer?: HumanizerConfig | Record<string, never> | null;
+  active?: boolean;
+  sortOrder?: number;
+}
+
+/** `replace` swaps the whole set in one txn; `source` is per CALL, not per item. */
+export interface ReplyListItemsBody {
+  mode: 'append' | 'replace';
+  items: { text: string }[];
+  source?: ReplyListItemSource;
+}
+
+export interface ReplyListItemPatchBody {
+  text?: string;
+  enabled?: boolean;
+}
+
+export interface UseReplyBody {
+  vars?: { name?: string; handle?: string };
+  targetTweetId?: string;
+  targetHandle?: string;
+  /** true = render a sample without stamping the anti-repeat state. */
+  preview?: boolean;
+}
+
+export interface UseReplyResponse {
+  itemId: string;
+  text: string;
+  /** Vars the template wanted but the target didn't supply (stripped, not left raw). */
+  missingVars: ReplyTemplateVar[];
+  /** Which jitters fired, e.g. `['prefix', 'typo:swap']`. */
+  applied: string[];
+}
+
+export interface GenerateItemsBody {
+  prompt: string;
+  /** 1..30 — refused, not clamped, past the cap. */
+  count?: number;
+  model?: string;
+  provider?: LlmProvider;
+}
+
+/** Proposal only — nothing is persisted until the panel applies it via setItems. */
+export interface GenerateItemsResponse {
+  items: { text: string }[];
+  count: number;
+  requested: number;
+  model: string;
+  costUsd: number;
+  requestId?: string;
 }

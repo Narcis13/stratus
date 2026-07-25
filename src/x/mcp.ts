@@ -18,6 +18,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
 import { InspectError, describeTable, listTables, runSelect } from './data/inspect.ts';
+import { ME_KINDS } from './me/profile.ts';
 
 type ToolResult = {
   content: { type: 'text'; text: string }[];
@@ -139,6 +140,36 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
       },
     },
     async ({ tzOffsetMin }) => route(`/x/brief${qp('tzOffsetMin', tzOffsetMin)}`),
+  );
+
+  server.registerTool(
+    'x_monitor',
+    {
+      title: 'Account health monitor',
+      description:
+        'Activity-pattern alerts over my own actions: posting bursts, near-duplicate originals, unfollow churn above the safe daily ceiling, and clustered pending slots. Empty `alerts` means nothing looks risky. Free, local read — advisory only, stratus never blocks a post.',
+      inputSchema: {},
+    },
+    async () => route('/x/monitor'),
+  );
+
+  server.registerTool(
+    'x_goals',
+    {
+      title: 'Goals & commitments',
+      description:
+        'Active goals with live pacing (required-vs-actual daily rate, on-pace/behind verdict, projected date) plus my daily commitments and the debt of missed days. Reading this also settles goals whose target or deadline has passed. Free, local read — advisory only, stratus never blocks an action for being behind.',
+      inputSchema: {
+        tzOffsetMin: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            'JS getTimezoneOffset() minutes; commitment debt counts your local days. Default UTC.',
+          ),
+      },
+    },
+    async ({ tzOffsetMin }) => route(`/x/goals${qp('tzOffsetMin', tzOffsetMin)}`),
   );
 
   server.registerTool(
@@ -306,6 +337,39 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
     },
   );
 
+  server.registerTool(
+    'x_niche',
+    {
+      title: 'Active niche',
+      description:
+        'The active niche — the identity + strategy container: persona, beliefs, reply persona, prose description, and the resolved doctrine knobs (reply quota, week reply %, target follower band). Free, local read.',
+      inputSchema: {},
+    },
+    async () => route('/x/niche'),
+  );
+
+  server.registerTool(
+    'x_me',
+    {
+      title: 'My profile (Me)',
+      description:
+        'The dynamic personal-context layer the drafters inject at the prompt tail: evergreen facts, dated events, current emotions, and notes (each with an `inWindow` freshness flag), plus goals with auto-computed progress. This is the same material a post/reply draft may draw on. Free, local read.',
+      inputSchema: {},
+    },
+    async () => route('/x/me'),
+  );
+
+  server.registerTool(
+    'x_settings',
+    {
+      title: 'Settings catalog',
+      description:
+        'Every tunable knob with its group, label, description, valid range, current value and whether it is still the default — doctrine cadence, quest targets, follow-up windows, stat gates, radar TTL, worker cadence, display limits. Read this before changing anything: the description carries the "why" and the range is the hard bound. Free, local read.',
+      inputSchema: {},
+    },
+    async () => route('/x/settings'),
+  );
+
   // -------------------------------------------------------------- Write tier
   // Tiny, never X-billed. The write ceiling is a DRAFT calendar row — MCP can
   // propose, only the human promotes it to `pending`.
@@ -347,6 +411,37 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
   );
 
   server.registerTool(
+    'x_add_me_entry',
+    {
+      title: 'Add a Me entry',
+      description:
+        'Journal a personal-context entry into your profile — a fact, a dated event, a current emotion, or a note. The drafters inject the fresh slice at the prompt tail so drafts sound like a person having this specific week. Free, local write (no X/Grok cost). Goals are NOT settable here — those are deliberate, low-frequency decisions made in the Me tab.',
+      inputSchema: {
+        kind: z
+          .enum(ME_KINDS)
+          .describe('One of: fact (evergreen), event (dated), emotion (7d window), note.'),
+        text: z.string().min(1).describe('The entry text (≤1000 chars, any language).'),
+        happenedAt: z
+          .string()
+          .optional()
+          .describe(
+            'Optional ISO timestamp for a dated event; omit for undated (uses created_at).',
+          ),
+        pinned: z
+          .boolean()
+          .optional()
+          .describe('Pin it to always inject, overriding the freshness windows.'),
+      },
+    },
+    async ({ kind, text, happenedAt, pinned }) => {
+      const body: Record<string, unknown> = { kind, text };
+      if (happenedAt !== undefined) body.happenedAt = happenedAt;
+      if (pinned !== undefined) body.pinned = pinned;
+      return route('/x/me/entries', { method: 'POST', body });
+    },
+  );
+
+  server.registerTool(
     'x_draft_post',
     {
       title: 'Draft a post',
@@ -379,5 +474,21 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
       if (scheduledFor !== undefined) body.scheduledFor = scheduledFor;
       return route('/x/posts/scheduled', { method: 'POST', body });
     },
+  );
+
+  server.registerTool(
+    'x_update_setting',
+    {
+      title: 'Change one setting',
+      description:
+        'Set a single knob to a new value (see x_settings for keys, ranges and what each one does). The route validates against the registry, so a value outside the knob’s range is refused with a 400 — the money and policy ceilings are not negotiable from here, and the guards that are never settings (URL surcharge, retire-before-snapshot, claim-before-call, token rotation) have no key at all. Free, local write.',
+      inputSchema: {
+        key: z.string().describe('Dot-namespaced setting key, e.g. x.gates.minCellN.'),
+        value: z
+          .union([z.number(), z.boolean(), z.string(), z.array(z.number())])
+          .describe('The new value; its type must match the knob’s declared type.'),
+      },
+    },
+    async ({ key, value }) => route('/x/settings', { method: 'PATCH', body: { [key]: value } }),
   );
 }

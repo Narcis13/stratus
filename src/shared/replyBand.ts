@@ -23,6 +23,11 @@
 // the velocity paths. Still one account over ~6 days, and original metrics were
 // scraped after the fact (so inflated for older posts) — re-check against your
 // own logged HOT outcomes before trusting the margins.
+//
+// UI.7 made every threshold a settings knob (`x.band.*`, all mirrored to the
+// extension). The numbers below are the shipped defaults and the fallback both
+// sides degrade to; §7.19 is unchanged — a recalibration is still a deliberate
+// edit at >=100 measured replies, the knobs only remove the rebuild.
 
 export type Band = 'hot' | 'warm' | 'skip' | null;
 
@@ -34,7 +39,27 @@ export interface TweetSignals {
   bait: boolean; // question / poll / take-bait format
 }
 
-export const BAND = {
+/** Every number the classifier reads. UI.7 made these configurable
+ *  (`x.band.*`), so they arrive as an ARGUMENT on both sides of the wire — the
+ *  server resolves them from the settings store, the page from the mirrored
+ *  blob. This module stays dependency-free (Vite inlines it into the content
+ *  script IIFE, §7.26), so it must never read a store or chrome.storage itself. */
+export interface BandThresholds {
+  bigViews: number;
+  baitViews: number;
+  earlyReplies: number;
+  midReplies: number;
+  freshMin: number;
+  risingVPM: number;
+  baitVPM: number;
+  watchVPM: number;
+  tooSmallAgeMin: number;
+  tooSmallViews: number;
+  tooSmallVpm: number;
+  watchReplyCeiling: number;
+}
+
+export const BAND: BandThresholds = {
   bigViews: 300, // floor to be "worth a reply" (recal 800->300, see header)
   baitViews: 180, // lower floor when the post is reply-bait (stays below bigViews)
   earlyReplies: 40, // still near the top of the thread
@@ -43,23 +68,36 @@ export const BAND = {
   risingVPM: 20, // views/min that projects into the band while still fresh
   baitVPM: 12, // relaxed rising bar for bait
   watchVPM: 8, // promising-but-unproven velocity
-} as const;
+  // The "won't grow" early return, hoisted out of the classifier body at UI.7:
+  // ONE rule spelled in three numbers — past this age, under this many views,
+  // at under this velocity, a non-bait post is dead. tooSmallViews shadows
+  // bigViews by design (both are 300); they are separate knobs because raising
+  // the "worth a reply" floor should not silently widen the dead zone.
+  tooSmallAgeMin: 20,
+  tooSmallViews: 300,
+  tooSmallVpm: 15,
+  // Ceiling on the fresh-and-rising 'warm' path: promising velocity stops
+  // mattering once the thread already has a crowd.
+  watchReplyCeiling: 25,
+};
 
-export function classifyBand(s: TweetSignals): Band {
+export function classifyBand(s: TweetSignals, t: BandThresholds = BAND): Band {
   const { views, replies, ageMin, vpm, bait } = s;
-  const fresh = ageMin <= BAND.freshMin;
+  const fresh = ageMin <= t.freshMin;
 
-  if (replies > BAND.midReplies) return 'skip'; // deep thread, you'd be buried
-  if (ageMin > 20 && views < 300 && vpm < 15 && !bait) return null; // too small, won't grow (aligned to bigViews floor)
+  if (replies > t.midReplies) return 'skip'; // deep thread, you'd be buried
+  if (ageMin > t.tooSmallAgeMin && views < t.tooSmallViews && vpm < t.tooSmallVpm && !bait) {
+    return null; // too small, won't grow
+  }
 
-  const viewFloor = bait ? BAND.baitViews : BAND.bigViews;
-  const vpmFloor = bait ? BAND.baitVPM : BAND.risingVPM;
+  const viewFloor = bait ? t.baitViews : t.bigViews;
+  const vpmFloor = bait ? t.baitVPM : t.risingVPM;
   const bigEnough = views >= viewFloor || (fresh && vpm >= vpmFloor);
-  const earlyEnough = replies <= BAND.earlyReplies;
+  const earlyEnough = replies <= t.earlyReplies;
 
   if (bigEnough && earlyEnough) return 'hot';
-  if (bigEnough && replies <= BAND.midReplies) return 'warm'; // good size, mid-pack
-  if (fresh && vpm >= BAND.watchVPM && replies <= 25) return 'warm'; // early, promising
+  if (bigEnough && replies <= t.midReplies) return 'warm'; // good size, mid-pack
+  if (fresh && vpm >= t.watchVPM && replies <= t.watchReplyCeiling) return 'warm'; // early, promising
   return null;
 }
 

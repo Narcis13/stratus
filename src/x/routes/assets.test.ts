@@ -80,6 +80,15 @@ describe('POST/GET/DELETE /x/assets (S4)', () => {
     expect(ok.body.kind).toBe('other');
   });
 
+  test('an S5 template kind (milestone) is stored, not coerced to other', async () => {
+    const { status, body } = await post<{ kind: string }>('/x/assets', {
+      pngBase64: B64,
+      kind: 'milestone',
+    });
+    expect(status).toBe(201);
+    expect(body.kind).toBe('milestone');
+  });
+
   test('delete removes it; the stream then 404s', async () => {
     const { body: created } = await post<{ id: string }>('/x/assets', {
       pngBase64: B64,

@@ -6,8 +6,13 @@
 
 import type { ApiRequest, ApiResponse, BinaryPayload } from '../shared/messages.ts';
 import {
+  type ActiveTimesResponse,
+  type AiSettings,
+  type AiSettingsPatchBody,
+  type AiSettingsResponse,
   ApiError,
   type AssetSaveBody,
+  type AudienceCapture,
   type AuthorProfile,
   type BatchReplyGenerateBody,
   type BatchReplyItem,
@@ -17,12 +22,19 @@ import {
   type BestTimesResponse,
   type Brief,
   type BriefGap,
+  type BriefGoal,
+  type BriefMonitor,
   type BriefQuests,
   type BriefTweet,
   type Channel,
   type ChannelAggregate,
   type ChannelCreateBody,
   type ChannelPatchBody,
+  type Commitment,
+  type CommitmentDebt,
+  type CommitmentKey,
+  type CommitmentPutBody,
+  type CommitmentsResponse,
   type ContentPillar,
   type ConversationItem,
   type ConversationPatchBody,
@@ -34,28 +46,77 @@ import {
   type CreateThreadResponse,
   type DigestFacts,
   type DigestResponse,
+  type DigestScorecard,
+  type DmDraft,
+  type DmDraftResult,
+  type DmPatchBody,
+  type DmStatus,
+  type DmsListResponse,
   type FanItem,
   type FansResponse,
+  type FollowingListOpts,
+  type FollowingListResponse,
+  type FollowingPatchBody,
+  type FollowingQueueItem,
+  type FollowingQueueResponse,
+  type FollowingRow,
+  type FollowingStatus,
   type FollowupItem,
   type FollowupKind,
   type FollowupSnoozeBody,
   type FollowupsResponse,
+  type GenerateItemsBody,
+  type GenerateItemsResponse,
   type GeneratedImageItem,
+  type GoalKind,
+  type GoalPacing,
+  type GoalStatus,
+  type GoalVerdict,
+  type HarvestRun,
+  type HumanizerConfig,
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
+  type IdeaGenerateBody,
+  type IdeaGenerateResponse,
   type IdeaPatchBody,
+  type IdeaProposal,
   type IdeaStatus,
   type IdeasResponse,
   type ImageGenerateBody,
   type ImageGenerateResponse,
   type ListOpts,
+  type LlmModel,
+  type LlmModelsResponse,
+  type LlmProvider,
+  type LlmReasoningEffort,
+  type MeContextResponse,
+  type MeEntry,
+  type MeEntryCreateBody,
+  type MeEntryPatchBody,
+  type MeGoal,
+  type MeGoalCreateBody,
+  type MeGoalPatchBody,
+  type MeKind,
+  type MeResponse,
   type MediaAsset,
   type Mention,
   type MentionPatchBody,
   type MentionStatus,
   type MentionsRefreshResult,
   type MentionsResponse,
+  type MetricsAccountResponse,
+  type MonitorAlert,
+  type MonitorSeverity,
+  type Niche,
+  type NicheActive,
+  type NicheChannelProposal,
+  type NicheCreateBody,
+  type NicheDoctrine,
+  type NicheDraftResult,
+  type NichePatchBody,
+  type NichePillarProposal,
+  type NicheProposal,
   type PeopleListOpts,
   type PeopleListResponse,
   type Person,
@@ -78,22 +139,53 @@ import {
   type PlaybookExtractResult,
   type PlaybookIdeaSurface,
   type PlaybookLatencyCell,
+  type PlaybookModelCell,
   type PlaybookRosterCoverage,
   type PostContext,
   type PostDraftBody,
   type PostDraftResponse,
   type PostReupBody,
   type PostStatus,
+  type PromptDetail,
+  type PromptPatchResult,
+  type PromptResetResult,
+  type PromptSummary,
+  type PromptsRestoreResult,
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftStatus,
   type ReplyGenerateBody,
+  type ReplyList,
+  type ReplyListCreateBody,
+  type ReplyListDetail,
+  type ReplyListItem,
+  type ReplyListItemPatchBody,
+  type ReplyListItemSource,
+  type ReplyListItemsBody,
+  type ReplyListPatchBody,
+  type ReplyListSummary,
   type ReplyPatchBody,
+  type ReplyTemplateVar,
+  type RewriteBody,
+  type RewriteResponse,
+  type RewriteVariant,
   type ScheduledPost,
+  type ScheduledPostCreated,
   type ScheduledPostWithThread,
   type ScrapeBody,
+  type SettingEntry,
+  type SettingsGroup,
+  type SettingsPatchResult,
+  type SettingsResetResult,
+  type SettingsResponse,
+  type ThreadDraftBody,
+  type ThreadDraftResponse,
+  type TimelineAffinityAuthor,
+  type TimelineAffinityResponse,
   type TopComment,
   type UpdateBody,
+  type UseReplyBody,
+  type UseReplyResponse,
   type VoiceAuthor,
   type VoiceExtractBatchResult,
   type VoiceTarget,
@@ -105,6 +197,21 @@ import type { Settings } from './storage.ts';
 
 export { ApiError };
 export type {
+  ActiveTimesResponse,
+  AudienceCapture,
+  AiSettings,
+  AiSettingsPatchBody,
+  AiSettingsResponse,
+  LlmModel,
+  LlmModelsResponse,
+  LlmProvider,
+  LlmReasoningEffort,
+  PromptDetail,
+  PromptPatchResult,
+  PromptResetResult,
+  PromptSummary,
+  PromptsRestoreResult,
+  RewriteVariant,
   AssetSaveBody,
   AuthorProfile,
   GeneratedImageItem,
@@ -119,10 +226,26 @@ export type {
   BestTimesResponse,
   Brief,
   BriefGap,
+  BriefGoal,
+  BriefMonitor,
   BriefQuests,
   BriefTweet,
+  MonitorAlert,
+  MonitorSeverity,
+  Commitment,
+  CommitmentDebt,
+  CommitmentKey,
+  CommitmentPutBody,
+  CommitmentsResponse,
+  GoalPacing,
+  GoalVerdict,
   DigestFacts,
   DigestResponse,
+  DigestScorecard,
+  DmDraft,
+  DmDraftResult,
+  DmPatchBody,
+  DmStatus,
   IcebreakersResponse,
   Channel,
   ChannelAggregate,
@@ -139,18 +262,50 @@ export type {
   CreateThreadResponse,
   FanItem,
   FansResponse,
+  FollowingListOpts,
+  FollowingListResponse,
+  FollowingPatchBody,
+  FollowingQueueItem,
+  FollowingQueueResponse,
+  FollowingRow,
+  FollowingStatus,
   FollowupItem,
   FollowupKind,
   FollowupSnoozeBody,
   FollowupsResponse,
+  HarvestRun,
   Idea,
   IdeaCreateBody,
+  IdeaGenerateBody,
+  IdeaGenerateResponse,
   IdeaPatchBody,
+  IdeaProposal,
   IdeaStatus,
   IdeasResponse,
   PinnedWatch,
   ListOpts,
+  GoalKind,
+  GoalStatus,
+  MeContextResponse,
+  MeEntry,
+  MeEntryCreateBody,
+  MeEntryPatchBody,
+  MeGoal,
+  MeGoalCreateBody,
+  MeGoalPatchBody,
+  MeKind,
+  MeResponse,
   Mention,
+  MetricsAccountResponse,
+  Niche,
+  NicheActive,
+  NicheChannelProposal,
+  NicheCreateBody,
+  NicheDoctrine,
+  NicheDraftResult,
+  NichePatchBody,
+  NichePillarProposal,
+  NicheProposal,
   PillarCreateBody,
   PillarDraftBody,
   PillarDraftResult,
@@ -168,6 +323,7 @@ export type {
   PlaybookExtractResult,
   PlaybookIdeaSurface,
   PlaybookLatencyCell,
+  PlaybookModelCell,
   PlaybookRosterCoverage,
   PersonAngleCell,
   PersonDossier,
@@ -187,9 +343,34 @@ export type {
   ReplyDraftStatus,
   ReplyGenerateBody,
   ReplyPatchBody,
+  HumanizerConfig,
+  ReplyList,
+  ReplyListCreateBody,
+  ReplyListDetail,
+  ReplyListItem,
+  ReplyListItemPatchBody,
+  ReplyListItemSource,
+  ReplyListItemsBody,
+  ReplyListPatchBody,
+  ReplyListSummary,
+  ReplyTemplateVar,
+  UseReplyBody,
+  UseReplyResponse,
+  GenerateItemsBody,
+  GenerateItemsResponse,
   ScheduledPost,
+  ScheduledPostCreated,
   ScheduledPostWithThread,
   ScrapeBody,
+  SettingEntry,
+  SettingsGroup,
+  SettingsPatchResult,
+  SettingsResetResult,
+  SettingsResponse,
+  ThreadDraftBody,
+  ThreadDraftResponse,
+  TimelineAffinityAuthor,
+  TimelineAffinityResponse,
   TopComment,
   UpdateBody,
   VoiceAuthor,
@@ -267,6 +448,21 @@ export const api = {
         `/x/metrics/best-times?tzOffsetMin=${new Date().getTimezoneOffset()}`,
       );
     },
+
+    // S5.5 — the daily follower KPI series; the milestone card detects the
+    // latest crossed rung client-side over it ($0, already-billed data).
+    account(s: Settings): Promise<MetricsAccountResponse> {
+      return request<MetricsAccountResponse>(s, '/x/metrics/account');
+    },
+  },
+
+  // A3.4 — the newest captured audience "Active times" heatmap ($0, DOM-scraped
+  // by the content script on X Analytics). The Composer blends it below its own
+  // measured best-times; a 404/unconfigured just leaves `capture` null.
+  analytics: {
+    activeTimes(s: Settings): Promise<ActiveTimesResponse> {
+      return request<ActiveTimesResponse>(s, '/x/analytics/active-times');
+    },
   },
 
   // Single-row fetch (§9.5) — thread members carry their siblings.
@@ -274,8 +470,10 @@ export const api = {
     return request<ScheduledPostWithThread>(s, `/x/posts/scheduled/${id}`);
   },
 
-  create(s: Settings, body: CreateBody): Promise<ScheduledPost> {
-    return request<ScheduledPost>(s, '/x/posts/scheduled', { method: 'POST', body });
+  // GR.6: the response carries `warnings` — advisory strings computed after the
+  // insert. Never a refusal: a warned post is a saved post.
+  create(s: Settings, body: CreateBody): Promise<ScheduledPostCreated> {
+    return request<ScheduledPostCreated>(s, '/x/posts/scheduled', { method: 'POST', body });
   },
 
   createThread(s: Settings, body: CreateThreadBody): Promise<CreateThreadResponse> {
@@ -290,6 +488,13 @@ export const api = {
     return request<void>(s, `/x/posts/scheduled/${id}`, { method: 'DELETE' });
   },
 
+  // A3.7 — flip a `manual` row to `posted` after you've pasted it in X. No body,
+  // no tweet id: the daily reconcile links the pasted tweet by text match (A3.6,
+  // decision 6). 409 `not_manual` if the row isn't manual.
+  markPosted(s: Settings, id: string): Promise<ScheduledPost> {
+    return request<ScheduledPost>(s, `/x/posts/scheduled/${id}/mark-posted`, { method: 'POST' });
+  },
+
   drafts: {
     // §8.1 — three register-distinct drafts land as draft rows in the calendar.
     generate(s: Settings, body: PostDraftBody): Promise<PostDraftResponse> {
@@ -299,6 +504,18 @@ export const api = {
     // §8.5 — quote-tweet re-up of one of my published posts.
     reup(s: Settings, body: PostReupBody): Promise<PostDraftResponse> {
       return request<PostDraftResponse>(s, '/x/posts/reup', { method: 'POST', body });
+    },
+
+    // AI.7 — one LLM call drafts a whole thread; head + segment rows land under
+    // a shared threadId and load straight into the Composer's thread editor.
+    thread(s: Settings, body: ThreadDraftBody): Promise<ThreadDraftResponse> {
+      return request<ThreadDraftResponse>(s, '/x/posts/draft-thread', { method: 'POST', body });
+    },
+
+    // AI.8 — rewrite assist: three sharper versions of the current draft. No DB
+    // rows; the Composer applies the picked variant to its own text state.
+    rewrite(s: Settings, body: RewriteBody): Promise<RewriteResponse> {
+      return request<RewriteResponse>(s, '/x/posts/rewrite', { method: 'POST', body });
     },
   },
 
@@ -359,6 +576,179 @@ export const api = {
     },
   },
 
+  // N0 — the niche: identity + strategy container. get() returns the active
+  // niche + resolved doctrine; activation is update(slug, { active: true }).
+  niche: {
+    get(s: Settings): Promise<NicheActive> {
+      return request<NicheActive>(s, '/x/niche');
+    },
+
+    list(s: Settings): Promise<Niche[]> {
+      return request<Niche[]>(s, '/x/niches');
+    },
+
+    create(s: Settings, body: NicheCreateBody): Promise<Niche> {
+      return request<Niche>(s, '/x/niches', { method: 'POST', body });
+    },
+
+    update(s: Settings, slug: string, body: NichePatchBody): Promise<Niche> {
+      return request<Niche>(s, `/x/niches/${encodeURIComponent(slug)}`, { method: 'PATCH', body });
+    },
+
+    remove(s: Settings, slug: string): Promise<unknown> {
+      return request<unknown>(s, `/x/niches/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+    },
+
+    // N0.8 — Grok wizard: prose → a proposed niche (persona/beliefs/pillars/
+    // channels). Not persisted; review/edit then create.
+    draft(s: Settings, description: string): Promise<NicheDraftResult> {
+      return request<NicheDraftResult>(s, '/x/niche/draft', {
+        method: 'POST',
+        body: { description },
+      });
+    },
+  },
+
+  // M1 — Me / My Profile: the dynamic personal-context layer. get() returns
+  // entries (each with a server-computed inWindow flag) + goals (each with
+  // computed progress); context() is the exact rendered block a draft would see.
+  me: {
+    get(s: Settings, opts: { kind?: MeKind; active?: boolean } = {}): Promise<MeResponse> {
+      const q = new URLSearchParams();
+      if (opts.kind) q.set('kind', opts.kind);
+      if (opts.active !== undefined) q.set('active', String(opts.active));
+      const qs = q.toString();
+      return request<MeResponse>(s, `/x/me${qs ? `?${qs}` : ''}`);
+    },
+
+    context(s: Settings, mode: 'post' | 'reply'): Promise<MeContextResponse> {
+      return request<MeContextResponse>(s, `/x/me/context?mode=${mode}`);
+    },
+
+    addEntry(s: Settings, body: MeEntryCreateBody): Promise<MeEntry> {
+      return request<MeEntry>(s, '/x/me/entries', { method: 'POST', body });
+    },
+
+    patchEntry(s: Settings, id: string, body: MeEntryPatchBody): Promise<MeEntry> {
+      return request<MeEntry>(s, `/x/me/entries/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    deleteEntry(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/me/entries/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    addGoal(s: Settings, body: MeGoalCreateBody): Promise<MeGoal> {
+      return request<MeGoal>(s, '/x/me/goals', { method: 'POST', body });
+    },
+
+    patchGoal(s: Settings, id: string, body: MeGoalPatchBody): Promise<MeGoal> {
+      return request<MeGoal>(s, `/x/me/goals/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    deleteGoal(s: Settings, id: string): Promise<void> {
+      return request<void>(s, `/x/me/goals/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+
+  // GR.8 — the daily commitments (Settings → General). Goals themselves are
+  // written through `me.*` above (one table, one writer) and READ off the
+  // brief, so there is no `goals.get` here; only the editor needs these two.
+  // Day keys are the viewer's local days, hence the tz on both calls.
+  commitments: {
+    get(s: Settings): Promise<CommitmentsResponse> {
+      return request<CommitmentsResponse>(
+        s,
+        `/x/commitments?tzOffsetMin=${new Date().getTimezoneOffset()}`,
+      );
+    },
+
+    put(s: Settings, body: CommitmentPutBody): Promise<Commitment> {
+      return request<Commitment>(
+        s,
+        `/x/commitments?tzOffsetMin=${new Date().getTimezoneOffset()}`,
+        {
+          method: 'PUT',
+          body,
+        },
+      );
+    },
+  },
+
+  // UI.1/UI.10 — the server settings registry. The panel renders from GET
+  // /x/settings (never the registry itself); PATCH validates per-key against the
+  // registry floors/ceilings, all-or-nothing.
+  settings: {
+    get(s: Settings): Promise<SettingsResponse> {
+      return request<SettingsResponse>(s, '/x/settings');
+    },
+
+    patch(s: Settings, patch: Record<string, unknown>): Promise<SettingsPatchResult> {
+      return request<SettingsPatchResult>(s, '/x/settings', { method: 'PATCH', body: patch });
+    },
+
+    reset(s: Settings, opts: { keys?: string[]; group?: string }): Promise<SettingsResetResult> {
+      return request<SettingsResetResult>(s, '/x/settings/reset', { method: 'POST', body: opts });
+    },
+  },
+
+  // AI.10 — the LLM provider config (Settings → AI panel). Separate from the
+  // `settings` registry above: `/llm/*` is always mounted and holds the routing
+  // knobs (provider, model, temperature, tokens, effort). API keys stay in
+  // server env and never travel through here.
+  llm: {
+    getSettings(s: Settings): Promise<AiSettingsResponse> {
+      return request<AiSettingsResponse>(s, '/llm/settings');
+    },
+
+    // Partial patch; blank numeric/effort fields are sent as explicit null to
+    // clear the override. Selecting openrouter without its server key → 409.
+    patchSettings(s: Settings, patch: AiSettingsPatchBody): Promise<AiSettingsResponse> {
+      return request<AiSettingsResponse>(s, '/llm/settings', { method: 'PATCH', body: patch });
+    },
+
+    // OpenRouter's free model list for the picker datalist; 503 without the key.
+    models(s: Settings): Promise<LlmModelsResponse> {
+      return request<LlmModelsResponse>(s, '/llm/models');
+    },
+  },
+
+  // AI.4/AI.11 — DB-backed editable prompt registry. Storage is override-rows-
+  // only: `customized` means a row exists; reset/restore delete it.
+  prompts: {
+    list(s: Settings): Promise<PromptSummary[]> {
+      return request<PromptSummary[]>(s, '/x/prompts');
+    },
+
+    get(s: Settings, key: string): Promise<PromptDetail> {
+      return request<PromptDetail>(s, `/x/prompts/${encodeURIComponent(key)}`);
+    },
+
+    // Server re-validates required placeholders (400 missing_placeholder); the
+    // editor mirrors the check client-side for instant feedback.
+    patch(s: Settings, key: string, body: string): Promise<PromptPatchResult> {
+      return request<PromptPatchResult>(s, `/x/prompts/${encodeURIComponent(key)}`, {
+        method: 'PATCH',
+        body: { body },
+      });
+    },
+
+    reset(s: Settings, key: string): Promise<PromptResetResult> {
+      return request<PromptResetResult>(s, `/x/prompts/${encodeURIComponent(key)}/reset`, {
+        method: 'POST',
+      });
+    },
+
+    restoreDefaults(s: Settings): Promise<PromptsRestoreResult> {
+      return request<PromptsRestoreResult>(s, '/x/prompts/restore-defaults', { method: 'POST' });
+    },
+  },
+
   // C8 — channels: topic rooms as saved views over tags.
   channels: {
     list(s: Settings, opts: { active?: boolean } = {}): Promise<Channel[]> {
@@ -392,6 +782,30 @@ export const api = {
         method: 'PATCH',
         body: { tags },
       });
+    },
+  },
+
+  // HV.3 — the run log, newest first. The Harvest tab reads it only to show
+  // today's passive row count; ingestion itself never goes through here (the
+  // content script POSTs straight to /x/harvest/* over the same transport).
+  harvest: {
+    runs(s: Settings, opts: { limit?: number } = {}): Promise<HarvestRun[]> {
+      const qs = opts.limit === undefined ? '' : `?limit=${opts.limit}`;
+      return request<HarvestRun[]>(s, `/x/harvest/runs${qs}`);
+    },
+
+    // HV.4 — read-time roster over the ambient corpus. $0, no params needed:
+    // the server's defaults (30d / 20 / ≥3 days) are the surface's contract.
+    affinity(
+      s: Settings,
+      opts: { days?: number; limit?: number; minDays?: number } = {},
+    ): Promise<TimelineAffinityResponse> {
+      const q = new URLSearchParams();
+      if (opts.days !== undefined) q.set('days', String(opts.days));
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.minDays !== undefined) q.set('minDays', String(opts.minDays));
+      const qs = q.toString();
+      return request<TimelineAffinityResponse>(s, `/x/harvest/affinity${qs ? `?${qs}` : ''}`);
     },
   },
 
@@ -492,6 +906,12 @@ export const api = {
       return request<Idea>(s, '/x/ideas', { method: 'POST', body });
     },
 
+    // AI.9 — generate post ideas from pillars + measured winners. Writes nothing;
+    // the panel saves picked proposals via create() with tags:['ai'].
+    generate(s: Settings, body: IdeaGenerateBody): Promise<IdeaGenerateResponse> {
+      return request<IdeaGenerateResponse>(s, '/x/ideas/generate', { method: 'POST', body });
+    },
+
     patch(s: Settings, id: string, body: IdeaPatchBody): Promise<Idea> {
       return request<Idea>(s, `/x/ideas/${encodeURIComponent(id)}`, { method: 'PATCH', body });
     },
@@ -577,6 +997,59 @@ export const api = {
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
       return request<FansResponse>(s, `/x/people/fans${qs ? `?${qs}` : ''}`);
+    },
+  },
+
+  // A3.9/A3.10 — grounded outbound DM drafts. draft() spends one Grok call
+  // (~$0.005) behind the icebreaker refusal ladder (404 unknown_person → 422
+  // no_shared_context → 503 grok_not_configured); list()/patch() are $0. Sending
+  // stays manual in X — patch(id, { status: 'sent' }) logs manual_dm_logged into
+  // the person timeline. Drafts persist (dm_drafts) so the dossier keeps history.
+  dms: {
+    draft(s: Settings, handle: string, idea?: string, purpose?: string): Promise<DmDraftResult> {
+      const body: Record<string, unknown> = { handle };
+      if (idea !== undefined) body.idea = idea;
+      if (purpose !== undefined) body.purpose = purpose;
+      return request<DmDraftResult>(s, '/x/dms/draft', { method: 'POST', body });
+    },
+
+    list(s: Settings, handle: string): Promise<DmDraft[]> {
+      return request<DmsListResponse>(s, `/x/dms?handle=${encodeURIComponent(handle)}`).then(
+        (r) => r.dms,
+      );
+    },
+
+    patch(s: Settings, id: string, body: DmPatchBody): Promise<DmDraft> {
+      return request<DmDraft>(s, `/x/dms/${encodeURIComponent(id)}`, { method: 'PATCH', body });
+    },
+  },
+
+  // Guardrails §A — the $0 following ledger and its capped unfollow queue.
+  // Nothing here unfollows anybody: `queue` nudges, `patch` records what the
+  // user did by hand in the X app, and the next complete scrape confirms it.
+  following: {
+    // Reading the queue is also what RELEASES rows into it (server-side, at read
+    // time), so a reload IS the release call. It tops the batch up to the
+    // cadence budget rather than stacking on it, so re-reading is free of
+    // consequence — but it is a write, not a pure view.
+    queue(s: Settings): Promise<FollowingQueueResponse> {
+      return request<FollowingQueueResponse>(s, '/x/following/queue');
+    },
+
+    list(s: Settings, opts: FollowingListOpts = {}): Promise<FollowingListResponse> {
+      const q = new URLSearchParams();
+      if (opts.status) q.set('status', opts.status);
+      if (opts.q) q.set('q', opts.q);
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      const qs = q.toString();
+      return request<FollowingListResponse>(s, `/x/following${qs ? `?${qs}` : ''}`);
+    },
+
+    patch(s: Settings, handle: string, body: FollowingPatchBody): Promise<FollowingRow> {
+      return request<FollowingRow>(s, `/x/following/${encodeURIComponent(handle)}`, {
+        method: 'PATCH',
+        body,
+      });
     },
   },
 
@@ -667,6 +1140,82 @@ export const api = {
 
     remove(s: Settings, id: string): Promise<void> {
       return request<void>(s, `/x/replies/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+  },
+
+  // RL — premade canned replies. Everything here is $0 except generate(), the
+  // one LLM call, and that one persists nothing: the panel previews the
+  // proposal and applies it through setItems() (Decision 3). use() is the only
+  // path that may compose a canned reply — picking locally would fork the
+  // anti-repeat state the server owns (Decision 1).
+  replyLists: {
+    list(s: Settings): Promise<ReplyListSummary[]> {
+      return request<ReplyListSummary[]>(s, '/x/reply-lists');
+    },
+
+    get(s: Settings, id: string): Promise<ReplyListDetail> {
+      return request<ReplyListDetail>(s, `/x/reply-lists/${encodeURIComponent(id)}`);
+    },
+
+    create(s: Settings, body: ReplyListCreateBody): Promise<ReplyList> {
+      return request<ReplyList>(s, '/x/reply-lists', { method: 'POST', body });
+    },
+
+    patch(s: Settings, id: string, body: ReplyListPatchBody): Promise<ReplyList> {
+      return request<ReplyList>(s, `/x/reply-lists/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, id: string): Promise<unknown> {
+      return request<unknown>(s, `/x/reply-lists/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    // Answers with the list's WHOLE current set for both modes, so the caller
+    // can render the response directly instead of re-fetching.
+    setItems(s: Settings, id: string, body: ReplyListItemsBody): Promise<ReplyListItem[]> {
+      return request<{ items: ReplyListItem[] }>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/items`,
+        { method: 'POST', body },
+      ).then((r) => r.items);
+    },
+
+    patchItem(
+      s: Settings,
+      id: string,
+      itemId: string,
+      body: ReplyListItemPatchBody,
+    ): Promise<ReplyListItem> {
+      return request<ReplyListItem>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`,
+        { method: 'PATCH', body },
+      );
+    },
+
+    removeItem(s: Settings, id: string, itemId: string): Promise<unknown> {
+      return request<unknown>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/items/${encodeURIComponent(itemId)}`,
+        { method: 'DELETE' },
+      );
+    },
+
+    use(s: Settings, id: string, body: UseReplyBody = {}): Promise<UseReplyResponse> {
+      return request<UseReplyResponse>(s, `/x/reply-lists/${encodeURIComponent(id)}/use`, {
+        method: 'POST',
+        body,
+      });
+    },
+
+    generate(s: Settings, id: string, body: GenerateItemsBody): Promise<GenerateItemsResponse> {
+      return request<GenerateItemsResponse>(
+        s,
+        `/x/reply-lists/${encodeURIComponent(id)}/generate`,
+        { method: 'POST', body },
+      );
     },
   },
 };

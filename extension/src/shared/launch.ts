@@ -172,3 +172,98 @@ export function isEarlyReplies(v: unknown): v is EarlyReply[] {
     );
   });
 }
+
+// ------------------------------------------------ manual-publish alarms (A3.8)
+//
+// A `manual` scheduled post is one the USER pastes into X by hand at its slot
+// (Studio visuals, link posts dodging the $0.20 URL surcharge — nothing
+// auto-publishes). The background sets one chrome.alarm per manual row AT its
+// scheduledFor and, at fire time, drops a due entry for the Today card + fires a
+// "Time to post" notification. Unlike the Launch Room there is no grace and no
+// retry: there is no publisher tick to wait on and the row's status is
+// authoritative the instant it fires (marked posted, or not).
+
+export const MANUAL_ALARM_PREFIX = 'stratus-manual:';
+export const MANUAL_DUE_KEY = 'manual:due';
+
+/** A manual slot missed by more than this is left to the Calendar/Today overdue
+ *  chip — no alarm, no notification (a reminder that late is just noise). A fire
+ *  time inside this window clamps to now so a reopened browser still nudges. */
+export const MANUAL_MISS_GRACE_MS = 30 * 60_000;
+/** The Today card self-expires from view this long after it fired; the session
+ *  storage entry harmlessly lingers until the browser closes. */
+export const MANUAL_CARD_TTL_MS = 60 * 60_000;
+/** At most this many due cards at once — two manual posts can share an evening. */
+export const MANUAL_DUE_CAP = 5;
+
+/** One due manual post awaiting a hand-paste — written by the background at fire
+ *  time (single writer), read by the Today card. `firedAt` drives both the
+ *  newest-first order and the 60-minute render expiry. */
+export interface ManualDue {
+  postId: string;
+  text: string;
+  mediaNote: string | null;
+  scheduledFor: string | null;
+  firedAt: string;
+}
+
+/** One alarm per manual row AT scheduledFor (no grace, unlike launch). A slot
+ *  more than MANUAL_MISS_GRACE_MS in the past is dropped (the overdue chip owns
+ *  it); a recent miss clamps just ahead of now so chrome.alarms fires at once. */
+export function computeManualAlarms(posts: SchedulablePost[], nowMs: number): LaunchAlarm[] {
+  const alarms: LaunchAlarm[] = [];
+  for (const p of posts) {
+    if (p.status !== 'manual' || !p.scheduledFor) continue;
+    const scheduled = Date.parse(p.scheduledFor);
+    if (Number.isNaN(scheduled)) continue;
+    if (scheduled < nowMs - MANUAL_MISS_GRACE_MS) continue; // too late to nudge
+    alarms.push({ name: MANUAL_ALARM_PREFIX + p.id, when: Math.max(scheduled, nowMs + 1000) });
+  }
+  return alarms.sort((a, b) => a.when - b.when);
+}
+
+/** postId for a manual alarm, or null for any alarm that isn't ours. */
+export function parseManualAlarm(name: string): string | null {
+  return name.startsWith(MANUAL_ALARM_PREFIX) ? name.slice(MANUAL_ALARM_PREFIX.length) : null;
+}
+
+/** Prepend a fired manual post to the due list — newest first, deduped by postId
+ *  (a re-fire of the same still-unposted slot refreshes it rather than stacking),
+ *  capped. Pure so the background's cap/dedup is unit-testable. */
+export function mergeManualDue(
+  existing: ManualDue[],
+  entry: ManualDue,
+  cap = MANUAL_DUE_CAP,
+): ManualDue[] {
+  const rest = existing.filter((e) => e.postId !== entry.postId);
+  return [entry, ...rest].slice(0, cap);
+}
+
+/** Should the Today card still show this due entry? (60 min from firedAt) */
+export function manualCardVisible(firedAt: string, nowMs: number): boolean {
+  const t = Date.parse(firedAt);
+  if (Number.isNaN(t)) return false;
+  return nowMs - t < MANUAL_CARD_TTL_MS && nowMs >= t - 1000;
+}
+
+/** Time to post: «snippet» — the notification body, clipped short. */
+export function manualNotificationText(postText: string, max = 60): string {
+  const collapsed = postText.replace(/\s+/g, ' ').trim();
+  const clipped = collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1)}…`;
+  return `Time to post: «${clipped}»`;
+}
+
+export function isManualDueList(v: unknown): v is ManualDue[] {
+  if (!Array.isArray(v)) return false;
+  return v.every((e) => {
+    if (!e || typeof e !== 'object') return false;
+    const x = e as Record<string, unknown>;
+    return (
+      typeof x.postId === 'string' &&
+      typeof x.text === 'string' &&
+      (x.mediaNote === null || typeof x.mediaNote === 'string') &&
+      (x.scheduledFor === null || typeof x.scheduledFor === 'string') &&
+      typeof x.firedAt === 'string'
+    );
+  });
+}

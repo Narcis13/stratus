@@ -1,6 +1,6 @@
 # Harvest Tab
 
-The **Harvest** tab bulk-collects tweets straight off an X (Twitter) profile page you're looking at — a whole timeline at once — and turns them into a spreadsheet. It works by *reading the page* the way your eyes do (scrolling and reading the numbers already on screen), so it never calls the paid X API and **costs $0**, no matter how many tweets you pull. Every harvest saves a **CSV file** to your Downloads folder, and (by default) also uploads the same rows into stratus so the app can use them. It's the "power tool" of the extension: a lot of data in one go, but completely safe and free.
+The **Harvest** tab bulk-collects tweets straight off an X (Twitter) profile page you're looking at — a whole timeline at once — and turns them into a spreadsheet. It works by *reading the page* the way your eyes do (scrolling and reading the numbers already on screen), so it never calls the paid X API and **costs $0**, no matter how many tweets you pull. By default every harvest saves a **CSV file** to your Downloads folder *and* uploads the same rows into stratus so the app can use them — both are checkboxes you can turn off independently (just not both at once). It's the "power tool" of the extension: a lot of data in one go, but completely safe and free. A quieter, automatic version of the same thing also runs while you browse your home timeline — see **[Passive timeline harvest](#passive-timeline-harvest-the-free-one-that-runs-itself)** below.
 
 ---
 
@@ -37,19 +37,20 @@ The **Re-detect** button (top-right) re-checks the active tab if you switch tabs
 
 ## The controls
 
-Work down the panel top to bottom.
+Work down the panel top to bottom. The detection line and the **Handle** box sit at the top as the panel's head; everything below them is grouped under two headings — **What to collect** (mode, date range, row cap, view floor) and **How to run it** (pace, and the two output switches). Every one of the mutually-exclusive choices is the same row-of-pills control used elsewhere in the panel, and the whole form goes inert while a harvest is running.
 
 ### Handle
 The X username to harvest, without the `@` (though you can type it — it's stripped). It's **pre-filled** from whatever profile the extension detected, but you can overwrite it with any handle. A handle must be 1–15 characters, letters, numbers, or underscores. Until you enter a valid one, the harvest button stays disabled and reads **"Enter a handle"**.
 
 ### Harvest (mode)
-Two buttons — pick what kind of tweet to collect:
+Three pills — pick what to collect:
 
 - **Posts** — the account's own original posts (its main profile timeline). Reposts (retweets) and other people's tweets are skipped; you get only tweets *authored by that account*.
 - **Replies** — the account's replies to other people (the "Posts & replies" / `/with_replies` view). Each reply is paired with the tweet it was replying to, so you capture both sides.
+- **Following** — not tweets at all: the list of accounts **you** follow, and whether each one follows you back. This feeds the People tab's unfollow queue; see **[Following mode](#following-mode--one-scrape-both-directions)** below.
 
 ### Date range (scope)
-How far back to collect. Four buttons:
+How far back to collect. Four pills:
 
 - **All** — the whole timeline, scrolling down until it reaches the bottom (or your Max rows cap). Use this the first time you study an account.
 - **Today** — only tweets from *today* (your local calendar day). The scroll stops automatically once it has scrolled past midnight.
@@ -57,13 +58,24 @@ How far back to collect. Four buttons:
 - **Since last** — *incremental catch-up.* Collects only tweets **newer than the last time you finished harvesting this same handle in this same mode.** The very first time you use "Since last" on an account there's nothing to compare against, so it behaves exactly like **All** and does a full scrape; every run after that just picks up the new tweets since the previous finish. This is the efficient way to keep a running record without re-scraping everything each time. (Read the important caveat under **Tips** below — the "silent-skip trap".)
 
 ### Pace
-How human-like the scrolling looks — **slow**, **human** (the default), or **fast**. Slower paces scroll more gently, pause longer between screens, and wait longer for X to load more tweets; faster paces move quicker. "Human" is a good balance. Slow down if a big harvest seems to be missing tweets (giving X more time to load), or speed up for small, quick pulls.
+How human-like the scrolling looks — three pills: **slow**, **human** (the default), or **fast**. Slower paces scroll more gently, pause longer between screens, and wait longer for X to load more tweets; faster paces move quicker. "Human" is a good balance. Slow down if a big harvest seems to be missing tweets (giving X more time to load), or speed up for small, quick pulls.
 
 ### Max rows
 An optional hard cap on how many tweets to collect. Leave it blank (it shows **∞**) for no limit. Set a number if you only want, say, the latest 50 tweets, or to keep a big account's harvest short. The scroll stops as soon as it reaches that many rows.
 
+### Min views
+An optional **floor**: tweets with fewer views than this number aren't kept. Leave it blank to keep everything. Set, say, `1000` to skip the small stuff and harvest only posts that actually got reach — it thins both the CSV *and* what's uploaded to stratus. The filter is applied as each tweet is read, so a filtered-out tweet still counts as "scrolled past" — which means a **Today**/**Yesterday** harvest still stops at the right point instead of scrolling forever looking for rows it will never keep.
+
+### Download CSV
+A checkbox, **on by default**. Uncheck it when you only want the rows *inside stratus* and don't need a spreadsheet cluttering your Downloads folder. With it off, the harvest runs exactly the same — it just skips writing the file, and the result line reads *"saved N rows to stratus only (no CSV)"*.
+
 ### Send to stratus (alongside the CSV)
-A checkbox, **on by default**. When on, the harvested rows are uploaded into stratus after the scrape *in addition to* the CSV download — the app then has the data to work with (see "What you get" below). When off, you only get the CSV file. Your choice is remembered between sessions. **Turning it off never affects the CSV** — the file always downloads either way.
+A checkbox, **on by default**. When on, the harvested rows are uploaded into stratus after the scrape *in addition to* the CSV download — the app then has the data to work with (see "What you get" below). When off, you only get the CSV file. **Turning it off never affects the CSV** — the file always downloads either way.
+
+> **Both off = nothing saved.** If you uncheck **Download CSV** *and* **Send to stratus**, the harvest button is disabled and a warning appears: *"Turn on the CSV download or Send to stratus — with both off the harvest saves nothing."* Turn one back on to continue.
+
+### Your choices are remembered
+Mode, date range, pace, max rows, min views and the CSV checkbox are all **saved automatically** and restored the next time you open the panel — close the side panel mid-thought and come back to exactly the form you left. (The **Send to stratus** toggle has always been remembered too.) Only the handle is re-detected fresh each time.
 
 ### The harvest button
 The big button at the bottom. It reads **"Harvest @handle"** once a valid handle is entered (or "Enter a handle" until then). Click it to begin.
@@ -73,6 +85,70 @@ While a harvest is running, the harvest button is replaced by a red **Stop** but
 
 ### Progress
 While running, you'll see a live status line such as *"Scrolling @handle — posts…"*, then a running count like **"128 rows · oldest Jul 3, 2026 · 42 scrolls"** — how many tweets captured, the date of the oldest one reached, and how many scroll steps it has taken. A hint reminds you to **keep the X tab in the foreground** (X stops loading more tweets when its tab is in the background).
+
+### Passive line (at the very bottom)
+A small grey line under the button reports the *other* harvest — the one you never start:
+
+- **"Passive: 412 rows today"** — how many tweets today's ambient timeline capture has collected so far (see the next section). The day rolls over at **midnight UTC**, not your local midnight, so the number resets at a fixed time worldwide.
+- **"Passive capture off"** — the Settings toggle is off, so nothing is being collected.
+- **Nothing at all** — the count hasn't loaded yet, or the server couldn't be reached. It never guesses "0".
+
+---
+
+## Following mode — one scrape, both directions
+
+The third mode collects people instead of tweets. X renders a small **Follows you** badge on every row of your `/following` page, so a single scroll answers both halves of the question at once: *who do I follow*, and *who follows me back*. That's why there is no follower-page scrape and no API sync — one pass is enough, and it costs **$0**.
+
+The rows land in the People tab's **[Following subtab](./people-tab.md#the-following-subtab--roster-hygiene)**, which turns them into a small, capped batch of long-standing non-followers to consider unfollowing. Nothing here unfollows anyone.
+
+### Running it
+
+1. Open **your own** following page: `x.com/<your-handle>/following`.
+2. Pick **Following**. The handle box freezes to the handle of the page you have open, and the **Date range** and **Min views** controls disappear — neither means anything for a list of people.
+3. **Start**, and let it scroll to the bottom.
+
+The mode chip is always clickable, but **Start** is blocked with a hint until you're actually on a `/following` page — a chip that looks selected *and* disabled reads as a broken panel and explains nothing.
+
+> **It refuses to scrape someone else's list.** Before it begins, the extension checks the account switcher in X's left nav against the page you're on. A positive mismatch aborts with *not your following list*. Importing someone else's followees as your own would wreck your whole ledger in a single pass, and it takes nothing more than a stale handle to get there.
+
+### Why finishing matters
+
+A run that reaches the **bottom of the list** is marked *complete*, and only a complete run is allowed to conclude anything from a handle's **absence** — that someone is gone, or that an unfollow you ticked off actually took.
+
+Any other ending — you hit **Stop**, the **Max rows** cap fires, or the scroll gives up — updates every row it saw and nothing else. That's always safe, but it also means the ledger never advances. The panel says so with a **partial pass** notice when it happens.
+
+**The trap worth knowing:** *Max rows carries over from your last posts harvest.* If you capped a study at 200 rows last week, a Following run will stop at 200 too, silently never completing. If the Following subtab starts looking stale, check that box before suspecting anything else.
+
+### What you get
+
+- A live **"N follow you back"** count while it runs.
+- A small CSV: handle, display name, follows-you.
+- The ledger itself, in the People tab.
+
+Rows are shipped in batches as it goes, so a mid-run failure just leaves the run open (and therefore never complete) rather than corrupting anything.
+
+---
+
+## Passive timeline harvest (the free one that runs itself)
+
+Everything above is the harvest you *start*. There's a second one that just happens: while you scroll **x.com/home**, the extension quietly records every tweet the algorithm put in front of you — the same rows, into the same place, at **$0**. It's on by default and you can turn it off in **[Settings](./settings-tab.md)**.
+
+**What gets recorded:** every tweet on your home timeline whose on-screen numbers the extension can read — *including the ones you'd never reply to*. That's deliberate: the point is to know what you were *shown*, not just what you liked, and the boring tweets are the denominator that makes the good ones measurable. Ads and promoted rows have no readable numbers, so they're skipped automatically.
+
+**Where it stops:**
+
+- **Home timeline only.** Profiles, search results, and individual tweet pages are not captured — only `x.com/home`.
+- **Nothing while a harvest is running.** Starting a Harvest-tab run in a tab suspends passive capture there, so the two can't double-record.
+- **One row per tweet per 30 minutes.** Scrolling past the same tweet again right away adds nothing; half an hour later it adds a second reading — which is exactly the growth curve you want (see "What you get" above).
+- **2,000 rows a day, 60 days of history.** A hard daily ceiling, and anything older than two months is deleted automatically. Ordinary browsing doesn't come close to the ceiling.
+- **Nobody is added to your People roster from this.** Being shown a tweet isn't a relationship. The deliberate bridge is the **Timeline affinity** list in the [People tab](./people-tab.md), where *you* click "Start their file".
+
+**What it's for.** Two screens read this corpus, and neither costs anything:
+
+- **[People → Timeline affinity](./people-tab.md)** — who the algorithm keeps putting in front of you, ranked by how many *separate days* they showed up. The answer to "who am I being fed constantly and still not tracking?"
+- **[Playbook → Timeline funnel](./playbook-tab.md)** — of the tweets you were actually shown, how many you replied to, split by how good the opportunity was. The honest measure of what you're letting slide past.
+
+Both need real scrolling before they say anything — days, not minutes.
 
 ---
 
@@ -112,7 +188,7 @@ Re-harvesting the same tweet on different days is intentional and useful — eac
 
 - **Idle** — the form, with the detection line and the "Harvest @handle" button. Ready to go.
 - **Running** — the red **Stop** button, a status line, and the live rows/oldest/scrolls counter. Leave the X tab in the foreground and let it work.
-- **Done (success)** — a green box: *"Done — saved N rows to filename.csv. Range \<oldest\> … \<newest\>."* If uploaded, a second line: *"Sent N rows to stratus · X matched drafts (Y backfilled)."*
+- **Done (success)** — a green box: *"Done — saved N rows to filename.csv. Range \<oldest\> … \<newest\>."* With **Download CSV** off it reads *"saved N rows to stratus only (no CSV)"* instead. If uploaded, a second line: *"Sent N rows to stratus · X matched drafts (Y backfilled)."*
 - **Stopped** — same as Done, but it opens with *"Stopped — saved N rows…"* — you cancelled, and the partial results were kept.
 - **Nothing found** — an amber box: *"No matching posts found"* (or *"…for today"* etc.). The account had nothing in that mode/date range — common with **Today**/**Yesterday** on an account that hasn't posted, or **Since last** when there's nothing new.
 - **Upload failed (but CSV saved)** — an amber box: *"Stratus ingest failed: \<reason\> — the CSV was still saved."* The scrape worked and your file downloaded; only the upload to stratus didn't go through. You can safely re-run later.
@@ -153,7 +229,7 @@ If a harvest can't start or run, you'll see one of these in plain language:
 - **It's free.** Harvest reads the page directly and never touches the paid X API, so a harvest of 10 or 10,000 tweets costs **$0**. This is exactly why it exists — pulling this data through the API would cost money per read.
 - **Keep the X tab in the foreground.** X quietly stops loading more tweets when its tab is in the background, so a backgrounded harvest will stall. Let the tab stay visible while it scrolls.
 - **Stopping is always safe.** Whatever was gathered before you hit Stop is saved and uploaded. You never lose partial progress.
-- **The CSV always downloads**, even if the stratus upload fails — the file is written to disk first, so an upload hiccup never costs you the data.
+- **The CSV always downloads** (when that checkbox is on), even if the stratus upload fails — the file is written to disk first, so an upload hiccup never costs you the data.
 - **The "Since last" silent-skip trap.** "Since last" remembers a per-account **cursor** — the timestamp of the newest tweet your last *completed* run saw — and skips everything at or before it. That's the point, but it means a "Since last" run can quietly return *nothing new* and you might wonder where the tweets went. Two things protect you: (1) the cursor **only advances on a run that finished** — if you Stop early, it isn't moved, so nothing gets skipped by a partial run; and (2) every cursor is **visible and resettable in the Settings tab**, under **"Harvest cursors"**. Each entry shows the handle, the mode, and the cutoff time, with a **Reset** button. Reset one to make the next "Since last" run scrape that timeline in full again.
 - **CSV safety (formula escaping).** Tweets sometimes start with characters like `=`, `+`, `-`, or `@`, which spreadsheet apps could otherwise treat as live formulas (a real security risk when opening files). Harvest automatically neutralizes those cells so your CSV opens as plain text — the standard "CSV injection" guard. You don't have to do anything.
 - **What's captured is what's on screen.** The numbers come from each tweet's own on-page counters, so they're accurate to the moment you scrolled past. Re-harvesting later gives you a fresh, later reading — useful for tracking growth.

@@ -3,7 +3,8 @@
 // reads the bearer token and attaches the Authorization header.
 
 import type { EarlyReply } from './launch.ts';
-import type { RadarSighting } from './radar.ts';
+import type { RadarSighting, RankMap } from './radar.ts';
+import type { MentionStatus, ReplyVariant } from './types.ts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -54,7 +55,9 @@ export interface RadarDismiss {
 // the background so it stays the single writer of the session ring buffer.
 export interface RadarReplies {
   type: 'stratus/radar-replies';
-  replies: { tweetId: string; reply: string }[];
+  // `reply` is the primary (variants[0].text); `variants` carries all 3 angles
+  // (RU.4) so the buffer can serve the on-page variant chips (Task 7).
+  replies: { tweetId: string; reply: string; variants?: ReplyVariant[] }[];
 }
 
 // User clicked a reply-ready Radar row (its reply was copied). Routed through
@@ -107,6 +110,85 @@ export function isRadarClick(msg: unknown): msg is RadarClick {
   );
 }
 
+// User opened a reply-ready Radar row (RU.6): promote its radar draft into a
+// real reply_drafts row. Routed through the background (single writer +
+// Authorization owner): it POSTs /x/radar/drafts/:tweetId/confirm and stamps
+// the returned draft id onto the sighting, so the on-page paste flow (RU.7)
+// can PATCH that row to `posted`.
+export interface RadarConfirm {
+  type: 'stratus/radar-confirm';
+  tweetId: string;
+}
+
+export function isRadarConfirm(msg: unknown): msg is RadarConfirm {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/radar-confirm' && typeof m.tweetId === 'string';
+}
+
+// Content script → background (RU.7): fetch a tweet's radar variants to render
+// the on-page chip strip. The background reads the session buffer first, then
+// falls back to GET /x/radar/drafts?tweetId= (covers a deep link that skipped
+// the panel). Response: `{ ok, variants: ReplyVariant[] | null, draftId }`.
+export interface RadarVariantsGet {
+  type: 'stratus/radar-variants-get';
+  tweetId: string;
+}
+
+// Content script → background (RU.7): the user clicked a variant chip (its text
+// was typed into the reply box). The background confirms the radar draft into a
+// reply_drafts row if needed (idempotent — covers deep links), then PATCHes it
+// to `posted` (paste-time semantics, §7.28 — the human still hits Reply). If the
+// chosen text differs from the primary it rides as replyTextEdited.
+export interface RadarVariantPasted {
+  type: 'stratus/radar-variant-pasted';
+  tweetId: string;
+  text: string;
+}
+
+export function isRadarVariantsGet(msg: unknown): msg is RadarVariantsGet {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/radar-variants-get' && typeof m.tweetId === 'string';
+}
+
+export function isRadarVariantPasted(msg: unknown): msg is RadarVariantPasted {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return (
+    m.type === 'stratus/radar-variant-pasted' &&
+    typeof m.tweetId === 'string' &&
+    typeof m.text === 'string'
+  );
+}
+
+// --- People dossier click-through (AX.6). A timeline chip or the tweet-page
+// context-panel header sends OpenPerson on click; the background opens the side
+// panel (best-effort — the click is a user gesture that may survive one hop) and
+// writes the handoff session key `stratus:openPerson` (background = single
+// session writer). App.tsx reads it, routes to the dossier, then sends
+// OpenPersonClear so a later panel open can't replay the stale handle.
+
+export interface OpenPerson {
+  type: 'stratus/open-person';
+  handle: string;
+}
+
+export interface OpenPersonClear {
+  type: 'stratus/open-person-clear';
+}
+
+export function isOpenPerson(msg: unknown): msg is OpenPerson {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/open-person' && typeof m.handle === 'string';
+}
+
+export function isOpenPersonClear(msg: unknown): msg is OpenPersonClear {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/open-person-clear';
+}
+
 // --- Launch Room (C7) — all routed through the background: it owns the
 // chrome.alarms schedule and is the single writer of the launch:* session keys.
 
@@ -157,4 +239,74 @@ export function isLaunchReport(msg: unknown): msg is LaunchReport {
 export function isLaunchDismiss(msg: unknown): msg is LaunchDismiss {
   if (typeof msg !== 'object' || msg === null) return false;
   return (msg as Record<string, unknown>).type === 'stratus/launch-dismiss';
+}
+
+/** Panel → background (A3.8): a manual post was pasted-and-marked, or its card
+ *  was dismissed — drop its `manual:due` entry. Carries the postId (unlike the
+ *  param-less LaunchDismiss — there can be several due cards at once). The
+ *  background stays the single writer of the session key (§7.24). */
+export interface ManualDismiss {
+  type: 'stratus/manual-dismiss';
+  postId: string;
+}
+
+export function isManualDismiss(msg: unknown): msg is ManualDismiss {
+  if (typeof msg !== 'object' || msg === null) return false;
+  const m = msg as Record<string, unknown>;
+  return m.type === 'stratus/manual-dismiss' && typeof m.postId === 'string';
+}
+
+// --- Mirrored server settings (UI.6). The background is the single fetcher and
+// the single writer of the `settings:server` blob; this message asks it to
+// refresh NOW rather than wait for its TTL. Sent on panel mount and after every
+// settings write (settingsClient), so a saved knob reaches the panel and the
+// page without a rebuild or a browser restart.
+
+export interface SettingsSync {
+  type: 'stratus/settings-sync';
+}
+
+export function isSettingsSync(msg: unknown): msg is SettingsSync {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/settings-sync';
+}
+
+// --- Notifications surface (C10) — content script → background, the whole
+// augmentation payload for x.com/notifications in one round trip: the mention
+// rows stratus already pulled (keyed by the REPLY's tweet id, carrying my
+// parent post's text + the inbox status) plus the S0.3 roster rank map for
+// tier chips. Both are background-cached (mentions 5 min, rank map 10 min) so
+// scrolling a long notifications page never fans out requests, and the
+// background stays the only Authorization owner.
+//
+// `force: true` rides on the click of the injected sync-replies chip, which
+// has just spent a capped `POST /x/mentions/refresh` — it drops the mentions
+// cache so the freshly pulled rows show up immediately instead of up to 5 min
+// later. Nothing else should send it: a page visit is not consent to spend.
+
+export interface NotifContextEntry {
+  /** My published post the mention replies to — null when it isn't one of mine. */
+  parentText: string | null;
+  status: MentionStatus;
+}
+
+/** Reply tweet id → what stratus knows about it. */
+export type NotifContextMap = Record<string, NotifContextEntry>;
+
+export interface NotifContextGet {
+  type: 'stratus/notif-context';
+  force?: boolean;
+}
+
+/** Always `ok: true` — augmentation degrades to empty maps, it never errors
+ *  the page (a failed fetch just keeps the last good, or empty, context). */
+export interface NotifContextResponse {
+  ok: true;
+  mentions: NotifContextMap;
+  rankMap: RankMap;
+}
+
+export function isNotifContextGet(msg: unknown): msg is NotifContextGet {
+  if (typeof msg !== 'object' || msg === null) return false;
+  return (msg as Record<string, unknown>).type === 'stratus/notif-context';
 }

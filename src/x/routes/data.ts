@@ -8,9 +8,10 @@
 //   GET  /x/data/:table          → readTable (query params: limit, offset, sort, dir, q)
 //   POST /x/data/query { sql }    → runSelect (the shared power tool)
 //
-// The explorer UI SHELL (public/explorer.html) is served separately at GET
-// /explorer WITHOUT the bearer guard — it contains no data, and every fetch it
-// makes carries the token. See `explorer` below, mounted at root by mountX.
+// The public UI SHELLS (public/explorer.html + public/writer.html) are served
+// separately at GET /explorer and GET /writer WITHOUT the bearer guard — they
+// contain no data, and every fetch they make carries the token. See `explorer`
+// below (both routes hang off it), mounted at root by mountX.
 
 import { Hono } from 'hono';
 import {
@@ -81,12 +82,19 @@ function parseDir(v: string | undefined): 'asc' | 'desc' | undefined {
   return undefined;
 }
 
-// Public explorer shell — served at GET /explorer with NO bearer guard (mounted
-// at root, outside the /x/* auth middleware). The HTML is data-free; it prompts
-// for the token, keeps it in localStorage, and attaches it to every /x/data/*
-// fetch. Read once and cached — the file never changes at runtime.
+// Public shells — served at the root path with NO bearer guard (this router is
+// mounted at '/' by mountX, OUTSIDE the /x/* auth middleware, §7.21). Both HTML
+// files are data-free: they prompt for the token, keep it in localStorage (the
+// SAME key, so one paste covers both), and attach it to every /x/* fetch. Read
+// once and cached — the files never change at runtime.
+//
+//   GET /explorer   — the read-only SQLite explorer (S1)
+//   GET /writer     — the standalone article writing room (A3.13); talks to the
+//                     /x/articles CRUD + assist routes, which stay bearer-guarded.
 const EXPLORER_HTML_URL = new URL('../../../public/explorer.html', import.meta.url);
+const WRITER_HTML_URL = new URL('../../../public/writer.html', import.meta.url);
 let explorerHtml: string | null = null;
+let writerHtml: string | null = null;
 
 export const explorer = new Hono();
 
@@ -100,4 +108,16 @@ explorer.get('/explorer', async (c) => {
     }
   }
   return c.html(explorerHtml);
+});
+
+explorer.get('/writer', async (c) => {
+  if (writerHtml === null) {
+    try {
+      writerHtml = await Bun.file(WRITER_HTML_URL).text();
+    } catch (err) {
+      console.error('writer.html read failed:', err instanceof Error ? err.message : err);
+      return c.text('writer.html not found', 500);
+    }
+  }
+  return c.html(writerHtml);
 });

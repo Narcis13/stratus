@@ -9,26 +9,24 @@
 //  - Never hand back a raw xAI URL — the module requests b64_json (and downloads
 //    a stray URL server-side), so the extension only ever sees base64 (§S4 taint
 //    trap: a cross-origin image taints the canvas and toBlob throws).
-//  - A per-UTC-day image budget (XAI_IMAGE_DAILY_BUDGET_USD, default $0.50) is
-//    checked BEFORE the paid call and refuses with 429 once crossed — a paint
-//    session can't melt the wallet. Image spend is isolated under platform
-//    'xai' in cost_events, so this reads exactly the image bucket.
+//  - A per-UTC-day image budget (`x.budgets.imageDailyUsd`, default $0.50 from
+//    XAI_IMAGE_DAILY_BUDGET_USD) is checked BEFORE the paid call and refuses
+//    with 429 once crossed — a paint session can't melt the wallet. Image spend
+//    is isolated under platform 'xai' in cost_events, so this reads exactly the
+//    image bucket. UI.5: the AMOUNT is a setting (ceiling $2/day in the
+//    registry); the check itself never is (Decision 5), and 0 is a real value —
+//    it disables generation rather than falling back to the old default.
 
 import { sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
 import { GrokImageError, generateImages } from '../../grok/index.ts';
+import { getSetting } from '../settings/registry.ts';
 
 export const images = new Hono();
 
 const MAX_PROMPT_LEN = 4000;
-const DEFAULT_IMAGE_BUDGET_USD = 0.5;
-
-function imageBudgetUsd(): number {
-  const v = Number(process.env.XAI_IMAGE_DAILY_BUDGET_USD ?? String(DEFAULT_IMAGE_BUDGET_USD));
-  return Number.isFinite(v) && v > 0 ? v : DEFAULT_IMAGE_BUDGET_USD;
-}
 
 /** Today's (UTC day) image spend — only image generation logs under 'xai'. */
 export async function imageSpendTodayUsd(): Promise<number> {
@@ -63,7 +61,9 @@ images.post('/images/generate', async (c) => {
 
   // Budget gate BEFORE spending. Refuse when today's image spend is already at
   // or over the cap — a hard stop, unlike the soft X watchdog that only logs.
-  const budget = imageBudgetUsd();
+  // Read per request (never cached across one): the ladder is validation →
+  // key → budget → paid call, so a PATCH binds the very next generate.
+  const budget = getSetting<number>('x.budgets.imageDailyUsd');
   const spent = await imageSpendTodayUsd();
   if (spent >= budget) {
     return c.json(

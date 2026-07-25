@@ -1,8 +1,15 @@
 import { type JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { PillarsPanel } from './Pillars.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type VoiceAuthor, type VoiceTweet, type VoiceTweetsOpts, api } from './api.ts';
+import { authorChip } from './chips.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import { useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 interface Props {
   settings: Settings;
@@ -13,10 +20,23 @@ interface Props {
 }
 
 const SEARCH_DEBOUNCE_MS = 250;
-const TWEET_LIMIT = 100;
+
+type VoiceView = 'tweets' | 'pillars';
+
+const VOICE_SUBTABS: SubTab<VoiceView>[] = [
+  { id: 'tweets', label: 'Tweets' },
+  { id: 'pillars', label: 'Pillars' },
+];
+
+/** The page size the library fetches — $0 local SQL, so this is a scroll
+ *  budget rather than a spend one. */
+const VOICE_SETTING_KEYS = ['x.display.voiceListLimit'];
 
 export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Element {
-  const [view, setView] = useState<'tweets' | 'pillars'>('tweets');
+  const [view, setView] = useState<VoiceView>('tweets');
+  const tweetLimit = useServerSettings().voiceListLimit;
+  // ONE editor for the tab (D135d).
+  const editor = useSettingsEditor(settings);
   const [authors, setAuthors] = useState<VoiceAuthor[]>([]);
   const [tweets, setTweets] = useState<VoiceTweet[]>([]);
   const [authorFilter, setAuthorFilter] = useState<string>('');
@@ -61,7 +81,7 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
     setLoadingTweets(true);
     setError(null);
     try {
-      const opts: VoiceTweetsOpts = { limit: TWEET_LIMIT, retired: showRetired };
+      const opts: VoiceTweetsOpts = { limit: tweetLimit, retired: showRetired };
       if (authorFilter) opts.author = authorFilter;
       if (search) opts.q = search;
       if (hook) opts.hook = hook;
@@ -73,7 +93,7 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
     } finally {
       setLoadingTweets(false);
     }
-  }, [settings, authorFilter, search, hook, extractedFilter, showRetired]);
+  }, [settings, authorFilter, search, hook, extractedFilter, showRetired, tweetLimit]);
 
   useEffect(() => {
     void loadAuthors();
@@ -207,22 +227,7 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
         )}
       </div>
 
-      <div className="radar-tabs">
-        <button
-          type="button"
-          className={`radar-tab${view === 'tweets' ? ' active' : ''}`}
-          onClick={() => setView('tweets')}
-        >
-          Tweets
-        </button>
-        <button
-          type="button"
-          className={`radar-tab${view === 'pillars' ? ' active' : ''}`}
-          onClick={() => setView('pillars')}
-        >
-          Pillars
-        </button>
-      </div>
+      <SubTabs tabs={VOICE_SUBTABS} active={view} onSelect={setView} />
 
       {view === 'pillars' ? (
         <PillarsPanel settings={settings} />
@@ -320,34 +325,55 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
             />
           )}
 
-          {loadingTweets && tweets.length === 0 ? (
-            <p className="muted">Loading tweets…</p>
-          ) : tweets.length === 0 ? (
-            <p className="muted">No saved tweets match these filters.</p>
-          ) : (
-            <ul className="voice-tweet-list">
-              {tweets.map((t) => (
-                <li key={t.tweetId}>
-                  <TweetRow
-                    tweet={t}
-                    settings={settings}
-                    onSaveTags={(tags) => saveTweetTags(t, tags)}
-                    renderHtml={renderHtml}
-                    busy={busy === `tweet:${t.tweetId}`}
-                    extractBusy={busy === `extract:${t.tweetId}`}
-                    confirmingDelete={confirming === `tweet:${t.tweetId}`}
-                    onToggleRetired={() => void toggleTweetRetired(t)}
-                    onRequestDelete={() => setConfirming(`tweet:${t.tweetId}`)}
-                    onCancelDelete={() => setConfirming(null)}
-                    onConfirmDelete={() => void removeTweet(t)}
-                    onExtract={() => void extractTweet(t)}
-                    onRemix={() => onRemix(t.tweetId)}
-                    onOpenPerson={onOpenPerson}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
+          <Section
+            title={`Saved tweets (${tweets.length})`}
+            actions={
+              <SettingsGear
+                editor={editor}
+                keys={VOICE_SETTING_KEYS}
+                label="Configure how many saved tweets a Voice query fetches"
+                note="The swipe file is DOM-scraped and read with local SQL, so a bigger page costs $0 — only scroll."
+              />
+            }
+          >
+            {loadingTweets && tweets.length === 0 ? (
+              <p className="muted">Loading tweets…</p>
+            ) : tweets.length === 0 ? (
+              <EmptyState
+                line="No saved tweets match these filters."
+                hint="Save tweets with the Save-to-stratus pill on x.com — it costs $0, unlike reading them through the API."
+              />
+            ) : (
+              <ul className="voice-tweet-list">
+                {tweets.map((t) => (
+                  <li key={t.tweetId}>
+                    <TweetRow
+                      tweet={t}
+                      settings={settings}
+                      onSaveTags={(tags) => saveTweetTags(t, tags)}
+                      renderHtml={renderHtml}
+                      busy={busy === `tweet:${t.tweetId}`}
+                      extractBusy={busy === `extract:${t.tweetId}`}
+                      confirmingDelete={confirming === `tweet:${t.tweetId}`}
+                      onToggleRetired={() => void toggleTweetRetired(t)}
+                      onRequestDelete={() => setConfirming(`tweet:${t.tweetId}`)}
+                      onCancelDelete={() => setConfirming(null)}
+                      onConfirmDelete={() => void removeTweet(t)}
+                      onExtract={() => void extractTweet(t)}
+                      onRemix={() => onRemix(t.tweetId)}
+                      onOpenPerson={onOpenPerson}
+                    />
+                  </li>
+                ))}
+              </ul>
+            )}
+            {tweets.length === tweetLimit && (
+              <div className="status-line">
+                Showing the first {tweetLimit} — narrow the filters, or raise the page size with ⚙
+                above.
+              </div>
+            )}
+          </Section>
         </>
       )}
     </div>
@@ -397,11 +423,11 @@ function AuthorCard({
           ↗
         </a>
         {author.enrichedAt ? (
-          <span className="badge badge-tracked">enriched</span>
+          <span className={authorChip('enriched')}>enriched</span>
         ) : (
-          <span className="badge badge-auto">tweet-only</span>
+          <span className={authorChip('tweet-only')}>tweet-only</span>
         )}
-        {author.retired && <span className="badge badge-paused">retired</span>}
+        {author.retired && <span className={authorChip('retired')}>retired</span>}
       </div>
 
       <div className="author-meta">
@@ -411,7 +437,7 @@ function AuthorCard({
 
       {author.bio && <div className="author-bio">{author.bio}</div>}
 
-      {author.pinnedTweetText && <div className="author-pinned">📌 {author.pinnedTweetText}</div>}
+      {author.pinnedTweetText && <div className="author-pinned">❑ {author.pinnedTweetText}</div>}
 
       <div className="row">
         <button type="button" onClick={onToggleRetired} disabled={busy}>

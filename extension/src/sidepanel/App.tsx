@@ -1,9 +1,11 @@
-import { type JSX, useState } from 'react';
+import { type JSX, useEffect, useState } from 'react';
+import type { SettingsSync } from '../shared/messages.ts';
 import { CalendarPanel } from './Calendar.tsx';
 import { ChannelsPanel } from './Channels.tsx';
 import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
 import { IdeasPanel } from './Ideas.tsx';
+import { MePanel } from './Me.tsx';
 import { PeoplePanel } from './People.tsx';
 import { PlaybookPanel } from './Playbook.tsx';
 import { RepliesPanel } from './Replies.tsx';
@@ -12,9 +14,11 @@ import { StudioPanel, type StudioSeed } from './Studio.tsx';
 import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
 import { isConfigured, useSettings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
 
 type Tab =
   | 'today'
+  | 'me'
   | 'people'
   | 'channels'
   | 'calendar'
@@ -27,19 +31,44 @@ type Tab =
   | 'playbook'
   | 'settings';
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: 'today', label: 'Today' },
-  { id: 'people', label: 'People' },
-  { id: 'channels', label: 'Channels' },
-  { id: 'calendar', label: 'Calendar' },
-  { id: 'composer', label: 'Composer' },
-  { id: 'studio', label: 'Studio' },
-  { id: 'harvest', label: 'Harvest' },
-  { id: 'voice', label: 'Voice' },
-  { id: 'replies', label: 'Replies' },
-  { id: 'ideas', label: 'Ideas' },
-  { id: 'playbook', label: 'Playbook' },
-  { id: 'settings', label: 'Settings' },
+// The rail is grouped by intent (eyebrow dividers). OPERATE = the daily loop,
+// AUTHOR = making things, LIBRARY = stored inputs, LEARN = measurement, SYSTEM
+// = config. Groups render top-to-bottom in this order.
+const TAB_GROUPS: { label: string; tabs: { id: Tab; label: string }[] }[] = [
+  {
+    label: 'Operate',
+    tabs: [
+      { id: 'today', label: 'Today' },
+      { id: 'people', label: 'People' },
+      { id: 'me', label: 'Me' },
+      { id: 'channels', label: 'Channels' },
+    ],
+  },
+  {
+    label: 'Author',
+    tabs: [
+      { id: 'composer', label: 'Composer' },
+      { id: 'calendar', label: 'Calendar' },
+      { id: 'studio', label: 'Studio' },
+      { id: 'ideas', label: 'Ideas' },
+    ],
+  },
+  {
+    label: 'Library',
+    tabs: [
+      { id: 'voice', label: 'Voice' },
+      { id: 'replies', label: 'Replies' },
+      { id: 'harvest', label: 'Harvest' },
+    ],
+  },
+  {
+    label: 'Learn',
+    tabs: [{ id: 'playbook', label: 'Playbook' }],
+  },
+  {
+    label: 'System',
+    tabs: [{ id: 'settings', label: 'Settings' }],
+  },
 ];
 
 export function App(): JSX.Element {
@@ -76,27 +105,69 @@ export function App(): JSX.Element {
   };
   const onSaved = () => setRefreshKey((k) => k + 1);
 
+  // AX.6: a timeline chip or the tweet-page context panel writes
+  // chrome.storage.session['stratus:openPerson'] via the background (single
+  // writer). Consume it on mount + live, route to the dossier, then clear it so
+  // a later panel open can't replay the stale handle. Only setState setters are
+  // referenced (stable), so the empty dep array is exhaustive.
+  useEffect(() => {
+    const consume = (v: unknown) => {
+      const handle = (v as { handle?: unknown } | null)?.handle;
+      if (typeof handle === 'string' && handle) {
+        setPersonHandle(handle.replace(/^@/, '').toLowerCase());
+        setTab('people');
+        void chrome.runtime.sendMessage({ type: 'stratus/open-person-clear' }).catch(() => {});
+      }
+    };
+    void chrome.storage.session
+      .get('stratus:openPerson')
+      .then((out) => consume(out['stratus:openPerson']))
+      .catch(() => {});
+    const onChanged = (changes: { [k: string]: chrome.storage.StorageChange }, area: string) => {
+      if (area === 'session' && changes['stratus:openPerson']) {
+        consume(changes['stratus:openPerson'].newValue);
+      }
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+
+  // UI.6: pull the mirrored settings blob once per panel open. Asking here
+  // rather than in the hook keeps it to ONE $0 GET however many consumers mount.
+  useEffect(() => {
+    const msg: SettingsSync = { type: 'stratus/settings-sync' };
+    void chrome.runtime.sendMessage(msg).catch(() => {});
+  }, []);
+
   const configured = isConfigured(settings);
   const activeTab: Tab = !configured && tab !== 'settings' ? 'settings' : tab;
 
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">stratus</div>
+        <div className="brand">
+          <img className="brand-mark" src="/icons/icon128.png" alt="" width={22} height={22} />
+          <span className="brand-word">stratus</span>
+        </div>
         <nav className="tabs">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              className={`tab${activeTab === t.id ? ' tab-active' : ''}`}
-              onClick={() => {
-                if (t.id === 'composer') clearEdit();
-                setTab(t.id);
-              }}
-              disabled={!configured && t.id !== 'settings'}
-            >
-              {t.label}
-            </button>
+          {TAB_GROUPS.map((g) => (
+            <div key={g.label} className="tab-group">
+              <div className="tab-group-eyebrow">{g.label}</div>
+              {g.tabs.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className={`tab${activeTab === t.id ? ' tab-active' : ''}`}
+                  onClick={() => {
+                    if (t.id === 'composer') clearEdit();
+                    setTab(t.id);
+                  }}
+                  disabled={!configured && t.id !== 'settings'}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
           ))}
         </nav>
       </header>
@@ -106,7 +177,10 @@ export function App(): JSX.Element {
           <div className="panel muted">Loading…</div>
         ) : !configured && activeTab !== 'settings' ? (
           <div className="panel">
-            <p className="muted">Configure API URL and bearer token first.</p>
+            <EmptyState
+              line="Connect stratus to get started."
+              hint="Open Settings and paste your server URL and bearer token."
+            />
           </div>
         ) : activeTab === 'today' ? (
           <TodayPanel
@@ -121,6 +195,8 @@ export function App(): JSX.Element {
             openHandle={personHandle}
             onClearOpen={() => setPersonHandle(null)}
           />
+        ) : activeTab === 'me' ? (
+          <MePanel settings={settings} />
         ) : activeTab === 'channels' ? (
           <ChannelsPanel settings={settings} onOpenPerson={openPerson} />
         ) : activeTab === 'calendar' ? (
@@ -143,7 +219,7 @@ export function App(): JSX.Element {
             onClearSeed={() => setStudioSeed(null)}
           />
         ) : activeTab === 'harvest' ? (
-          <HarvestPanel />
+          <HarvestPanel settings={settings} />
         ) : activeTab === 'voice' ? (
           <VoicePanel settings={settings} onRemix={startRemix} onOpenPerson={openPerson} />
         ) : activeTab === 'replies' ? (

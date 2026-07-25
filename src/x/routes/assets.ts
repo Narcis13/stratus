@@ -22,7 +22,24 @@ export const assets = new Hono();
 // the single-file DB. 2MB comfortably holds a 1500×500 PNG.
 const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 const LIST_LIMIT = 200;
-const ASSET_KINDS = new Set(['quote', 'stat', 'banner', 'pfp', 'background', 'other']);
+// S5 template gallery kinds are all whitelisted at once (milestone/streak land
+// in S5.5; code/thread/list/chart in later S5 tasks) so those tasks need no
+// server edit — an unknown kind already degrades to 'other', so this is safe
+// even while some templates don't exist yet.
+const ASSET_KINDS = new Set([
+  'quote',
+  'stat',
+  'banner',
+  'pfp',
+  'milestone',
+  'streak',
+  'code',
+  'thread',
+  'list',
+  'chart',
+  'background',
+  'other',
+]);
 
 // Metadata projection — everything BUT the blob.
 const META_COLUMNS = {

@@ -9,8 +9,13 @@
 // sidepanel/Radar.tsx (reader).
 
 import type { TweetSignals } from '../replyBand.ts';
+import type { ReplyVariant } from './types.ts';
 
-export type RadarBand = 'hot' | 'warm';
+// 'manual' = the user pinned this tweet into the queue via the ⊕ button (RU.8).
+// It's queue/UX metadata, not a classifier verdict — a manual row never enters
+// the Playbook's hot/warm band cells (its reply_drafts signals keep the real
+// computed band, null when uncomputed).
+export type RadarBand = 'hot' | 'warm' | 'manual';
 
 // Who the author is, as far as the people layer knows (S0.3). A warm post from
 // an ally/mutual compounds a real relationship; a hot post from a rando is a
@@ -41,10 +46,18 @@ export interface RadarSighting {
   // by the background after a "Draft replies" run. Survives re-sightings so a
   // drafted reply isn't wiped when the content script re-reports the tweet.
   reply?: string;
+  // All 3 angle variants (RU.4) from the batch draft — extends/contrarian/debate.
+  // `reply` stays the primary (variants[0].text); the full set rides for the
+  // on-page variant chips (Task 7). Survives re-sightings like `reply`.
+  variants?: ReplyVariant[];
   // ISO time the user clicked a reply-ready row (its reply was copied). A
   // clicked sighting leaves the live queue for the "Clicked" view so the queue
   // stays the not-yet-worked set. Survives re-sightings like `reply`.
   clickedAt?: string;
+  // The reply_drafts row id (RU.6), stamped by the background after the confirm
+  // endpoint promotes this radar draft into a measured reply row. The on-page
+  // paste flow (RU.7) PATCHes it to `posted`. Survives re-sightings like `reply`.
+  draftId?: string;
   // Roster tier of the author (S0.3), stamped by the background from the cached
   // rankmap after every buffer write — always re-derived, never merged, so a
   // stage change is reflected on the next write.
@@ -81,15 +94,30 @@ export function mergeSightings(
     // Re-sighting from the content script carries no reply/clickedAt — keep the
     // ones the panel/background set earlier (incoming wins only if it has one).
     const reply = s.reply ?? prev.reply;
+    const variants = s.variants ?? prev.variants;
     const clickedAt = s.clickedAt ?? prev.clickedAt;
-    const merged: RadarSighting = { ...s, firstSeenAt: prev.firstSeenAt };
+    const draftId = s.draftId ?? prev.draftId;
+    // A manual add is a human pin (RU.8): a hot/warm re-sight from the content
+    // script never downgrades it. Otherwise the fresher incoming band wins.
+    const band = prev.band === 'manual' ? 'manual' : s.band;
+    const merged: RadarSighting = { ...s, band, firstSeenAt: prev.firstSeenAt };
     if (reply !== undefined) merged.reply = reply;
+    if (variants !== undefined) merged.variants = variants;
     if (clickedAt !== undefined) merged.clickedAt = clickedAt;
+    if (draftId !== undefined) merged.draftId = draftId;
     byId.set(s.tweetId, merged);
   }
   const all = [...byId.values()];
   if (all.length <= RADAR_CAP) return all;
-  all.sort((a, b) => a.lastSeenAt.localeCompare(b.lastSeenAt));
+  // Evict least-recently-seen — but a manual add (a human pin) outlives any
+  // auto-captured row (RU.8): non-manual rows sort to the front (dropped first),
+  // manual rows to the back (kept). slice() keeps the tail.
+  all.sort((a, b) => {
+    const am = a.band === 'manual' ? 1 : 0;
+    const bm = b.band === 'manual' ? 1 : 0;
+    if (am !== bm) return am - bm;
+    return a.lastSeenAt.localeCompare(b.lastSeenAt);
+  });
   return all.slice(all.length - RADAR_CAP);
 }
 
@@ -138,11 +166,14 @@ function tierWeight(t: PersonTier | undefined): number {
   return 0;
 }
 
-// Queue order (S0.3): who the author is first (roster tier), THEN band (hot over
-// warm), then views-per-minute, then recency — the original order preserved
-// within a tier.
+// Queue order: a manual add (the human pinned it, RU.8) tops everything; then
+// (S0.3) who the author is (roster tier), THEN band (hot over warm), then
+// views-per-minute, then recency — the original order preserved within a rung.
 export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
   return [...sightings].sort((a, b) => {
+    const am = a.band === 'manual' ? 1 : 0;
+    const bm = b.band === 'manual' ? 1 : 0;
+    if (am !== bm) return bm - am;
     const tw = tierWeight(b.personTier) - tierWeight(a.personTier);
     if (tw !== 0) return tw;
     if (a.band !== b.band) return a.band === 'hot' ? -1 : 1;
@@ -192,6 +223,9 @@ export interface RadarDraftRow {
   signals: TweetSignals | null;
   replyText: string;
   angle: string;
+  // All 3 angle variants (RU.2 column); null on pre-feature / CLI-primary rows.
+  // replyText/angle stay the primary (variants[0]).
+  variants: ReplyVariant[] | null;
   status: 'ready' | 'clicked' | 'expired';
   draftedAt: string;
   createdAt: string;
@@ -203,7 +237,7 @@ export interface RadarDraftRow {
 // draft time — displayAgeMin keeps ticking from there, same as a live capture.
 export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
   if (!row.band || !row.signals) return null;
-  return {
+  const s: RadarSighting = {
     tweetId: row.tweetId,
     url: row.url ?? `https://x.com/${row.handle}/status/${row.tweetId}`,
     handle: row.handle,
@@ -215,6 +249,8 @@ export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
     lastSeenAt: row.draftedAt,
     reply: row.replyText,
   };
+  if (row.variants && row.variants.length > 0) s.variants = row.variants;
+  return s;
 }
 
 export function isRadarSightings(v: unknown): v is RadarSighting[] {
@@ -225,7 +261,7 @@ export function isRadarSightings(v: unknown): v is RadarSighting[] {
     return (
       typeof r.tweetId === 'string' &&
       typeof r.url === 'string' &&
-      (r.band === 'hot' || r.band === 'warm') &&
+      (r.band === 'hot' || r.band === 'warm' || r.band === 'manual') &&
       typeof r.signals === 'object' &&
       r.signals !== null
     );

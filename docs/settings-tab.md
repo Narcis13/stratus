@@ -2,6 +2,17 @@
 
 The **Settings** tab is where you connect the stratus extension to your stratus server and control a few privacy and behavior switches. This is the first tab you have to deal with: until you enter the API URL and bearer token here, every other tab is locked and the extension keeps you on Settings. Once those two fields are filled in and saved, the rest of the app unlocks and stays connected — you rarely need to come back unless you change servers, rotate your token, or want to flip a toggle.
 
+### Four subtabs: General · Tuning · AI · Prompts
+
+Settings is split into four subtabs across the top:
+
+- **General** — the connection fields, the behavior/privacy toggles, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
+- **Tuning** — every tunable number the server has, in one searchable list: doctrine, quests, people, follow-ups, the reply band, stat gates, budgets, workers and more. See [Tuning](#tuning-the-tuning-subtab).
+- **AI** — which LLM provider drafts your content (Grok or OpenRouter), and the model/temperature/token/effort knobs. See [AI provider](#ai-provider-the-ai-subtab).
+- **Prompts** — the editable text of every AI prompt behind the app, with a one-click "Restore Default Prompts". See [Prompts editor](#prompts-editor-the-prompts-subtab).
+
+Tuning, AI and Prompts are the "power user" half — you can ignore them entirely and everything runs on the shipped defaults (Grok, stock prompts, the doctrine numbers stratus was built with). They're there for when you want to run a different model, tune how the AI writes, or move a threshold.
+
 ---
 
 ## First-time setup (do this first)
@@ -17,7 +28,7 @@ Step by step:
 5. **Click Save.** The **Save** button stays disabled until both fields have something in them. When you click it, the button briefly reads **Saving…**, then a green **Saved** appears next to it.
 6. **The other tabs unlock.** As soon as both fields are saved and non-empty, every other tab (Today, People, Calendar, Composer, and so on) becomes clickable. You're connected.
 
-> **Tip:** The three toggle switches lower down (pillars, auto-type, passive capture) save **the instant you click them** — they don't wait for the Save button. The **Save** button exists only to commit the API URL and bearer token together.
+> **Tip:** The four toggle switches lower down (pillars, auto-type, passive capture, passive harvest) save **the instant you click them** — they don't wait for the Save button. So do the Appearance dropdowns. The **Save** button exists only to commit the API URL and bearer token together.
 
 ---
 
@@ -52,12 +63,13 @@ A **401** response means "not authorized" — the server got your request but di
 
 ## Behavior & privacy toggles
 
-Three checkboxes sit between the connection fields and the harvest section. Each one saves immediately when you click it.
+Four checkboxes sit between the connection fields and the harvest section. Each one saves immediately when you click it.
 
 ### Apply content pillars to reply drafting (default off)
 
 - **What it does:** your stratus setup has "content pillars" — the handful of themes you want to be known for. When this is **on**, the AI reply drafter is nudged to steer replies toward those pillars. When **off** (the default), replies are drafted purely from the tweet you're responding to, with no pillar steering.
 - **When to turn it on:** if you want your replies to consistently reinforce your core topics. Leave it off if you'd rather each reply just react naturally to whatever it's answering.
+- **Note:** the content pillars themselves are owned and edited under the **Niche** card (below) — they belong to your active niche, not to a global list.
 
 ### Auto-type Reply Master drafts into the reply box (default off)
 
@@ -69,7 +81,175 @@ Three checkboxes sit between the connection fields and the harvest section. Each
 - **What it does:** as you browse X normally and hover over someone's name or avatar, X shows a little profile pop-up ("hover card"). With this **on** (the default), the extension quietly reads those hover cards you naturally triggered and adds those people to your stratus roster (the "People" tab), building your contact list from ordinary browsing — no clicking "save" required.
 - **What data it captures:** only what's already on the hover card X drew because *you* hovered — handle, display name, basic profile info. It does **not** synthesize hovers, crawl, or read anything you didn't naturally bring up on screen. New people are added gently (a hover glimpse never overwrites richer data you've already saved).
 - **Why it's on by default:** it grows your relationship roster for free from browsing you were already doing. It's the effortless way the People layer fills itself in.
-- **How to opt out:** simply **uncheck** this box. It saves immediately, and the extension stops capturing people from hover cards from that point on. This is the one place to turn passive capture off.
+- **It also captures your audience heatmap.** This same toggle governs one more passive read: whenever you happen to visit **X Analytics → Audience** (`x.com/i/account_analytics`), the extension reads the *active-times heatmap* X draws there — the grid of when your audience is on X — and stores it ($0, from what's already on screen). That heatmap is what powers the **audience** best-time hints in the [Composer](./composer-tab.md) and the "aud" ghost slots on the [Calendar week board](./calendar-tab.md). Capture is entirely passive: stratus never opens Analytics on its own, and a fresh grid is only sent when it has meaningfully changed (and at most twice a day). With this toggle **off**, no heatmap is captured and the audience hints go stale (the Composer nudges you to revisit).
+- **How to opt out:** simply **uncheck** this box. It saves immediately, and the extension stops capturing people from hover cards — and audience heatmaps — from that point on. This is the one place to turn passive contact capture off.
+
+### Passive timeline harvest while browsing /home (default on, $0)
+
+- **What it does:** while you scroll **x.com/home**, the extension records each tweet the algorithm showed you — its text and its on-screen engagement numbers — into your own stratus database. Nothing is sent to X, nothing is fetched from X's paid API: it reads the numbers already drawn on your screen, so it costs **$0** no matter how much you scroll. It's the automatic sibling of the [Harvest tab](./harvest-tab.md)'s manual bulk scrape.
+- **What data it captures:** the tweet, its author's handle, its like/reply/repost/bookmark/view counts, and when you saw it — for **every** readable tweet on the home timeline, including ones you'd never reply to (those are the denominator the analytics need). Ads and promoted rows carry no readable counters and are skipped. **No one is added to your People roster from this** — being shown a tweet isn't a relationship.
+- **Where it stops:** home timeline only (not profiles, search, or tweet pages); nothing while a Harvest-tab run is going in that tab; at most one row per tweet per 30 minutes; a ceiling of **2,000 rows a day**; and everything older than **60 days** is deleted automatically.
+- **Why it's on by default:** it's free, invisible, and it's what powers **People → Timeline affinity** ("who does the algorithm keep showing me?") and **Playbook → Timeline funnel** ("of what I was shown, what did I actually reply to?"). Neither says anything useful until a few days of real scrolling have accumulated.
+- **How to opt out:** **uncheck** this box. It takes effect immediately in every open X tab — no reload needed — and the Harvest tab's status line switches to *"Passive capture off"*.
+- **Note:** this is a **separate** toggle from *Passive contact capture from hover cards* above. One grows your people roster from profile pop-ups you hover; this one grows the tweet corpus from your timeline. Turning either off leaves the other running.
+
+---
+
+## Appearance
+
+Three dropdowns controlling how the side panel *looks*. They're panel-only — nothing here reaches the server, nothing here changes what stratus does — and each applies the instant you change it, with no Save.
+
+- **Theme** — **System** (default, follows your OS light/dark setting), **Dark**, or **Light**. The overlays stratus draws *on X itself* (badges, chips, the context panel) are deliberately exempt: they follow X's own page theme so they never clash with the site.
+- **Density** — **Cozy** (default) or **Compact**. Compact tightens the spacing throughout, fitting noticeably more on screen in a narrow side panel.
+- **Text size** — **Small (12px)**, **Default (13px)**, or **Large (14px)**. Scales the whole panel, not just body copy.
+
+These three are stored locally in the extension, like the connection fields — they're per-browser, not per-account, so they don't follow you to another machine.
+
+---
+
+## Tuning (the Tuning subtab)
+
+**Tuning** is every number stratus makes a decision with, in one place. Doctrine cadence, quest targets, follow-up windows, the reply-band thresholds, stat gates, budgets, worker schedules, display limits — all of it, live-editable, with the bounds and the reasoning attached to each row.
+
+The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
+
+### The fourteen groups
+
+Today the registry holds **61 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
+
+| Group | Knobs | What it decides | Where the change shows |
+|---|---|---|---|
+| **Doctrine** | 3 | The cadence ladder: the 3/day and 4/day anchor hours, and how many filled slots switches you from one to the other. | Today's gaps, the Composer's slot suggestions, the Calendar's ghost anchors. |
+| **Quests** | 4 | The daily bar: originals target, how many neglected targets count, the neglect window, the launch-room attendance window. | Today's quest checklist and the streak. |
+| **People** | 3 | The CRM stage ladder's promotion windows (mutual, ally, ally window). | Stages on People, and every stage-aware draft. |
+| **Follow-ups** | 8 | The follow-up queue's windows: chain freshness, DM readiness, neglected target/ally days, momentum %, re-up age range, unacknowledged-fan days. | Do next, Targets, Top fans, the dossier queue. |
+| **Pinned watch** | 2 | When a pinned post reads as stale, and the ratio that says something outperforms it. | Today's pinned-watch card. |
+| **Digest** | 1 | How many neglected people the Sunday digest names. | The weekly digest. |
+| **Reply band** | 12 | The reply-band **classifier** thresholds — views, replies, freshness, views-per-minute, the too-small floors. | The on-page badge *and* the server's draft gate — same numbers, both sides. |
+| **Stat gates** | 2 | How much data a Playbook cell and a best-time cell need before they read as evidence. | The Playbook's `insufficient data (n=…/N)` cells; the best-time advice. |
+| **Radar** | 1 | How long a radar draft stays clickable. | The Radar strip on Today. |
+| **Workers** | 4 | The daily-metrics hour, the publisher tick, and the winner re-read floor/cap. | Background only. The first two are `restart` knobs. |
+| **Budgets** | 2 | The soft X daily watchdog and the **hard** image-generation cap. | A refused image generation; the cost log's warnings. |
+| **AI calls** | 6 | Per-surface LLM defaults: reply/drafter/digest token caps, reply temperature and effort, the batch-reply ceiling. | Every AI draft — unless **Settings → AI** overrides them globally. |
+| **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
+| **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
+
+Twenty-seven of the 61 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
+
+### How a row works
+
+Each row shows the knob's **name**, a one-line **description** carrying the *why* (and the warning, where there is one), and a control picked to fit: a **slider** for a bounded number, a plain number box for an unbounded one, a checkbox, a dropdown, or a comma-separated list for things like the posting-hour anchors.
+
+- **Saving is automatic.** Move a control and it saves about a third of a second later — there is no Save button. The pause exists so dragging a slider is one save, not fifty. Switching subtabs mid-drag still saves.
+- **A small accent dot** appears to the left of any knob you've changed from its shipped default. **Click the dot** to put that one knob back.
+- **Out-of-range values are refused by the server**, not by the box. If you type something the knob's floor or ceiling forbids, the row shows the refusal code and snaps back to the value that's actually stored. Those floors and ceilings are the real guard — they're the reason a budget knob can't be talked into an unbounded number, here or by an AI agent through the MCP tools.
+- **A `restart` tag** on a row means that knob is read once when the server boots (it arms a timer), so a change lands on the next restart. Only the worker schedule knobs are like this; **everything else applies to the very next request** — no restart, no rebuild.
+
+### Search
+
+The box at the top filters as you type, across every group at once. It matches a knob's **name**, its **description**, or its **raw key** — and if what you type matches a **group name**, the whole group stays, so searching `budget` gives you every budget knob rather than only the ones that repeat the word. The count line under the box tells you how many of the total matched.
+
+### Per-group reset
+
+Every group header has a **Reset group** button, which drops every override in that group back to the shipped defaults at once. Groups you've never touched are already at their defaults, so it does nothing there.
+
+### The same knobs, next to the feature (inline ⚙)
+
+Tuning is the complete list, but you rarely arrive here wondering about "the display group" — you arrive wondering why the Do-next strip only shows five rows. So the knobs that shape a section also appear behind a small **⚙** on that section's own header. The **[Today tab](./today-tab.md#tuning-today-from-today-the--gears)** has five of them (quests, Do next, Radar, Targets, Top fans); the **[Composer](./composer-tab.md)** (Schedule) and the **[Calendar](./calendar-tab.md)** (This week) share a sixth — the cadence ladder plus the best-time gate, one gear on both tabs because both render the same anchor hours. Four more size the lists you read most: the **[People](./people-tab.md#-dossier-list-rows)** dossier header (how many rows its capped lists show), the **[Channels](./channels-tab.md)** room's *My posts* section, the **[Voice](./voice-tab.md)** library's *Saved tweets* section, and the **[Replies](./replies-tab.md#the-history-list)** tab's *History* section. And one changes what a whole page is willing to *say*: the **[Playbook](./playbook-tab.md)** header's gear moves the per-cell sample gate (`x.gates.minCellN`), which re-gates every stat on that page and decides whether the measured guidance lines are allowed to steer your AI drafts — the one gear worth reading the warning on before you touch it.
+
+There is no second store and no second copy: a gear edits the same key with the same discipline (auto-save, the same accent dot, the same server-side refusal), so a number changed in a gear reads back identically here. A gear simply doesn't render when the server is unreachable — the section keeps working off its mirrored copy.
+
+### Where some numbers *aren't*
+
+A few numbers you might expect in Tuning deliberately live somewhere else, because each setting has exactly one owner:
+
+- **Your reply quota, week reply %, and the 2–10× target-follower window** belong to your **active niche** — edit them under **General → Niche**. Tuning says so at the top of the affected groups.
+- **The Reply band group is a different thing from the reply targets.** Those twelve numbers are the *classifier* thresholds — what counts as hot, warm or skip. They're the same numbers on both sides: the badge stratus draws on a tweet and the gate the server applies before spending on a draft read the identical settings, so the badge can never promise a draft the server then refuses. (Changing one takes effect on the page within a few minutes, or immediately when you reopen the panel.)
+- **AI calls is the lower of two tiers.** Those knobs are the per-surface defaults; whatever you set in **Settings → AI** is a *global* override that wins over them. The blank fields in the AI subtab are what fall back to this group. The AI subtab links straight here.
+
+> A caution worth repeating from the descriptions themselves: the band thresholds and the stat gates ship as **opening guesses**. They're worth recalibrating from measurements — not from a hunch — and the descriptions tell you how much data each one wants first.
+
+### Coming soon
+
+At the bottom sits the **roadmap**: features that are planned and specced but not built, each with the knobs it would add. The rows are inert — dimmed, with no controls at all, because there's nothing on the server to store yet. It's there so you can see where the product is going from inside the product. Entries are removed as they ship.
+
+---
+
+## Your niche (identity & strategy)
+
+The **Niche** card is where "who you are" lives. A niche bundles the four things every AI draft and every coaching number is built from: your **persona** (the biography the post drafter grounds on), your **beliefs** (the principles it argues from), your **reply persona** (the short self-description replies use), a prose **description**, and five **doctrine** knobs. Editing any of these changes the next drafted post and reply **without a deploy** — the same way pillars became editable.
+
+### The active-niche editor
+
+- **Persona / beliefs / reply persona / description:** free-text fields. Save commits them; Reset discards unsaved edits. The next `/x/posts/draft` and `/x/replies/generate` immediately ground on the new text (nothing is cached across an edit).
+- **Doctrine (5 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), and the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces). These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+
+### Niches list & activation
+
+- Exactly **one niche is active at a time.** The list shows every niche; **Activate** swaps which one grounds your drafts and doctrine. **Delete** removes an inactive niche (you can't delete the active one).
+- **Creating a niche** needs a slug, label, and the persona/beliefs/reply-persona text (the server rejects empty grounding). New niches are created **inactive** — activate when you're ready.
+- A niche owns its **pillars and channels.** Activate a fresh niche with no pillars yet and the post drafter will politely refuse (`no_pillars_for_niche`) rather than borrow another niche's pillars — add its pillars first (Voice → Pillars, or the wizard).
+
+### The wizard (prose → a proposed niche)
+
+Paste a paragraph describing a niche ("I post about evidence-based nutrition for busy parents…") and **Generate** turns it into a complete **proposed** niche — persona, beliefs, reply persona, three pillars, and up to five channels — for you to review and edit before saving. It's one AI call (~$0.01), and the proposal is **never saved automatically**: nothing changes until you click Create. Saving runs in the right order (create → activate → its pillars → its channels) so the new niche's pillars/channels attach to it, not to whatever was active before.
+
+---
+
+## Daily commitments
+
+Under the Niche card is a small **Commitments** card: the daily minimums you hold yourself to. Two keys, each a number plus an **active** checkbox and its own **Save** button (they save one at a time — this is a promise, not a preference sheet).
+
+- **replies** — how many replies a day you're committing to.
+- **originals** — how many original posts a day.
+
+Range 1–100. Leaving a row **inactive** keeps the number on file without holding you to it.
+
+What a commitment actually does:
+
+- It **raises the quest targets** on the [Today tab](./today-tab.md) — *"17 quality replies"* instead of the doctrine default. It can only ever raise a bar, never lower one, so no streak already earned can be retroactively broken.
+- It **accumulates debt** when you miss days: a quiet line under Today's quest list, escalating to amber past three missed days, and past five it suggests lowering the bar rather than pushing harder.
+- It **feeds the Sunday grade** — the reply-quota component of the weekly scorecard is measured against your commitment when there is one.
+
+What it deliberately does **not** do: it never blocks anything, and it doesn't touch the doctrine's own 10–20/day reply band shown in Today's **Replies quota** section. Those are different numbers answering different questions — one is sustainable practice, the other is a personal promise.
+
+Two behaviours worth knowing: editing the target **never** erases days you already missed (raising the bar isn't a fresh start), but switching a commitment from inactive back to active **does** restart the clock. And a commitment made today reads zero debt, because today can't be a missed day yet.
+
+If the card loads blank, the fields stay empty rather than inventing a target — save and the real error will surface.
+
+---
+
+## AI provider (the AI subtab)
+
+The **AI** subtab controls which large language model drafts your posts, replies, threads, ideas, and everything else the app generates. By default everything runs on **Grok** (xAI). If you'd rather draft on Claude, GPT, Gemini, or any other model, you switch the provider to **OpenRouter** here and pick a model.
+
+- **Provider (Grok / OpenRouter):** a radio choice. **Grok** is the default and needs the server's `XAI_API_KEY`. **OpenRouter** is a gateway to hundreds of models (Claude, GPT, Gemini, Llama, …) and needs the server's `OPENROUTER_API_KEY`. If that key isn't set on the server, the OpenRouter option is greyed out with a hint — set the key in the server's environment first. (Keys live **only** in the server's environment, never in the extension or the database — that's a deliberate security rule.)
+- **OpenRouter model:** a text box with autocomplete. It suggests models from OpenRouter's live catalogue (id, friendly name, and per-token price), so you can see roughly what each costs before choosing. The default is `anthropic/claude-sonnet-4.5`. Any valid OpenRouter model id works, whether or not it's in the suggestion list.
+- **Temperature / Max output tokens / Reasoning effort:** optional knobs. Leave them **blank** and each draft surface uses its own sensible default (the "house" setting for that kind of draft). Fill one in and it overrides the house default for **every** surface. Temperature is 0–2 (higher = more varied); max output tokens caps the reply length; reasoning effort (none/low/medium/high) applies to models that support it.
+- **Save:** commits the provider config to the server.
+
+**Precedence, plainly:** a value typed into a specific draft (a per-request override, where the app exposes one) beats these AI-subtab settings, which in turn beat each surface's built-in default. So this subtab is the middle tier — a global preference you can still override case by case.
+
+**Where the spend shows up:** OpenRouter charges by the token and the exact cost of each call is read back from OpenRouter and logged under platform **`openrouter`** in your cost dashboard (`/cost/today`) — separate from Grok text spend (`grok`) and image spend (`xai`). There's a soft daily budget (`OPENROUTER_DAILY_BUDGET_USD`, default $1.00) that logs a warning once crossed; it doesn't block calls.
+
+**The Grok path is untouched.** Switching the model here only affects the OpenRouter path — Grok always drafts on `grok-4.3`. If you never touch this subtab, nothing about your drafting changes.
+
+---
+
+## Prompts editor (the Prompts subtab)
+
+Every AI feature in stratus is driven by a **prompt** — the instructions the model reads before it writes. The **Prompts** subtab lets you read and edit all **13** of them, and revert to the shipped defaults whenever you want.
+
+The 13 prompts are: **reply drafts**, **reply drafts (batch)**, **post drafts**, **thread drafts**, **rewrite assist**, **idea generator**, **template extraction**, **pillar drafting**, **Sunday digest**, **icebreakers**, **reply-list items** (the generator that fills a canned-reply list from a category prompt), **DM drafts** (the direct-message drafter grounded strictly on real shared context), and **article assist** (the long-form Writer prompt behind the outline / section / polish / full drafting on the `/writer` page). Each row shows its name, a one-line description, and an amber **"customized"** chip if you've edited it.
+
+- **Editing a prompt:** click a row to open the editor — a big monospace text box with the full prompt, a character count, and a set of **required-placeholder chips**. Placeholders look like `{{TWEET_CONTEXT}}` or `{{IDEA}}`; they're where the app injects the actual tweet, your pillars, your winners, and so on at draft time. A chip is **green** when its placeholder is still present in your text and **red** when it's missing. You can't save while any required placeholder is missing (Save greys out, and the server refuses it too) — a prompt that dropped `{{IDEA}}` would silently ignore your idea, so the editor won't let that happen. You can freely edit all the surrounding prose.
+- **Save / Reset this prompt:** Save stores your version as an override on the server; the next draft of that kind uses it immediately. "Reset this prompt" deletes just that one override, reverting it to the shipped default.
+- **Show default:** lets you compare your edit against the original text.
+- **Restore Default Prompts:** the big button (with a confirm dialog) that deletes **every** override at once — all 13 prompts snap back to their shipped defaults and the "customized" chips disappear. This is the recovery button if an edit made your drafts worse.
+
+**How overrides work under the hood:** a prompt you never edit has *no* stored row — it just uses the code default, which means an improved default shipped in a later stratus update applies automatically. The moment you save an edit, a row is stored and "customized" turns on; reset/restore delete that row. So "customized" is a real fact (a row exists), not a guess.
+
+**A caution:** editing prompts is genuinely powerful and genuinely able to make output worse — that's the point, it's yours to tune. The customized chip and Restore button are your safety net. There's no version history beyond that: defaults live in the app's source, and your only stored state is the current override.
 
 ---
 
@@ -106,8 +286,9 @@ The mention-refresh budget is **not** a control on this Settings tab — there's
 
 ### Opt out of passive capture
 1. Go to the **Settings** tab.
-2. **Uncheck** *"Passive contact capture from hover cards (default on)"*.
-3. That's it — it saves the moment you click. The extension stops adding people from hover cards.
+2. **Uncheck** *"Passive contact capture from hover cards (default on)"* to stop adding people from hover cards.
+3. **Uncheck** *"Passive timeline harvest while browsing /home (default on, $0)"* to stop recording the tweets your home timeline shows you.
+4. That's it — both save the moment you click, and they're independent: turning one off leaves the other running.
 
 ### Reset a harvest cursor that's skipping tweets
 1. Go to the **Settings** tab and scroll to **Harvest cursors**.
@@ -122,7 +303,7 @@ The mention-refresh budget is **not** a control on this Settings tab — there's
 - **Not configured (tabs locked):** if the **API URL** or **Bearer token** is empty, every tab except **Settings** is disabled and greyed out, and trying to view another tab shows *"Configure API URL and bearer token first."* Fill in both fields and click **Save** to unlock everything. This is the expected first-run state, not an error.
 - **Save button won't click:** the **Save** button is intentionally disabled until **both** the API URL and Bearer token fields contain text. Make sure neither is blank.
 - **Tabs unlocked but nothing loads / requests fail (401 or errors):** the extension only checks that the two fields are *non-empty* — it doesn't verify they're correct. A wrong token or wrong URL unlocks the UI but every request fails. Re-check the token against the server's `API_TOKEN`, confirm the URL is right and the server is running, then **Save** again. See [Troubleshooting a 401](#troubleshooting-a-401-or-everything-is-failing).
-- **A toggle didn't seem to stick:** the three toggles save on click, independently of the Save button. If one looks unchanged, click it again — the checkbox reflects the stored state.
+- **A toggle didn't seem to stick:** the four toggles save on click, independently of the Save button. If one looks unchanged, click it again — the checkbox reflects the stored state.
 
 ---
 

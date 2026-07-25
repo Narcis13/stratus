@@ -13,8 +13,12 @@
 //   slots/day    3 or 4.
 //
 // Cadence anchors:
-//   3/day: 09, 13, 18 local
-//   4/day: 08, 12, 16, 20 local
+//   Read from the server's mirrored settings (x.doctrine.anchors3 / anchors4) so
+//   this script, the Today brief and the Composer share ONE ladder. Falls back
+//   to the baked defaults (3/day: 09, 13, 18 · 4/day: 08, 12, 16, 20) whenever
+//   the server is unreachable, unconfigured, or returns a ladder whose length
+//   doesn't match slots/day — a scheduling run never fails over a settings read.
+//   Env: STRATUS_BASE_URL (default the prod host) + STRATUS_API_TOKEN.
 //
 // Output:
 //   stdout — JSON array of {text, scheduledFor} ready to redirect to a file.
@@ -60,7 +64,41 @@ try {
   die(`unknown IANA timezone: ${tz}`);
 }
 
-const anchors = ANCHORS_BY_SLOTS[slotsPerDay];
+// --- Cadence anchors: server first, baked fallback ---
+// The mirrored settings endpoint is the single owner of the ladder (UI.6). Any
+// failure — no token, dead host, non-2xx, malformed body, or a configured
+// ladder that isn't `slotsPerDay` hours long — silently keeps the baked values,
+// because emitting a week on yesterday's anchors beats emitting nothing.
+async function loadAnchors(slots: number): Promise<{ anchors: number[]; source: string }> {
+  const baked = ANCHORS_BY_SLOTS[slots];
+  // Same resolution api.sh uses: the explicit var, else API_TOKEN (bun loads
+  // .env into process.env when the script runs from the repo root).
+  const token = process.env.STRATUS_API_TOKEN ?? process.env.API_TOKEN;
+  if (!token) return { anchors: baked, source: 'baked (no STRATUS_API_TOKEN)' };
+  const base = process.env.STRATUS_BASE_URL ?? 'https://stratus-narcis.duckdns.org';
+  const key = slots === 4 ? 'x.doctrine.anchors4' : 'x.doctrine.anchors3';
+  try {
+    const res = await fetch(`${base}/x/settings/values?scope=mirrored`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return { anchors: baked, source: `baked (HTTP ${res.status})` };
+    const body = (await res.json()) as Record<string, unknown>;
+    const hours = body[key];
+    if (
+      !Array.isArray(hours) ||
+      hours.length !== slots ||
+      !hours.every((h) => typeof h === 'number' && Number.isInteger(h) && h >= 0 && h <= 23)
+    ) {
+      return { anchors: baked, source: `baked (${key} unusable for ${slots}/day)` };
+    }
+    return { anchors: hours as number[], source: key };
+  } catch {
+    return { anchors: baked, source: 'baked (settings unreachable)' };
+  }
+}
+
+const { anchors, source: anchorSource } = await loadAnchors(slotsPerDay);
 
 // --- Parse markdown ---
 const raw = await Bun.file(mdPath)
@@ -207,5 +245,5 @@ for (let d = 0; d < DAYS; d++) {
 // --- Output ---
 console.log(JSON.stringify(rows, null, 2));
 console.error(
-  `md_to_schedule: emitted ${rows.length} rows | tz=${tz} | startLocal=${startDate} | slots/day=${slotsPerDay} | anchors=${anchors.join(',')}`,
+  `md_to_schedule: emitted ${rows.length} rows | tz=${tz} | startLocal=${startDate} | slots/day=${slotsPerDay} | anchors=${anchors.join(',')} (${anchorSource})`,
 );

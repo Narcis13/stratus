@@ -104,6 +104,40 @@ export type Layer =
       font: FontSpec;
       color: string;
       margin?: number;
+    }
+  | {
+      /** SVG path data authored in a 100×100 viewbox, scaled into `box`. The
+       *  mascot's building block; Path2D-from-string works on both canvas
+       *  contexts, so keep it in the `Ctx2D` union. */
+      kind: 'path';
+      d: string;
+      box: Box;
+      fill?: string;
+      stroke?: string;
+      strokeWidth?: number;
+    }
+  | {
+      /** Rounded rect with optional stroke and drop shadow — terminal windows,
+       *  list rows, cards behind cards. */
+      kind: 'panel';
+      box: Box;
+      radius: number;
+      fill?: string;
+      stroke?: string;
+      strokeWidth?: number;
+      shadow?: { blur: number; color: string; dy: number };
+    }
+  | {
+      /** Deterministic background texture. `blobs` uses the seeded mulberry32
+       *  PRNG (never Math.random) so the same spec+seed paints the same pixels
+       *  forever — the S3 determinism contract. No `box` = full canvas. */
+      kind: 'pattern';
+      pattern: PatternKind;
+      color: string;
+      box?: Box;
+      spacing?: number;
+      size?: number;
+      seed?: number;
     };
 
 export interface RenderSpec {
@@ -293,6 +327,62 @@ export function sparklineCoords(points: number[], box: Box): Array<{ x: number; 
   }));
 }
 
+// ------------------------------------------------------------ pure: patterns
+
+export type PatternKind = 'dots' | 'grid' | 'diagonal' | 'plus' | 'blobs';
+
+export interface PatternPoint {
+  x: number;
+  y: number;
+  /** Per-point radius — only `blobs` sets it; lattice marks leave it undefined. */
+  r?: number;
+}
+
+/** Mulberry32 — a tiny seedable [0,1) PRNG. `Math.random` is forbidden in the
+ *  Studio: the same spec + seed must yield the same pixels forever, since the
+ *  live preview IS the artifact and specs are snapshot-tested. */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Box-local geometry for a background pattern in a `w × h` area. Pure so the
+ *  layout is unit-testable without a canvas. `dots|grid|diagonal|plus` share a
+ *  regular lattice (mark centers / line anchors, top-left-first); `blobs`
+ *  returns seeded-random points each with their own radius. drawPattern offsets
+ *  these by the layer's box origin. */
+export function patternCoords(
+  pattern: PatternKind,
+  w: number,
+  h: number,
+  spacing: number,
+  seed: number,
+): PatternPoint[] {
+  const step = Math.max(1, spacing);
+  if (pattern === 'blobs') {
+    const rand = mulberry32(seed);
+    const count = Math.max(1, Math.floor(w / step)) * Math.max(1, Math.floor(h / step));
+    const out: PatternPoint[] = [];
+    for (let i = 0; i < count; i += 1) {
+      // Three draws per blob (x, y, r) — order fixed so the sequence is stable.
+      out.push({ x: rand() * w, y: rand() * h, r: step * (0.25 + rand() * 0.5) });
+    }
+    return out;
+  }
+  const out: PatternPoint[] = [];
+  for (let y = step / 2; y < h; y += step) {
+    for (let x = step / 2; x < w; x += step) {
+      out.push({ x, y });
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------- rendering
 
 type Ctx2D = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -453,6 +543,119 @@ function drawRing(ctx: Ctx2D, layer: Extract<Layer, { kind: 'ring' }>): void {
   ctx.stroke();
 }
 
+function drawPath(ctx: Ctx2D, layer: Extract<Layer, { kind: 'path' }>): void {
+  const { box } = layer;
+  const sx = box.w / 100;
+  const sy = box.h / 100;
+  ctx.save();
+  ctx.translate(box.x, box.y);
+  ctx.scale(sx, sy);
+  const path = new Path2D(layer.d);
+  if (layer.fill) {
+    ctx.fillStyle = layer.fill;
+    ctx.fill(path);
+  }
+  if (layer.stroke) {
+    // Undo the mean scale so the stroke keeps its intended px width.
+    const meanScale = (sx + sy) / 2 || 1;
+    ctx.strokeStyle = layer.stroke;
+    ctx.lineWidth = (layer.strokeWidth ?? 1) / meanScale;
+    ctx.lineJoin = 'round';
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
+function drawPanel(ctx: Ctx2D, layer: Extract<Layer, { kind: 'panel' }>): void {
+  const { box } = layer;
+  ctx.save();
+  if (layer.shadow) {
+    ctx.shadowBlur = layer.shadow.blur;
+    ctx.shadowColor = layer.shadow.color;
+    ctx.shadowOffsetY = layer.shadow.dy;
+  }
+  ctx.beginPath();
+  ctx.roundRect(box.x, box.y, box.w, box.h, layer.radius);
+  if (layer.fill) {
+    ctx.fillStyle = layer.fill;
+    ctx.fill();
+  }
+  if (layer.stroke) {
+    // Drop the shadow before stroking so the border isn't doubled by a halo.
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = layer.stroke;
+    ctx.lineWidth = layer.strokeWidth ?? 2;
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawPattern(
+  ctx: Ctx2D,
+  layer: Extract<Layer, { kind: 'pattern' }>,
+  spec: RenderSpec,
+): void {
+  const box = layer.box ?? { x: 0, y: 0, w: spec.w, h: spec.h };
+  const spacing = Math.max(1, layer.spacing ?? 40);
+  const size = layer.size ?? Math.max(2, spacing * 0.08);
+  const coords = patternCoords(layer.pattern, box.w, box.h, spacing, layer.seed ?? 1);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(box.x, box.y, box.w, box.h);
+  ctx.clip();
+
+  if (layer.pattern === 'dots' || layer.pattern === 'blobs') {
+    ctx.fillStyle = layer.color;
+    for (const p of coords) {
+      ctx.beginPath();
+      ctx.arc(box.x + p.x, box.y + p.y, p.r ?? size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (layer.pattern === 'plus') {
+    ctx.strokeStyle = layer.color;
+    ctx.lineWidth = Math.max(1, size / 3);
+    ctx.lineCap = 'round';
+    for (const p of coords) {
+      const cx = box.x + p.x;
+      const cy = box.y + p.y;
+      ctx.beginPath();
+      ctx.moveTo(cx - size, cy);
+      ctx.lineTo(cx + size, cy);
+      ctx.moveTo(cx, cy - size);
+      ctx.lineTo(cx, cy + size);
+      ctx.stroke();
+    }
+  } else if (layer.pattern === 'grid') {
+    ctx.strokeStyle = layer.color;
+    ctx.lineWidth = Math.max(1, size / 4);
+    for (const x of new Set(coords.map((p) => p.x))) {
+      ctx.beginPath();
+      ctx.moveTo(box.x + x, box.y);
+      ctx.lineTo(box.x + x, box.y + box.h);
+      ctx.stroke();
+    }
+    for (const y of new Set(coords.map((p) => p.y))) {
+      ctx.beginPath();
+      ctx.moveTo(box.x, box.y + y);
+      ctx.lineTo(box.x + box.w, box.y + y);
+      ctx.stroke();
+    }
+  } else {
+    // diagonal — parallel lines from box+spacing, sweeping past both corners.
+    ctx.strokeStyle = layer.color;
+    ctx.lineWidth = Math.max(1, size / 4);
+    for (let o = -box.h; o < box.w; o += spacing) {
+      ctx.beginPath();
+      ctx.moveTo(box.x + o, box.y);
+      ctx.lineTo(box.x + o + box.h, box.y + box.h);
+      ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawWatermark(
   ctx: Ctx2D,
   layer: Extract<Layer, { kind: 'watermark' }>,
@@ -491,6 +694,15 @@ function drawLayer(ctx: Ctx2D, layer: Layer, spec: RenderSpec): void {
       break;
     case 'watermark':
       drawWatermark(ctx, layer, spec);
+      break;
+    case 'path':
+      drawPath(ctx, layer);
+      break;
+    case 'panel':
+      drawPanel(ctx, layer);
+      break;
+    case 'pattern':
+      drawPattern(ctx, layer, spec);
       break;
   }
 }

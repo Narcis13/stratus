@@ -88,8 +88,9 @@ export const ICEBREAKER_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-// Static prefix (cacheable); the grounding block rides at the variable tail.
-const ICEBREAKER_INSTRUCTIONS = `You write conversation openers for me on X (Twitter). About me, exactly this and nothing more: solopreneur; passionate about programming, AI and marketing; builds in public.
+// Registry default (key `icebreaker`, AI.6) — the static prefix; the GROUNDING
+// block substitutes at the {{GROUNDING}} tail so the prefix stays cacheable.
+export const ICEBREAKER_PROMPT_TEMPLATE = `You write conversation openers for me on X (Twitter). About me, exactly this and nothing more: solopreneur; passionate about programming, AI and marketing; builds in public.
 
 I want to warm up a relationship with the person described in the GROUNDING block. Propose exactly two openers:
 - "reply": a reply-style opener I could post under one of their tweets — react to something concrete from the grounding.
@@ -101,10 +102,25 @@ HARD RULES:
 - No flattery openers ("love your work"), no "long-time follower", no "quick question" cold-DM energy, no hashtags, no emoji.
 - Each opener under 280 characters, in English, sounding like one human to another.
 
-Return JSON {"reply": "...", "dm": "..."} — nothing else.`;
+Return JSON {"reply": "...", "dm": "..."} — nothing else.
 
-export function buildIcebreakerInput(grounding: string): GrokMessage[] {
-  return [{ role: 'user', content: `${ICEBREAKER_INSTRUCTIONS}\n\nGROUNDING:\n${grounding}` }];
+GROUNDING:
+{{GROUNDING}}`;
+
+const GROUNDING_PLACEHOLDER = '{{GROUNDING}}';
+
+// AI.6: `template` is the registry-loaded body (DB override or the default
+// above). The grounding substitutes at {{GROUNDING}} — byte-identical to the
+// old concatenation when the default runs; a token-less custom override still
+// gets the grounding appended.
+export function buildIcebreakerInput(
+  grounding: string,
+  template: string = ICEBREAKER_PROMPT_TEMPLATE,
+): GrokMessage[] {
+  const content = template.includes(GROUNDING_PLACEHOLDER)
+    ? template.split(GROUNDING_PLACEHOLDER).join(grounding)
+    : `${template}\n\nGROUNDING:\n${grounding}`;
+  return [{ role: 'user', content }];
 }
 
 export interface Icebreakers {

@@ -15,29 +15,48 @@ import {
   LAUNCH_ROOM_MS,
   LAUNCH_SYNC_ALARM,
   LAUNCH_SYNC_PERIOD_MIN,
+  MANUAL_ALARM_PREFIX,
+  MANUAL_DUE_KEY,
+  MANUAL_MISS_GRACE_MS,
+  type ManualDue,
   computeLaunchAlarms,
+  computeManualAlarms,
   isActiveLaunch,
   isEarlyReplies,
+  isManualDueList,
   launchIsLive,
+  manualNotificationText,
   mergeEarlyReplies,
+  mergeManualDue,
   notificationText,
   parseLaunchAlarm,
+  parseManualAlarm,
   retryAlarmName,
   threadLinkInFirstReply,
 } from './shared/launch.ts';
 import {
   type ApiRequest,
   type ApiResponse,
+  type NotifContextMap,
+  type NotifContextResponse,
   isApiRequest,
   isLaunchDismiss,
   isLaunchGet,
   isLaunchReport,
   isLaunchSync,
+  isManualDismiss,
+  isNotifContextGet,
+  isOpenPerson,
+  isOpenPersonClear,
   isRadarClick,
+  isRadarConfirm,
   isRadarDismiss,
   isRadarRehydrate,
   isRadarReplies,
   isRadarReport,
+  isRadarVariantPasted,
+  isRadarVariantsGet,
+  isSettingsSync,
 } from './shared/messages.ts';
 import {
   RADAR_DISMISSED_KEY,
@@ -51,7 +70,14 @@ import {
   mergeSightings,
   stampTiers,
 } from './shared/radar.ts';
-import type { ScheduledPost, ScheduledPostWithThread } from './shared/types.ts';
+import { SERVER_SETTINGS_KEY } from './shared/serverSettings.ts';
+import type {
+  MentionsResponse,
+  ReplyVariant,
+  ScheduledPost,
+  ScheduledPostWithThread,
+} from './shared/types.ts';
+import { isReplyVariants } from './shared/variantChips.ts';
 
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
@@ -189,6 +215,53 @@ async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
   return { ok: true, status: r.status, data };
 }
 
+// ------------------------------------------------- mirrored settings (UI.6)
+//
+// The server-side knobs marked scope:'mirrored' ride to the panel and the page
+// through one flat blob in chrome.storage.local. The background is the only
+// fetcher (it owns the Authorization header) and the only writer (§7.24/7.25);
+// readers resolve the blob through shared/serverSettings.ts.
+//
+// Refresh cadence mirrors the rank map: a 5-min TTL checked on demand, so the
+// service-worker start and the 15-min periodic alarm cost at most one $0 GET
+// per window. A `stratus/settings-sync` message FORCES a refresh — it rides on
+// panel mount and on every settings write, which is what makes a saved knob
+// visible without a rebuild or a restart.
+const SERVER_SETTINGS_TTL_MS = 5 * 60 * 1000;
+let serverSettingsAt = 0;
+let serverSettingsInflight: Promise<void> | null = null;
+
+async function syncServerSettings(force: boolean): Promise<void> {
+  if (force) {
+    // A save must not be answered by a pull that started before it: let any
+    // in-flight refresh settle, then invalidate and fetch again.
+    if (serverSettingsInflight) await serverSettingsInflight.catch(() => {});
+    serverSettingsAt = 0;
+  }
+  if (Date.now() - serverSettingsAt < SERVER_SETTINGS_TTL_MS) return;
+  if (serverSettingsInflight) return serverSettingsInflight;
+  serverSettingsInflight = (async () => {
+    const res = await handleApiRequest({
+      type: 'stratus/api',
+      method: 'GET',
+      path: '/x/settings/values',
+      query: { scope: 'mirrored' },
+    });
+    // An unconfigured or unreachable server keeps the last good blob (and, on a
+    // cold start, none at all) — every reader falls back to baked defaults, so
+    // a dead server never breaks a suggestion. Only a success advances the
+    // stamp, so a failure retries on the next trigger instead of going quiet.
+    if (!res.ok) return;
+    const values = res.data;
+    if (typeof values !== 'object' || values === null || Array.isArray(values)) return;
+    await chrome.storage.local.set({ [SERVER_SETTINGS_KEY]: values });
+    serverSettingsAt = Date.now();
+  })().finally(() => {
+    serverSettingsInflight = null;
+  });
+  return serverSettingsInflight;
+}
+
 // --------------------------------------------------------------- radar (§7.2)
 //
 // Session-scoped ring buffer of hot/warm sightings streamed by the content
@@ -267,13 +340,19 @@ async function dismissSightings(tweetIds: string[]): Promise<void> {
 // Attach batch-drafted replies onto matching sightings (§7.2). Single writer,
 // same as add/dismiss — a sighting evicted between draft and attach is simply
 // skipped (the panel only renders what's in the buffer).
-async function attachReplies(items: { tweetId: string; reply: string }[]): Promise<void> {
+async function attachReplies(
+  items: { tweetId: string; reply: string; variants?: ReplyVariant[] }[],
+): Promise<void> {
   const { sightings } = await readRadar();
-  const byId = new Map(items.map((i) => [i.tweetId, i.reply]));
+  const byId = new Map(items.map((i) => [i.tweetId, i]));
   await chrome.storage.session.set({
-    [RADAR_SIGHTINGS_KEY]: sightings.map((s) =>
-      byId.has(s.tweetId) ? { ...s, reply: byId.get(s.tweetId) } : s,
-    ),
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) => {
+      const item = byId.get(s.tweetId);
+      if (!item) return s;
+      const next: RadarSighting = { ...s, reply: item.reply };
+      if (item.variants && item.variants.length > 0) next.variants = item.variants;
+      return next;
+    }),
   });
 }
 
@@ -284,6 +363,104 @@ async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
   await chrome.storage.session.set({
     [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, clickedAt } : s)),
   });
+}
+
+// Confirm a radar draft into a real reply_drafts row (RU.6). POST the confirm
+// endpoint — idempotent server-side (RU.5): it promotes the newest non-expired
+// draft for the tweet and ratchets the radar status → clicked — then stamp the
+// returned draft id onto the sighting so the on-page paste flow (RU.7) can PATCH
+// that row to `posted`. Best-effort (§7.8): a failed confirm logs a warn and the
+// click UX proceeds (the reply was already copied to the clipboard).
+async function confirmDraft(tweetId: string): Promise<void> {
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: `/x/radar/drafts/${tweetId}/confirm`,
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] radar confirm failed', res.code);
+    return;
+  }
+  const draftId = (res.data as { id?: string } | undefined)?.id;
+  if (typeof draftId !== 'string') return;
+  await enqueueRadar(() => stampDraftId(tweetId, draftId));
+}
+
+// Stamp the confirmed reply_drafts id onto its sighting. Single writer, same as
+// markClicked — a sighting evicted between confirm and write is simply skipped.
+async function stampDraftId(tweetId: string, draftId: string): Promise<void> {
+  const { sightings } = await readRadar();
+  await chrome.storage.session.set({
+    [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, draftId } : s)),
+  });
+}
+
+// The on-page variant chips (RU.7) ask for a tweet's radar variants. Serve the
+// session buffer first — a live sighting is the freshest copy — then fall back
+// to GET /x/radar/drafts?tweetId= (RU.5) so a deep link that never touched the
+// panel still gets chips. A row with no stored variants (pre-feature / CLI
+// primary) degrades to the single primary as one variant.
+async function getVariants(
+  tweetId: string,
+): Promise<{ variants: ReplyVariant[]; draftId: string | null } | null> {
+  const { sightings } = await readRadar();
+  const hit = sightings.find((s) => s.tweetId === tweetId);
+  if (isReplyVariants(hit?.variants)) {
+    return { variants: hit.variants, draftId: hit.draftId ?? null };
+  }
+
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/radar/drafts',
+    query: { tweetId },
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] variants-get fetch failed', res.code);
+    return null;
+  }
+  const rows = (res.data as { drafts?: RadarDraftRow[] } | undefined)?.drafts;
+  const row = Array.isArray(rows) ? rows[0] : undefined; // newest-first
+  if (!row) return null;
+  const variants: ReplyVariant[] = isReplyVariants(row.variants)
+    ? row.variants
+    : [{ text: row.replyText, angle: row.angle as ReplyVariant['angle'] }];
+  return { variants, draftId: null };
+}
+
+// A variant chip was pasted (RU.7). Confirm the radar draft into a reply_drafts
+// row — idempotent (RU.5), so a deep link that skipped the panel-click confirm
+// still lands one — then PATCH it to `posted` (paste-time semantics). The
+// confirm response IS the full reply_drafts row, so its `replyText` is the
+// primary: a chosen text that differs rides as replyTextEdited. Best-effort
+// (§7.8): a failure warns; the reply text is already in the composer.
+async function pasteVariant(tweetId: string, text: string): Promise<void> {
+  const confirm = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: `/x/radar/drafts/${tweetId}/confirm`,
+  });
+  if (!confirm.ok) {
+    if (confirm.code !== 'unconfigured') {
+      console.warn('[stratus] variant paste confirm failed', confirm.code);
+    }
+    return;
+  }
+  const row = confirm.data as { id?: string; replyText?: string } | undefined;
+  const id = row?.id;
+  if (typeof id !== 'string') return;
+
+  const body: { status: 'posted'; replyTextEdited?: string } = { status: 'posted' };
+  if (text !== row?.replyText) body.replyTextEdited = text;
+  const patch = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'PATCH',
+    path: `/x/replies/${id}`,
+    body,
+  });
+  if (!patch.ok && patch.code !== 'unconfigured') {
+    console.warn('[stratus] variant paste patch failed', patch.code);
+  }
 }
 
 // --- server copy (C0): radar_drafts is the restart-surviving mirror of the
@@ -494,14 +671,121 @@ async function recordEarlyReplies(tweetId: string, replies: EarlyReply[]): Promi
   );
 }
 
+// ------------------------------------------- manual-publish reminders (A3.8)
+//
+// A `manual` scheduled post is pasted into X by hand at its slot (Studio
+// visuals, link posts at $0 — nothing auto-publishes). We can't watch for it
+// to go live, so — unlike the Launch Room — there is no grace and no retry:
+// one alarm AT scheduledFor, and at fire time we re-check the row is still
+// `manual`, drop a due entry for the Today card (single writer, its own
+// promise chain since `manual:due` is a distinct key family), and notify. This
+// piggybacks on the launch sync's three triggers (worker start, panel
+// `stratus/launch-sync`, the 15-min periodic alarm).
+
+let manualChain: Promise<void> = Promise.resolve();
+function enqueueManual(fn: () => Promise<void>): Promise<void> {
+  const next = manualChain.then(fn);
+  manualChain = next.catch((err) => console.error('[stratus] manual write failed', err));
+  return next;
+}
+
+async function syncManualAlarms(): Promise<void> {
+  // Recently-past window included so a missed slot (browser was closed) still
+  // fires a clamped alarm; the 24h forward reach covers the rest of today.
+  const from = new Date(Date.now() - MANUAL_MISS_GRACE_MS).toISOString();
+  const to = new Date(Date.now() + 24 * 3_600_000).toISOString();
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: '/x/posts/scheduled',
+    query: { status: 'manual', from, to },
+  });
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] manual sync failed', res.code);
+    return;
+  }
+  const posts = Array.isArray(res.data) ? (res.data as ScheduledPost[]) : [];
+  const wanted = computeManualAlarms(posts, Date.now());
+  const wantedNames = new Set(wanted.map((w) => w.name));
+
+  // Drop manual alarms for rows that moved/posted/cancelled; scoped to our
+  // prefix so launch fire/retry/sync alarms are never touched.
+  const existing = await chrome.alarms.getAll();
+  for (const a of existing) {
+    if (a.name.startsWith(MANUAL_ALARM_PREFIX) && !wantedNames.has(a.name)) {
+      await chrome.alarms.clear(a.name);
+    }
+  }
+  for (const w of wanted) chrome.alarms.create(w.name, { when: w.when });
+}
+
+async function handleManualFire(postId: string): Promise<void> {
+  const res = await handleApiRequest({
+    type: 'stratus/api',
+    method: 'GET',
+    path: `/x/posts/scheduled/${postId}`,
+  });
+  // Best-effort: a transient failure just skips this nudge — the next sync
+  // re-creates the alarm while the slot is still inside the miss window.
+  if (!res.ok) {
+    if (res.code !== 'unconfigured') console.warn('[stratus] manual fire fetch failed', res.code);
+    return;
+  }
+  const row = res.data as ScheduledPost;
+  // Posted (marked or reconciled), cancelled, or edited back to draft/pending
+  // meanwhile — nothing to nudge, drop silently.
+  if (row.status !== 'manual') return;
+
+  const entry: ManualDue = {
+    postId: row.id,
+    text: row.text,
+    mediaNote: row.mediaNote,
+    scheduledFor: row.scheduledFor,
+    firedAt: new Date().toISOString(),
+  };
+  await enqueueManual(async () => {
+    const out = await chrome.storage.session.get(MANUAL_DUE_KEY);
+    const existing = isManualDueList(out[MANUAL_DUE_KEY]) ? out[MANUAL_DUE_KEY] : [];
+    await chrome.storage.session.set({ [MANUAL_DUE_KEY]: mergeManualDue(existing, entry) });
+  });
+  // Same notification id on a re-fire replaces rather than stacks (the card
+  // dedups too), so an unposted slot re-nudges without piling up.
+  chrome.notifications.create(`stratus-manual-note:${row.id}`, {
+    type: 'basic',
+    iconUrl: chrome.runtime.getURL('icons/icon128.png'),
+    title: 'stratus — post now',
+    message: manualNotificationText(row.text),
+    priority: 2,
+  });
+}
+
+async function dismissManualDue(postId: string): Promise<void> {
+  const out = await chrome.storage.session.get(MANUAL_DUE_KEY);
+  const existing = isManualDueList(out[MANUAL_DUE_KEY]) ? out[MANUAL_DUE_KEY] : [];
+  await chrome.storage.session.set({
+    [MANUAL_DUE_KEY]: existing.filter((e) => e.postId !== postId),
+  });
+}
+
 // Runs on every service-worker start; re-creating the periodic alarm is
 // idempotent (same name replaces).
 chrome.alarms.create(LAUNCH_SYNC_ALARM, { periodInMinutes: LAUNCH_SYNC_PERIOD_MIN });
 void syncLaunchAlarms();
+void syncManualAlarms();
+void syncServerSettings(false);
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === LAUNCH_SYNC_ALARM) {
     void syncLaunchAlarms();
+    void syncManualAlarms();
+    // TTL-guarded, so riding the 15-min alarm costs nothing when a panel mount
+    // already forced a refresh — the settings blob has no alarm of its own.
+    void syncServerSettings(false);
+    return;
+  }
+  const manualId = parseManualAlarm(alarm.name);
+  if (manualId) {
+    void handleManualFire(manualId);
     return;
   }
   const fire = parseLaunchAlarm(alarm.name);
@@ -511,7 +795,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // A notification click is a user gesture, which sidePanel.open needs. Best
 // effort — if Chrome disagrees, the panel is one action-click away.
 chrome.notifications.onClicked.addListener((id) => {
-  if (!id.startsWith('stratus-launch-note:')) return;
+  // Both the launch and the manual-post notifications open the side panel.
+  if (!id.startsWith('stratus-launch-note:') && !id.startsWith('stratus-manual-note:')) return;
   chrome.notifications.clear(id);
   chrome.windows.getLastFocused((win) => {
     if (win?.id !== undefined) {
@@ -522,7 +807,77 @@ chrome.notifications.onClicked.addListener((id) => {
   });
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// ------------------------------------------------ notifications ctx (C10)
+//
+// Augmenting x.com/notifications needs two lookups per cell: "which of my
+// posts is this reply on, and did the inbox already settle it?" (the mention
+// rows a daily pull already billed) and "does this handle matter?" (the S0.3
+// rank map). Both are cached here rather than fetched per cell — a long
+// notifications scroll would otherwise fan out hundreds of requests — and both
+// refreshes are TTL-guarded no-ops in the common case.
+//
+// Mentions get a shorter TTL than the rank map because they move on a human
+// sync click; that click sends `force` so its freshly pulled rows land at once.
+const NOTIF_CONTEXT_TTL_MS = 5 * 60 * 1000;
+const NOTIF_CONTEXT_LIMIT = '200';
+let notifContext: NotifContextMap = {};
+let notifContextAt = 0;
+let notifContextInflight: Promise<void> | null = null;
+
+async function refreshNotifContext(): Promise<void> {
+  if (Date.now() - notifContextAt < NOTIF_CONTEXT_TTL_MS) return;
+  if (notifContextInflight) return notifContextInflight;
+  notifContextInflight = (async () => {
+    const res = await handleApiRequest({
+      type: 'stratus/api',
+      method: 'GET',
+      path: '/x/mentions',
+      query: { limit: NOTIF_CONTEXT_LIMIT },
+    });
+    if (!res.ok) return;
+    const rows = (res.data as MentionsResponse | undefined)?.mentions;
+    if (!Array.isArray(rows)) return;
+    const map: NotifContextMap = {};
+    for (const row of rows) {
+      if (typeof row?.tweetId !== 'string') continue;
+      map[row.tweetId] = { parentText: row.parentText ?? null, status: row.status };
+    }
+    // Only a successful pull advances the stamp — a failed one keeps the last
+    // good map and retries on the next ask instead of going quiet for 5 min.
+    notifContext = map;
+    notifContextAt = Date.now();
+  })().finally(() => {
+    notifContextInflight = null;
+  });
+  return notifContextInflight;
+}
+
+async function notifContextPayload(force: boolean): Promise<NotifContextResponse> {
+  if (force) {
+    // A sync click must not be answered by a pull that started before it: let
+    // any in-flight refresh settle, then invalidate and fetch again.
+    if (notifContextInflight) await notifContextInflight.catch(() => {});
+    notifContextAt = 0;
+  }
+  await Promise.all([
+    refreshNotifContext().catch((err) => console.warn('[stratus] mentions context failed', err)),
+    refreshRankMap().catch((err) => console.warn('[stratus] rankmap refresh failed', err)),
+  ]);
+  return { ok: true, mentions: notifContext, rankMap };
+}
+
+// --- People dossier click-through (AX.6). The handoff session key is written
+// only here so the background stays the single chrome.storage.session writer;
+// App.tsx reads it (mount + onChanged) and clears it via OpenPersonClear.
+const OPEN_PERSON_KEY = 'stratus:openPerson';
+let openPersonChain: Promise<void> = Promise.resolve();
+function enqueueOpenPerson(fn: () => Promise<void>): Promise<void> {
+  const next = openPersonChain.then(fn);
+  openPersonChain = next.catch((err) => console.error('[stratus] open-person write failed', err));
+  return next;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (isApiRequest(msg)) {
     void handleApiRequest(msg).then(
       (res) => sendResponse(res),
@@ -565,6 +920,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     );
     return true;
   }
+  if (isRadarConfirm(msg)) {
+    void confirmDraft(msg.tweetId).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isRadarVariantsGet(msg)) {
+    void getVariants(msg.tweetId).then(
+      (data) =>
+        sendResponse({
+          ok: true,
+          variants: data?.variants ?? null,
+          draftId: data?.draftId ?? null,
+        }),
+      (err) => {
+        console.warn('[stratus] variants-get failed', err);
+        sendResponse({ ok: false });
+      },
+    );
+    return true;
+  }
+  if (isRadarVariantPasted(msg)) {
+    void pasteVariant(msg.tweetId, msg.text).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
   if (isRadarRehydrate(msg)) {
     void rehydrateFromServer().then(
       (r) => sendResponse({ ok: true, added: r.added }),
@@ -575,8 +959,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     );
     return true;
   }
+  if (isOpenPerson(msg)) {
+    // A content-script click is a user gesture; sidePanel.open best-effort
+    // survives one message hop (Chrome >=116). If it doesn't, the panel is one
+    // action-click away and the session key still routes on next open.
+    const tabId = sender.tab?.id;
+    if (tabId !== undefined) {
+      chrome.sidePanel.open({ tabId }).catch(() => {
+        /* no gesture credit — ignore */
+      });
+    }
+    void enqueueOpenPerson(() =>
+      chrome.storage.session.set({ [OPEN_PERSON_KEY]: { handle: msg.handle, at: Date.now() } }),
+    ).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isOpenPersonClear(msg)) {
+    void enqueueOpenPerson(() => chrome.storage.session.remove(OPEN_PERSON_KEY)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
   if (isLaunchSync(msg)) {
-    void syncLaunchAlarms().then(
+    // Panel mount re-syncs both the launch and the manual reminder alarms.
+    void Promise.all([syncLaunchAlarms(), syncManualAlarms()]).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );
@@ -606,6 +1016,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isManualDismiss(msg)) {
+    void enqueueManual(() => dismissManualDue(msg.postId)).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isSettingsSync(msg)) {
+    void syncServerSettings(true).then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false }),
+    );
+    return true;
+  }
+  if (isNotifContextGet(msg)) {
+    void notifContextPayload(msg.force === true).then(
+      (payload) => sendResponse(payload),
+      (err) => {
+        // Never let the notifications page see a failure — it augments, it
+        // doesn't own the page.
+        console.warn('[stratus] notif-context failed', err);
+        sendResponse({ ok: true, mentions: {}, rankMap } satisfies NotifContextResponse);
+      },
     );
     return true;
   }

@@ -1,32 +1,82 @@
-// The Studio (SURFACES S3.3): template picker → live preview → Copy PNG /
-// Download. The preview IS the artifact — every field edit re-renders the
-// exact pixels that will be exported, because the engine is deterministic.
-// Export ends in a human paste: /2/media/upload still needs OAuth 1.0a, so
-// stratus never attaches images via the API. $0 throughout.
+// The Studio (SURFACES S3.3, refactored S5.2 into a template registry + field
+// components): template picker → live preview → Copy PNG / Download. The preview
+// IS the artifact — every field edit re-renders the exact pixels that will be
+// exported, because the engine is deterministic. Export ends in a human paste:
+// /2/media/upload still needs OAuth 1.0a, so stratus never attaches images via
+// the API. $0 throughout.
 
-import { type ChangeEvent, type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type ChangeEvent,
+  type JSX,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   type BrandKit,
+  type BrandKits,
   DEFAULT_BRAND_KIT,
-  loadBrandKit,
-  parseBrandKit,
-  saveBrandKit,
+  activeKit,
+  deletePreset,
+  loadBrandKits,
+  patchActiveKit,
+  renamePreset,
+  saveBrandKits,
+  savePresetAs,
+  setActivePreset,
 } from '../studio/brandKit.ts';
-import { render } from '../studio/compose.ts';
-import { ensureStudioFonts } from '../studio/fonts.ts';
 import {
-  BANNER,
-  PFP_FRAME,
-  QUOTE_CARD,
-  STAT_CARD,
-  type StatCardData,
-  bannerSpec,
-  pfpFrameSpec,
-  quoteCardSpec,
-  statCardSpec,
-} from '../studio/templates.ts';
+  type ChartCell,
+  type GrowthSeries,
+  growthSeries,
+  heatmapCells,
+} from '../studio/chartData.ts';
+import { type PatternKind, render } from '../studio/compose.ts';
+import { ensureStudioFonts } from '../studio/fonts.ts';
+import { latestCrossed } from '../studio/milestones.ts';
+import type { MilestoneCardData, StatCardData, StreakCardData } from '../studio/templates.ts';
 import { ApiError, type ContentPillar, type MediaAsset, api } from './api.ts';
 import type { Settings } from './storage.ts';
+import { KitEditor } from './studio/KitEditor.tsx';
+import {
+  BackgroundFields,
+  BannerFields,
+  ChartFields,
+  CodeFields,
+  LibraryRail,
+  ListFields,
+  MilestoneFields,
+  PfpFields,
+  QuoteFields,
+  StatFields,
+  StreakFields,
+  ThreadFields,
+} from './studio/fields.tsx';
+import {
+  DEFAULT_BANNER_CREW,
+  DEFAULT_BANNER_HEADLINE,
+  DEFAULT_BANNER_KEYWORDS,
+  DEFAULT_BANNER_STANCE,
+  EMPTY_STAT,
+  TEMPLATES,
+  type TemplateId,
+  buildSpec,
+  supportsAiBackground,
+  templateMeta,
+} from './studio/registry.ts';
+import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Auto-detected milestone (before the manual override folds in). */
+interface MilestoneAuto {
+  milestone: number | null;
+  crossedOn: string | null;
+  followers: number | null;
+}
 
 /** ImageBitmap from a data: URL — same-origin, so it never taints the canvas
  *  (the whole point of the server returning base64 instead of an xAI URL). */
@@ -50,43 +100,29 @@ function seedImagePrompt(pillarLabel: string | null, styleSuffix: string): strin
   return `${subject}. ${styleSuffix}`;
 }
 
-/** Templates that composite an AI background under their text. */
-const BG_TEMPLATES = new Set<TemplateId>(['quote', 'banner']);
+// S5.4: the background of a background-capable template — the plain gradient, a
+// deterministic $0 pattern, or the ~$0.02 AI image. Patterns and the AI bitmap
+// are mutually exclusive; `bgMode` is the single source of truth (patternKind
+// derives from it).
+type BgMode = 'gradient' | PatternKind | 'ai';
+const BG_MODES: SubTab<BgMode>[] = [
+  { id: 'gradient', label: 'Gradient' },
+  { id: 'dots', label: 'Dots' },
+  { id: 'grid', label: 'Grid' },
+  { id: 'diagonal', label: 'Diagonal' },
+  { id: 'plus', label: 'Plus' },
+  { id: 'blobs', label: 'Blobs' },
+  { id: 'ai', label: 'AI image' },
+];
 
 /** Seed handed over from the Composer's "Make visual" or a leader's re-up. */
 export interface StudioSeed {
   text: string;
   /** Calendar row the visual belongs to — enables the media_note stamp. */
   postId?: string;
-}
-
-type TemplateId = 'quote' | 'stat' | 'banner' | 'pfp';
-
-const TEMPLATES: Array<{ id: TemplateId; label: string; size: string }> = [
-  { id: 'quote', label: 'Quote card', size: `${QUOTE_CARD.w}×${QUOTE_CARD.h}` },
-  { id: 'stat', label: 'Stat card', size: `${STAT_CARD.w}×${STAT_CARD.h}` },
-  { id: 'banner', label: 'Banner', size: `${BANNER.w}×${BANNER.h}` },
-  { id: 'pfp', label: 'Profile pic', size: `${PFP_FRAME.w}×${PFP_FRAME.h}` },
-];
-
-const EMPTY_STAT: StatCardData = {
-  followers: null,
-  delta: null,
-  sparkline: [],
-  weekLabel: '',
-  posts: null,
-  replies: null,
-  topPostText: null,
-  topPostViews: null,
-  streakDays: null,
-};
-
-// <input type="color"> only speaks #rrggbb.
-function toColorInput(hex: string): string {
-  const m = /^#([0-9a-f]{3})$/i.exec(hex);
-  if (!m) return hex;
-  const s = m[1] as string;
-  return `#${s.replace(/./g, (c) => c + c)}`;
+  /** Which template to open — Composer thread mode seeds the thread cover; the
+   *  default (or 'quote') seeds the quote card. */
+  template?: 'quote' | 'thread';
 }
 
 interface Props {
@@ -96,7 +132,8 @@ interface Props {
 }
 
 export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element {
-  const [kit, setKit] = useState<BrandKit | null>(null);
+  const [bundle, setBundle] = useState<BrandKits | null>(null);
+  const kit = bundle ? activeKit(bundle) : null;
   const [kitOpen, setKitOpen] = useState(false);
   const [template, setTemplate] = useState<TemplateId>('quote');
 
@@ -107,15 +144,45 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const [statData, setStatData] = useState<StatCardData | null>(null);
   const [statLoading, setStatLoading] = useState(false);
 
-  const [bannerHeadline, setBannerHeadline] = useState('');
-  const [bannerKeywords, setBannerKeywords] = useState('');
+  const [bannerHeadline, setBannerHeadline] = useState(DEFAULT_BANNER_HEADLINE);
+  const [bannerKeywords, setBannerKeywords] = useState(DEFAULT_BANNER_KEYWORDS);
   const [bannerFollowers, setBannerFollowers] = useState<number | null>(null);
   const [bannerMilestone, setBannerMilestone] = useState(true);
+  const [bannerStance, setBannerStance] = useState(DEFAULT_BANNER_STANCE);
+  const [bannerCrew, setBannerCrew] = useState(DEFAULT_BANNER_CREW);
+  const [bannerAnchor, setBannerAnchor] = useState(true);
   const bannerSeeded = useRef(false);
 
   const [pfpBitmap, setPfpBitmap] = useState<ImageBitmap | null>(null);
 
-  // S4: AI background composited under the quote/banner text.
+  const [codeTitle, setCodeTitle] = useState('');
+  const [codeText, setCodeText] = useState('');
+
+  const [threadHook, setThreadHook] = useState('');
+  const [threadCount, setThreadCount] = useState(5);
+  const [listTitle, setListTitle] = useState('');
+  const [listItems, setListItems] = useState('');
+
+  // S5.8 chart card: growth/heatmap mode + the two lazily-loaded $0 datasets.
+  const [chartMode, setChartMode] = useState<'growth' | 'heatmap'>('growth');
+  const [chartGrowth, setChartGrowth] = useState<GrowthSeries | null>(null);
+  const [chartCells, setChartCells] = useState<ChartCell[]>([]);
+  const [chartLoading, setChartLoading] = useState(false);
+
+  // S5.5 celebration cards: auto-detected value + a manual override. The
+  // override wins when set; blank falls back to what the account/streak reads.
+  const [milestoneAuto, setMilestoneAuto] = useState<MilestoneAuto | null>(null);
+  const [milestoneOverride, setMilestoneOverride] = useState<number | null>(null);
+  const [milestoneLoading, setMilestoneLoading] = useState(false);
+  const [streakAuto, setStreakAuto] = useState<{ days: number | null; since: string } | null>(null);
+  const [streakOverride, setStreakOverride] = useState<number | null>(null);
+  const [streakLoading, setStreakLoading] = useState(false);
+
+  // S4/S5.4: the background of a background-capable template. `bgMode` is the
+  // single source of truth; the AI bitmap only applies while mode === 'ai'.
+  const [bgMode, setBgMode] = useState<BgMode>('gradient');
+  const [patternSeed, setPatternSeed] = useState(7);
+  const patternKind: PatternKind | null = bgMode !== 'gradient' && bgMode !== 'ai' ? bgMode : null;
   const [bgBitmap, setBgBitmap] = useState<ImageBitmap | null>(null);
   const [bgPrompt, setBgPrompt] = useState('');
   const [pillars, setPillars] = useState<ContentPillar[]>([]);
@@ -137,14 +204,18 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const renderToken = useRef(0);
 
   useEffect(() => {
-    void loadBrandKit().then(setKit);
+    void loadBrandKits().then(setBundle);
   }, []);
 
-  // Seed from Composer / re-up: quote card, text prefilled, stamp target kept.
+  // Seed from Composer / re-up: route to the requested template (thread mode
+  // seeds the thread-cover hook; everything else the quote card), text
+  // prefilled, stamp target kept.
   useEffect(() => {
     if (!seed) return;
-    setTemplate('quote');
-    setQuoteText(seed.text);
+    const target: TemplateId = seed.template === 'thread' ? 'thread' : 'quote';
+    setTemplate(target);
+    if (target === 'thread') setThreadHook(seed.text);
+    else setQuoteText(seed.text);
     setSeedPostId(seed.postId ?? null);
     setStamped(false);
     onClearSeed();
@@ -195,13 +266,116 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   }, [settings]);
 
+  // Milestone: detect the latest crossed follower rung over the account series
+  // client-side (§7.12 read-time compute) — no new server aggregation.
+  const loadMilestoneData = useCallback(async () => {
+    setMilestoneLoading(true);
+    setError(null);
+    try {
+      const res = await api.metrics.account(settings);
+      const crossed = latestCrossed(
+        res.series.map((p) => ({ date: p.snapshotAt, followers: p.followersCount })),
+      );
+      setMilestoneAuto({
+        milestone: crossed?.milestone ?? null,
+        crossedOn: crossed?.crossedOn ? crossed.crossedOn.slice(0, 10) : null,
+        followers: res.latest?.followersCount ?? null,
+      });
+    } catch (e) {
+      setError(e instanceof ApiError ? `Account data failed: ${e.message}` : 'Account data failed');
+      setMilestoneAuto({ milestone: null, crossedOn: null, followers: null });
+    } finally {
+      setMilestoneLoading(false);
+    }
+  }, [settings]);
+
+  // Streak: the live C9 quest streak; the start date is derived from its length.
+  const loadStreakData = useCallback(async () => {
+    setStreakLoading(true);
+    setError(null);
+    try {
+      const brief = await api.brief(settings);
+      const days = brief.quests.streak.current;
+      const since =
+        days > 0 ? new Date(Date.now() - (days - 1) * DAY_MS).toISOString().slice(0, 10) : '';
+      setStreakAuto({ days: days > 0 ? days : null, since });
+    } catch (e) {
+      setError(e instanceof ApiError ? `Streak data failed: ${e.message}` : 'Streak data failed');
+      setStreakAuto({ days: null, since: '' });
+    } finally {
+      setStreakLoading(false);
+    }
+  }, [settings]);
+
+  // Chart: both datasets are $0 reads — the account series (growth) and the
+  // best-times cells (heatmap), gated client-side via the response's minN.
+  const loadChartData = useCallback(async () => {
+    setChartLoading(true);
+    setError(null);
+    try {
+      const [account, best] = await Promise.all([
+        api.metrics.account(settings),
+        api.metrics.bestTimes(settings),
+      ]);
+      setChartGrowth(growthSeries(account.series));
+      setChartCells(heatmapCells(best.cells, best.minN));
+    } catch (e) {
+      setError(e instanceof ApiError ? `Chart data failed: ${e.message}` : 'Chart data failed');
+      setChartGrowth({ points: [], firstLabel: '', lastLabel: '', delta: 0 });
+      setChartCells([]);
+    } finally {
+      setChartLoading(false);
+    }
+  }, [settings]);
+
   useEffect(() => {
     if (template === 'stat' && statData === null && !statLoading) void loadStatData();
     if (template === 'banner' && !bannerSeeded.current) {
       bannerSeeded.current = true;
       void loadBannerData();
     }
-  }, [template, statData, statLoading, loadStatData, loadBannerData]);
+    if (template === 'milestone' && milestoneAuto === null && !milestoneLoading)
+      void loadMilestoneData();
+    if (template === 'streak' && streakAuto === null && !streakLoading) void loadStreakData();
+    if (template === 'chart' && chartGrowth === null && !chartLoading) void loadChartData();
+  }, [
+    template,
+    statData,
+    statLoading,
+    loadStatData,
+    loadBannerData,
+    milestoneAuto,
+    milestoneLoading,
+    loadMilestoneData,
+    streakAuto,
+    streakLoading,
+    loadStreakData,
+    chartGrowth,
+    chartLoading,
+    loadChartData,
+  ]);
+
+  // Resolve the celebration-card data the render loop feeds buildSpec: override
+  // beats auto; the date label only shows when the auto value is in effect.
+  // Memoized so a stable identity doesn't churn the debounced render effect.
+  const milestoneData = useMemo<MilestoneCardData>(
+    () => ({
+      milestone: milestoneOverride ?? milestoneAuto?.milestone ?? null,
+      followers: milestoneAuto?.followers ?? null,
+      dateLabel:
+        milestoneOverride === null && milestoneAuto?.crossedOn
+          ? `reached ${milestoneAuto.crossedOn}`
+          : '',
+    }),
+    [milestoneOverride, milestoneAuto],
+  );
+  const streakData = useMemo<StreakCardData>(
+    () => ({
+      days: streakOverride ?? streakAuto?.days ?? null,
+      dateLabel: streakOverride === null && streakAuto?.since ? streakAuto.since : '',
+    }),
+    [streakOverride, streakAuto],
+  );
 
   // S4: history rail — metadata only ($0 read), refreshed after save/delete.
   const loadLibrary = useCallback(async () => {
@@ -216,7 +390,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   // style suffix, and load the library — once, when a background-capable
   // template first comes into view.
   useEffect(() => {
-    if (!kit || !BG_TEMPLATES.has(template) || bgPromptSeeded.current) return;
+    if (!kit || !supportsAiBackground(template) || bgPromptSeeded.current) return;
     bgPromptSeeded.current = true;
     void (async () => {
       try {
@@ -279,6 +453,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     setGenCost(null);
   };
 
+  // Picking a pattern (or gradient) drops any AI bitmap — patterns and AI
+  // backgrounds are mutually exclusive; 'ai' keeps the bitmap for regeneration.
+  const chooseBgMode = (mode: BgMode): void => {
+    setBgMode(mode);
+    if (mode !== 'ai') clearBackground();
+  };
+
   const saveToLibrary = async (): Promise<void> => {
     const blob = lastBlob.current;
     if (!blob) return;
@@ -287,14 +468,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     setNotice(null);
     try {
       const pngBase64 = await blobToBase64(blob);
-      const t = TEMPLATES.find((x) => x.id === template);
-      const [w, h] = (t?.size ?? '').split('×').map((n) => Number.parseInt(n, 10));
+      const { w, h } = templateMeta(template).size;
       await api.assets.save(settings, {
         pngBase64,
         kind: template,
         ...(bgBitmap && bgPrompt.trim() !== '' ? { prompt: bgPrompt.trim() } : {}),
-        ...(Number.isFinite(w) ? { width: w } : {}),
-        ...(Number.isFinite(h) ? { height: h } : {}),
+        width: w,
+        height: h,
       });
       setNotice('Saved to your asset library.');
       await loadLibrary();
@@ -311,7 +491,8 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     try {
       const { base64, mediaType } = await api.assets.png(settings, asset.id);
       const bmp = await bitmapFromDataUrl(`data:${mediaType};base64,${base64}`);
-      if (!BG_TEMPLATES.has(template)) setTemplate('quote');
+      if (!supportsAiBackground(template)) setTemplate('quote');
+      setBgMode('ai');
       setBgBitmap(bmp);
       if (asset.prompt) setBgPrompt(asset.prompt);
       setNotice('Re-opened as the background layer — add your text on top.');
@@ -337,28 +518,39 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       setRendering(true);
       try {
         await ensureStudioFonts();
-        const spec =
-          template === 'quote'
-            ? quoteCardSpec(
-                { text: quoteText.trim() || 'Your words, pixel-crisp.', background: bgBitmap },
-                kit,
-              )
-            : template === 'stat'
-              ? statCardSpec(statData ?? EMPTY_STAT, kit)
-              : template === 'banner'
-                ? bannerSpec(
-                    {
-                      headline: bannerHeadline.trim() || 'Building in public',
-                      keywords: bannerKeywords
-                        .split(',')
-                        .map((k) => k.trim())
-                        .filter((k) => k !== ''),
-                      followers: bannerMilestone ? bannerFollowers : null,
-                      background: bgBitmap,
-                    },
-                    kit,
-                  )
-                : pfpFrameSpec({ photo: pfpBitmap, initial: kit.handle }, kit);
+        const spec = buildSpec(
+          template,
+          {
+            quoteText,
+            statData,
+            bannerHeadline,
+            bannerKeywords,
+            bannerFollowers,
+            bannerMilestone,
+            bannerStance,
+            bannerCrew,
+            bannerAnchor,
+            pfpBitmap,
+            bgBitmap,
+            patternKind,
+            patternSeed,
+            milestoneData,
+            streakData,
+            codeTitle,
+            codeText,
+            threadHook,
+            threadCount,
+            listTitle,
+            listItems,
+            chartMode,
+            chartPoints: chartGrowth?.points ?? [],
+            chartFirstLabel: chartGrowth?.firstLabel ?? '',
+            chartLastLabel: chartGrowth?.lastLabel ?? '',
+            chartDelta: chartGrowth?.delta ?? 0,
+            chartCells,
+          },
+          kit,
+        );
         // A document canvas (not OffscreenCanvas) so the loaded FontFaces are
         // guaranteed visible to measureText/fillText.
         const blob = await render(spec, document.createElement('canvas'));
@@ -385,8 +577,24 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     bannerKeywords,
     bannerFollowers,
     bannerMilestone,
+    bannerStance,
+    bannerCrew,
+    bannerAnchor,
     pfpBitmap,
     bgBitmap,
+    patternKind,
+    patternSeed,
+    milestoneData,
+    streakData,
+    codeTitle,
+    codeText,
+    threadHook,
+    threadCount,
+    listTitle,
+    listItems,
+    chartMode,
+    chartGrowth,
+    chartCells,
   ]);
 
   useEffect(
@@ -396,14 +604,20 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     [previewUrl],
   );
 
-  const patchKit = (partial: Partial<BrandKit>): void => {
-    setKit((prev) => {
+  // Every kit/preset edit maps to a pure bundle transform, then persists.
+  const applyBundle = (fn: (b: BrandKits) => BrandKits): void => {
+    setBundle((prev) => {
       if (!prev) return prev;
-      const next = { ...prev, ...partial };
-      void saveBrandKit(next);
+      const next = fn(prev);
+      void saveBrandKits(next);
       return next;
     });
   };
+  const patchKit = (partial: Partial<BrandKit>): void =>
+    applyBundle((b) => patchActiveKit(b, partial));
+  const importBundle = (next: BrandKits): void => applyBundle(() => next);
+  const resetActiveKit = (): void =>
+    applyBundle((b) => patchActiveKit(b, { ...DEFAULT_BRAND_KIT }));
 
   const copyPng = async (): Promise<void> => {
     const blob = lastBlob.current;
@@ -421,10 +635,10 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   const download = (): void => {
     const blob = lastBlob.current;
     if (!blob) return;
-    const t = TEMPLATES.find((x) => x.id === template);
+    const { w, h } = templateMeta(template).size;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `stratus-${template}-${t?.size ?? ''}.png`;
+    a.download = `stratus-${template}-${w}×${h}.png`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -435,38 +649,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     if (!seedPostId) return;
     setError(null);
     try {
-      const label = TEMPLATES.find((x) => x.id === template)?.label ?? 'visual';
+      const label = templateMeta(template).label;
       await api.update(settings, seedPostId, { mediaNote: `${label} made in Studio` });
       setStamped(true);
       setNotice('Post marked — it renders an amber "post manually" chip now.');
     } catch (e) {
       setError(e instanceof ApiError ? `Stamp failed: ${e.message}` : 'Stamp failed');
     }
-  };
-
-  const exportKit = (): void => {
-    if (!kit) return;
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(
-      new Blob([JSON.stringify(kit, null, 2)], { type: 'application/json' }),
-    );
-    a.download = 'stratus-brand-kit.json';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  const importKit = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    const parsed = parseBrandKit(await file.text());
-    if (!parsed) {
-      setError('Not a brand kit JSON.');
-      return;
-    }
-    setKit(parsed);
-    await saveBrandKit(parsed);
-    setNotice('Brand kit imported.');
   };
 
   const onPickPhoto = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
@@ -480,7 +669,7 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   };
 
-  if (!kit) return <div className="panel muted">Loading…</div>;
+  if (!bundle || !kit) return <div className="panel muted">Loading…</div>;
 
   return (
     <div className="panel">
@@ -492,195 +681,173 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       </div>
 
       {kitOpen && (
-        <section className="studio-kit">
-          <div className="studio-kit-row">
-            <label className="studio-color">
-              <span>Background</span>
-              <input
-                type="color"
-                value={toColorInput(kit.bg)}
-                onChange={(e) => patchKit({ bg: e.target.value })}
-              />
-            </label>
-            <label className="studio-color">
-              <span>Accent</span>
-              <input
-                type="color"
-                value={toColorInput(kit.accent)}
-                onChange={(e) => patchKit({ accent: e.target.value })}
-              />
-            </label>
-          </div>
-          <label className="field">
-            <span>Handle (no @)</span>
-            <input
-              type="text"
-              value={kit.handle}
-              onChange={(e) => patchKit({ handle: e.target.value.replace(/^@+/, '') })}
-              placeholder="yourhandle"
-            />
-          </label>
-          <div className="studio-kit-row">
-            <label className="row studio-check">
-              <input
-                type="checkbox"
-                checked={kit.watermark}
-                onChange={(e) => patchKit({ watermark: e.target.checked })}
-              />
-              <span>Watermark</span>
-            </label>
-            <input
-              type="text"
-              value={kit.watermarkText}
-              onChange={(e) => patchKit({ watermarkText: e.target.value })}
-              disabled={!kit.watermark}
-            />
-          </div>
-          <label className="field">
-            <span>AI background style suffix (the brand — keep "no text")</span>
-            <textarea
-              value={kit.imageStyleSuffix}
-              onChange={(e) => patchKit({ imageStyleSuffix: e.target.value })}
-              rows={2}
-            />
-          </label>
-          <div className="row studio-kit-actions">
-            <button type="button" onClick={exportKit}>
-              Export JSON
-            </button>
-            <label className="studio-import">
-              Import
-              <input type="file" accept="application/json" onChange={(e) => void importKit(e)} />
-            </label>
+        <KitEditor
+          bundle={bundle}
+          onPatch={patchKit}
+          onSelectPreset={(name) => applyBundle((b) => setActivePreset(b, name))}
+          onSaveAs={(name) => applyBundle((b) => savePresetAs(b, name, activeKit(b)))}
+          onRename={(from, to) => applyBundle((b) => renamePreset(b, from, to))}
+          onDelete={(name) => applyBundle((b) => deletePreset(b, name))}
+          onImport={importBundle}
+          onResetActive={resetActiveKit}
+          onError={setError}
+          onNotice={setNotice}
+        />
+      )}
+
+      {/* The gallery keeps `.studio-template` rather than becoming SubTabs: each
+          pill carries two lines (label + pixel size), which a segmented pill
+          cannot. The flat background row below it can, and does. */}
+      <Section title="Template">
+        <div className="studio-templates">
+          {TEMPLATES.map((t) => (
             <button
+              key={t.id}
               type="button"
-              onClick={() => {
-                setKit({ ...DEFAULT_BRAND_KIT });
-                void saveBrandKit({ ...DEFAULT_BRAND_KIT });
-              }}
+              className={`studio-template${template === t.id ? ' studio-template-active' : ''}`}
+              onClick={() => setTemplate(t.id)}
             >
-              Reset
+              <span>{t.label}</span>
+              <span className="muted">
+                {t.size.w}×{t.size.h}
+              </span>
             </button>
-          </div>
-        </section>
-      )}
+          ))}
+        </div>
+      </Section>
 
-      <div className="studio-templates">
-        {TEMPLATES.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`studio-template${template === t.id ? ' studio-template-active' : ''}`}
-            onClick={() => setTemplate(t.id)}
-          >
-            <span>{t.label}</span>
-            <span className="muted">{t.size}</span>
-          </button>
-        ))}
-      </div>
-
-      {template === 'quote' && (
-        <label className="field">
-          <span>Quote text</span>
-          <textarea
-            value={quoteText}
-            onChange={(e) => setQuoteText(e.target.value)}
-            rows={4}
-            placeholder="Paste the draft or line worth framing…"
-          />
-        </label>
-      )}
+      {template === 'quote' && <QuoteFields value={quoteText} onChange={setQuoteText} />}
 
       {template === 'stat' && (
-        <div className="row studio-data-row">
-          <span className="muted">
-            {statLoading
-              ? 'Reading the week…'
-              : statData
-                ? `Live data: ${statData.weekLabel}`
-                : 'No data yet'}
-          </span>
-          <button type="button" onClick={() => void loadStatData()} disabled={statLoading}>
-            Reload
-          </button>
-        </div>
+        <StatFields loading={statLoading} data={statData} onReload={() => void loadStatData()} />
       )}
 
       {template === 'banner' && (
-        <>
-          <label className="field">
-            <span>Headline</span>
-            <input
-              type="text"
-              value={bannerHeadline}
-              onChange={(e) => setBannerHeadline(e.target.value)}
-              placeholder="Building in public"
-            />
-          </label>
-          <label className="field">
-            <span>Keywords (comma-separated — prefilled from your pillars)</span>
-            <input
-              type="text"
-              value={bannerKeywords}
-              onChange={(e) => setBannerKeywords(e.target.value)}
-            />
-          </label>
-          <label className="row studio-check">
-            <input
-              type="checkbox"
-              checked={bannerMilestone}
-              onChange={(e) => setBannerMilestone(e.target.checked)}
-            />
-            <span>
-              Show follower milestone
-              {bannerFollowers !== null ? ` (${bannerFollowers})` : ' (no snapshot yet)'}
-            </span>
-          </label>
-        </>
+        <BannerFields
+          headline={bannerHeadline}
+          keywords={bannerKeywords}
+          milestone={bannerMilestone}
+          followers={bannerFollowers}
+          stance={bannerStance}
+          crew={bannerCrew}
+          anchor={bannerAnchor}
+          onHeadline={setBannerHeadline}
+          onKeywords={setBannerKeywords}
+          onMilestone={setBannerMilestone}
+          onStance={setBannerStance}
+          onCrew={setBannerCrew}
+          onAnchor={setBannerAnchor}
+        />
       )}
 
-      {template === 'pfp' && (
-        <label className="field">
-          <span>Photo (circle-cropped in your brand ring)</span>
-          <input type="file" accept="image/*" onChange={(e) => void onPickPhoto(e)} />
-        </label>
+      {template === 'pfp' && <PfpFields onPickPhoto={(e) => void onPickPhoto(e)} />}
+
+      {template === 'code' && (
+        <CodeFields title={codeTitle} code={codeText} onTitle={setCodeTitle} onCode={setCodeText} />
       )}
 
-      {BG_TEMPLATES.has(template) && (
-        <section className="studio-bg">
-          <div className="row studio-data-row">
-            <span className="muted">AI background (composited under your text)</span>
-            {bgBitmap && (
-              <button type="button" onClick={clearBackground}>
-                Remove background
+      {template === 'thread' && (
+        <ThreadFields
+          hook={threadHook}
+          count={threadCount}
+          onHook={setThreadHook}
+          onCount={setThreadCount}
+        />
+      )}
+
+      {template === 'list' && (
+        <ListFields
+          title={listTitle}
+          items={listItems}
+          onTitle={setListTitle}
+          onItems={setListItems}
+        />
+      )}
+
+      {template === 'chart' && (
+        <ChartFields
+          mode={chartMode}
+          loading={chartLoading}
+          statusLabel={
+            chartGrowth
+              ? chartMode === 'growth'
+                ? chartGrowth.points.length >= 2
+                  ? `${chartGrowth.points.length} daily snapshots`
+                  : 'Not enough follower history yet'
+                : `${chartCells.filter((c) => c.sufficient).length} measured cells`
+              : 'No metrics yet'
+          }
+          onMode={setChartMode}
+          onReload={() => void loadChartData()}
+        />
+      )}
+
+      {template === 'milestone' && (
+        <MilestoneFields
+          loading={milestoneLoading}
+          statusLabel={
+            milestoneAuto
+              ? milestoneAuto.milestone !== null
+                ? `Auto: ${milestoneAuto.milestone.toLocaleString('en-US')} followers${
+                    milestoneAuto.crossedOn ? ` (reached ${milestoneAuto.crossedOn})` : ''
+                  }`
+                : 'No milestone crossed yet'
+              : 'No account data yet'
+          }
+          override={milestoneOverride}
+          onOverride={setMilestoneOverride}
+          onReload={() => void loadMilestoneData()}
+        />
+      )}
+
+      {template === 'streak' && (
+        <StreakFields
+          loading={streakLoading}
+          statusLabel={
+            streakAuto
+              ? streakAuto.days !== null
+                ? `Current streak: ${streakAuto.days} day${streakAuto.days === 1 ? '' : 's'}`
+                : 'No streak yet — show up today'
+              : 'No streak data yet'
+          }
+          override={streakOverride}
+          onOverride={setStreakOverride}
+          onReload={() => void loadStreakData()}
+        />
+      )}
+
+      {supportsAiBackground(template) && (
+        <Section
+          title="Background"
+          actions={
+            bgMode === 'blobs' ? (
+              <button
+                type="button"
+                onClick={() => setPatternSeed((s) => s + 1)}
+                title="Reroll the blob placement"
+              >
+                Reroll
               </button>
-            )}
-          </div>
-          {pillars.length > 0 && (
-            <label className="field">
-              <span>Seed from pillar</span>
-              <select value={pillarSlug} onChange={(e) => reseedPrompt(e.target.value)}>
-                {pillars.map((p) => (
-                  <option key={p.slug} value={p.slug}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <label className="field">
-            <span>
-              Prompt (style suffix from your brand kit; the "no text" clause is load-bearing)
-            </span>
-            <textarea value={bgPrompt} onChange={(e) => setBgPrompt(e.target.value)} rows={3} />
-          </label>
-          <div className="row">
-            <button type="button" onClick={() => void generateBackground()} disabled={genLoading}>
-              {genLoading ? 'Generating…' : 'Generate background (~$0.02)'}
-            </button>
-            {genCost !== null && <span className="muted">last: ${genCost.toFixed(3)}</span>}
-          </div>
-        </section>
+            ) : null
+          }
+        >
+          <SubTabs tabs={BG_MODES} active={bgMode} onSelect={chooseBgMode} />
+        </Section>
+      )}
+
+      {supportsAiBackground(template) && bgMode === 'ai' && (
+        <BackgroundFields
+          hasBackground={bgBitmap !== null}
+          pillars={pillars}
+          pillarSlug={pillarSlug}
+          prompt={bgPrompt}
+          loading={genLoading}
+          cost={genCost}
+          onClear={clearBackground}
+          onReseed={reseedPrompt}
+          onPromptChange={setBgPrompt}
+          onGenerate={() => void generateBackground()}
+        />
       )}
 
       <div className="studio-preview">
@@ -732,39 +899,12 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       </small>
 
       {library.length > 0 && (
-        <section className="studio-library">
-          <div className="panel-header">
-            <h3>Library</h3>
-            <button type="button" onClick={() => void loadLibrary()}>
-              Refresh
-            </button>
-          </div>
-          <div className="studio-library-rail">
-            {library.map((a) => (
-              <div key={a.id} className="studio-asset">
-                <button
-                  type="button"
-                  className="studio-asset-open"
-                  onClick={() => void reopenAsset(a)}
-                  title={a.prompt ?? a.kind}
-                >
-                  <span className="studio-asset-kind">{a.kind}</span>
-                  <span className="muted">
-                    {a.width && a.height ? `${a.width}×${a.height}` : ''}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="studio-asset-del"
-                  onClick={() => void deleteAsset(a.id)}
-                  title="Delete asset"
-                >
-                  ✕
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
+        <LibraryRail
+          library={library}
+          onRefresh={() => void loadLibrary()}
+          onReopen={(a) => void reopenAsset(a)}
+          onDelete={(id) => void deleteAsset(id)}
+        />
       )}
     </div>
   );

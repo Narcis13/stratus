@@ -1,17 +1,23 @@
 import { describe, expect, test } from 'bun:test';
+import type { ActiveTimesGrid } from '../shared/activeTimes.ts';
 import type { BestTimeCell } from '../shared/types.ts';
 import {
   ANCHORS_3,
   ANCHORS_4,
   BEST_TIME_MIN_N,
+  CADENCE_DEFAULTS,
+  CADENCE_SETTING_KEYS,
+  audiencePeakHours,
   bestTimeCellScore,
   estimatePostCostUsd,
   findScheduleGaps,
   jitterMinutes,
   pickAnchors,
+  slotHint,
   splitIntoThread,
   suggestBestSlotDate,
   suggestSlotDate,
+  thinCellsForWeekday,
   topCellsForWeekday,
 } from './composerLogic.ts';
 
@@ -26,6 +32,16 @@ function cell(weekday: number, hour: number, posts: number, rate: number | null)
     avgLikes: null,
     avgProfileVisits: null,
   };
+}
+
+// A 7×24 audience grid with the given (jsWeekday, hour) cells set to 1, all
+// else 0. Columns run Mon..Sun; audienceScoreFor maps jsWeekday via (wd+6)%7.
+function grid(hot: Array<[number, number]>): ActiveTimesGrid {
+  const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+  for (const [wd, hr] of hot) {
+    (cells[(wd + 6) % 7] as number[])[hr] = 1;
+  }
+  return { cols: 7, rows: 24, grid: cells, tzOffsetMin: 0, metric: 'likes' };
 }
 
 describe('pickAnchors', () => {
@@ -114,6 +130,32 @@ describe('best-times slot picker (S0.4)', () => {
     expect(topCellsForWeekday(cells, 0)).toEqual([]);
   });
 
+  test('thinCellsForWeekday returns the sub-gate cells, thickest first (UI.13)', () => {
+    const cells = [
+      cell(4, 9, 2, 300),
+      cell(4, 13, 1, 900),
+      cell(4, 20, 2, 100), // ties on n → earlier hour first
+      cell(4, 18, 5, 600), // clears the gate — never "thin"
+      cell(4, 8, 0, null), // never measured — not a thin cell either
+      cell(5, 12, 1, 5000), // wrong weekday
+    ];
+    expect(thinCellsForWeekday(cells, 4).map((c) => c.hour)).toEqual([9, 20, 13]);
+    expect(thinCellsForWeekday(cells, 4, 2).map((c) => c.hour)).toEqual([9, 20]);
+    // The two halves partition the weekday's measured cells at the gate, so
+    // raising it moves a cell from one line to the other and never loses it.
+    expect(topCellsForWeekday(cells, 4, 9, 6).map((c) => c.hour)).toEqual([]);
+    expect(thinCellsForWeekday(cells, 4, 9, 6).map((c) => c.hour)).toEqual([18, 9, 20, 13]);
+  });
+
+  test('CADENCE_SETTING_KEYS names the registry knobs behind CadenceConfig', () => {
+    expect(CADENCE_SETTING_KEYS).toEqual([
+      'x.doctrine.anchors3',
+      'x.doctrine.anchors4',
+      'x.doctrine.ladderSwitchAt',
+      'x.gates.bestTimeMinN',
+    ]);
+  });
+
   test('suggestBestSlotDate picks the highest-scoring open anchor, jittered', () => {
     const now = new Date(2026, 5, 18, 7, 0); // Thu 07:00 local, before the 9 anchor
     const cells = [cell(4, 9, 5, 300), cell(4, 13, 5, 900), cell(4, 18, 5, 600)];
@@ -148,6 +190,102 @@ describe('best-times slot picker (S0.4)', () => {
       new Date(2026, 5, 18, 18, 5),
     ];
     expect(suggestBestSlotDate(now, claimed, [], 0, fixedJitter)).toBeNull();
+  });
+});
+
+describe('audience-blended slots (A3.4)', () => {
+  const fixedJitter = () => 0;
+  const now = new Date(2026, 5, 18, 7, 0); // Thu 07:00, before the 9 anchor
+
+  test('a measured cell outranks a hotter but unmeasured audience slot', () => {
+    const cells = [cell(4, 9, 5, 300)]; // only 9 is measured (and low)
+    const aud = grid([[4, 18]]); // Thu 18h is the audience peak, 9h/13h cold
+    // Tier 1 holds: measured 9 wins over hot-but-unmeasured 18.
+    const d = suggestBestSlotDate(now, [], cells, 0, fixedJitter, aud);
+    expect(d?.getHours()).toBe(9);
+  });
+
+  test('audience intensity breaks the tie among unmeasured slots', () => {
+    const aud = grid([[4, 18]]); // Thu 18h hot, 9h/13h cold
+    const withAud = suggestBestSlotDate(now, [], [], 0, fixedJitter, aud);
+    expect(withAud?.getHours()).toBe(18); // later-but-hot beats earlier-cold
+    const withoutAud = suggestBestSlotDate(now, [], [], 0, fixedJitter);
+    expect(withoutAud?.getHours()).toBe(9); // no grid → earliest, unchanged
+  });
+
+  test('passing null audience is identical to omitting it', () => {
+    const cells = [cell(4, 9, 5, 300), cell(4, 13, 5, 900), cell(4, 18, 5, 600)];
+    const omitted = suggestBestSlotDate(now, [], cells, 7, fixedJitter);
+    const nulled = suggestBestSlotDate(now, [], cells, 7, fixedJitter, null);
+    expect(nulled?.getTime()).toBe(omitted?.getTime());
+  });
+
+  test('slotHint labels why a slot won', () => {
+    expect(slotHint(cell(4, 9, 5, 300), 0.9)).toBe('measured'); // measured outranks audience
+    expect(slotHint(cell(4, 9, 2, 999), 0.9)).toBe('audience'); // below n gate → audience
+    expect(slotHint(undefined, 0.5)).toBe('audience');
+    expect(slotHint(undefined, null)).toBeNull();
+  });
+
+  test('audiencePeakHours returns the busiest local hours, best-first', () => {
+    const aud = grid([
+      [4, 21],
+      [4, 18],
+    ]); // Thu 18h & 21h equally hot, rest cold
+    expect(audiencePeakHours(aud, 4)).toEqual([18, 21]); // tie → earlier first
+    expect(audiencePeakHours(aud, 4, 1)).toEqual([18]);
+    expect(audiencePeakHours(aud, 0)).toEqual([]); // Sunday is all-cold → no peaks
+  });
+});
+
+describe('mirrored cadence config (UI.6)', () => {
+  const fixedJitter = () => 0;
+  const custom = {
+    anchors3: [7, 12, 20],
+    anchors4: [6, 10, 15, 22],
+    ladderSwitchAt: 2,
+    bestTimeMinN: 6,
+  };
+
+  test('CADENCE_DEFAULTS reproduces the baked ladder', () => {
+    expect(CADENCE_DEFAULTS.anchors3).toEqual(ANCHORS_3);
+    expect(CADENCE_DEFAULTS.anchors4).toEqual(ANCHORS_4);
+    expect(CADENCE_DEFAULTS.bestTimeMinN).toBe(BEST_TIME_MIN_N);
+  });
+
+  test('a custom ladderSwitchAt flips the ladder at its own fill count', () => {
+    expect(pickAnchors(1, custom)).toEqual(custom.anchors3);
+    expect(pickAnchors(2, custom)).toEqual(custom.anchors4); // baked switch is 4
+    expect(pickAnchors(2)).toEqual(ANCHORS_3); // omitting cfg is unchanged
+  });
+
+  test('suggestSlotDate walks the configured anchors', () => {
+    const now = new Date(2026, 5, 18, 5, 0); // Thu 05:00, before every anchor
+    expect(suggestSlotDate(now, [], 7, fixedJitter, custom)?.getHours()).toBe(7);
+    expect(suggestSlotDate(now, [], 7, fixedJitter)?.getHours()).toBe(9);
+  });
+
+  test('suggestBestSlotDate ranks over the configured anchors and gate', () => {
+    const now = new Date(2026, 5, 18, 5, 0);
+    // n=5 clears the baked gate of 3 but not the configured gate of 6, so the
+    // same cells rank the slot under the custom config and don't under it.
+    const cells = [cell(4, 20, 5, 900), cell(4, 12, 5, 300)];
+    expect(
+      suggestBestSlotDate(now, [], cells, 0, fixedJitter, null, {
+        ...custom,
+        bestTimeMinN: 3,
+      })?.getHours(),
+    ).toBe(20);
+    // Gate at 6 → nothing is measured → earliest configured anchor wins.
+    expect(suggestBestSlotDate(now, [], cells, 0, fixedJitter, null, custom)?.getHours()).toBe(7);
+  });
+
+  test('a raised gate hides a cell from both the score and the hint', () => {
+    const c = cell(4, 9, 5, 300);
+    expect(bestTimeCellScore(c, custom.bestTimeMinN)).toBeNull();
+    expect(slotHint(c, 0.9, custom.bestTimeMinN)).toBe('audience');
+    expect(topCellsForWeekday([c], 4, 3, custom.bestTimeMinN)).toEqual([]);
+    expect(topCellsForWeekday([c], 4)).toEqual([c]); // baked gate still passes it
   });
 });
 
@@ -190,6 +328,16 @@ describe('estimatePostCostUsd', () => {
       segments: ['hook', 'link https://x.com'],
     });
     expect(c.usd).toBeCloseTo(0.03);
+  });
+  test('manual mode is $0 even with a URL — the user pastes it (A3.7)', () => {
+    const c = estimatePostCostUsd({
+      threadMode: false,
+      text: 'read this https://example.com',
+      segments: [],
+      manual: true,
+    });
+    expect(c.usd).toBe(0);
+    expect(c.note).toBe('manual paste');
   });
 });
 

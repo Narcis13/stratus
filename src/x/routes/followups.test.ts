@@ -15,7 +15,9 @@ import {
   postsPublished,
   scheduledPosts,
 } from '../db/schema.ts';
+import { rankFans } from '../people/followups.ts';
 import { logPersonEvents } from '../people/store.ts';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { followups } from './followups.ts';
 import { peopleRouter } from './people.ts';
 
@@ -28,6 +30,10 @@ app.route('/x', peopleRouter);
 const ALLY = 'c5_quiet_ally';
 const FAN = 'c5_top_fan';
 const CHAIN = 'c5_chain_fan';
+// C10 pair: `hi` has more inbound, `lo` has more engagement. If engagement ever
+// leaked into rankFans, `lo` (2 + 3 = 5) would outrank `hi` (3).
+const FAN_HI = 'c10_fan_hi';
+const FAN_LO = 'c10_fan_lo';
 const MY_REPLY_ID = '95000000000000001';
 const THEIR_REPLY_ID = '95000000000000002';
 // §S0.6 re-up winner: 21d old, huge measured views so it's the single best
@@ -111,6 +117,42 @@ describe('followups routes', () => {
         refId: `c5f${n}`,
         at: new Date(Date.now() - n * DAY_MS),
       })),
+      { source: 'test' },
+    );
+
+    // C10 engagement pair. FAN_LO also carries one like 40d back, outside the
+    // 30d window the count must respect.
+    await logPersonEvents(
+      [
+        ...[1, 2, 3].map((n) => ({
+          handle: FAN_HI,
+          type: 'their_mention' as const,
+          refTable: 't',
+          refId: `c10hi_m${n}`,
+          at: new Date(Date.now() - n * DAY_MS),
+        })),
+        ...[1, 2].map((n) => ({
+          handle: FAN_LO,
+          type: 'their_mention' as const,
+          refTable: 't',
+          refId: `c10lo_m${n}`,
+          at: new Date(Date.now() - n * DAY_MS),
+        })),
+        ...[1, 2, 3].map((n) => ({
+          handle: FAN_LO,
+          type: 'their_like' as const,
+          refTable: 't',
+          refId: `c10lo_l${n}`,
+          at: new Date(Date.now() - n * DAY_MS),
+        })),
+        {
+          handle: FAN_LO,
+          type: 'their_like' as const,
+          refTable: 't',
+          refId: 'c10lo_old',
+          at: new Date(Date.now() - 40 * DAY_MS),
+        },
+      ],
       { source: 'test' },
     );
 
@@ -324,9 +366,130 @@ describe('followups routes', () => {
     expect(body.fans.find((f) => f.handle === ALLY)).toBeUndefined();
   });
 
+  test('GET /people/fans counts engagements in-window without ranking on them', async () => {
+    const { body } = await getJson<{
+      fans: Array<{
+        handle: string;
+        inboundCount: number;
+        engagementCount: number;
+        lastInboundAt: string;
+        lastOutboundAt: string | null;
+      }>;
+    }>('/x/people/fans?days=30&limit=100');
+
+    const lo = body.fans.find((f) => f.handle === FAN_LO);
+    expect(lo?.inboundCount).toBe(2);
+    // 3 in-window likes; the 40d-old one is outside the window.
+    expect(lo?.engagementCount).toBe(3);
+
+    const hi = body.fans.find((f) => f.handle === FAN_HI);
+    expect(hi?.inboundCount).toBe(3);
+    expect(hi?.engagementCount).toBe(0);
+
+    // Ranking is inbound-only: more engagement must not lift FAN_LO.
+    const iHi = body.fans.findIndex((f) => f.handle === FAN_HI);
+    const iLo = body.fans.findIndex((f) => f.handle === FAN_LO);
+    expect(iHi).toBeGreaterThanOrEqual(0);
+    expect(iHi).toBeLessThan(iLo);
+
+    // Stronger than the pair: re-rank the returned rows with engagementCount
+    // stripped and assert the whole page comes back in the same order.
+    const reranked = rankFans(
+      body.fans.map((f) => ({
+        handle: f.handle,
+        inboundCount: f.inboundCount,
+        lastInboundAt: new Date(f.lastInboundAt),
+        lastOutboundAt: f.lastOutboundAt === null ? null : new Date(f.lastOutboundAt),
+      })),
+    );
+    expect(reranked.map((f) => f.handle)).toEqual(body.fans.map((f) => f.handle));
+  });
+
   test('GET /people/fans validates days', async () => {
     expect((await app.request('/x/people/fans?days=0')).status).toBe(400);
     expect((await app.request('/x/people/fans?days=nope')).status).toBe(400);
+  });
+
+  // UI.3 done-when: the follow-up route reads the `followups` group per request,
+  // so a widened neglectedAllyDays drops a borderline-quiet ally from the queue.
+  // Process-global store → reset in finally (UI.2 gotcha #3).
+  test('a widened x.followups.neglectedAllyDays drops a 16-day-quiet ally', async () => {
+    const H = 'c5_ui3_ally';
+    const quiet = new Date(Date.now() - 16 * DAY_MS);
+    await db
+      .insert(people)
+      .values({
+        handle: H,
+        stage: 'mutual',
+        // Old promotion moment so it reads as neglected, never a fresh dm_ready.
+        stageUpdatedAt: quiet,
+        lastInboundAt: quiet,
+        lastOutboundAt: quiet,
+      })
+      .onConflictDoNothing();
+    try {
+      // Default 14d window: 16-day-quiet ally is neglected.
+      let { body } = await getJson<FollowupsBody>('/x/people/followups');
+      expect(itemsFor(body, H).map((i) => i.kind)).toEqual(['neglected_ally']);
+
+      // Widen to 21d and the same ally is no longer neglected.
+      setSettings({ 'x.followups.neglectedAllyDays': 21 });
+      ({ body } = await getJson<FollowupsBody>('/x/people/followups'));
+      expect(itemsFor(body, H)).toHaveLength(0);
+    } finally {
+      resetSettings({ keys: ['x.followups.neglectedAllyDays'] });
+      await db.delete(people).where(eq(people.handle, H));
+    }
+  });
+
+  // The re-up view bar is the SAME knob the dailyMetrics winner re-read uses
+  // (x.workers.winnerRereadMinViews), read per request — not a boot-time env
+  // capture. The 250k main fixture can't be excluded (fixture views exceed the
+  // knob's 100k ceiling), so isolate a low-view winner via the age-window knobs
+  // and flip it out with the views knob alone.
+  test('x.workers.winnerRereadMinViews gates re-up candidates per read', async () => {
+    const LOW_ID = '95000000000000031';
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: LOW_ID,
+        text: 'my modest winner',
+        postedAt: new Date(Date.now() - 70 * DAY_MS),
+        isReply: false,
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(metricsSnapshots)
+      .values({
+        tweetId: LOW_ID,
+        publicMetrics: { impression_count: 800 },
+        snapshotAt: new Date(Date.now() - 69 * DAY_MS),
+      })
+      .onConflictDoNothing();
+    try {
+      // Age window holds only the 800-view post; at the default 500 bar it wins.
+      setSettings({ 'x.followups.reupMinAgeDays': 65, 'x.followups.reupMaxAgeDays': 80 });
+      let { body } = await getJson<FollowupsBody>('/x/people/followups');
+      const lowItem = (b: FollowupsBody) =>
+        b.items.find((i) => i.kind === 'reup_candidate' && i.tweetId === LOW_ID);
+      expect(lowItem(body)).toBeDefined();
+
+      // Raise the bar past its views: same window, same request, no candidate.
+      setSettings({ 'x.workers.winnerRereadMinViews': 5000 });
+      ({ body } = await getJson<FollowupsBody>('/x/people/followups'));
+      expect(lowItem(body)).toBeUndefined();
+    } finally {
+      resetSettings({
+        keys: [
+          'x.followups.reupMinAgeDays',
+          'x.followups.reupMaxAgeDays',
+          'x.workers.winnerRereadMinViews',
+        ],
+      });
+      await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, LOW_ID));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, LOW_ID));
+    }
   });
 
   test('cleanup', async () => {
@@ -338,7 +501,7 @@ describe('followups routes', () => {
     await db.delete(scheduledPosts).where(eq(scheduledPosts.id, REUP_SCHED_ID));
     await db.delete(followupSnoozes).where(eq(followupSnoozes.itemKey, `neglected_ally:${ALLY}`));
     await db.delete(followupSnoozes).where(eq(followupSnoozes.itemKey, `reup:${REUP_ID}`));
-    for (const h of [ALLY, FAN]) {
+    for (const h of [ALLY, FAN, FAN_HI, FAN_LO]) {
       await db.delete(personEvents).where(eq(personEvents.handle, h));
       await db.delete(people).where(eq(people.handle, h));
     }

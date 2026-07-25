@@ -4,12 +4,15 @@
 
 import type { Hono } from 'hono';
 import { registerHeartbeat, unregisterHeartbeat } from '../heartbeats.ts';
+import { llmConfigured } from '../llm/index.ts';
 // S2: the X platform's MCP tools. Re-exported so the platform-agnostic MCP
 // bridge (src/mcp.ts) reaches them through this public surface, not a deep
 // import — same discipline as mountX/startXWorkers.
 export { registerXTools } from './mcp.ts';
 import { makeOnCost } from '../middleware/costTracker.ts';
 import { setDefaultOnCost } from './client.ts';
+import { analyticsRouter } from './routes/analytics.ts';
+import { articlesRouter } from './routes/articles.ts';
 import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
@@ -17,22 +20,32 @@ import { channelsRouter } from './routes/channels.ts';
 import { conversations } from './routes/conversations.ts';
 import { data, explorer } from './routes/data.ts';
 import { digest } from './routes/digest.ts';
+import { dmsRouter } from './routes/dms.ts';
 import { drafter } from './routes/drafter.ts';
+import { followingRouter } from './routes/following.ts';
 import { followups } from './routes/followups.ts';
+import { goalsRouter } from './routes/goals.ts';
 import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
 import { images } from './routes/images.ts';
 import { launch } from './routes/launch.ts';
+import { me } from './routes/me.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
 import { metrics } from './routes/metrics.ts';
+import { monitorRouter } from './routes/monitor.ts';
+import { nicheRouter } from './routes/niche.ts';
 import { peopleRouter } from './routes/people.ts';
 import { pillars } from './routes/pillars.ts';
 import { playbook } from './routes/playbook.ts';
 import { createPostsRouter } from './routes/posts.ts';
+import { promptsRouter } from './routes/prompts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
+import { replyListsRouter } from './routes/replyLists.ts';
+import { settingsRouter } from './routes/settings.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
+import { getSetting } from './settings/registry.ts';
 import { DAILY_METRICS_HEARTBEAT, startDailyMetrics } from './workers/dailyMetrics.ts';
 import { PUBLISHER_HEARTBEAT, startPublisher } from './workers/publisher.ts';
 
@@ -55,16 +68,52 @@ export function mountX(app: Hono): void {
   app.route('/x', brief);
   app.route('/x', calendar);
   app.route('/x', metrics);
+  // A3.2: audience Active-times captures — $0 DOM-scraped presence data from
+  // X Analytics, stored append-only. Always mounted (no X call, no LLM);
+  // static path only, so §7.20 can't bite.
+  app.route('/x', analyticsRouter);
   app.route('/x', pillars);
+  // AI.4: the prompt editor — CRUD over `prompt_overrides` (the editable half of
+  // the AI.3 registry). Always mounted: editing a prompt must work with no LLM
+  // key. Static `/prompts/*` paths (the `restore-defaults` static path and the
+  // `:key/reset` param path don't collide — different segment counts, §7.20).
+  app.route('/x', promptsRouter);
+  // N0: niche CRUD + activation ratchet. Always mounted, $0. Static paths plus a
+  // `/niches/:slug` param that shadows nothing (no other route lives under niche*).
+  app.route('/x', nicheRouter);
+  // M1: the Me / My Profile personal-context layer. Always mounted, $0 (pure
+  // SQL — no Grok, no X). `/x/me` is a static prefix; its only params are on
+  // `/me/entries/:id` + `/me/goals/:id`, shadowing nothing (§7.20).
+  app.route('/x', me);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   app.route('/x', harvest);
-  // C0: radar draft reads/status flips are $0 and mount without the Grok key;
-  // only the insert path (generate-batch, below) needs XAI_API_KEY.
+  // GR: the following ledger — who I follow / who follows back, from one DOM
+  // scrape of my own /following page. Always mounted, $0: nothing in the file
+  // can reach the X API, and unfollowing stays a manual act in the X app.
+  // `/following/queue` (GR.3) registers above `/following/:handle` (§7.20).
+  app.route('/x', followingRouter);
+  // GR: the activity monitor — read-time rules over posts/replies/following/
+  // calendar rows that flag the patterns X's spam heuristics punish. Always
+  // mounted, $0 (no X call, no LLM), static path only. Advisory by design:
+  // it never blocks a post, a reply or an unfollow.
+  app.route('/x', monitorRouter);
+  // GR.7: goals + daily commitments. Always mounted, $0. The goals themselves
+  // are written through `/x/me/goals` (D4 — one table, one writer); this router
+  // owns the pacing view, the lazy achieved/missed flip and the commitments.
+  app.route('/x', goalsRouter);
+  // C0: radar draft reads/status flips are $0 and mount without an LLM key;
+  // only the insert path (generate-batch, below) needs a configured provider.
   app.route('/x', radar);
   // C6: Idea Inbox — pure SQL, always mounted; consumption happens inside the
   // Grok-gated draft routes, but capture/list/reopen must work without the key.
   app.route('/x', ideasRouter);
+  // A3.11: Articles — long-form Markdown originals for the /writer page. Pure-SQL
+  // CRUD, always mounted, every route $0 (the Grok assist route is A3.12).
+  app.route('/x', articlesRouter);
+  // RL: reply lists — premade canned replies. CRUD (and later /use) are pure SQL
+  // and always mounted; only /generate (RL.4) needs an LLM and checks at runtime.
+  app.route('/x', replyListsRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
   // S4: Studio asset library (composed PNGs + AI backgrounds as SQLite BLOBs),
@@ -76,34 +125,46 @@ export function mountX(app: Hono): void {
   // bearer), so it sits OUTSIDE the /x/* auth middleware.
   app.route('/x', data);
   app.route('/', explorer);
+  // UI.1: the settings platform — app_settings overrides + typed registry.
+  // Static paths only (/settings, /settings/values, /settings/reset), so it's
+  // §7.20-safe anywhere; always mounted, $0. Lands INERT — no consumer reads the
+  // store yet (UI.2+ wire brief/quests/people/… through it).
+  app.route('/x', settingsRouter);
   // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
   // 'followups'/'fans' are valid usernames, so GET /people/:handle would
   // otherwise swallow these static paths as dossier lookups.
   app.route('/x', followups);
   // C1: the people layer — pure SQL over already-collected data, always $0.
   app.route('/x', peopleRouter);
+  // A3.9: DM drafts — list/patch are pure SQL and always mounted; only
+  // POST /dms/draft spends (one Grok call, LLM-gated at runtime). Mounted after
+  // peopleRouter — it imports loadIcebreakerGrounding from it and shares the
+  // grounding refusal ladder (decision 8).
+  app.route('/x', dmsRouter);
   // C7: Launch Room early-replier ingest — DOM-scraped, people+events only, $0.
   app.route('/x', launch);
   // C2: threaded inbox — groups mentions + my posts by conversation_id, $0.
   app.route('/x', conversations);
-  // C9: Sunday Digest — facts are $0 SQL; the one weekly narration checks
-  // XAI_API_KEY at runtime and degrades to facts-only without it.
+  // C9: Sunday Digest — facts are $0 SQL; the one weekly narration checks for
+  // an LLM provider at runtime (AI.6) and degrades to facts-only without one.
   app.route('/x', digest);
   // C4: the Playbook — pure SQL over measured outcomes, $0; only its
-  // extract-winners POST needs Grok and it checks XAI_API_KEY at runtime.
+  // extract-winners POST needs an LLM and it checks llmConfigured() at runtime.
   app.route('/x', playbook);
   app.route('/x', createMentionsRouter(cfg));
   // S4: image generation is always mounted; POST /x/images/generate checks the
-  // XAI key at runtime (503 without it), same as /pillars/draft and the digest.
+  // XAI key at runtime (503 without it) — images stay xAI-only (Decision 6).
   app.route('/x', images);
-  // Grok-backed; refuse to mount when the key is missing — same shape as mountGrok.
-  if (process.env.XAI_API_KEY) {
+  // LLM-backed (AI.6): mount when EITHER provider is configured (Grok or
+  // OpenRouter); refuse to mount when neither is — askLLM enforces the resolved
+  // provider's key per request.
+  if (llmConfigured()) {
     app.route('/x', replies);
     app.route('/x', drafter);
     app.route('/x', voiceExtract);
   } else {
     console.log(
-      'x/replies: XAI_API_KEY not set — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
+      'x/replies: no LLM provider configured (set XAI_API_KEY or OPENROUTER_API_KEY) — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
     );
   }
 }
@@ -115,27 +176,46 @@ export interface XWorkers {
 
 export function startXWorkers(): XWorkers {
   // Install before any worker tick so the very first X call is logged. The
-  // daily budget watchdog rides on the same callback ($0.15/day soft cap).
+  // daily budget watchdog rides on the same callback. UI.5: the amount is a
+  // GETTER over `x.budgets.xSoftDailyUsd` (env X_DAILY_BUDGET_USD is that
+  // knob's default) — resolved per cost event and per /cost read, so a PATCH
+  // moves the watchdog without a restart. Still soft: it logs, never blocks.
   setDefaultOnCost(
-    makeOnCost('x', { dailyBudgetUsd: Number(process.env.X_DAILY_BUDGET_USD ?? '0.15') }),
+    makeOnCost('x', { dailyBudgetUsd: () => getSetting<number>('x.budgets.xSoftDailyUsd') }),
   );
 
   const cfg = loadConfig();
   const stops: Array<() => void | Promise<void>> = [];
   const heartbeats: string[] = [];
 
+  // UI.4: worker cadence is settings-backed, read ONCE here (`appliesOn:'restart'`
+  // — decision 10). No hot-reloading timers: a PATCH shows a "takes effect on
+  // restart" hint in the Settings tab and lands on the next boot.
+  const publisherIntervalSec = getSetting<number>('x.workers.publisherIntervalSec');
+  const dailyMetricsHourUtc = getSetting<number>('x.workers.dailyMetricsHourUtc');
+  console.log(
+    `workers: publisher every ${publisherIntervalSec}s, ` +
+      `daily pass at ${String(dailyMetricsHourUtc).padStart(2, '0')}:00 UTC (restart to change)`,
+  );
+
   // Heartbeats: /healthz flags (503) when a worker stops beating — a dead
   // publisher must page the deploy check, not fail silently.
-  registerHeartbeat(PUBLISHER_HEARTBEAT, 5 * 60_000);
+  // The window is derived from the configured interval, never hardcoded: the
+  // publisher beats once per tick, so a fixed 5min window would mark a healthy
+  // worker stale for any interval past 300s and permanently 503 /healthz — which
+  // also fails deploy.sh's closing health check. 3x the interval (floor 5min)
+  // keeps the two in step whatever the knob is set to, including an override
+  // already stored in app_settings from before the registry cap.
+  registerHeartbeat(PUBLISHER_HEARTBEAT, Math.max(5 * 60_000, publisherIntervalSec * 3_000));
   heartbeats.push(PUBLISHER_HEARTBEAT);
-  stops.push(startPublisher(cfg));
+  stops.push(startPublisher({ ...cfg, intervalMs: publisherIntervalSec * 1000 }));
 
   // One daily 03:00 UTC pass that discovers own tweets/replies and snapshots
   // each once at ~24h (replaces the old 60s metricsPoll + 24h ownReconcile).
   if (process.env.DAILY_METRICS_ENABLED !== 'false') {
     registerHeartbeat(DAILY_METRICS_HEARTBEAT, 25 * 60 * 60_000);
     heartbeats.push(DAILY_METRICS_HEARTBEAT);
-    stops.push(startDailyMetrics(cfg));
+    stops.push(startDailyMetrics({ ...cfg, hourUtc: dailyMetricsHourUtc }));
   } else {
     console.log(
       'dailyMetrics: timer disabled via DAILY_METRICS_ENABLED=false (manual POST /x/posts/reconcile still works)',

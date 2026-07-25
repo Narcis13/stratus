@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { NicheDoctrine } from '../niche/defaults.ts';
+import type { HumanizerConfig } from '../replyLists/engine.ts';
 
 // Migrated from Postgres (Neon) to local SQLite (bun:sqlite). Type mapping:
 //   timestamptz   -> integer({ mode: 'timestamp_ms' })  (epoch ms; app sees Date)
@@ -36,6 +38,9 @@ export const contentPillars = sqliteTable('content_pillars', {
   body: text('body').notNull(),
   sortOrder: integer('sort_order').default(0).notNull(),
   active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  // Owning niche (N0). Nullable; migration backfills 'builder'. Plain text (no
+  // FK) — the future per-niche partition is a backfill, not a rework.
+  niche: text('niche'),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
@@ -59,6 +64,33 @@ export const channels = sqliteTable('channels', {
   active: integer('active', { mode: 'boolean' }).default(true).notNull(),
   pillar: text('pillar'),
   keywords: text('keywords', { mode: 'json' }).$type<string[]>(),
+  // Owning niche (N0). Nullable; migration backfills 'builder'.
+  niche: text('niche'),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Niche (N0) — the first-class identity + strategy container. Exactly ONE active
+// niche at a time (v1). persona/beliefs/replyPersona are the prompt-grounding
+// blocks lifted out of the byte-synced templates (post prompt §1/§5, reply
+// prompt "Who I am"), so the active identity can change without a deploy — the
+// §8.6 move that made pillars editable. `doctrine` (nullable JSON) holds the 5
+// REPLY-GUIDE knobs; null = all defaults (resolveDoctrine merges field-by-field).
+// Seeded with `builder` (active), mirroring DEFAULT_NICHE byte-for-byte — the
+// DEFAULT_PILLARS seed discipline. Consumers stay inert until N0.3/N0.4/N0.5.
+export const niches = sqliteTable('niches', {
+  slug: text('slug').primaryKey(),
+  label: text('label').notNull(),
+  description: text('description'),
+  persona: text('persona').notNull(),
+  beliefs: text('beliefs').notNull(),
+  replyPersona: text('reply_persona').notNull(),
+  doctrine: text('doctrine', { mode: 'json' }).$type<Partial<NicheDoctrine>>(),
+  active: integer('active', { mode: 'boolean' }).default(false).notNull(),
   createdAt: integer('created_at', { mode: 'timestamp_ms' })
     .default(sql`(unixepoch() * 1000)`)
     .notNull(),
@@ -316,7 +348,7 @@ export const replyDrafts = sqliteTable(
 
     replyText: text('reply_text').notNull(),
     replyTextEdited: text('reply_text_edited'),
-    // All variants from the structured two-variant call ({text, angle}[]);
+    // All variants from the structured three-variant call ({text, angle}[]);
     // replyText holds the primary pick. Null on pre-7.1 rows.
     variants: text('variants', { mode: 'json' }),
     // The optional human steer sent with the generate call (often Romanian).
@@ -332,6 +364,9 @@ export const replyDrafts = sqliteTable(
     grokRequestId: text('grok_request_id'),
 
     systemPromptOverride: text('system_prompt_override'),
+
+    // Draft origin (RU.2): 'reply_master' | 'radar'. Null = pre-RU legacy row.
+    source: text('source'),
 
     status: text('status').notNull().default('generated'),
     postedTweetId: text('posted_tweet_id'),
@@ -372,6 +407,16 @@ export const radarDrafts = sqliteTable(
     signals: text('signals', { mode: 'json' }),
     replyText: text('reply_text').notNull(),
     angle: text('angle').notNull(),
+    // All 3 angle variants (RU.2) — replyText stays the primary (variants[0]),
+    // so rank/rehydrate/old rows keep working. Null on pre-RU rows and CLI
+    // callers that never supplied variants.
+    variants: text('variants', { mode: 'json' }).$type<{ text: string; angle: string }[]>(),
+    // The Grok model that drafted these (RU.2) — copied onto the confirmed
+    // reply_drafts row (whose `model` is NOT NULL). Null on pre-RU rows.
+    model: text('model'),
+    // Soft link to the reply_drafts row this draft was confirmed into (RU.2).
+    // Null until confirmed; no FK — the reply_drafts row may outlive/precede it.
+    replyDraftId: text('reply_draft_id'),
     // Channel slugs (C8) — tagged from the Radar row, keyed by tweet_id.
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
     status: text('status').notNull().default('ready'), // ready | clicked | expired
@@ -408,7 +453,8 @@ export const people = sqliteTable(
     stageUpdatedAt: integer('stage_updated_at', { mode: 'timestamp_ms' }),
     notes: text('notes'),
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
-    // First surface that created the row: mention | voice | reply | harvest | manual
+    // First surface that created the row:
+    // mention | voice | reply | harvest | hover | launch | notification | manual
     source: text('source'),
     firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' }),
     lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }),
@@ -433,7 +479,9 @@ export const personEvents = sqliteTable(
       .notNull()
       .references(() => people.handle),
     // saved_tweet | saved_author | my_reply | their_mention |
-    // their_reply_to_me | hover_sighting | harvest_seen | note | manual_dm_logged
+    // their_reply_to_me | hover_sighting | harvest_seen |
+    // their_like | their_repost | their_follow (C10 notification harvest —
+    // timeline-only, see src/x/people/stage.ts) | note | manual_dm_logged
     type: text('type').notNull(),
     refTable: text('ref_table'),
     refId: text('ref_id'),
@@ -640,4 +688,333 @@ export const harvestRows = sqliteTable(
     index('harvest_rows_tweet_captured_idx').on(t.tweetId, t.capturedAt),
     index('harvest_rows_run_idx').on(t.runId),
   ],
+);
+
+// Me / My Profile (M1): the DYNAMIC personal-context layer injected at the
+// prompt tail (post prompt.md §1 stays static). Human-written only — Grok never
+// authors these (§7.18). An empty profile renders an empty block, so with no
+// rows every prompt is byte-identical to before this feature (the rollback
+// story). `happened_at` null = undated, so created_at drives freshness windows.
+export const meEntries = sqliteTable(
+  'me_entries',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    kind: text('kind').notNull(), // fact | event | emotion | note
+    text: text('text').notNull(),
+    happenedAt: integer('happened_at', { mode: 'timestamp_ms' }),
+    pinned: integer('pinned', { mode: 'boolean' }).default(false).notNull(),
+    active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('me_entries_kind_active_idx').on(t.kind, t.active)],
+);
+
+// Measurable goals. `followers` goals auto-track progress from the latest
+// account_snapshots row ($0, daily getMe); `mrr`/`custom` take a manual
+// current_value. GR.7 (D4) extends this table rather than forking a second
+// goals system.
+export const meGoals = sqliteTable(
+  'me_goals',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    label: text('label').notNull(),
+    kind: text('kind').notNull(), // followers | mrr | custom
+    target: real('target').notNull(),
+    unit: text('unit'),
+    currentValue: real('current_value'),
+    deadline: integer('deadline', { mode: 'timestamp_ms' }),
+    // GR.7 (D4): where this goal started, stamped at creation. followers/mrr/
+    // custom record the value at that moment; the counted kinds
+    // (posted_replies/originals) start at 0 and count forward from baseline_at.
+    // Both null on rows created before GR.7 — readers fall back to created_at.
+    baselineValue: real('baseline_value'),
+    baselineAt: integer('baseline_at', { mode: 'timestamp_ms' }),
+    status: text('status').notNull().default('active'), // active | achieved | missed | dropped
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('me_goals_status_idx').on(t.status)],
+);
+
+// Daily commitments (GR.7, Guardrails §C): the minimum I hold myself to each
+// day. One row per key ('replies' | 'originals'); an ABSENT row means no
+// commitment, and the quest targets fall back to the doctrine defaults — which
+// is why there is no seed. `active_since` is stamped at creation and on a
+// re-activation but deliberately NOT touched by a target edit: debt is counted
+// from the day I made the promise, and raising the bar must not erase the days
+// I already missed.
+export const commitments = sqliteTable('commitments', {
+  key: text('key').primaryKey(),
+  dailyTarget: integer('daily_target').notNull(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  activeSince: integer('active_since', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Prompt overrides (AI.3) — OVERRIDE ROWS ONLY, keyed by the registry's
+// PromptKey. Row absent = the shipped default in src/x/prompts/registry.ts
+// applies; restore = DELETE. No seed INSERT by design (sidesteps the
+// drizzle-kit dropped-seed trap, and a default improved in a later deploy
+// applies automatically unless the user overrode it). Never store secrets
+// here — the table is explorer/MCP-visible like everything except tokens.
+export const promptOverrides = sqliteTable('prompt_overrides', {
+  key: text('key').primaryKey(),
+  body: text('body').notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// Reply lists (RL) — premade, templated, humanized canned replies for the
+// moments the machinery already surfaces (Launch Room early commenters, open
+// loops). The pick/render/jitter logic is pure (src/x/replyLists/engine.ts);
+// these three tables are the state it runs over.
+//
+// `humanizer` holds the per-list override, stored NORMALIZED through
+// parseHumanizerConfig (null = DEFAULT_HUMANIZER) so the /use path resolves it
+// without re-validating.
+export const replyLists = sqliteTable('reply_lists', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text('name').notNull(),
+  description: text('description'),
+  humanizer: text('humanizer', { mode: 'json' }).$type<HumanizerConfig>(),
+  active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
+
+// `last_used_at` is the anti-repeat state — server-side on purpose, so the
+// shuffle survives a browser restart and stays one source of truth (Decision 1).
+// The index is exactly what pickItem's recency window reads.
+export const replyListItems = sqliteTable(
+  'reply_list_items',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    listId: text('list_id')
+      .notNull()
+      .references(() => replyLists.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    enabled: integer('enabled', { mode: 'boolean' }).default(true).notNull(),
+    source: text('source').notNull().default('manual'), // manual | ai
+    lastUsedAt: integer('last_used_at', { mode: 'timestamp_ms' }),
+    useCount: integer('use_count').default(0).notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('reply_list_items_list_used_idx').on(t.listId, t.lastUsedAt)],
+);
+
+// The use log: audit trail AND the measurement hook — the Playbook's `canned`
+// bucket matches a published reply against `rendered_text` (typos and all, so
+// the paste-exact match holds). Deliberately NOT FK'd to the list/item: the
+// history must outlive an edited-away item or a deleted list, or the attribution
+// silently loses rows.
+export const replyListUses = sqliteTable(
+  'reply_list_uses',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    listId: text('list_id').notNull(),
+    itemId: text('item_id').notNull(),
+    renderedText: text('rendered_text').notNull(),
+    targetTweetId: text('target_tweet_id'),
+    targetHandle: text('target_handle'),
+    usedAt: integer('used_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('reply_list_uses_used_at_idx').on(t.usedAt)],
+);
+
+// Following ledger (Guardrails §A) — who I follow and whether they follow back,
+// from ONE $0 DOM scrape of my own /following page: X renders a "Follows you"
+// indicator on every row, so a single pass yields both sides. No API sync
+// (~$1.00 per 500+500 pass), no `follows.write` scope — unfollowing stays a
+// manual act in the X app and this table only ever nudges.
+//
+// One row per scrape click. `complete` is the trust flag: only a run that walked
+// the whole list may conclude anything from a handle's ABSENCE, so a cancelled,
+// capped or empty run never reconciles (decision 9).
+export const followingRuns = sqliteTable('following_runs', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  startedAt: integer('started_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  completedAt: integer('completed_at', { mode: 'timestamp_ms' }),
+  rowsSeen: integer('rows_seen').default(0).notNull(),
+  complete: integer('complete', { mode: 'boolean' }).default(false).notNull(),
+});
+
+// `followed_at` deliberately does not exist: X never exposes when a follow
+// happened, so `first_seen_at` is the proxy (§7.11) and the fill-only rule keeps
+// it monotonic — the unfollow grace window measures from it.
+//
+// status ladder (§7.10, edges owned by routes/following.ts):
+//   active     in my following per the latest data
+//   queued     released into an unfollow batch (GR.3)
+//   done       user ticked "unfollowed" — awaiting scrape confirmation
+//   confirmed  a COMPLETE run no longer saw a `done` handle
+//   gone       a COMPLETE run no longer saw a live handle (deleted account,
+//              they blocked me, or I unfollowed outside the queue)
+export const following = sqliteTable(
+  'following',
+  {
+    handle: text('handle').primaryKey(),
+    displayName: text('display_name'),
+    // Not nullable: the userFollowIndicator's ABSENCE is the "no", so there is
+    // no third state to record. A DOM drift that silently drops the badge would
+    // read as "nobody follows me back" — that guard belongs in the queue's
+    // eligibility rules (GR.3), not in a column type.
+    followsBack: integer('follows_back', { mode: 'boolean' }).default(false).notNull(),
+    // Render order in the latest run — X lists most-recently-followed first, so
+    // this is a best-effort follow-recency tie-break, never a date.
+    listPosition: integer('list_position'),
+    firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    lastRunId: text('last_run_id')
+      .notNull()
+      .references(() => followingRuns.id),
+    status: text('status').notNull().default('active'),
+    keep: integer('keep', { mode: 'boolean' }).default(false).notNull(),
+    // When the user ticked "unfollowed". The 6h release budget and the monitor's
+    // churn rule both count marks in a trailing window, so it is never cleared.
+    unfollowMarkedAt: integer('unfollow_marked_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('following_status_seen_idx').on(t.status, t.firstSeenAt)],
+);
+
+// Audience "Active times" heatmap captures (Authoring 3.0, A3.2) — the $0 DOM
+// scrape of X Analytics' when-is-my-audience-online grid. Append-only on
+// purpose: repeated captures form a longitudinal series (the harvest_runs
+// precedent), and the newest row is "current" for the Composer's slot blending.
+// This is PRESENCE data, not measured outcomes — §7.19 gating happens in the
+// consumers (own gated best-time cells always outrank it), never here.
+export const audienceActivity = sqliteTable(
+  'audience_activity',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    // Server-stamped at insert (client clocks lie); the route sets it
+    // explicitly rather than leaning on the column default.
+    capturedAt: integer('captured_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    // The analytics dropdown at capture time ('likes', …) — free text, X owns
+    // the vocabulary.
+    metric: text('metric').notNull(),
+    // Viewer-local tz at capture: the grid buckets are local wall-clock.
+    tzOffsetMin: integer('tz_offset_min').notNull(),
+    cols: integer('cols').notNull(),
+    rows: integer('rows').notNull(),
+    // number[cols][rows], 0..1 intensity, col 0 = Monday (ActiveTimesGrid).
+    grid: text('grid', { mode: 'json' }).$type<number[][]>().notNull(),
+  },
+  (t) => [index('audience_activity_captured_idx').on(t.capturedAt)],
+);
+
+// DM drafts (Authoring 3.0 / CIRCLES outbound, A3.9): grounded direct-message
+// drafts for a known person. Each draft is one Grok call grounded STRICTLY on
+// the icebreaker grounding (decision 8 — no fabricated familiarity; a thin
+// dossier refuses 422 before any spend). Sending stays manual in X; "Mark sent"
+// logs the existing manual_dm_logged person event. `grounding` snapshots exactly
+// what the model saw (§7.16). Lifecycle: draft → sent | discarded (sent is
+// terminal — nothing regresses from it, §7.10).
+export const dmDrafts = sqliteTable(
+  'dm_drafts',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    // Lowercased people.handle (FK, like person_events/person_snapshots) — the
+    // route resolves the person before inserting, so the ref always exists.
+    handle: text('handle')
+      .notNull()
+      .references(() => people.handle),
+    text: text('text').notNull(),
+    // The optional steer that was used (any language in; the DM is English).
+    purpose: text('purpose'),
+    status: text('status').notNull().default('draft'), // draft | sent | discarded
+    // JSON: exactly what grounded the draft — { block, idea } (§7.16).
+    grounding: text('grounding', { mode: 'json' }).$type<{ block: string; idea: string | null }>(),
+    costUsd: real('cost_usd'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    sentAt: integer('sent_at', { mode: 'timestamp_ms' }),
+  },
+  (t) => [index('dm_drafts_handle_created_idx').on(t.handle, t.createdAt)],
+);
+
+// Articles (Authoring 3.0 / the Writer, A3.11): long-form originals drafted in
+// the standalone /writer page. `body_md` is Markdown; there is no API article
+// publish — posting is a manual "Copy for X" into X's article composer, and
+// `published_url` records where it landed. `outline` is JSON persisted by the
+// A3.12 outline assist (shape owned there). Lifecycle: draft → published (stamps
+// published_at) | discarded; published → draft re-opens for editing (the publish
+// stamp stays as the historical record); a discarded row is frozen except status
+// back to draft. `pillar` is validated against the active niche slugs at write
+// time (stored free-text — a niche can retire a slug after the fact).
+export const articles = sqliteTable(
+  'articles',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    subtitle: text('subtitle'),
+    bodyMd: text('body_md').notNull().default(''),
+    pillar: text('pillar'),
+    status: text('status').notNull().default('draft'), // draft | published | discarded
+    // JSON structured outline (headings/beats) written by the outline assist.
+    outline: text('outline', { mode: 'json' }).$type<unknown>(),
+    publishedUrl: text('published_url'),
+    publishedAt: integer('published_at', { mode: 'timestamp_ms' }),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  // List is `WHERE status ORDER BY updated_at DESC` — same shape as ideas.
+  (t) => [index('articles_status_updated_idx').on(t.status, t.updatedAt)],
 );

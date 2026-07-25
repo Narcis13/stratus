@@ -79,5 +79,14 @@ if (!/stratus.*explorer/i.test(html) || !html.includes('/x/data/tables')) {
 }
 console.log('GET /explorer serves the shell OK');
 
+// 7. The writer shell (A3.13) hangs off the same public root router.
+const writer = await app.request('/writer');
+if (writer.status !== 200) fail(`GET /writer → ${writer.status}`);
+const writerHtml = await writer.text();
+if (!/stratus.*writer/i.test(writerHtml) || !writerHtml.includes('/x/articles')) {
+  fail('writer.html did not render the expected shell');
+}
+console.log('GET /writer serves the shell OK');
+
 console.log('SMOKE PASS');
 process.exit(0);

@@ -31,19 +31,45 @@ A recurring theme you'll see everywhere: **stratus drafts, you post.** Actual po
 
 ## The tabs
 
+The tab rail is grouped into five sections — **Operate**, **Author**, **Library**, **Learn** and **System** — so related tabs sit together.
+
+### Operate
+
 | Tab | What it's for |
 |---|---|
-| **[Today](./today-tab.md)** | Your home screen — "what do I do right now": launch room, quests, follow-up queue, conversations, radar, targets, fans, follower trend, today's plan, spend, and the Sunday digest. |
-| **[People](./people-tab.md)** | Your CRM — one profile ("dossier") per person you've encountered, with an auto-advancing relationship stage, notes, past exchanges, and AI icebreakers. |
+| **[Today](./today-tab.md)** | Your home screen — "what do I do right now": launch room, quests, goals, follow-up queue, conversations, radar, targets, fans, follower trend, account health, today's plan, spend, and the Sunday digest. |
+| **[People](./people-tab.md)** | Your CRM — one profile ("dossier") per person you've encountered, with an auto-advancing relationship stage, notes, past exchanges, AI icebreakers and grounded DM drafts. Also holds the **Following** subtab for roster hygiene. |
+| **[Me](./me-tab.md)** | Your living personal context — facts, events, emotions and notes with freshness windows, plus the goals you're chasing. Everything here is injected into the drafting prompts, and a **"What the AI sees"** preview shows the exact block. |
 | **[Channels](./channels-tab.md)** | Topics as places — group people, saved tweets, ideas, and your own post performance by subject on one screen. |
-| **[Calendar](./calendar-tab.md)** | See and manage everything queued to post and everything already posted; the publishing lifecycle. |
-| **[Composer](./composer-tab.md)** | Write, AI-draft, and schedule original posts and threads; suggests the best times to post. |
-| **[Harvest](./harvest-tab.md)** | Bulk-collect tweets from a page you're viewing into a CSV (and into stratus) — free, no API. |
-| **[Voice](./voice-tab.md)** | Your swipe file of others' tweets + your editable content pillars; extract reusable templates. |
-| **[Replies](./replies-tab.md)** | "Reply Master" — AI-draft strong replies to the right tweets (band-gated to save money), then paste them yourself. |
+
+### Author
+
+| Tab | What it's for |
+|---|---|
+| **[Composer](./composer-tab.md)** | Write, AI-draft, and schedule original posts and threads; suggests the best times to post, blending your own results with your audience's active hours. |
+| **[Calendar](./calendar-tab.md)** | See and manage everything queued to post and everything already posted; the publishing lifecycle, including posts you publish by hand. |
+| **[Studio](./s3-studio.md)** | Deterministic, brand-consistent visuals (quote, stat, banner, pfp, milestone, streak, code, thread cover, list, chart) composed in-browser and exported as PNG. |
 | **[Ideas](./ideas-tab.md)** | The Idea Inbox — capture post/reply ideas (even by right-click on any page) so none get lost. |
+
+### Library
+
+| Tab | What it's for |
+|---|---|
+| **[Voice](./voice-tab.md)** | Your swipe file of others' tweets + your editable content pillars; extract reusable templates. |
+| **[Replies](./replies-tab.md)** | "Reply Master" — AI-draft strong replies to the right tweets (band-gated to save money), then paste them yourself. Also holds the **Lists** subtab of premade canned replies. |
+| **[Harvest](./harvest-tab.md)** | Bulk-collect tweets from a page you're viewing into a CSV (and into stratus) — free, no API. Also documents the automatic **passive timeline harvest** that runs while you scroll x.com/home. |
+
+### Learn
+
+| Tab | What it's for |
+|---|---|
 | **[Playbook](./playbook-tab.md)** | Your personal "what's working" analytics report, gated so it never lies on thin data. |
-| **[Settings](./settings-tab.md)** | Connect the extension to your server; privacy and behavior toggles. **Configure this first.** |
+
+### System
+
+| Tab | What it's for |
+|---|---|
+| **[Settings](./settings-tab.md)** | Connect the extension to your server; your niche, privacy, behavior and appearance; the AI provider and the prompt editor; and **Tuning** — the 61 knobs stratus makes its decisions with, searchable, with the bounds and reasoning attached. **Configure this first.** |
 
 ---
 
@@ -57,6 +83,18 @@ Beyond the side-panel tabs, stratus ships four cross-cutting surfaces from the `
 | **[S2 — MCP server](./s2-mcp-server.md)** | `POST /mcp` — lets Claude Code (or any MCP client) interrogate the whole X operation: query the DB, call any route, draft a post. Never billed. |
 | **[S3 — The Studio](./s3-studio.md)** | The Studio tab: deterministic, brand-consistent visuals (quote/stat/banner/pfp) composed in-browser, exported as PNG, pasted manually. |
 | **[S4 — AI image layer](./s4-ai-image-layer.md)** | AI-generated backgrounds (Grok Imagine) composited *under* the Studio's canvas text, with a hard daily budget and a BLOB asset library. |
+| **[The Writer](./writer.md)** | `GET /writer` — a standalone long-form writing room for X Articles, served by your own server in a normal browser tab (not a side-panel tab). Outline, per-section AI assists, autosave, and a copy-for-X hand-off. Never touches the X API. |
+
+---
+
+## On x.com itself
+
+stratus also decorates the pages you're already reading. These aren't tabs — they're the extension's content script adding what it knows to X's own UI, always read-only and free.
+
+| Surface | What it's for |
+|---|---|
+| **[S6 — Augmented X UI](./s6-augmented-ui.md)** | Person chips on the timeline and a "stratus context" panel under each tweet you open. |
+| **[Notifications surface](./notifications-surface.md)** | On x.com/notifications: which post a reply is on, tier chips, and the $0 harvest of likes/reposts/follows into your CRM. |
 
 ---
 

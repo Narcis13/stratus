@@ -1,19 +1,34 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
-import type { BestTimeCell, PostPillar, PostRegister } from '../shared/types.ts';
+import { audienceScoreFor } from '../shared/activeTimes.ts';
+import type {
+  AudienceCapture,
+  BestTimeCell,
+  PostPillar,
+  PostRegister,
+  PostStatus,
+} from '../shared/types.ts';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type Idea,
   type PostDraftResponse,
+  type RewriteVariant,
   type ScheduledPost,
+  type ScheduledPostCreated,
   type ScheduledPostWithThread,
   type UpdateBody,
   api,
 } from './api.ts';
 import {
+  CADENCE_SETTING_KEYS,
+  audiencePeakHours,
+  bestTimeCellScore,
   estimatePostCostUsd,
+  slotHint,
   splitIntoThread,
   suggestBestSlotDate,
   suggestSlotDate,
+  thinCellsForWeekday,
   topCellsForWeekday,
 } from './composerLogic.ts';
 import {
@@ -23,7 +38,11 @@ import {
   localInputToIso,
   startOfLocalDay,
 } from './datetime.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import { useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 interface Props {
   settings: Settings;
@@ -35,8 +54,13 @@ interface Props {
   onSaved: (post: ScheduledPost) => void;
   /** Open one of the just-generated drafts in the editor (no calendar trip). */
   onEdit: (id: string) => void;
-  /** S3: seed the Studio's quote card with this text (and the row to stamp). */
-  onMakeVisual: (seed: { text: string; postId?: string }) => void;
+  /** S3: seed the Studio with this text (and the row to stamp). Thread mode seeds
+   *  the thread cover with the head segment; otherwise the quote card. */
+  onMakeVisual: (seed: {
+    text: string;
+    postId?: string;
+    template?: 'quote' | 'thread';
+  }) => void;
 }
 
 const TWEET_LIMIT = 280;
@@ -45,8 +69,28 @@ const URL_RE = /(^|\s)https?:\/\//i;
 const URL_EXTRACT_RE = /https?:\/\/\S+/g;
 // How far ahead "Suggest slot" scans the calendar for open anchors.
 const SLOT_HORIZON_DAYS = 7;
+// Past this the captured audience heatmap is stale enough to nudge a refresh
+// visit — the grid drifts as the audience does (A3.4).
+const AUDIENCE_STALE_DAYS = 28;
+
+// Characters left at which the counter starts warning — the DS counter ramp is
+// neutral → warn → danger, so the limit stops being a cliff you only see after
+// falling off it.
+const COUNTER_WARN_AT = 20;
+
+// UI.13 — the cadence gear's ownership line. The ladder is HOURS; every
+// how-many number a user might come looking for here has a different owner, and
+// an unexplained absence reads as a missing knob (D134d).
+const CADENCE_NOTE =
+  "These are the anchor hours, not the quota — how many originals a day you owe lives in Today's quests, and the reply band comes from your niche (Settings → General).";
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+// The counter's className for `remaining` characters left of the 280 limit.
+function counterClass(remaining: number): string {
+  if (remaining < 0) return 'counter over';
+  return remaining <= COUNTER_WARN_AT ? 'counter near' : 'counter';
+}
 
 // Hours show as HH:xx — the :xx signals the mandatory minute jitter (never
 // top-of-hour), so a best-time slot never reads as a robotic 17:00.
@@ -58,6 +102,23 @@ function fmtViews(n: number): string {
   if (n >= 10_000) return `${(n / 1000).toFixed(1)}k`;
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return Math.round(n).toLocaleString();
+}
+
+// A3.7 — the status a single-post edit should transition to, given the current
+// status and the publish-mode toggle. Only the schedulable states participate
+// (posted/publishing are locked out of editing; cancelled/failed keep their
+// status unless re-scheduled the normal API way). null = leave status untouched.
+function nextEditStatus(
+  cur: PostStatus,
+  manual: boolean,
+  hasTime: boolean,
+): 'draft' | 'pending' | 'manual' | null {
+  if (cur !== 'draft' && cur !== 'pending' && cur !== 'manual') return null;
+  if (manual) return hasTime ? 'manual' : null; // no-time is guarded before submit
+  if (cur === 'manual') return hasTime ? 'pending' : 'draft';
+  if (cur === 'draft' && hasTime) return 'pending';
+  if (cur === 'pending' && !hasTime) return 'draft';
+  return null;
 }
 
 type DraftCard = PostDraftResponse['drafts'][number];
@@ -74,6 +135,13 @@ const REGISTER_LABEL: Record<PostRegister, string> = {
   reflective: 'reflective',
 };
 
+// AI.8 — rewrite variant labels for the "Improve with AI" cards.
+const REWRITE_KIND_LABEL: Record<RewriteVariant['kind'], string> = {
+  tightened: 'tightened',
+  rehooked: 'rehooked',
+  restructured: 'restructured',
+};
+
 export function ComposerPanel({
   settings,
   editingId,
@@ -84,6 +152,14 @@ export function ComposerPanel({
   onEdit,
   onMakeVisual,
 }: Props): JSX.Element {
+  // The mirrored cadence ladder + best-time gate (UI.6) — same numbers the
+  // brief and /metrics/best-times read, so a PATCHed anchor moves this picker
+  // after one background sync instead of at the next extension rebuild.
+  const server = useServerSettings();
+  // UI.13 — ONE editor for the whole tab, behind the Schedule gear. It reads the
+  // registry over its own $0 `GET /x/settings`; the numbers the form itself
+  // obeys still come from the mirrored blob above, which the PATCH re-syncs.
+  const editor = useSettingsEditor(settings);
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
   const [segments, setSegments] = useState<string[]>(['', '']);
@@ -92,8 +168,19 @@ export function ComposerPanel({
   const [suggesting, setSuggesting] = useState(false);
   // S0.4 — best-times cells (local weekday × hour) for the slot picker.
   const [bestCells, setBestCells] = useState<BestTimeCell[]>([]);
+  // A3.4 — the latest captured audience heatmap ($0), blended below measured
+  // cells in "Best time" and shown as the day's audience peaks. null until the
+  // fetch lands or when X Analytics was never visited.
+  const [audience, setAudience] = useState<AudienceCapture | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // GR.6 schedule-time advisory — survives the post-save `reset()` on purpose
+  // (it is about the post that was just saved), so it is set after reset runs.
+  const [warnings, setWarnings] = useState<string[]>([]);
+  // A3.7 — publish mode. API (default): the publisher ships it. Manual: the user
+  // pastes it at the slot ($0, URL surcharge doesn't apply). Single posts only —
+  // threads reject manual server-side (decision 7), so the toggle hides there.
+  const [manualMode, setManualMode] = useState(false);
   const [original, setOriginal] = useState<ScheduledPostWithThread | null>(null);
   const [thread, setThread] = useState<ScheduledPost[]>([]);
 
@@ -110,6 +197,9 @@ export function ComposerPanel({
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
+  // AI.8 — "Improve with AI" rewrite of the current single-post text.
+  const [rewriting, setRewriting] = useState(false);
+  const [rewriteVariants, setRewriteVariants] = useState<RewriteVariant[]>([]);
 
   // S0.4 — best-times for the schedule picker; failure just hides the hints.
   useEffect(() => {
@@ -119,6 +209,21 @@ export function ComposerPanel({
       .then((r) => alive && setBestCells(r.cells))
       .catch(() => {
         /* no best-times hints; Suggest slot / manual entry still work */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+
+  // A3.4 — load the captured audience heatmap once on mount, alongside
+  // best-times. Silent null on 404/unconfigured: measured cells still rank.
+  useEffect(() => {
+    let alive = true;
+    api.analytics
+      .activeTimes(settings)
+      .then((r) => alive && setAudience(r.capture))
+      .catch(() => {
+        /* no audience data; "Best time" falls back to measured cells only */
       });
     return () => {
       alive = false;
@@ -172,6 +277,8 @@ export function ComposerPanel({
     setThread([]);
     setError(null);
     setNotice(null);
+    setWarnings([]);
+    setManualMode(false);
     setDrafts([]);
     setDraftMeta(null);
   }, []);
@@ -195,6 +302,10 @@ export function ComposerPanel({
           const head = row.thread.find((s) => s.threadPosition === 1) ?? row.thread[0];
           setScheduledFor(isoToLocalInput(head?.scheduledFor ?? null));
         } else {
+          // A3.7 — a manual row stays manual; a Studio-marked visual (media_note)
+          // must ship by hand anyway (the API can't attach images), so nudge
+          // manual on. The user can still flip back to API.
+          setManualMode(row.status === 'manual' || row.mediaNote != null);
           setScheduledFor(isoToLocalInput(row.scheduledFor));
         }
       })
@@ -217,15 +328,42 @@ export function ComposerPanel({
     }
     return new Date().getDay();
   })();
-  const topSlots = topCellsForWeekday(bestCells, selectedWeekday);
+  const topSlots = topCellsForWeekday(bestCells, selectedWeekday, 3, server.bestTimeMinN);
+  // UI.13 — when nothing clears the gate, show what IS measured, greyed and with
+  // its n, instead of a flat "no data": "two posts at 17:xx, need three" is a
+  // nudge to keep posting there; "no measured best-time" reads as a dead end.
+  const thinSlots =
+    topSlots.length > 0
+      ? []
+      : thinCellsForWeekday(bestCells, selectedWeekday, 3, server.bestTimeMinN);
+
+  // A3.4 — captured audience peaks for the scheduling day (presence, not
+  // measured advice — always labeled "audience") + a staleness/absence nudge.
+  const audiencePeaks = audience ? audiencePeakHours(audience, selectedWeekday) : [];
+  const audienceStale = ((): string | null => {
+    if (!audience) return 'no audience data — visit X Analytics once';
+    const capturedMs = new Date(audience.capturedAt).getTime();
+    if (Number.isNaN(capturedMs)) return null;
+    const days = Math.floor((Date.now() - capturedMs) / 86_400_000);
+    return days > AUDIENCE_STALE_DAYS
+      ? `audience data ${days}d old — visit X Analytics to refresh`
+      : null;
+  })();
+
+  // A3.7 — manual mode is a single-post-only affordance; the toggle never shows
+  // in either thread branch, so this also gates the $0 cost line and the URL
+  // suppression to the single-post render.
+  const isSinglePost = !isThreadEdit && !(threadMode && !isEditing);
+  const isManualSingle = isSinglePost && manualMode;
 
   // Live cost preview (invariant #1) — what this post will bill before you save.
+  // Manual mode is $0 (the user pastes it), and the URL surcharge doesn't apply.
   const costPreview = estimatePostCostUsd(
     isThreadEdit
       ? { threadMode: true, text: '', segments: thread.map((s) => s.text) }
       : threadMode && !isEditing
         ? { threadMode: true, text: '', segments }
-        : { threadMode: false, text, segments: [] },
+        : { threadMode: false, text, segments: [], manual: manualMode },
   );
 
   // §8.2 affordance: a link in tweet 1 costs $0.20; in the first reply, $0.015.
@@ -274,8 +412,16 @@ export function ComposerPanel({
       const now = new Date();
       const slotted = await readSlottedPending(now);
       const slot = best
-        ? suggestBestSlotDate(now, slotted, bestCells, SLOT_HORIZON_DAYS)
-        : suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS);
+        ? suggestBestSlotDate(
+            now,
+            slotted,
+            bestCells,
+            SLOT_HORIZON_DAYS,
+            Math.random,
+            audience,
+            server,
+          )
+        : suggestSlotDate(now, slotted, SLOT_HORIZON_DAYS, Math.random, server);
       if (!slot) {
         setError(`No open slot in the next ${SLOT_HORIZON_DAYS} days — every anchor is filled.`);
         return;
@@ -285,11 +431,19 @@ export function ComposerPanel({
         const cell = bestCells.find(
           (c) => c.weekday === slot.getDay() && c.hour === slot.getHours(),
         );
-        const score = cell?.avgViewsPerDay ?? cell?.avgViews ?? null;
+        const audScore = audience
+          ? audienceScoreFor(audience, slot.getDay(), slot.getHours())
+          : null;
+        const hint = slotHint(cell, audScore, server.bestTimeMinN);
+        const where = `${WEEKDAYS[slot.getDay()]} ${fmtHour(slot.getHours())}`;
+        // Label WHY the slot won (§7.19/decision 10): measured own-data, else
+        // captured audience presence, else the earliest-open fallback.
         setNotice(
-          score != null
-            ? `Best open slot: ${WEEKDAYS[slot.getDay()]} ${fmtHour(slot.getHours())} · ${fmtViews(score)} avg views/day (n=${cell?.posts}).`
-            : 'No measured best-time yet — filled the earliest open slot instead.',
+          hint === 'measured'
+            ? `Best open slot: ${where} · ${fmtViews(bestTimeCellScore(cell, server.bestTimeMinN) ?? 0)} avg views/day (n=${cell?.posts}).`
+            : hint === 'audience'
+              ? `Best open slot: ${where} · audience peak (no measured data yet).`
+              : 'No measured best-time yet — filled the earliest open slot instead.',
         );
       }
     } catch (err) {
@@ -299,18 +453,21 @@ export function ComposerPanel({
     }
   };
 
-  const submitSingle = async (): Promise<ScheduledPost> => {
+  const submitSingle = async (): Promise<ScheduledPostCreated> => {
     const iso = localInputToIso(scheduledFor);
     if (isEditing && original) {
       const patch: UpdateBody = { text: text.trim(), scheduledFor: iso };
-      if (original.status === 'draft' && iso) patch.status = 'pending';
-      if (original.status === 'pending' && !iso) patch.status = 'draft';
+      // A3.7 — the publish-mode toggle drives the status transition. Manual
+      // needs a slot (guarded above); flipping back to API re-derives
+      // pending/draft from whether a time is set.
+      const target = nextEditStatus(original.status, manualMode, iso != null);
+      if (target && target !== original.status) patch.status = target;
       return api.update(settings, original.id, patch);
     }
     return api.create(settings, {
       text: text.trim(),
       scheduledFor: iso,
-      status: iso ? 'pending' : 'draft',
+      status: manualMode ? 'manual' : iso ? 'pending' : 'draft',
     });
   };
 
@@ -348,17 +505,26 @@ export function ComposerPanel({
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    // A3.7 — manual posts are pasted at a specific slot, so a time is required
+    // (the server would 400 `scheduled_for_required_when_pending` anyway; catch
+    // it here with a clearer message before the round-trip).
+    if (isManualSingle && !localInputToIso(scheduledFor)) {
+      setError('Manual posts need a scheduled time — that is the slot you paste them at.');
+      return;
+    }
     setLoading(true);
     setError(null);
     setNotice(null);
     try {
-      let row: ScheduledPost;
+      let row: ScheduledPostCreated;
       if (isThreadEdit) row = await submitThreadEdit();
       else if (threadMode && !isEditing) row = await submitThreadCreate();
       else row = await submitSingle();
       onSaved(row);
       onClearEdit();
       reset();
+      // After reset, which clears the previous save's advisory (GR.6).
+      setWarnings(row.warnings ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Save failed');
     } finally {
@@ -437,6 +603,60 @@ export function ComposerPanel({
     }
   };
 
+  // AI.7 — one LLM call drafts a whole thread (reusing the pillar + idea inputs).
+  // It lands as a draft head + segment tails sharing a threadId; we open it in
+  // the thread editor so the user can tweak segments, set a time, and schedule.
+  const draftThread = async (): Promise<void> => {
+    setDrafting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const effectiveIdea = idea.trim();
+      const ideaId = effectiveIdea ? selectedIdeaId : '';
+      const res = await api.drafts.thread(settings, {
+        ...(pillar ? { pillar } : {}),
+        ...(effectiveIdea ? { idea: effectiveIdea } : {}),
+        ...(ideaId ? { ideaId } : {}),
+      });
+      if (ideaId) {
+        setSelectedIdeaId('');
+        loadOpenIdeas();
+      }
+      const head = res.segments.find((s) => s.threadPosition === 1) ?? res.segments[0];
+      if (!head) throw new ApiError(0, 'empty_thread_response');
+      onSaved(head);
+      onEdit(head.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Thread draft failed');
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  // AI.8 — three sharper versions of the current single-post text. No DB rows;
+  // clicking a variant replaces the textarea. Same substance, better writing.
+  const improveWithAi = async (): Promise<void> => {
+    const draft = text.trim();
+    if (draft.length < 1) return;
+    setRewriting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.drafts.rewrite(settings, { text: draft });
+      setRewriteVariants(res.variants);
+      if (res.variants.length === 0) setNotice('No usable rewrites came back — try again.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Rewrite failed');
+    } finally {
+      setRewriting(false);
+    }
+  };
+
+  const applyRewrite = (v: RewriteVariant): void => {
+    setText(v.text);
+    setRewriteVariants([]);
+  };
+
   // Pick a generated draft → open it in the editor (it already exists as a draft
   // row); the user sets a time and Saves, promoting it to pending. No round-trip
   // through the Calendar tab.
@@ -471,7 +691,11 @@ export function ComposerPanel({
     ? thread.some((s) => s.text.trim() !== '')
     : threadMode && !isEditing
       ? segments.filter((s) => s.trim() !== '').length >= 2
-      : text.trim() !== '' && TWEET_LIMIT - text.length >= 0;
+      : text.trim() !== '' &&
+        TWEET_LIMIT - text.length >= 0 &&
+        // A3.7 — manual mode has no draft form: it's a scheduled paste, so a
+        // time is mandatory before the button unlocks.
+        (!manualMode || scheduledFor !== '');
 
   const threadSegments = isThreadEdit ? thread.map((s) => s.text) : segments;
   const threadCharTotal = threadSegments.reduce((n, s) => n + s.length, 0);
@@ -557,7 +781,7 @@ export function ComposerPanel({
                 <span>
                   {seg.threadPosition}/{thread.length}
                   {segLocked && ` · ${seg.status}`}
-                  <span className={`counter${TWEET_LIMIT - seg.text.length < 0 ? ' over' : ''}`}>
+                  <span className={counterClass(TWEET_LIMIT - seg.text.length)}>
                     {TWEET_LIMIT - seg.text.length}
                   </span>
                 </span>
@@ -578,7 +802,7 @@ export function ComposerPanel({
             <label className="field" key={i}>
               <span>
                 {i + 1}/{segments.length}
-                <span className={`counter${TWEET_LIMIT - seg.length < 0 ? ' over' : ''}`}>
+                <span className={counterClass(TWEET_LIMIT - seg.length)}>
                   {TWEET_LIMIT - seg.length}
                 </span>
               </span>
@@ -619,7 +843,7 @@ export function ComposerPanel({
         <label className="field">
           <span>
             Text
-            <span className={`counter${TWEET_LIMIT - text.length < 0 ? ' over' : ''}`}>
+            <span className={counterClass(TWEET_LIMIT - text.length)}>
               {TWEET_LIMIT - text.length}
             </span>
           </span>
@@ -632,6 +856,32 @@ export function ComposerPanel({
             disabled={isLocked}
           />
         </label>
+      )}
+
+      {!threadMode && !isThreadEdit && !isLocked && text.trim() !== '' && (
+        <div className="rewrite-assist">
+          <button type="button" onClick={() => void improveWithAi()} disabled={rewriting}>
+            {rewriting ? 'Improving…' : 'Improve with AI (~$0.003)'}
+          </button>
+          {rewriteVariants.length > 0 && (
+            <div className="draft-cards">
+              {rewriteVariants.map((v) => (
+                <div className="draft-card" key={v.kind}>
+                  <div className="draft-card-head">
+                    <span className="badge badge-register">{REWRITE_KIND_LABEL[v.kind]}</span>
+                    <span className="counter">{v.text.length}</span>
+                  </div>
+                  <div className="draft-card-text">{v.text}</div>
+                  <div className="row draft-card-actions">
+                    <button type="button" className="primary" onClick={() => applyRewrite(v)}>
+                      Use this →
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {(threadMode || isThreadEdit) && (
@@ -650,7 +900,7 @@ export function ComposerPanel({
         </div>
       )}
 
-      {headHasUrl && (
+      {headHasUrl && !isManualSingle && (
         <div className="warn">
           ⚠ A URL in tweet 1 is billed at $0.20 (13×).{' '}
           {!threadMode && !isEditing && (
@@ -661,74 +911,155 @@ export function ComposerPanel({
         </div>
       )}
 
-      <label className="field">
-        <span>Scheduled for (local time)</span>
-        <div className="row schedule-row">
-          <input
-            type="datetime-local"
-            value={scheduledFor}
-            onChange={(e) => setScheduledFor(e.target.value)}
-            disabled={isLocked}
+      <Section
+        title="Schedule"
+        actions={
+          <SettingsGear
+            editor={editor}
+            keys={CADENCE_SETTING_KEYS}
+            label="Configure the posting cadence"
+            note={CADENCE_NOTE}
           />
-          {!isLocked && (
-            <>
+        }
+      >
+        {isSinglePost && !isLocked && (
+          <div className="publish-mode">
+            <span className="muted">Publish</span>
+            <div className="segmented">
               <button
                 type="button"
-                onClick={() => void suggestSlot(true)}
-                disabled={suggesting}
-                title="Fill the highest-scoring open anchor (jittered, never top-of-hour)"
+                className={manualMode ? '' : 'active'}
+                onClick={() => setManualMode(false)}
+                title="Stratus publishes it automatically at the slot"
               >
-                {suggesting ? '…' : 'Best time'}
+                API
               </button>
               <button
                 type="button"
-                onClick={() => void suggestSlot(false)}
-                disabled={suggesting}
-                title="Fill the earliest open anchor"
+                className={manualMode ? 'active' : ''}
+                onClick={() => setManualMode(true)}
+                title="You paste it in X yourself at the slot — $0, and links are fine (no $0.20 surcharge)"
               >
-                Next slot
+                Manual (you paste)
               </button>
-            </>
-          )}
-          {scheduledFor && !isLocked && (
-            <button type="button" onClick={() => setScheduledFor('')} title="Clear → save as draft">
-              ✕
-            </button>
-          )}
-        </div>
-        {!isLocked &&
-          (topSlots.length > 0 ? (
-            <div className="best-times muted">
-              Best {WEEKDAYS[selectedWeekday]}:{' '}
-              {topSlots.map((c, i) => (
-                <span key={`${c.weekday}:${c.hour}`} className="best-time-cell">
-                  {i > 0 && ' · '}
-                  {fmtHour(c.hour)} <strong>{fmtViews(c.avgViewsPerDay ?? c.avgViews ?? 0)}</strong>
-                  /day (n={c.posts})
-                </span>
-              ))}
             </div>
-          ) : (
-            <div className="best-times muted">
-              No measured best-time for {WEEKDAYS[selectedWeekday]} yet (need ≥3 posts in a slot).
-            </div>
-          ))}
-        <small className="muted">
-          {scheduledFor
-            ? 'Will save as pending and ship at this minute.'
-            : 'Empty → saved as draft.'}
-        </small>
-      </label>
+          </div>
+        )}
 
-      {costPreview.usd > 0 && (
-        <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
-          ≈ ${costPreview.usd.toFixed(3)}
-          {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
-        </div>
-      )}
+        <label className="field">
+          <span>Scheduled for (local time)</span>
+          <div className="row schedule-row">
+            <input
+              type="datetime-local"
+              value={scheduledFor}
+              onChange={(e) => setScheduledFor(e.target.value)}
+              disabled={isLocked}
+            />
+            {!isLocked && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void suggestSlot(true)}
+                  disabled={suggesting}
+                  title="Fill the highest-scoring open anchor (jittered, never top-of-hour)"
+                >
+                  {suggesting ? '…' : 'Best time'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void suggestSlot(false)}
+                  disabled={suggesting}
+                  title="Fill the earliest open anchor"
+                >
+                  Next slot
+                </button>
+              </>
+            )}
+            {scheduledFor && !isLocked && (
+              <button
+                type="button"
+                onClick={() => setScheduledFor('')}
+                title="Clear → save as draft"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {!isLocked &&
+            (topSlots.length > 0 ? (
+              <div className="best-times muted">
+                Best {WEEKDAYS[selectedWeekday]}:{' '}
+                {topSlots.map((c, i) => (
+                  <span key={`${c.weekday}:${c.hour}`} className="best-time-cell">
+                    {i > 0 && ' · '}
+                    {fmtHour(c.hour)}{' '}
+                    <strong>{fmtViews(c.avgViewsPerDay ?? c.avgViews ?? 0)}</strong>
+                    /day (n={c.posts})
+                  </span>
+                ))}
+              </div>
+            ) : thinSlots.length > 0 ? (
+              // Measured, but under the gate — dimmed and labelled with its n, so
+              // it can never be mistaken for advice (§7.19).
+              <div className="best-times muted">
+                {WEEKDAYS[selectedWeekday]} so far:{' '}
+                {thinSlots.map((c, i) => (
+                  <span key={`${c.weekday}:${c.hour}`} className="best-time-cell best-time-thin">
+                    {i > 0 && ' · '}
+                    {fmtHour(c.hour)} (n={c.posts})
+                  </span>
+                ))}{' '}
+                — need {server.bestTimeMinN} in a slot before it counts as advice.
+              </div>
+            ) : (
+              <div className="best-times muted">
+                No measured best-time for {WEEKDAYS[selectedWeekday]} yet (need ≥
+                {server.bestTimeMinN} posts in a slot).
+              </div>
+            ))}
+          {!isLocked && audiencePeaks.length > 0 && (
+            <div className="best-times muted">
+              Audience peak {WEEKDAYS[selectedWeekday]}:{' '}
+              {audiencePeaks.map((h) => fmtHour(h)).join(', ')}
+            </div>
+          )}
+          {!isLocked && audienceStale && <div className="best-times muted">{audienceStale}</div>}
+          <small className="muted">
+            {isManualSingle
+              ? scheduledFor
+                ? 'Manual — you paste it in X at this minute; nothing auto-publishes.'
+                : 'Manual mode needs a time — that is the slot you paste it at.'
+              : scheduledFor
+                ? 'Will save as pending and ship at this minute.'
+                : 'Empty → saved as draft.'}
+          </small>
+        </label>
+
+        {isManualSingle ? (
+          <div className="cost-preview">
+            $0 <span className="muted">· you paste it</span>
+          </div>
+        ) : (
+          costPreview.usd > 0 && (
+            <div className={`cost-preview${headHasUrl ? ' cost-preview-warn' : ''}`}>
+              ≈ ${costPreview.usd.toFixed(3)}
+              {costPreview.note && <span className="muted"> · {costPreview.note}</span>}
+            </div>
+          )
+        )}
+      </Section>
 
       {error && <div className="error">{error}</div>}
       {notice && <div className="ok">{notice}</div>}
+      {/* GR.6: the post is already saved — these are cadence smells worth a look
+          before the publisher gets there, never a reason it didn't go in. */}
+      {warnings.length > 0 && (
+        <div className="warn">
+          {warnings.map((w) => (
+            <div key={w}>{w}</div>
+          ))}
+        </div>
+      )}
 
       <div className="row">
         <button type="submit" className="primary" disabled={loading || isLocked || !canSubmit}>
@@ -738,13 +1069,15 @@ export function ComposerPanel({
           0 && (
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              const isThread = threadMode || isThreadEdit;
               onMakeVisual({
-                text: (threadMode || isThreadEdit ? (threadSegments[0] ?? '') : text).trim(),
+                text: (isThread ? (threadSegments[0] ?? '') : text).trim(),
                 ...(isEditing && original ? { postId: original.id } : {}),
-              })
-            }
-            title="Open the Studio with this text as a branded quote card"
+                ...(isThread ? { template: 'thread' as const } : {}),
+              });
+            }}
+            title="Open the Studio with this text — thread mode seeds the thread cover, otherwise a quote card"
           >
             Make visual
           </button>
@@ -762,113 +1095,120 @@ export function ComposerPanel({
       </div>
 
       {!isEditing && (
-        <section className="drafter">
-          <h3>Draft with Grok (§8.1)</h3>
-          {remixTweetId && (
-            <div className="status-line">
-              remixing structure of tweet <code>{remixTweetId}</code>{' '}
-              <button type="button" onClick={onClearRemix}>
-                ✕
-              </button>
-            </div>
-          )}
-          <label className="field">
-            <span>Pillar</span>
-            <select value={pillar} onChange={(e) => setPillar(e.target.value)}>
-              {pillarOpts.map((p) => (
-                <option key={p.value} value={p.value}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {openIdeas.length > 0 && (
+        <div className="drafter">
+          <Section title={threadMode ? 'Draft a thread with AI' : 'Draft with AI'}>
+            {remixTweetId && (
+              <div className="status-line">
+                remixing structure of tweet <code>{remixTweetId}</code>{' '}
+                <button type="button" onClick={onClearRemix}>
+                  ✕
+                </button>
+              </div>
+            )}
             <label className="field">
-              <span>Seed from Idea Inbox (optional)</span>
-              <select
-                value={selectedIdeaId}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  setSelectedIdeaId(id);
-                  const picked = openIdeas.find((i) => i.id === id);
-                  if (picked) setIdea(picked.text);
-                }}
-              >
-                <option value="">— free-typed / none —</option>
-                {openIdeas.map((i) => (
-                  <option key={i.id} value={i.id}>
-                    {i.text.length > 80 ? `${i.text.slice(0, 79)}…` : i.text}
+              <span>Pillar</span>
+              <select value={pillar} onChange={(e) => setPillar(e.target.value)}>
+                {pillarOpts.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
                   </option>
                 ))}
               </select>
             </label>
-          )}
-          <label className="field">
-            <span>Idea (optional, Romanian OK)</span>
-            <textarea
-              value={idea}
-              onChange={(e) => {
-                setIdea(e.target.value);
-                // Emptying the box drops the inbox link; tweaking keeps it —
-                // the picked idea still seeded whatever ships.
-                if (e.target.value.trim() === '') setSelectedIdeaId('');
-              }}
-              rows={2}
-              maxLength={2000}
-              placeholder="seed for the three drafts…"
-            />
-          </label>
-          <button type="button" onClick={() => void generateDrafts()} disabled={drafting}>
-            {drafting
-              ? 'Drafting…'
-              : drafts.length > 0
-                ? 'Regenerate 3 drafts (~$0.01)'
-                : 'Generate 3 drafts (~$0.01)'}
-          </button>
+            {openIdeas.length > 0 && (
+              <label className="field">
+                <span>Seed from Idea Inbox (optional)</span>
+                <select
+                  value={selectedIdeaId}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    setSelectedIdeaId(id);
+                    const picked = openIdeas.find((i) => i.id === id);
+                    if (picked) setIdea(picked.text);
+                  }}
+                >
+                  <option value="">— free-typed / none —</option>
+                  {openIdeas.map((i) => (
+                    <option key={i.id} value={i.id}>
+                      {i.text.length > 80 ? `${i.text.slice(0, 79)}…` : i.text}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="field">
+              <span>Idea (optional, Romanian OK)</span>
+              <textarea
+                value={idea}
+                onChange={(e) => {
+                  setIdea(e.target.value);
+                  // Emptying the box drops the inbox link; tweaking keeps it —
+                  // the picked idea still seeded whatever ships.
+                  if (e.target.value.trim() === '') setSelectedIdeaId('');
+                }}
+                rows={2}
+                maxLength={2000}
+                placeholder="seed for the three drafts…"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void (threadMode ? draftThread() : generateDrafts())}
+              disabled={drafting}
+            >
+              {drafting
+                ? 'Drafting…'
+                : threadMode
+                  ? 'Draft thread with AI (~$0.01)'
+                  : drafts.length > 0
+                    ? 'Regenerate 3 drafts (~$0.01)'
+                    : 'Generate 3 drafts (~$0.01)'}
+            </button>
 
-          {drafts.length > 0 ? (
-            <div className="draft-cards">
-              {draftMeta && (
-                <div className="muted draft-meta">
-                  {drafts.length} drafts · {draftMeta.winnersUsed} winners as voice anchors · $
-                  {draftMeta.costUsd.toFixed(4)}. Pick one to set a time, or regenerate.
-                </div>
-              )}
-              {drafts.map((d) => (
-                <div className="draft-card" key={d.id}>
-                  <div className="draft-card-head">
-                    {d.register && (
-                      <span className={`badge badge-register badge-${d.register}`}>
-                        {REGISTER_LABEL[d.register]}
-                      </span>
-                    )}
-                    {d.pillar && <span className="badge badge-pillar">{d.pillar}</span>}
-                    <span className="counter">{d.text.length}</span>
+            {drafts.length > 0 ? (
+              <div className="draft-cards">
+                {draftMeta && (
+                  <div className="muted draft-meta">
+                    {drafts.length} drafts · {draftMeta.winnersUsed} winners as voice anchors · $
+                    {draftMeta.costUsd.toFixed(4)}. Pick one to set a time, or regenerate.
                   </div>
-                  <div className="draft-card-text">{d.text}</div>
-                  <div className="row draft-card-actions">
-                    <button type="button" className="primary" onClick={() => useDraft(d.id)}>
-                      Use this →
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void generateDrafts(d.text)}
-                      disabled={drafting}
-                      title="Feed this draft back as the seed for three fresh takes"
-                    >
-                      More like this
-                    </button>
+                )}
+                {drafts.map((d) => (
+                  <div className="draft-card" key={d.id}>
+                    <div className="draft-card-head">
+                      {d.register && (
+                        <span className={`badge badge-register badge-${d.register}`}>
+                          {REGISTER_LABEL[d.register]}
+                        </span>
+                      )}
+                      {d.pillar && <span className="badge badge-pillar">{d.pillar}</span>}
+                      <span className="counter">{d.text.length}</span>
+                    </div>
+                    <div className="draft-card-text">{d.text}</div>
+                    <div className="row draft-card-actions">
+                      <button type="button" className="primary" onClick={() => useDraft(d.id)}>
+                        Use this →
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void generateDrafts(d.text)}
+                        disabled={drafting}
+                        title="Feed this draft back as the seed for three fresh takes"
+                      >
+                        More like this
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <small className="muted">
-              One plain, one spicy, one reflective — pick one inline to schedule, the rest stay as
-              calendar drafts. Nothing posts until you schedule it.
-            </small>
-          )}
-        </section>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                line="One plain, one spicy, one reflective — pick one inline to schedule."
+                hint="The other two stay as calendar drafts. Nothing posts until you schedule it."
+              />
+            )}
+          </Section>
+        </div>
       )}
     </form>
   );

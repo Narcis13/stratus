@@ -1,22 +1,246 @@
+/* ============================================================================
+   Stratus Design System tokens — lifted verbatim from
+   `Stratus Design System/tokens/{colors,typography,spacing,radii}.css`.
+   New work references `--strat-*` directly; the legacy short aliases at the end
+   of this block keep the existing 2,400-line sheet resolving unchanged.
+   Dark-only for now — Task 9 (UI.9) adds the `:root[data-theme='light']` block.
+   ============================================================================ */
 :root {
-  color-scheme: light dark;
-  --bg: #0e1014;
-  --bg-elev: #161a21;
-  --bg-hover: #1d222b;
-  --border: #262c36;
-  --text: #e8ebf0;
-  --muted: #8b95a7;
-  --accent: #4f8cff;
-  --accent-hover: #6ba0ff;
-  --danger: #e0556d;
-  --warn: #ffb454;
-  --ok: #5ad19a;
-  --status-draft: #8b95a7;
-  --status-pending: #4f8cff;
-  --status-publishing: #f0b446;
-  --status-posted: #5ad19a;
-  --status-failed: #e0556d;
-  --status-cancelled: #6e6e6e;
+  color-scheme: dark;
+
+  /* ---- Surfaces (deep → elevated) ---- */
+  --strat-bg: #0e1014;
+  --strat-bg-elev: #161a21;
+  --strat-bg-hover: #1d222b;
+  --strat-border: #262c36;
+
+  /* ---- Text ---- */
+  --strat-text: #e8ebf0;
+  --strat-muted: #8b95a7;
+
+  /* ---- Brand accent ---- */
+  --strat-accent: #4f8cff;
+  --strat-accent-hover: #6ba0ff;
+
+  /* ---- Semantic ---- */
+  --strat-danger: #e0556d;
+  --strat-warn: #ffb454;
+  --strat-ok: #5ad19a;
+
+  /* ---- Post lifecycle status ---- */
+  --strat-status-draft: #8b95a7;
+  --strat-status-pending: #4f8cff;
+  --strat-status-publishing: #f0b446;
+  --strat-status-posted: #5ad19a;
+  --strat-status-failed: #e0556d;
+  --strat-status-cancelled: #6e6e6e;
+
+  /* ---- Reply-band signal (mirrors the on-page content-script badge) ---- */
+  --strat-band-hot: rgb(0, 186, 124);
+  --strat-band-warm: rgb(255, 179, 0);
+  --strat-band-warm-text: rgb(214, 150, 0);
+
+  /* ---- Content-pillar purple (drafts, thread pillars) ---- */
+  --strat-pillar: #9b86ff;
+  --strat-pillar-bg: rgba(124, 92, 255, 0.15);
+
+  /* ---- Tinted fills (12–18% alpha over dark) used by badges & messages.
+     Other alphas are derived at the call site via color-mix() so they track
+     the base token when Task 9's light theme redefines it. ---- */
+  --strat-accent-fill: rgba(79, 140, 255, 0.18);
+  --strat-danger-fill: rgba(224, 85, 109, 0.12);
+  --strat-warn-fill: rgba(255, 180, 84, 0.1);
+  --strat-ok-fill: rgba(90, 209, 154, 0.12);
+  --strat-scrim: rgba(0, 0, 0, 0.55);
+
+  /* ---- X-companion reference tokens ----
+     X's own values, used only when a surface must visually blend into the live
+     X timeline (delete-hover red, native-blue affordances). */
+  --x-blue: #1d9bf0;
+  --x-dim-bg: #15202b;
+  --x-dark-bg: #000000;
+  --x-border: #2f3336;
+  --x-muted: #71767b;
+  --x-red: #f4212e;
+
+  /* ---- Typography (base size is 13px, not the web-default 16px) ---- */
+  --strat-font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --strat-font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+  --strat-weight-regular: 400;
+  --strat-weight-semibold: 600;
+  --strat-weight-bold: 700;
+  --strat-weight-extrabold: 800;
+  --strat-text-kpi: 26px;
+  --strat-text-lg: 15px;
+  --strat-text-h2: 14px;
+  --strat-text-body: 13px;
+  --strat-text-sm: 12px;
+  --strat-text-xs: 11px;
+  --strat-text-2xs: 10px;
+  --strat-text-3xs: 9px;
+  --strat-leading-body: 1.45;
+  --strat-leading-tight: 1.1;
+  --strat-leading-snug: 1.3;
+  --strat-tracking-eyebrow: 0.04em;
+
+  /* ---- Spacing (tight 2px rhythm) ---- */
+  --strat-space-0: 0;
+  --strat-space-1: 2px;
+  --strat-space-2: 4px;
+  --strat-space-3: 6px;
+  --strat-space-4: 8px;
+  --strat-space-5: 10px;
+  --strat-space-6: 12px;
+  --strat-space-7: 14px;
+  --strat-space-8: 16px;
+  --strat-space-10: 20px;
+  --strat-pad-panel: 14px;
+  --strat-pad-btn: 6px 12px;
+  --strat-pad-input: 8px 10px;
+  --strat-pad-chip: 1px 8px;
+  --strat-pad-badge: 1px 6px;
+  --strat-rail-width: 104px;
+  --strat-panel-width: 360px;
+
+  /* ---- Appearance knobs (UI.9) — density + scale semantic vars the panel
+     rules consume; [data-density]/[data-scale] on <html> override them. ---- */
+  --ui-panel-pad: 14px;
+  --ui-section-gap: 12px;
+  --ui-row-gap: 8px;
+  --ui-root-size: 13px;
+
+  /* ---- Radii, borders, elevation, motion (flat: hairlines, not shadows) ---- */
+  --strat-radius-xs: 3px;
+  --strat-radius-sm: 4px;
+  --strat-radius-md: 6px;
+  --strat-radius-lg: 8px;
+  --strat-radius-badge: 10px;
+  --strat-radius-pill: 999px;
+  --strat-border-width: 1px;
+  --strat-border-hairline: 1px solid var(--strat-border);
+  --strat-border-focus: 1px solid var(--strat-accent);
+  --strat-shadow-none: none;
+  --strat-shadow-modal: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --strat-transition-fast: 120ms ease;
+  --strat-transition: 160ms ease;
+
+  /* ---- Semantic aliases (prefer these in new work) ---- */
+  --surface-app: var(--strat-bg);
+  --surface-card: var(--strat-bg-elev);
+  --surface-hover: var(--strat-bg-hover);
+  --border-hairline: var(--strat-border);
+  --text-body: var(--strat-text);
+  --text-muted: var(--strat-muted);
+
+  /* ---- Legacy short aliases — the rest of this sheet resolves through these.
+     Each maps onto a --strat-* token; new rules should use --strat-* directly. */
+  --bg: var(--strat-bg);
+  --bg-elev: var(--strat-bg-elev);
+  --bg-hover: var(--strat-bg-hover);
+  --border: var(--strat-border);
+  --text: var(--strat-text);
+  --muted: var(--strat-muted);
+  --accent: var(--strat-accent);
+  --accent-hover: var(--strat-accent-hover);
+  --danger: var(--strat-danger);
+  --warn: var(--strat-warn);
+  --ok: var(--strat-ok);
+  --status-draft: var(--strat-status-draft);
+  --status-pending: var(--strat-status-pending);
+  --status-publishing: var(--strat-status-publishing);
+  --status-posted: var(--strat-status-posted);
+  --status-failed: var(--strat-status-failed);
+  --status-cancelled: var(--strat-status-cancelled);
+}
+
+/* ============================================================================
+   Light theme (UI.9) — `data-theme='light'` stamped on <html> by main.tsx.
+   Only the base --strat-* tokens are redefined; every legacy/semantic alias is
+   a var() reference and resolves lazily, so the whole 2.5k-line sheet re-tints
+   for free. Palette is an opening guess (AA over the tinted fills is the QA
+   bar — see plan risk note). Every tinted fill keeps a *dark* text companion
+   (never light-alpha text on white). Content-script overlays and the Studio
+   canvas are NOT themed here — they follow X / the user's brand kit. */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --strat-bg: #f5f7fa;
+  --strat-bg-elev: #ffffff;
+  --strat-bg-hover: #eceff4;
+  --strat-border: #d9dfe9;
+
+  --strat-text: #18212f;
+  --strat-muted: #5f6b80;
+
+  --strat-accent: #2f6ce0;
+  --strat-accent-hover: #1f5ccc;
+
+  /* Semantic ink darkened so each reads as text on light AND tints cleanly as a
+     color-mix fill base (both usages share the token). */
+  --strat-danger: #c23a54;
+  --strat-warn: #9a6a10;
+  --strat-ok: #1f9d66;
+
+  --strat-status-draft: #5f6b80;
+  --strat-status-pending: #2f6ce0;
+  --strat-status-publishing: #b26f00;
+  --strat-status-posted: #1f9d66;
+  --strat-status-failed: #c23a54;
+  --strat-status-cancelled: #6b7280;
+
+  --strat-band-hot: rgb(0, 150, 100);
+  --strat-band-warm: rgb(200, 140, 0);
+  --strat-band-warm-text: #8a6100;
+
+  --strat-pillar: #6d4fd0;
+  --strat-pillar-bg: rgba(124, 92, 255, 0.12);
+
+  /* Direct-use tinted fills re-authored for a light base (10–14% alpha). */
+  --strat-accent-fill: rgba(47, 108, 224, 0.12);
+  --strat-danger-fill: rgba(194, 58, 84, 0.1);
+  --strat-warn-fill: rgba(154, 106, 16, 0.12);
+  --strat-ok-fill: rgba(31, 157, 102, 0.12);
+  --strat-scrim: rgba(15, 23, 42, 0.4);
+}
+
+/* Density — [data-density='compact'] tightens the ~3 layout rhythm vars every
+   .panel/.row consumes. Cozy is the base (:root defaults), so a no-op. */
+:root[data-density="compact"] {
+  --ui-panel-pad: 10px;
+  --ui-section-gap: 8px;
+  --ui-row-gap: 6px;
+}
+
+/* Scale — base is 13px on :root; these shift the panel's inherited root size. */
+:root[data-scale="12"] {
+  --ui-root-size: 12px;
+}
+:root[data-scale="14"] {
+  --ui-root-size: 14px;
+}
+
+/* Inter — bundled at extension/public/fonts (served from /fonts). Three weights
+   ship: 400, 700, 800; 600 (semibold) is synthesized by the browser. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/Inter-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/Inter-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("/fonts/Inter-ExtraBold.woff2") format("woff2");
 }
 
 * {
@@ -31,8 +255,8 @@ body,
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
+  font-family: var(--strat-font-sans);
+  font-size: var(--ui-root-size, 13px);
   line-height: 1.45;
   color: var(--text);
   background: var(--bg);
@@ -57,12 +281,23 @@ body {
 }
 
 .brand {
-  padding: 12px 12px 8px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  font-size: 11px;
-  color: var(--muted);
-  text-transform: uppercase;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 12px 10px;
+}
+.brand-mark {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--strat-radius-sm);
+}
+.brand-word {
+  font-size: 13px;
+  font-weight: var(--strat-weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--strat-text);
 }
 
 .tabs {
@@ -70,6 +305,25 @@ body {
   flex-direction: column;
   gap: 2px;
   padding: 0 6px 8px;
+}
+
+/* rail groups — eyebrow-divided clusters (OPERATE / AUTHOR / …) */
+.tab-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tab-group + .tab-group {
+  margin-top: 10px;
+}
+.tab-group-eyebrow {
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: var(--strat-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--strat-muted);
+  opacity: 0.75;
 }
 
 .tab {
@@ -110,10 +364,10 @@ body {
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 14px;
+  padding: var(--ui-panel-pad);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--ui-section-gap);
 }
 
 .panel-header {
@@ -178,6 +432,11 @@ code {
   font-variant-numeric: tabular-nums;
   font-size: 11px;
 }
+/* The counter ramps neutral → warn → danger (UI.13), so the 280 limit stops
+   being a cliff you only notice after going over it. */
+.counter.near {
+  color: var(--warn);
+}
 .counter.over {
   color: var(--danger);
   font-weight: 600;
@@ -221,22 +480,22 @@ button.danger:hover:not(:disabled) {
 
 .row {
   display: flex;
-  gap: 8px;
+  gap: var(--ui-row-gap);
   align-items: center;
 }
 
 /* messages */
 .error {
-  background: rgba(224, 85, 109, 0.12);
-  border: 1px solid rgba(224, 85, 109, 0.3);
+  background: var(--strat-danger-fill);
+  border: 1px solid color-mix(in srgb, var(--strat-danger) 30%, transparent);
   color: var(--danger);
   padding: 8px 10px;
   border-radius: 6px;
   font-size: 12px;
 }
 .warn {
-  background: rgba(255, 180, 84, 0.1);
-  border: 1px solid rgba(255, 180, 84, 0.3);
+  background: var(--strat-warn-fill);
+  border: 1px solid color-mix(in srgb, var(--strat-warn) 30%, transparent);
   color: var(--warn);
   padding: 8px 10px;
   border-radius: 6px;
@@ -267,27 +526,27 @@ button.danger:hover:not(:disabled) {
   flex-shrink: 0;
 }
 .badge-draft {
-  background: rgba(139, 149, 167, 0.2);
+  background: color-mix(in srgb, var(--strat-status-draft) 20%, transparent);
   color: var(--status-draft);
 }
 .badge-pending {
-  background: rgba(79, 140, 255, 0.18);
+  background: var(--strat-accent-fill);
   color: var(--status-pending);
 }
 .badge-publishing {
-  background: rgba(240, 180, 70, 0.18);
+  background: color-mix(in srgb, var(--strat-status-publishing) 18%, transparent);
   color: var(--status-publishing);
 }
 .badge-posted {
-  background: rgba(90, 209, 154, 0.18);
+  background: color-mix(in srgb, var(--strat-status-posted) 18%, transparent);
   color: var(--status-posted);
 }
 .badge-failed {
-  background: rgba(224, 85, 109, 0.18);
+  background: color-mix(in srgb, var(--strat-status-failed) 18%, transparent);
   color: var(--status-failed);
 }
 .badge-cancelled {
-  background: rgba(110, 110, 110, 0.18);
+  background: color-mix(in srgb, var(--strat-status-cancelled) 18%, transparent);
   color: var(--status-cancelled);
 }
 
@@ -321,6 +580,7 @@ button.danger:hover:not(:disabled) {
 .day-count {
   color: var(--muted);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 .day-empty {
   padding: 8px 10px;
@@ -369,6 +629,98 @@ button.danger:hover:not(:disabled) {
   min-width: 0;
 }
 
+/* A3.14 — Calendar week board: 7 horizontally-scrolling day columns with
+   heat-shaded open anchors + a drafts tray. The side panel is narrow, so the
+   board scrolls internally rather than widening the panel. */
+.week-board {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.week-col {
+  flex: 0 0 150px;
+  min-width: 150px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.week-col-today {
+  border-color: var(--accent);
+}
+/* Rows wrap inside a 150px column so the chips stay visible. */
+.week-col .post-row {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  padding: 6px 8px;
+}
+.week-col .post-time {
+  min-width: 0;
+}
+.ghost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+}
+.ghost {
+  width: 100%;
+  text-align: left;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 4px 8px;
+  border-radius: var(--strat-radius-sm);
+  cursor: default;
+  color: var(--muted);
+  background: transparent;
+  border: 1px dashed var(--border);
+}
+/* Tier shade (§7.19): measured own-data outranks captured audience presence. */
+.ghost-measured {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.ghost-audience {
+  border-color: transparent;
+  background: var(--strat-accent-fill);
+  color: var(--status-pending);
+}
+.ghost-armed {
+  cursor: pointer;
+}
+.ghost-armed:hover:not(:disabled) {
+  background: var(--strat-accent-fill);
+}
+.ghost:disabled {
+  cursor: default;
+}
+/* The tray sits under a `Section` eyebrow since UI.13 (its count moved into the
+   title), so the panel's own gap spaces it — a margin here would double up.
+   Clipping keeps the first/last row inside the card's rounded border. */
+.drafts-tray {
+  overflow: hidden;
+}
+.tray-draft-selected {
+  background: var(--strat-accent-fill);
+}
+.tray-actions {
+  display: flex;
+  gap: 6px;
+  padding: 2px 10px 6px;
+}
+.tray-edit-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+
 /* harvest */
 .field select {
   background: var(--bg);
@@ -384,28 +736,14 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-.seg-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.seg-group > span {
-  font-size: 12px;
-  color: var(--muted);
-}
-.seg-row {
-  display: flex;
-  gap: 4px;
-}
-.seg-row button {
-  flex: 1;
-}
-
 .harvest-tuning {
   align-items: flex-end;
 }
 .harvest-tuning .field {
   flex: 1;
+  /* HV.3 added a third column (Min views); without this the inputs' intrinsic
+     min-width keeps them from shrinking and the row overflows the panel. */
+  min-width: 0;
 }
 
 .harvest-progress {
@@ -421,8 +759,8 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 .harvest-result {
-  background: rgba(90, 209, 154, 0.1);
-  border: 1px solid rgba(90, 209, 154, 0.3);
+  background: color-mix(in srgb, var(--strat-ok) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--strat-ok) 30%, transparent);
   border-radius: 6px;
   padding: 8px 10px;
   line-height: 1.5;
@@ -478,19 +816,15 @@ button.danger:hover:not(:disabled) {
 }
 
 .badge-auto {
-  background: rgba(255, 180, 84, 0.18);
+  background: color-mix(in srgb, var(--strat-warn) 18%, transparent);
   color: var(--warn);
 }
 .badge-manual {
-  background: rgba(79, 140, 255, 0.18);
+  background: var(--strat-accent-fill);
   color: var(--status-pending);
 }
-.badge-tracked {
-  background: rgba(90, 209, 154, 0.18);
-  color: var(--status-posted);
-}
 .badge-paused {
-  background: rgba(139, 149, 167, 0.2);
+  background: color-mix(in srgb, var(--strat-status-draft) 20%, transparent);
   color: var(--status-draft);
 }
 
@@ -728,17 +1062,9 @@ button.danger:hover:not(:disabled) {
 }
 
 /* radar (§7.2) — band colors mirror the content-script badge */
-.radar-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.radar-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
+/* UI.12 removed `.radar-head` / `.radar-actions`: the Radar and the Inbox both
+   moved onto the `Section` primitive, whose `.ui-section-head` /
+   `.ui-section-actions` are the same layout with token spacing. */
 .radar-clear {
   font-size: 11px;
   padding: 2px 8px;
@@ -763,7 +1089,7 @@ button.danger:hover:not(:disabled) {
 .radar-tab.active {
   color: var(--text);
   border-color: var(--accent);
-  background: rgba(79, 140, 255, 0.14);
+  background: color-mix(in srgb, var(--strat-accent) 14%, transparent);
 }
 .radar-group-label {
   font-size: 10px;
@@ -804,14 +1130,20 @@ button.danger:hover:not(:disabled) {
   border-radius: 999px;
 }
 .radar-band-hot {
-  color: rgb(0, 186, 124);
-  border: 1px solid rgba(0, 186, 124, 0.5);
-  background: rgba(0, 186, 124, 0.1);
+  color: var(--strat-band-hot);
+  border: 1px solid color-mix(in srgb, var(--strat-band-hot) 50%, transparent);
+  background: color-mix(in srgb, var(--strat-band-hot) 10%, transparent);
 }
 .radar-band-warm {
-  color: rgb(214, 150, 0);
-  border: 1px solid rgba(255, 179, 0, 0.55);
-  background: rgba(255, 179, 0, 0.12);
+  color: var(--strat-band-warm-text);
+  border: 1px solid color-mix(in srgb, var(--strat-band-warm) 55%, transparent);
+  background: color-mix(in srgb, var(--strat-band-warm) 12%, transparent);
+}
+/* RU.8: a ⊕ manual add — distinct from the hot/warm classifier verdicts. */
+.radar-band-manual {
+  color: var(--strat-accent);
+  border: 1px solid color-mix(in srgb, var(--strat-accent) 50%, transparent);
+  background: color-mix(in srgb, var(--strat-accent) 12%, transparent);
 }
 .radar-author {
   flex: 1;
@@ -847,14 +1179,23 @@ button.danger:hover:not(:disabled) {
 
 /* a drafted sighting (§7.2 batch replies) — marked, with its reply shown */
 .radar-row-replied {
-  border-color: rgba(0, 186, 124, 0.55);
+  border-color: color-mix(in srgb, var(--strat-band-hot) 55%, transparent);
 }
 .radar-ready {
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: rgb(0, 186, 124);
+  color: var(--strat-band-hot);
+}
+/* RU.4 — "N angles" hint next to "reply ready"; the full picker lives on the
+   tweet page (Task 7), so the panel stays light. */
+.radar-angles {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
 }
 
 /* S0.3 roster tier chip — reuses .stage-chip / .stage-ally / .stage-mutual,
@@ -874,8 +1215,8 @@ button.danger:hover:not(:disabled) {
   font-size: 12px;
   color: var(--text);
   white-space: pre-wrap;
-  background: rgba(0, 186, 124, 0.08);
-  border-left: 2px solid rgba(0, 186, 124, 0.55);
+  background: color-mix(in srgb, var(--strat-band-hot) 8%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--strat-band-hot) 55%, transparent);
   border-radius: 4px;
   padding: 6px 8px;
   margin-top: 2px;
@@ -929,7 +1270,7 @@ button.danger:hover:not(:disabled) {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--accent, #1d9bf0);
+  background: var(--accent);
   flex-shrink: 0;
 }
 .convo-meta-actions {
@@ -1094,16 +1435,15 @@ button.danger:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
-.reply-variant {
-  font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 999px;
-}
-
+/* UI.15: the geometry moved up into the `.chip` shape (this row was a third
+   copy of it). Only the FILLED active state is variant-specific — a variant
+   picker is a choice, not a status, so it reads stronger than the chip family's
+   `aria-pressed` tint. Rendered by Replies AND Conversations: same class, same
+   look, no rename. */
 .reply-variant.active {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: white;
 }
 
 .reply-idea .reply-textarea {
@@ -1129,7 +1469,7 @@ button.danger:hover:not(:disabled) {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--strat-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1137,6 +1477,10 @@ button.danger:hover:not(:disabled) {
   z-index: 100;
 }
 .modal-card {
+  /* neutralize <dialog> UA styles (absolute positioning, canvastext color) */
+  position: static;
+  margin: 0;
+  color: inherit;
   background: var(--bg-elev);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1227,7 +1571,7 @@ button.danger:hover:not(:disabled) {
   color: var(--muted);
   font-weight: 400;
   font-size: 11px;
-  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  background: color-mix(in srgb, white 4%, transparent);
   border-radius: 999px;
   padding: 1px 8px;
 }
@@ -1239,8 +1583,9 @@ button.danger:hover:not(:disabled) {
 
 /* ---------------------------------------------------- targets (§7.4) */
 
+/* Sits in `.ui-section-actions` since UI.12, which supplies the gap — the old
+   `margin-left` was for living inside the section's `<h3>`. */
 .targets-band {
-  margin-left: 8px;
   font-size: 11px;
   font-weight: 400;
   color: var(--muted);
@@ -1278,10 +1623,12 @@ button.danger:hover:not(:disabled) {
 .target-followers {
   font-size: 11px;
   color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .target-momentum {
   font-size: 11px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .target-replied {
   font-size: 11px;
@@ -1305,24 +1652,20 @@ button.danger:hover:not(:disabled) {
   padding: 1px 7px;
   font-size: 11px;
 }
+/* UI.13 — the drafter's head is a `Section` eyebrow now (its own `h3` rule is
+   gone: `.ui-section-eyebrow` styles it identically). This wrapper survives for
+   the hairline divider that separates writing from AI drafting; the panel's gap
+   supplies the space above it, so no margin here. */
 .drafter {
-  margin-top: 14px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.drafter h3 {
-  margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
 .badge-pillar {
-  background: rgba(124, 92, 255, 0.15);
-  color: #9b86ff;
+  background: var(--strat-pillar-bg);
+  color: var(--strat-pillar);
 }
 .voice-tweet-template {
   font-size: 11px;
@@ -1345,6 +1688,11 @@ button.danger:hover:not(:disabled) {
 }
 .best-time-cell {
   white-space: nowrap;
+}
+/* UI.13 — a measured cell still under the best-time gate. Dimmed on purpose:
+   it is evidence that data is accumulating, never a recommendation (§7.19). */
+.best-time-thin {
+  opacity: 0.65;
 }
 /* S0.4 — best-time-annotated cadence gaps in the Today tab. */
 .brief-gaps {
@@ -1375,6 +1723,58 @@ button.danger:hover:not(:disabled) {
 .cost-preview-warn {
   color: var(--warn);
   font-weight: 600;
+}
+/* A3.7 — publish-mode (API | Manual) segmented toggle above the schedule row. */
+.publish-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--strat-radius-sm);
+  overflow: hidden;
+}
+.segmented button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.segmented button + button {
+  border-left: 1px solid var(--border);
+}
+.segmented button.active {
+  background: var(--strat-accent-fill);
+  color: var(--text);
+  font-weight: 600;
+}
+/* A3.7 — a manual slot whose time has passed but isn't marked posted, plus its
+   one-click confirm button in the Calendar day list. */
+.post-row.overdue {
+  background: var(--strat-warn-fill);
+}
+.post-row.overdue .post-time {
+  color: var(--strat-warn);
+}
+.mark-posted-btn {
+  margin: 2px 10px 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--strat-warn);
+  color: var(--strat-warn);
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.mark-posted-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .draft-cards {
   display: flex;
@@ -1414,15 +1814,15 @@ button.danger:hover:not(:disabled) {
   padding: 4px 10px;
 }
 .badge-register {
-  background: rgba(79, 140, 255, 0.15);
+  background: color-mix(in srgb, var(--strat-accent) 15%, transparent);
   color: var(--accent);
 }
 .badge-spicy {
-  background: rgba(224, 85, 109, 0.15);
+  background: color-mix(in srgb, var(--strat-danger) 15%, transparent);
   color: var(--danger);
 }
 .badge-reflective {
-  background: rgba(90, 209, 154, 0.15);
+  background: color-mix(in srgb, var(--strat-ok) 15%, transparent);
   color: var(--ok);
 }
 
@@ -1524,6 +1924,85 @@ button.danger:hover:not(:disabled) {
   flex: 1 1 auto;
 }
 
+/* ---------------------------------------------------------- prompts editor (AI.11) */
+
+.prompt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.prompt-row {
+  width: 100%;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.prompt-row:hover {
+  border-color: var(--strat-accent, var(--border));
+}
+.prompt-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.prompt-key {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  color: var(--muted);
+}
+.prompt-desc {
+  font-size: 12px;
+}
+.prompt-updated {
+  font-size: 11px;
+}
+.prompt-editor-head {
+  margin-bottom: 8px;
+}
+.prompt-placeholders {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.prompt-token {
+  font-family: var(--mono, monospace);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--strat-status-posted) 16%, transparent);
+  color: var(--status-posted);
+}
+.prompt-token-missing {
+  background: color-mix(in srgb, var(--strat-status-failed) 18%, transparent);
+  color: var(--status-failed);
+}
+.prompt-body {
+  width: 100%;
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.prompt-meta {
+  justify-content: space-between;
+  margin: 6px 0;
+}
+.prompt-default {
+  margin-top: 12px;
+}
+
 /* ---------------------------------------------------------- people (C1) */
 
 /* Any handle anywhere in the panel — click-through to the dossier. */
@@ -1558,11 +2037,35 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
 }
 
-.people-stage-filter {
-  flex-wrap: wrap;
-}
-
-.stage-chip {
+/* ------------------------------------------- chip taxonomy (UI.14) ------ */
+/* ONE chip shape, five tones, many vocabularies.
+ *
+ * `.chip` is the shape. A vocabulary — CRM stage, idea lifecycle, swipe-file
+ * author state, following-ledger status, DM status — maps its values onto a
+ * TONE in `sidepanel/chips.ts`; it does not mint another class carrying its own
+ * padding and radius. That is how the near-identical families this block
+ * absorbed (`.stage-chip`, `.people-angle-chip`, `.dm-status`) came about.
+ *
+ * `.stage-chip`, `.people-angle-chip` and `.reply-variant` survive as ALIASES of
+ * the shape rather than being renamed: each is rendered by files outside the
+ * pass that unified it — `.stage-chip` by five (Radar, Fans, Conversations, …)
+ * and `.reply-variant` by Conversations as well as Replies — so a rename would
+ * reach into another lane's files. New code writes `.chip`.
+ *
+ * What deliberately stays OUT of this family: the scheduled-post status ramp
+ * (`.badge-*` — a pipeline state, uppercase and denser), the reply-band
+ * verdicts (`.radar-band-*` — a classifier output the on-page badge mirrors in
+ * its own `--stratus-*` palette, D137c), and the goal pacing verdict (see the
+ * GR.8 note below). Different vocabularies with different alphabets; collapsing
+ * them would mislead the next reader.
+ *
+ * Both themes come free: every value below is an alias token that the
+ * `:root[data-theme='light']` block re-points (UI.9). No literal belongs here.
+ */
+.chip,
+.stage-chip,
+.people-angle-chip,
+.reply-variant {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 10px;
@@ -1573,23 +2076,59 @@ button.danger:hover:not(:disabled) {
   text-transform: lowercase;
 }
 
+.chip-ok,
 .stage-ally {
   color: var(--ok);
   border-color: var(--ok);
 }
 
+.chip-accent,
 .stage-mutual {
   color: var(--accent);
   border-color: var(--accent);
 }
 
+.chip-warn,
 .stage-responded {
   color: var(--warn);
   border-color: var(--warn);
 }
 
+.chip-strong,
 .stage-engaged {
   color: var(--text);
+}
+
+/* The quiet tone IS the base — named so a lookup can return it, and so the two
+   quietest stages stop resolving to "no class at all". */
+.chip-muted,
+.stage-noticed,
+.stage-stranger {
+  color: var(--muted);
+}
+
+/* A chip that acts: the stage picker. Overrides the global `button` box (6px
+   12px / 12px / radius 6) with the chip's, keeps its cursor. */
+button.chip {
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+button.chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button.chip[aria-pressed="true"] {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  font-weight: 600;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 6px;
 }
 
 .people-list {
@@ -1685,13 +2224,10 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 6px;
 }
 
+/* geometry + tone come from the chip family above — this only opts out of its
+   lowercasing, because an angle label is already the writer's own wording */
 .people-angle-chip {
-  padding: 1px 8px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  font-size: 11px;
-  color: var(--muted);
+  text-transform: none;
 }
 
 .people-timeline {
@@ -1717,6 +2253,45 @@ button.danger:hover:not(:disabled) {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* following curation (Guardrails §A) — one row per person to unfollow by hand */
+.following-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.following-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.following-handle {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.following-handle:hover {
+  text-decoration: underline;
+}
+
+/* pushes the ticks to the right edge; the age is the ranking reason, so it
+   stays next to them rather than next to the handle */
+.following-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.following-mutual {
+  color: var(--ok);
+  font-size: 11px;
 }
 
 /* playbook (C4) */
@@ -1764,6 +2339,11 @@ button.danger:hover:not(:disabled) {
 }
 .pb-note {
   font-size: 11px;
+}
+/* UI.15: a cell below the gate. Same quieting as `tr.pb-thin` but per CELL —
+   a populated table can have one gated cell in an otherwise answered row. */
+.pb-gated {
+  color: var(--muted);
 }
 
 /* ------------------------------------------- followups + fans (C5) */
@@ -1851,8 +2431,8 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
+/* Same as `.targets-band` — UI.12 moved it into the section's actions slot. */
 .fans-window {
-  margin-left: 8px;
   display: inline-flex;
   gap: 4px;
 }
@@ -1884,6 +2464,12 @@ button.danger:hover:not(:disabled) {
 
 .fan-ack {
   margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* C10 notification harvest — quiet by design: engagement never ranks. */
+.fan-engagements {
   color: var(--muted);
   font-size: 11px;
 }
@@ -1932,13 +2518,69 @@ button.danger:hover:not(:disabled) {
   padding: 8px 12px;
   border-radius: 6px;
   background: var(--accent);
-  color: #fff;
+  color: white;
   font-weight: 600;
   text-decoration: none;
 }
 
 .launch-open:hover {
   background: var(--accent-hover);
+}
+
+/* A3.8 — the Today "Time to post" card for a due manual slot. Launch-room
+   shape, warn-toned because it needs a human paste, not a live celebration. */
+.manual-card {
+  border: 1px solid var(--strat-warn);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--strat-warn-fill);
+}
+
+.manual-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manual-card-head h3 {
+  margin: 0;
+  flex: 1;
+}
+
+.manual-card-slot {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--strat-warn);
+}
+
+.manual-card-dismiss {
+  padding: 0 7px;
+  color: var(--muted);
+}
+
+.manual-card-text {
+  margin: 8px 0 6px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--text);
+}
+
+.manual-card-media {
+  margin: 6px 0;
+  font-size: 12px;
+}
+
+.manual-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.manual-card-open {
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
 }
 
 .launch-checklist {
@@ -2169,12 +2811,113 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
 }
 
+/* --------------------------------------------- GR.8: goals + commitments */
+/* The pacing bar itself reuses .brief-quota-* (same shape, same meaning: how
+   far along a number is). The verdict chip is its own class rather than
+   .stage-chip — a CRM stage and a pacing verdict are different vocabularies,
+   and collapsing them would mislead the next reader. */
+
+.goal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.goal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.goal-label {
+  flex: 1;
+  font-size: var(--strat-text-sm);
+  font-weight: var(--strat-weight-semibold);
+}
+
+.goal-verdict {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: var(--strat-text-xs);
+  border: 1px solid var(--strat-border);
+  background: var(--strat-bg-elev);
+  color: var(--strat-muted);
+  flex-shrink: 0;
+}
+
+.goal-verdict.ahead {
+  color: var(--strat-ok);
+  border-color: var(--strat-ok);
+}
+
+.goal-verdict.on-pace {
+  color: var(--strat-accent);
+  border-color: var(--strat-accent);
+}
+
+.goal-verdict.behind {
+  color: var(--strat-warn);
+  border-color: var(--strat-warn);
+}
+
+.goal-verdict.overdue {
+  color: var(--strat-danger);
+  border-color: var(--strat-danger);
+}
+
+.commitment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.commitment-label {
+  flex: 1;
+  min-width: 140px;
+  font-size: var(--strat-text-sm);
+}
+
+.commitment-target {
+  width: 72px;
+}
+
 /* ---------------------------------------------------- C9: Sunday digest */
 
 .digest-narrative p {
   margin: 0 0 8px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* GR.9: the weekly grade — renders only when the server shipped a score. */
+.digest-grade {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.digest-grade-score {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.digest-grade-score .muted {
+  font-size: 11px;
+  font-weight: 400;
 }
 
 .digest-facts {
@@ -2254,9 +2997,84 @@ button.danger:hover:not(:disabled) {
   margin-top: 4px;
 }
 
+/* ------------------------------------------------------ A3.10: DM drafts */
+
+.dm-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.dm-compose {
+  display: flex;
+  gap: 6px;
+}
+
+.dm-idea {
+  flex: 1;
+  min-width: 0;
+}
+
+.dm-text {
+  width: 100%;
+  resize: vertical;
+  white-space: pre-wrap;
+}
+
+.dm-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.dm-grounding {
+  margin: 0;
+  padding: 6px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.dm-prior {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dm-prior-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* the DM status label is a `.chip` with a tone (UI.14) — this only keeps it
+   from being squeezed by the text beside it */
+.dm-prior-row .chip {
+  flex-shrink: 0;
+}
+
+.dm-prior-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
 /* ---- Studio (SURFACES S3): brand kit, template picker, live preview ---- */
 .badge-media {
-  background: rgba(255, 180, 84, 0.18);
+  background: color-mix(in srgb, var(--strat-warn) 18%, transparent);
   color: var(--warn);
   text-transform: none;
 }
@@ -2295,7 +3113,7 @@ button.danger:hover:not(:disabled) {
 }
 .studio-template-active {
   border-color: var(--accent);
-  background: rgba(79, 140, 255, 0.1);
+  background: color-mix(in srgb, var(--strat-accent) 10%, transparent);
 }
 
 .studio-preview {
@@ -2381,7 +3199,7 @@ button.danger:hover:not(:disabled) {
 
 /* S4: AI background generator + asset library rail. */
 .studio-bg {
-  border: 1px solid var(--border, #2f3336);
+  border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px;
   margin-bottom: 10px;
@@ -2400,7 +3218,7 @@ button.danger:hover:not(:disabled) {
 .studio-asset {
   display: flex;
   align-items: stretch;
-  border: 1px solid var(--border, #2f3336);
+  border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
 }
@@ -2427,11 +3245,844 @@ button.danger:hover:not(:disabled) {
   padding: 0 10px;
   background: transparent;
   border: none;
-  border-left: 1px solid var(--border, #2f3336);
+  border-left: 1px solid var(--border);
   cursor: pointer;
-  color: var(--muted, #71767b);
+  color: var(--muted);
 }
 
 .studio-asset-del:hover {
-  color: #f4212e;
+  color: var(--x-red);
+}
+
+/* ============================================================================
+   UI primitives (UI.10) — Section / EmptyState / SubTabs / SettingRow / Slider /
+   GearPopover. Thin, token-only; every NEW surface from Wave 1 on builds on
+   these (D7). No color literals — `--strat-*` tokens only.
+   ============================================================================ */
+
+/* Section — eyebrow-headed content block */
+.ui-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-5);
+}
+.ui-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--strat-space-4);
+}
+.ui-section-eyebrow {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  font-weight: var(--strat-weight-semibold);
+  letter-spacing: var(--strat-tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--strat-muted);
+}
+.ui-section-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-3);
+}
+
+/* EmptyState — a warmer replacement for bare muted paragraphs */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-3);
+  padding: var(--strat-space-6) 0;
+}
+.ui-empty-line {
+  margin: 0;
+  font-size: var(--strat-text-body);
+  color: var(--strat-text);
+}
+.ui-empty-hint {
+  margin: 0;
+  font-size: var(--strat-text-sm);
+  color: var(--strat-muted);
+}
+.ui-empty-action {
+  margin-top: var(--strat-space-2);
+}
+
+/* SubTabs — segmented pill control */
+/* UI.14: wraps. Every consumer through UI.13 had 2–4 tabs, so the row always
+   fit; People's stage filter is seven (All + six stages) and would have run off
+   a ~400px panel. Wrapping is a no-op for the short rows. */
+.ui-subtabs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--strat-space-1);
+  padding: var(--strat-space-1);
+  background: var(--strat-bg);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-md);
+}
+.ui-subtab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--strat-muted);
+  padding: 4px 10px;
+  font-size: var(--strat-text-sm);
+  border-radius: var(--strat-radius-sm);
+}
+.ui-subtab:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+}
+.ui-subtab-active {
+  background: var(--strat-bg-elev);
+  color: var(--strat-text);
+  border-color: var(--strat-border);
+}
+
+/* SettingRow — label + description + typed control + reset dot */
+.ui-setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--strat-space-6);
+  padding: var(--strat-space-4) 0;
+  border-top: 1px solid var(--strat-border);
+}
+.ui-setting-row:first-child {
+  border-top: none;
+}
+.ui-setting-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ui-setting-label {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-3);
+  font-size: var(--strat-text-sm);
+  color: var(--strat-text);
+}
+.ui-setting-desc {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-muted);
+  line-height: 1.4;
+}
+.ui-setting-restart {
+  font-size: var(--strat-text-3xs);
+  text-transform: uppercase;
+  letter-spacing: var(--strat-tracking-eyebrow);
+  color: var(--strat-warn);
+  border: 1px solid color-mix(in srgb, var(--strat-warn) 40%, transparent);
+  border-radius: var(--strat-radius-badge);
+  padding: 0 5px;
+}
+.ui-setting-reset {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border-radius: var(--strat-radius-pill);
+  border: none;
+  background: var(--strat-accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.ui-setting-reset:hover {
+  background: var(--strat-accent-hover);
+}
+.ui-setting-control {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-3);
+  flex-shrink: 0;
+}
+.ui-setting-control input[type="number"],
+.ui-setting-control input[type="text"],
+.ui-setting-control select {
+  background: var(--strat-bg);
+  color: var(--strat-text);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-md);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: var(--strat-text-sm);
+}
+.ui-setting-control input[type="number"] {
+  width: 68px;
+}
+.ui-numberarray {
+  width: 120px;
+}
+
+/* Slider — bounded range with a tabular readout */
+.ui-slider {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-4);
+}
+.ui-slider-range {
+  accent-color: var(--strat-accent);
+  width: 110px;
+}
+.ui-slider-value {
+  font-size: var(--strat-text-sm);
+  color: var(--strat-text);
+  font-variant-numeric: tabular-nums;
+  min-width: 42px;
+  text-align: right;
+}
+
+/* GearPopover — inline-config affordance */
+.ui-gear {
+  position: relative;
+  display: inline-flex;
+}
+.ui-gear-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--strat-muted);
+  padding: 2px 6px;
+  font-size: var(--strat-text-body);
+  line-height: 1;
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.ui-gear-btn:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+}
+.ui-gear-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 240px;
+  max-width: 300px;
+  display: flex;
+  flex-direction: column;
+  background: var(--strat-bg-elev);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-lg);
+  box-shadow: var(--strat-shadow-modal);
+  padding: var(--strat-space-4) var(--strat-space-6);
+}
+.ui-gear-pop .ui-setting-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--strat-space-3);
+}
+.ui-gear-pop .ui-setting-control {
+  justify-content: flex-start;
+}
+/* UI.12 — the ownership line: which number this gear does NOT hold, and where
+   it lives instead. Reads as context, never as an error. */
+.ui-gear-note {
+  margin: 0 0 var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  line-height: 1.45;
+  color: var(--strat-muted);
+}
+.ui-gear-error {
+  margin: 0 0 var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+}
+
+/* ============================================================================
+   Me / My Profile (M1) — goals, quick log, entry library, AI-view preview.
+   ========================================================================= */
+
+.me-intro {
+  margin: -4px 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.me-section {
+  margin-top: 18px;
+}
+
+.me-section > h3 {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.me-section h4 {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+/* -------- goals -------- */
+
+.me-goal-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.me-goal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.me-goal-closed {
+  opacity: 0.6;
+}
+
+.me-goal-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.me-goal-label {
+  font-weight: 600;
+  font-size: 13px;
+  margin-right: auto;
+}
+
+.me-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.me-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.2s ease;
+}
+
+.me-goal-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.me-overdue {
+  color: var(--warn);
+}
+
+.me-goal-value {
+  max-width: 180px;
+}
+
+.me-goal-actions,
+.me-entry-actions {
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.me-add-bar {
+  margin-top: 4px;
+}
+
+/* -------- quick log -------- */
+
+.me-chip-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+
+.me-chip {
+  padding: 3px 10px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.me-chip-on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.me-log-opts {
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.me-date-field {
+  max-width: 200px;
+}
+
+.me-pin-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* -------- entries -------- */
+
+.me-entry-group {
+  margin-bottom: 10px;
+}
+
+.me-entry-group-title {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 11px !important;
+}
+
+.me-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.me-entry {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-elev);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.me-entry-retired {
+  opacity: 0.55;
+}
+
+.me-entry-stale {
+  border-style: dashed;
+}
+
+.me-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.me-star {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+
+.me-star-on {
+  color: var(--accent);
+}
+
+.me-entry-time {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.me-entry-text {
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
+.me-entry-edit {
+  width: 100%;
+}
+
+/* -------- AI-view preview -------- */
+
+.me-preview-toggle {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
+
+.me-preview-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.me-preview-pre {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+/* --- Reply lists (RL.5): the Lists subtab of the Replies tab --- */
+.rl-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rl-head {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.rl-rail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rl-rail-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.rl-rail-item.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--strat-accent) 12%, transparent);
+}
+.rl-rail-item.rl-rail-inactive {
+  opacity: 0.6;
+}
+.rl-rail-name {
+  font-size: 12px;
+  font-weight: 600;
+}
+.rl-rail-meta {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.rl-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rl-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rl-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: var(--bg);
+}
+.rl-item.rl-item-off {
+  opacity: 0.55;
+}
+.rl-item-text {
+  background: transparent;
+  color: var(--text);
+  border: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  resize: vertical;
+}
+.rl-item-text:focus {
+  outline: none;
+}
+.rl-item-foot {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.rl-item-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.rl-item-actions button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.rl-proposal-text {
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rl-proposals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rl-chances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rl-chance {
+  flex: 1 1 150px;
+}
+.rl-testvars {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.rl-testvars .field {
+  flex: 1 1 140px;
+}
+.rl-count input {
+  max-width: 90px;
+}
+.rl-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+.rl-preview-text {
+  font-size: 13px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* --- Quick canned-reply picker (RL.6): rides Launch Room early-replier rows
+   and Conversations open loops. One click = one server-side pick (rendered,
+   humanized) straight onto the clipboard; the popover keeps the text visible
+   so a clipboard refusal is still recoverable by hand. --- */
+.quick-reply {
+  position: relative;
+  display: inline-flex;
+}
+.quick-reply-btn {
+  font-size: var(--strat-text-xs);
+  padding: 2px 8px;
+}
+.quick-reply-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 210px;
+  max-width: 290px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-3);
+  padding: var(--strat-space-4);
+  background: var(--strat-bg-elev);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-lg);
+  box-shadow: var(--strat-shadow-modal);
+}
+.quick-reply-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-1);
+}
+.quick-reply-item {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--strat-space-4);
+  padding: var(--strat-space-2) var(--strat-space-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--strat-radius-sm);
+  color: var(--strat-text);
+  text-align: left;
+}
+.quick-reply-item:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+}
+.quick-reply-name {
+  font-size: var(--strat-text-sm);
+  font-weight: var(--strat-weight-semibold);
+}
+.quick-reply-meta {
+  font-size: var(--strat-text-2xs);
+  color: var(--strat-muted);
+  font-variant-numeric: tabular-nums;
+}
+.quick-reply-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--strat-space-3);
+}
+.quick-reply-status {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-ok);
+}
+.quick-reply-status.quick-reply-status-warn {
+  color: var(--strat-warn);
+}
+.quick-reply-text {
+  font-size: var(--strat-text-sm);
+  line-height: var(--strat-leading-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.quick-reply-err {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-danger);
+}
+
+/* ============================================================================
+   Settings → Tuning (UI.11) — the registry-driven knob cockpit: sticky search,
+   per-group reset, ownership notes, and the inert coming-soon roadmap.
+   ========================================================================= */
+
+.settings-search {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--strat-bg-elev);
+  padding-bottom: var(--strat-space-3);
+}
+.settings-search input[type="search"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--strat-bg);
+  color: var(--strat-text);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-md);
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: var(--strat-text-sm);
+}
+.settings-search input[type="search"]:focus {
+  outline: none;
+  border-color: var(--strat-accent);
+}
+.settings-count {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-group-reset {
+  background: transparent;
+  border: 1px solid var(--strat-border);
+  color: var(--strat-muted);
+  border-radius: var(--strat-radius-sm);
+  padding: 2px 8px;
+  font-size: var(--strat-text-xs);
+  cursor: pointer;
+}
+.settings-group-reset:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+}
+
+/* Ownership/tier copy above a group's rows — several numbers a user expects
+   here live on the active niche instead, and saying so is the whole point. */
+.settings-note {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  line-height: 1.5;
+}
+.settings-row-error {
+  margin: 0 0 var(--strat-space-4);
+  font-size: var(--strat-text-xs);
+}
+
+/* A button that reads as a link — used to jump between settings subtabs. */
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--strat-accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.linklike:hover {
+  color: var(--strat-accent-hover);
+}
+
+/* Coming soon — inert by construction: no control is rendered at all, so there
+   is nothing to disable. Dimmed to read as roadmap, not as broken settings. */
+.coming-soon {
+  padding: var(--strat-space-4) 0;
+  border-top: 1px solid var(--strat-border);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.coming-soon:first-of-type {
+  border-top: none;
+}
+.coming-soon-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--strat-space-4);
+}
+.coming-soon-title {
+  font-size: var(--strat-text-sm);
+  color: var(--strat-text);
+}
+.coming-soon-plan {
+  font-family: var(--strat-font-mono);
+  font-size: var(--strat-text-3xs);
+  color: var(--strat-muted);
+}
+.coming-soon-summary {
+  margin: 2px 0 var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  line-height: 1.5;
+}
+.coming-soon-knobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.coming-soon-knobs li {
+  display: flex;
+  gap: var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  line-height: 1.4;
+}
+.coming-soon-knob {
+  color: var(--strat-text);
+  flex-shrink: 0;
 }

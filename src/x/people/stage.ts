@@ -6,7 +6,11 @@
 //
 // The thresholds (2 exchange days → mutual, 4/60d → ally) are opening guesses,
 // to be revisited after ~30 days of real events — same spirit as the BAND
-// ≥100-outcomes gate. Change them here and in the test matrix together.
+// ≥100-outcomes gate. They are now tunable via the settings registry (the
+// `people` group, UI.3): computeStage takes a StageThresholds param defaulted to
+// STAGE_DEFAULTS, and recomputePerson (store.ts) reads the overrides. Change the
+// DEFAULTS here and the test matrix together — a custom-thresholds test in
+// stage.test.ts pins the param path independently.
 
 export const STAGES = ['stranger', 'noticed', 'engaged', 'responded', 'mutual', 'ally'] as const;
 export type Stage = (typeof STAGES)[number];
@@ -19,21 +23,41 @@ export const PERSON_EVENT_TYPES = [
   'their_reply_to_me',
   'hover_sighting',
   'harvest_seen',
+  'their_like',
+  'their_repost',
+  'their_follow',
   'note',
   'manual_dm_logged',
 ] as const;
 export type PersonEventType = (typeof PERSON_EVENT_TYPES)[number];
 
-// Which event types mean what to the stage machine. harvest_seen and the
-// manual types are timeline-only — they never advance a stage on their own.
+// Which event types mean what to the stage machine. harvest_seen, the three
+// notification-harvested engagement types (C10) and the manual types are
+// timeline-only — they never advance a stage on their own. Engagement is NOT
+// reciprocity: someone can like fifty posts without a word being exchanged, so
+// their_like/their_repost/their_follow deliberately appear in no set below.
 const NOTICED_TYPES: readonly PersonEventType[] = ['saved_tweet', 'saved_author', 'hover_sighting'];
 export const INBOUND_TYPES: readonly PersonEventType[] = ['their_mention', 'their_reply_to_me'];
 export const OUTBOUND_TYPES: readonly PersonEventType[] = ['my_reply'];
 
-const MUTUAL_EXCHANGE_DAYS = 2;
-const ALLY_EXCHANGE_DAYS = 4;
-const ALLY_WINDOW_DAYS = 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The stage-machine thresholds. Overridable per-request via the settings store
+ *  (see recomputePerson); computeStage defaults to STAGE_DEFAULTS. */
+export interface StageThresholds {
+  /** Two-way exchange days before a relationship reaches "mutual". */
+  mutualExchangeDays: number;
+  /** Two-way exchange days inside the ally window before reaching "ally". */
+  allyExchangeDays: number;
+  /** The rolling window the ally exchange-day count must fall inside. */
+  allyWindowDays: number;
+}
+
+export const STAGE_DEFAULTS: StageThresholds = {
+  mutualExchangeDays: 2,
+  allyExchangeDays: 4,
+  allyWindowDays: 60,
+};
 
 export interface StageEvent {
   type: PersonEventType;
@@ -67,8 +91,13 @@ export function exchangeDays(events: StageEvent[]): number[] {
 }
 
 /** Highest stage the event history supports at `now` (events after `now` are
- *  ignored — nothing should time-travel a stage). */
-export function computeStage(events: StageEvent[], now: Date): Stage {
+ *  ignored — nothing should time-travel a stage). Thresholds default to
+ *  STAGE_DEFAULTS; the store-backed overrides are read by recomputePerson. */
+export function computeStage(
+  events: StageEvent[],
+  now: Date,
+  thresholds: StageThresholds = STAGE_DEFAULTS,
+): Stage {
   const nowMs = now.getTime();
   const past = events.filter((e) => e.at.getTime() <= nowMs);
 
@@ -81,14 +110,14 @@ export function computeStage(events: StageEvent[], now: Date): Stage {
 
   const days = exchangeDays(past);
 
-  // ally: ≥4 two-way exchange days inside any rolling 60d window. Sliding
-  // window over the sorted day list; window includes both endpoints.
-  for (let i = 0; i + ALLY_EXCHANGE_DAYS - 1 < days.length; i++) {
-    const last = days[i + ALLY_EXCHANGE_DAYS - 1] as number;
-    if (last - (days[i] as number) <= ALLY_WINDOW_DAYS) return 'ally';
+  // ally: ≥N two-way exchange days inside any rolling window. Sliding window
+  // over the sorted day list; window includes both endpoints.
+  for (let i = 0; i + thresholds.allyExchangeDays - 1 < days.length; i++) {
+    const last = days[i + thresholds.allyExchangeDays - 1] as number;
+    if (last - (days[i] as number) <= thresholds.allyWindowDays) return 'ally';
   }
 
-  if (days.length >= MUTUAL_EXCHANGE_DAYS) return 'mutual';
+  if (days.length >= thresholds.mutualExchangeDays) return 'mutual';
 
   if (
     firstReplyAt !== null &&

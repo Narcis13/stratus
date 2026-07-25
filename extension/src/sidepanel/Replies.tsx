@@ -1,4 +1,6 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReplyListsPanel } from './ReplyLists.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type Idea,
@@ -7,6 +9,7 @@ import {
   type ReplyDraftStatus,
   api,
 } from './api.ts';
+import { replyDraftChip } from './chips.ts';
 import {
   clearLastDraft,
   setLastDraft,
@@ -15,7 +18,12 @@ import {
   useLastDraft,
   useSystemPromptOverride,
 } from './replyMasterStorage.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import { useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 interface Props {
   settings: Settings;
@@ -23,7 +31,6 @@ interface Props {
   onOpenPerson: (handle: string) => void;
 }
 
-const LIST_LIMIT = 100;
 const TWEET_LIMIT = 280;
 const EDIT_DEBOUNCE_MS = 600;
 const SYSTEM_PROMPT_DEBOUNCE_MS = 600;
@@ -31,15 +38,33 @@ const TWEET_ID_RE = /^\d{1,32}$/;
 const GROUP_PAGE_SIZE = 10;
 const POSTED_AUTO_CLEAR_MS = 700;
 
-const STATUS_OPTIONS: { value: '' | ReplyDraftStatus; label: string }[] = [
-  { value: '', label: 'All' },
-  { value: 'generated', label: 'Generated' },
-  { value: 'copied', label: 'Copied' },
-  { value: 'posted', label: 'Posted' },
-  { value: 'discarded', label: 'Discarded' },
+type RepliesView = 'drafts' | 'lists';
+
+const REPLY_SUBTABS: { id: RepliesView; label: string }[] = [
+  { id: 'drafts', label: 'Reply Master' },
+  { id: 'lists', label: 'Lists' },
 ];
 
+// The history filter as the panel's single-select control (UI.15). `all` is the
+// sentinel the row needs to be able to CLEAR — the state itself stays `''`, the
+// empty status the list API means by "every status" (UI.14's Ideas pattern).
+type StatusTab = 'all' | ReplyDraftStatus;
+
+const STATUS_TABS: SubTab<StatusTab>[] = [
+  { id: 'all', label: 'All' },
+  { id: 'generated', label: 'Generated' },
+  { id: 'copied', label: 'Copied' },
+  { id: 'posted', label: 'Posted' },
+  { id: 'discarded', label: 'Discarded' },
+];
+
+// The one knob this tab owns — how many drafts the History list loads.
+const REPLIES_SETTING_KEYS = ['x.display.repliesListLimit'];
+
 export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
+  const [view, setView] = useState<RepliesView>('drafts');
+  const listLimit = useServerSettings().repliesListLimit;
+  const editor = useSettingsEditor(settings);
   const { draft: storageDraft, refresh: refreshStorage } = useLastDraft();
   const {
     value: systemPromptOverride,
@@ -92,7 +117,7 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
     setLoadingHistory(true);
     setHistoryError(null);
     try {
-      const opts: RepliesListOpts = { limit: LIST_LIMIT };
+      const opts: RepliesListOpts = { limit: listLimit };
       if (statusFilter) opts.status = statusFilter;
       const rows = await api.replies.list(settings, opts);
       setHistory(rows);
@@ -101,7 +126,10 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
     } finally {
       setLoadingHistory(false);
     }
-  }, [settings, statusFilter]);
+    // `listLimit` is a FETCH parameter, not a render-time slice, so it belongs in
+    // the deps — otherwise raising the knob would only take effect on the next
+    // unrelated refresh (UI.14's Voice trap).
+  }, [settings, statusFilter, listLimit]);
 
   useEffect(() => {
     void loadHistory();
@@ -152,20 +180,34 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
     setActiveDraft(row);
   };
 
+  if (view === 'lists') {
+    return (
+      <div className="panel">
+        <div className="panel-header">
+          <h2>Replies</h2>
+        </div>
+        <SubTabs tabs={REPLY_SUBTABS} active={view} onSelect={setView} />
+        <ReplyListsPanel settings={settings} />
+      </div>
+    );
+  }
+
   return (
     <div className="panel">
       <div className="panel-header">
-        <h2>Reply Master</h2>
+        <h2>Replies</h2>
         <button type="button" onClick={() => void loadHistory()} disabled={loadingHistory}>
           {loadingHistory ? 'Loading…' : 'Refresh'}
         </button>
       </div>
 
+      <SubTabs tabs={REPLY_SUBTABS} active={view} onSelect={setView} />
+
       {!activeDraft && (
-        <p className="muted">
-          Open a tweet on x.com and click <strong>🪄 Reply Master</strong> to start a draft. The
-          generated text is copied to your clipboard automatically.
-        </p>
+        <EmptyState
+          line="Open a tweet on x.com and click 🪄 Reply Master to start a draft."
+          hint="The generated text is copied to your clipboard automatically — the button lives on the tweet's own status page."
+        />
       )}
 
       <IdeaSteer
@@ -220,42 +262,52 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
       />
 
       <div className="reply-history">
-        <div className="panel-header">
-          <h2>History</h2>
-        </div>
-        {historyError && <div className="error">{historyError}</div>}
-        <div className="voice-controls">
-          <label className="field">
-            <span>Status</span>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as '' | ReplyDraftStatus)}
-              disabled={loadingHistory}
-            >
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <Section
+          title={`History (${history.length})`}
+          actions={
+            <SettingsGear
+              editor={editor}
+              keys={REPLIES_SETTING_KEYS}
+              label="Configure how many reply drafts the History list loads"
+              note="Reply drafts are local rows, so a bigger page costs $0 — only scroll. The status filter narrows what is already loaded; this sizes the load itself."
+            />
+          }
+        >
+          {historyError && <div className="error">{historyError}</div>}
+          <SubTabs
+            tabs={STATUS_TABS}
+            active={statusFilter === '' ? 'all' : statusFilter}
+            onSelect={(id) => setStatusFilter(id === 'all' ? '' : id)}
+            disabled={loadingHistory}
+          />
           <div className="status-line">
             {history.length} shown · {counts.generated} gen · {counts.copied} copied ·{' '}
             {counts.posted} posted · {counts.discarded} discarded
           </div>
-        </div>
 
-        {loadingHistory && history.length === 0 ? (
-          <p className="muted">Loading…</p>
-        ) : history.length === 0 ? (
-          <p className="muted">No reply drafts yet.</p>
-        ) : (
-          <HistoryGroups
-            history={history}
-            activeId={activeDraft?.id ?? null}
-            onOpen={openFromHistory}
-          />
-        )}
+          {loadingHistory && history.length === 0 ? (
+            <p className="muted">Loading…</p>
+          ) : history.length === 0 ? (
+            <EmptyState
+              line={
+                statusFilter === ''
+                  ? 'No reply drafts yet.'
+                  : `No ${statusFilter} drafts in the last ${listLimit} loaded.`
+              }
+              hint={
+                statusFilter === ''
+                  ? 'Every 🪄 draft, Radar batch and Conversations draft lands here — copy, paste on X, then Mark posted to make it measurable.'
+                  : 'Switch the filter back to All to see the rest.'
+              }
+            />
+          ) : (
+            <HistoryGroups
+              history={history}
+              activeId={activeDraft?.id ?? null}
+              onOpen={openFromHistory}
+            />
+          )}
+        </Section>
       </div>
     </div>
   );
@@ -434,7 +486,7 @@ function DraftEditor({
     <div className="reply-editor">
       <div className="reply-capture">
         <div className="reply-capture-head">
-          <span className={`badge ${badgeClassFor(draft.status)}`}>{draft.status}</span>
+          <span className={replyDraftChip(draft.status)}>{draft.status}</span>
           <span>
             Drafted from{' '}
             <button
@@ -447,7 +499,7 @@ function DraftEditor({
             </button>
           </span>
           <span className="muted">· {relativeTime(draft.createdAt)}</span>
-          {isLive && <span className="badge badge-pending">live</span>}
+          {isLive && <span className="chip chip-accent">live</span>}
           <button type="button" className="reply-link" onClick={onClear}>
             Clear
           </button>
@@ -495,7 +547,7 @@ function DraftEditor({
             <button
               key={`${v.angle}-${i}`}
               type="button"
-              className={`reply-variant${text === v.text ? ' active' : ''}`}
+              className={`chip reply-variant${text === v.text ? ' active' : ''}`}
               onClick={() => setText(v.text)}
               disabled={isTerminal || busy !== null}
               title={v.text}
@@ -759,7 +811,7 @@ function SystemPromptOverride({
       <summary>
         System prompt override{' '}
         {active ? (
-          <span className="badge badge-pending">active</span>
+          <span className="chip chip-accent">active</span>
         ) : (
           <span className="muted">(empty — using default)</span>
         )}
@@ -839,10 +891,13 @@ function PromptViewer({
       }}
       role="presentation"
     >
-      <div
+      <dialog
+        open
         className="modal-card"
         onClick={(e) => e.stopPropagation()}
-        role="dialog"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onClose();
+        }}
         aria-modal="true"
         aria-label="Default reply system prompt"
       >
@@ -863,7 +918,7 @@ function PromptViewer({
             Use as starting point
           </button>
         </div>
-      </div>
+      </dialog>
     </div>
   );
 }
@@ -1017,8 +1072,8 @@ function HistoryRow({
     >
       <div className="voice-tweet-head">
         <span className="voice-tweet-author">@{draft.sourceAuthorUsername}</span>
-        <span className={`badge ${badgeClassFor(draft.status)}`}>{draft.status}</span>
-        {draft.replyTextEdited !== null && <span className="badge badge-draft">edited</span>}
+        <span className={replyDraftChip(draft.status)}>{draft.status}</span>
+        {draft.replyTextEdited !== null && <span className="chip chip-strong">edited</span>}
         <span className="voice-tweet-time">
           {created.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
         </span>
@@ -1036,19 +1091,6 @@ function HistoryRow({
       </div>
     </button>
   );
-}
-
-function badgeClassFor(status: ReplyDraftStatus): string {
-  switch (status) {
-    case 'generated':
-      return 'badge-draft';
-    case 'copied':
-      return 'badge-pending';
-    case 'posted':
-      return 'badge-posted';
-    case 'discarded':
-      return 'badge-cancelled';
-  }
 }
 
 function relativeTime(iso: string): string {

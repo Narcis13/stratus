@@ -18,6 +18,7 @@ import { costEvents } from '../src/db/shared-schema.ts';
 import { mediaAssets } from '../src/x/db/schema.ts';
 import { assets } from '../src/x/routes/assets.ts';
 import { images } from '../src/x/routes/images.ts';
+import { resetSettings, resolveSetting, setSettings } from '../src/x/settings/registry.ts';
 
 const LIVE = process.argv.includes('--live');
 
@@ -25,7 +26,16 @@ const app = new Hono();
 app.route('/x', assets);
 app.route('/x', images);
 
+// Set while the smoke holds a settings override, so a mid-run failure still
+// puts the operator's real budget back (fail() exits — no finally would run).
+let restoreSettings: (() => void) | null = null;
+
 function fail(msg: string): never {
+  try {
+    restoreSettings?.();
+  } catch (err) {
+    console.error(`  (settings restore failed: ${err instanceof Error ? err.message : err})`);
+  }
   console.error(`FAIL: ${msg}`);
   process.exit(1);
 }
@@ -92,9 +102,18 @@ ok('2MB cap enforced (413)');
 // 5. Budget refusal (429) — seed today's image spend over the cap, with a key
 //    set so the 503 gate passes and the budget check runs before any network.
 const prevKey = process.env.XAI_API_KEY;
-const prevBudget = process.env.XAI_IMAGE_DAILY_BUDGET_USD;
 if (!LIVE) process.env.XAI_API_KEY = 'smoke-key';
-process.env.XAI_IMAGE_DAILY_BUDGET_USD = '0.50';
+// UI.5: the cap is a SETTING now (the env var only seeds its registry default,
+// read once at import), so pin it through the store. This runs against the real
+// DB, so snapshot the operator's own override and put it back — never assume a
+// reset is the right restore (the GR.10 rule for a smoke that writes rows it
+// did not create).
+const prevBudget = resolveSetting('x.budgets.imageDailyUsd');
+setSettings({ 'x.budgets.imageDailyUsd': 0.5 });
+restoreSettings = (): void => {
+  if (prevBudget.isDefault) resetSettings({ keys: ['x.budgets.imageDailyUsd'] });
+  else setSettings({ 'x.budgets.imageDailyUsd': prevBudget.value });
+};
 const marker = `smoke-studio-budget-${Date.now()}`;
 db.insert(costEvents)
   .values({
@@ -118,8 +137,9 @@ if (refused.status !== 429 || refused.json.error !== 'image_budget_exceeded')
   );
 ok(`budget refusal (429) fires at $${refused.json.spentUsd} ≥ $${refused.json.budgetUsd}`);
 db.delete(costEvents).where(eq(costEvents.requestId, marker)).run();
-// Restore budget ('' reads as unset → route default); leave the key for --live.
-process.env.XAI_IMAGE_DAILY_BUDGET_USD = prevBudget ?? '';
+// Put the operator's own budget back; leave the key for --live.
+restoreSettings();
+restoreSettings = null;
 if (!LIVE) process.env.XAI_API_KEY = prevKey ?? '';
 
 // 6. Delete.
@@ -128,6 +148,31 @@ if (del.status !== 200) fail(`DELETE → ${del.status}`);
 const gone = await app.request(`/x/assets/${assetId}/png`);
 if (gone.status !== 404) fail(`deleted asset /png → ${gone.status} (expected 404)`);
 ok('deleted; stream 404s');
+
+// 7. S5 template gallery kinds survive the whitelist (not coerced to 'other').
+//    Each new template saves under its own kind; the round-trip must echo it
+//    back verbatim — a regression in ASSET_KINDS would silently degrade to
+//    'other' and the S1 explorer/library filter would lose the kind.
+const S5_KINDS = ['milestone', 'streak', 'code', 'thread', 'list', 'chart'] as const;
+const kindIds: string[] = [];
+for (const kind of S5_KINDS) {
+  const r = await postJson<{ id: string; kind: string }>('/x/assets', {
+    pngBase64: B64,
+    kind,
+    width: 1200,
+    height: 675,
+  });
+  if (r.status !== 201) fail(`POST /x/assets kind=${kind} → ${r.status}`);
+  if (r.json.kind !== kind)
+    fail(`kind '${kind}' coerced to '${r.json.kind}' (whitelist regression)`);
+  kindIds.push(r.json.id);
+}
+ok(`S5 kinds survive the whitelist: ${S5_KINDS.join(', ')}`);
+for (const id of kindIds) {
+  const r = await app.request(`/x/assets/${id}`, { method: 'DELETE' });
+  if (r.status !== 200) fail(`cleanup DELETE ${id} → ${r.status}`);
+}
+ok(`cleaned up ${kindIds.length} S5-kind assets`);
 
 // Belt-and-suspenders: nothing this run created should remain.
 await db.delete(mediaAssets).where(eq(mediaAssets.id, assetId));

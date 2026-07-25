@@ -13,7 +13,19 @@
 //   PATCH  /channels/:slug    partial update
 //   DELETE /channels/:slug
 
-import { type AnyColumn, type SQL, and, asc, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import {
+  type AnyColumn,
+  type SQL,
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
@@ -27,6 +39,7 @@ import {
   voiceAuthors,
   voiceTweets,
 } from '../db/schema.ts';
+import { loadActiveNicheSafe } from '../niche/store.ts';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const MAX_LABEL_LEN = 60;
@@ -46,16 +59,20 @@ channelsRouter.get('/channels', async (c) => {
     return c.json({ error: 'invalid_active' }, 400);
   }
   const order = [asc(channels.sortOrder), asc(channels.slug)] as const;
+  // N0.6: scope to the active niche (or NULL legacy rows) — a channel of another
+  // niche never appears while it isn't active. Identity until a second niche.
+  const nicheScope = ownedByNiche(loadActiveNicheSafe().slug);
   const rows =
     activeParam === undefined
       ? await db
           .select()
           .from(channels)
+          .where(nicheScope)
           .orderBy(...order)
       : await db
           .select()
           .from(channels)
-          .where(eq(channels.active, activeParam === 'true'))
+          .where(and(eq(channels.active, activeParam === 'true'), nicheScope))
           .orderBy(...order);
   return c.json(rows);
 });
@@ -96,9 +113,11 @@ channelsRouter.post('/channels', async (c) => {
     .where(eq(channels.slug, slug));
   if (existing.length > 0) return c.json({ error: 'slug_exists' }, 409);
 
+  // N0.6: stamp the owning niche so the channel joins the active niche's set.
+  const niche = loadActiveNicheSafe().slug;
   const [row] = await db
     .insert(channels)
-    .values({ slug, label, color, pillar, keywords, sortOrder, active })
+    .values({ slug, label, color, pillar, keywords, sortOrder, active, niche })
     .returning();
   return c.json(row, 201);
 });
@@ -110,7 +129,12 @@ channelsRouter.get('/channels/:slug', async (c) => {
   if (!SLUG_RE.test(slug)) return c.json({ error: 'invalid_slug' }, 400);
 
   const [channel] = await db.select().from(channels).where(eq(channels.slug, slug));
-  if (!channel) return c.json({ error: 'not_found' }, 404);
+  // N0.6: the room is invisible from another niche — a slug that belongs to a
+  // non-active niche reads as not-found (NULL-niche legacy rows stay visible).
+  const activeSlug = loadActiveNicheSafe().slug;
+  if (!channel || (channel.niche !== activeSlug && channel.niche !== null)) {
+    return c.json({ error: 'not_found' }, 404);
+  }
 
   const [taggedPeople, taggedVoiceTweets, taggedIdeas, taggedRadarDrafts] = await Promise.all([
     db
@@ -254,6 +278,13 @@ channelsRouter.delete('/channels/:slug', async (c) => {
 // SQLite JSON containment: the tags column holds a JSON string[] of slugs.
 function tagged(col: AnyColumn, slug: string): SQL {
   return sql`exists (select 1 from json_each(${col}) where json_each.value = ${slug})`;
+}
+
+// N0.6: a channel is owned by the active niche when its stamp matches — or is
+// NULL (legacy rows pre-dating the niche column). Identity until a second niche
+// exists (the N0.1 migration backfills every row to `builder`).
+function ownedByNiche(slug: string): SQL | undefined {
+  return or(eq(channels.niche, slug), isNull(channels.niche));
 }
 
 // Own posts in the channel's mapped pillar, with the latest measured snapshot

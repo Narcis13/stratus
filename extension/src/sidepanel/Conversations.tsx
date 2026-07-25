@@ -8,6 +8,7 @@
 // Posting stays MANUAL PASTE: Copy → open the tweet → paste → Done.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { QuickReplyPicker } from './QuickReplyPicker.tsx';
 import {
   ApiError,
   type ConversationItem,
@@ -17,13 +18,18 @@ import {
   type ReplyDraft,
   api,
 } from './api.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 const LIST_LIMIT = 30;
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 
 // Client-side mention-refresh budget — "a few per day". Rolling 24h window
-// persisted in localStorage; the server's own counter (6/day) is the backstop.
+// persisted in localStorage; the server's own counter is the backstop and the
+// real limit. UI.6 mirrors the panel budget as x.mentions.panelRefreshCap; this
+// is the fallback when the settings blob hasn't landed yet.
 const REFRESH_LIMIT = 4;
 const REFRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
 const REFRESH_KEY = 'stratus:inbox:refreshes';
@@ -104,7 +110,12 @@ export function ConversationsSection({
   const [data, setData] = useState<ConversationsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshesLeft, setRefreshesLeft] = useState(REFRESH_LIMIT - recentRefreshes().length);
+  // Track what's been SPENT, not what's left: the cap arrives from the mirrored
+  // blob after mount (and can change under us on a settings save), so the
+  // remaining count has to be derived rather than snapshotted.
+  const { panelRefreshCap } = useServerSettings();
+  const [refreshesUsed, setRefreshesUsed] = useState(recentRefreshes().length);
+  const refreshesLeft = Math.max(0, panelRefreshCap - refreshesUsed);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -122,8 +133,8 @@ export function ConversationsSection({
 
   // New mentions arrive through the same §7.5 pull the flat inbox used.
   const refresh = async (): Promise<void> => {
-    if (recentRefreshes().length >= REFRESH_LIMIT) {
-      setRefreshesLeft(0);
+    if (recentRefreshes().length >= panelRefreshCap) {
+      setRefreshesUsed(recentRefreshes().length);
       return;
     }
     setRefreshing(true);
@@ -131,7 +142,7 @@ export function ConversationsSection({
     try {
       await api.mentions.refresh(settings);
       recordRefresh();
-      setRefreshesLeft(REFRESH_LIMIT - recentRefreshes().length);
+      setRefreshesUsed(recentRefreshes().length);
       await load();
     } catch (e) {
       if (e instanceof ApiError && e.code === 'refresh_limit') {
@@ -179,31 +190,30 @@ export function ConversationsSection({
   const counts = data?.counts;
 
   return (
-    <section className="brief-section">
-      <div className="radar-head">
-        <h3>
-          Inbox
-          {counts && counts.openLoops > 0 && ` — ${counts.openLoops} owed`}
-          {counts && counts.chains > 0 && ` (${counts.chains} chain)`}
-        </h3>
+    <Section
+      title={`Inbox${counts && counts.openLoops > 0 ? ` — ${counts.openLoops} owed` : ''}${
+        counts && counts.chains > 0 ? ` (${counts.chains} chain)` : ''
+      }`}
+      actions={
         <button
           type="button"
           className="radar-clear"
           onClick={() => void refresh()}
           disabled={refreshing || refreshesLeft <= 0}
-          title={refreshesLeft <= 0 ? `Limit ${REFRESH_LIMIT}/day — back tomorrow` : undefined}
+          title={refreshesLeft <= 0 ? `Limit ${panelRefreshCap}/day — back tomorrow` : undefined}
         >
           {refreshing ? 'Refreshing…' : `Refresh (${refreshesLeft} left)`}
         </button>
-      </div>
-
+      }
+    >
       {error && <div className="error">{error}</div>}
 
       {data &&
         (data.threads.length === 0 ? (
-          <div className="muted">
-            No conversations yet. Refresh pulls new mentions (~$0.001 each).
-          </div>
+          <EmptyState
+            line="No conversations yet."
+            hint="Refresh pulls new mentions (~$0.001 each) — the daily pass does it for free anyway."
+          />
         ) : (
           <ul className="radar-list">
             {data.threads.map((t) => (
@@ -226,7 +236,7 @@ export function ConversationsSection({
             ))}
           </ul>
         ))}
-    </section>
+    </Section>
   );
 }
 
@@ -453,6 +463,15 @@ function OpenLoopActions({
             {copied ? 'Copied ✓' : 'Copy'}
           </button>
         )}
+        <QuickReplyPicker
+          settings={settings}
+          vars={{
+            name: t.counterpartName ?? t.person?.displayName ?? undefined,
+            handle: t.counterpartHandle ?? undefined,
+          }}
+          targetTweetId={owed.tweetId}
+          targetHandle={t.counterpartHandle ?? undefined}
+        />
         <button
           type="button"
           disabled={busy}

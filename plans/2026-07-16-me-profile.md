@@ -1,6 +1,6 @@
 # M1 — Me (My Profile): the personal-context layer
 
-- **Status:** planned 2026-07-16 · not started
+- **Status:** shipped 2026-07-18 (masterplan ME.1–ME.7). Canonical record: CLAUDE.md §"Me layer M1".
 - **Goal fit:** Goal 1 (authoring quality — the drafters produce the content the calendar schedules) with goal-4 spirit (personal, emotional content earns engagement the same way relationship context does). Same category as §8.6 editable pillars: the persona already ships inside the prompts; this makes the *dynamic* personal layer — facts, events, emotions, notes, goals — DB-backed, editable, and injected.
 - **Cost impact:** $0 X API. Grok: the injected block adds ~150–500 tokens at the variable tail ≈ +$0.0005–0.001 per existing draft call (no new calls). $0 recurring.
 - **Invariants touched:** §7.8 (best-effort loader — a me-layer failure never fails the paying path), §7.13 (sync SQLite), §7.14 (prompt byte-sync — templates untouched, tail injection only), §7.15 (variable tail), §7.16 (server-stamped fields, persisted via contextSnapshot), §7.18 (no fabrication — the block is the ONLY extra biography Grok may use; instruction rides inside the block), §7.19 (lift cell gated n≥20/side), §7.29–30 (docs sync, $0 smoke).

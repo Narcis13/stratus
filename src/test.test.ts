@@ -1,11 +1,22 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, describe, expect, test } from 'bun:test';
+import { eq, inArray } from 'drizzle-orm';
+import { db } from './db/client.ts';
 import { beat, heartbeatStatus, registerHeartbeat, unregisterHeartbeat } from './heartbeats.ts';
 import { matchOrigin } from './middleware/cors.ts';
+import type { ActiveTimesGrid } from './shared/activeTimes.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
+import { metricsSnapshots, postsPublished } from './x/db/schema.ts';
+import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
-import { defaultPostParams } from './x/fields.ts';
+import { MENTION_EXPANSIONS, defaultPostParams } from './x/fields.ts';
+import { DEFAULT_NICHE } from './x/niche/defaults.ts';
+import {
+  IDEAS_PROMPT_TEMPLATE,
+  buildIdeasInput,
+  parseIdeaProposals,
+} from './x/posts/ideasPrompt.ts';
 import { buildPillarDraftInput, parsePillarProposal } from './x/posts/pillarDraft.ts';
 import {
   DEFAULT_PILLARS,
@@ -20,10 +31,21 @@ import {
   buildPostDraftsSchema,
   parsePostDrafts,
 } from './x/posts/prompt.ts';
+import {
+  REWRITE_PROMPT_TEMPLATE,
+  buildRewriteInput,
+  parseRewrite,
+} from './x/posts/rewritePrompt.ts';
+import {
+  THREAD_PROMPT_TEMPLATE,
+  buildThreadDraftInput,
+  parseThreadDraft,
+} from './x/posts/threadPrompt.ts';
 import { priceFor } from './x/pricing.ts';
 import {
   type BatchTweet,
   type PostContext,
+  REPLY_BATCH_PROMPT_TEMPLATE,
   REPLY_PROMPT_TEMPLATE,
   blankLineBetweenPropositions,
   buildBatchGrokInput,
@@ -67,7 +89,7 @@ import {
   rankBestTimes,
 } from './x/routes/metrics.ts';
 import { type RadarBatchTweet, buildRadarDraftRows, radarDraftExpired } from './x/routes/radar.ts';
-import { parseBatchTweets } from './x/routes/replies.ts';
+import { parseBatchTweets, replyLlmDefaults } from './x/routes/replies.ts';
 import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
 import {
   type FollowerSnapshotPoint,
@@ -75,8 +97,9 @@ import {
   rankTargets,
   targetBand,
 } from './x/routes/voice.ts';
-import { parseExtractedTemplate } from './x/routes/voiceExtract.ts';
-import { msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
+import { resetSettings, setSettings } from './x/settings/registry.ts';
+import { EXTRACT_PROMPT_TEMPLATE, parseExtractedTemplate } from './x/voice/extractPrompt.ts';
+import { ingestPulledTweet, maxTweetId, msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -101,6 +124,37 @@ describe('defaultPostParams', () => {
   test('default omits private metrics', () => {
     const p = defaultPostParams();
     expect(p['tweet.fields']).not.toContain('non_public_metrics');
+  });
+
+  // CA.2: an expansion hydrates whole extra objects into `includes.*`, X bills
+  // every object in the body, and `itemCount` only counts `data` — so a stray
+  // expansion is billed AND invisible to /cost/today. Expanding by default cost
+  // ~90 unread parent tweets ($0.005 each) on a 90-reply day. Lock it at zero.
+  test('expands nothing by default — an unread `includes` object is pure spend', () => {
+    for (const p of [defaultPostParams(), defaultPostParams({ ownedPrivate: true })]) {
+      expect(p.expansions).toBeUndefined();
+      // These only shape objects an expansion would have put in `includes`.
+      expect(p['user.fields']).toBeUndefined();
+      expect(p['media.fields']).toBeUndefined();
+    }
+  });
+
+  test('dropping the expansions keeps the free tweet FIELDS that back has_media', () => {
+    // `attachments`/`referenced_tweets` ride the tweet itself at no extra cost —
+    // only the hydrated parent-tweet/media objects went away, so the has_media
+    // baseline (`tweet.attachments?.media_keys?.length`) still works.
+    const p = defaultPostParams();
+    expect(p['tweet.fields']).toContain('attachments');
+    expect(p['tweet.fields']).toContain('referenced_tweets');
+  });
+
+  test('mentions opt in to author_id — the one includes.* the repo reads', () => {
+    const p = defaultPostParams({ expansions: MENTION_EXPANSIONS });
+    expect(p.expansions).toBe('author_id');
+    // getUserMentions resolves handles out of includes.users, so the shaping
+    // param has to ride along with the expansion.
+    expect(p['user.fields']).toContain('username');
+    expect(p.expansions).not.toContain('referenced_tweets');
   });
 });
 
@@ -207,6 +261,134 @@ describe('dailyMetrics schedule', () => {
   test('crosses the month boundary correctly', () => {
     // 2026-06-30 05:00 UTC → next 03:00 is 2026-07-01 03:00 (22h).
     expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 30, 5, 0, 0)), 3)).toBe(22 * HOUR);
+  });
+});
+
+describe('maxTweetId (discovery checkpoint high-water)', () => {
+  test('compares snowflakes as BigInt, not Number', () => {
+    // These differ only past Number's 2^53 safe range — a Number compare ties.
+    const lo = '2078076276561093110';
+    const hi = '2078111316628107769';
+    expect(maxTweetId(lo, hi)).toBe(hi);
+    expect(maxTweetId(hi, lo)).toBe(hi);
+  });
+
+  test('passes through when either side is undefined', () => {
+    expect(maxTweetId(undefined, '123')).toBe('123');
+    expect(maxTweetId('123', undefined)).toBe('123');
+    expect(maxTweetId(undefined, undefined)).toBeUndefined();
+  });
+
+  test('never regresses on equal ids', () => {
+    expect(maxTweetId('999', '999')).toBe('999');
+  });
+});
+
+// The discovery pull now doubles as the snapshot read (one billed read per own
+// tweet per day instead of two — audit 2026-07-23). The property that keeps that
+// safe is idempotency: the pull can be replayed after a crash that lost the
+// checkpoint, and a tweet already retired must cost nothing and write nothing.
+describe('ingestPulledTweet (discovery pull = snapshot)', () => {
+  const NOW = new Date('2026-07-24T03:00:00Z');
+  const POSTED = new Date('2026-07-23T15:00:00Z');
+  const IDS = ['dm1_new', 'dm1_replay', 'dm1_sched', 'dm1_reply'];
+
+  // posts_published/metrics_snapshots are global to the in-memory DB and the
+  // playbook suite aggregates over both — leave nothing behind.
+  afterAll(async () => {
+    await db.delete(metricsSnapshots).where(inArray(metricsSnapshots.tweetId, IDS));
+    await db.delete(postsPublished).where(inArray(postsPublished.tweetId, IDS));
+  });
+
+  function pulled(id: string, extra: Partial<XTweet> = {}): XTweet {
+    return {
+      id,
+      text: 'pulled from the timeline',
+      created_at: POSTED.toISOString(),
+      public_metrics: { impression_count: 900, like_count: 4 },
+      non_public_metrics: { user_profile_clicks: 2 },
+      ...extra,
+    } as XTweet;
+  }
+
+  async function readRow(tweetId: string) {
+    const [row] = await db
+      .select({
+        retired: postsPublished.retired,
+        pollCount: postsPublished.pollCount,
+        nextPollAt: postsPublished.nextPollAt,
+        isReply: postsPublished.isReply,
+        source: postsPublished.source,
+      })
+      .from(postsPublished)
+      .where(eq(postsPublished.tweetId, tweetId));
+    return row;
+  }
+
+  async function snapshotCount(tweetId: string) {
+    const rows = await db
+      .select({ id: metricsSnapshots.id })
+      .from(metricsSnapshots)
+      .where(eq(metricsSnapshots.tweetId, tweetId));
+    return rows.length;
+  }
+
+  test('an unseen tweet lands retired, with its snapshot, in one step', async () => {
+    expect(ingestPulledTweet(pulled('dm1_new'), NOW)).toBe('discovered');
+
+    const row = await readRow('dm1_new');
+    // Retired immediately: this is what stops snapshotDue buying the same read
+    // a second time minutes later.
+    expect(row?.retired).toBe(true);
+    expect(row?.nextPollAt).toBeNull();
+    // pollCount 1 keeps it eligible for the day-7 winner re-read.
+    expect(row?.pollCount).toBe(1);
+    expect(row?.source).toBe('manual');
+    expect(await snapshotCount('dm1_new')).toBe(1);
+  });
+
+  test('replaying the same tweet writes nothing and never double-snapshots', async () => {
+    ingestPulledTweet(pulled('dm1_replay'), NOW);
+    expect(await snapshotCount('dm1_replay')).toBe(1);
+
+    // A run that died before saveDiscoveryCheckpoint re-pulls this tweet.
+    expect(ingestPulledTweet(pulled('dm1_replay'), NOW)).toBe('already-retired');
+    expect(ingestPulledTweet(pulled('dm1_replay'), NOW)).toBe('already-retired');
+
+    expect(await snapshotCount('dm1_replay')).toBe(1);
+    expect((await readRow('dm1_replay'))?.pollCount).toBe(1); // not inflated
+  });
+
+  test('a publisher-inserted scheduled post is adopted, not re-read', async () => {
+    await db.insert(postsPublished).values({
+      tweetId: 'dm1_sched',
+      text: 'scheduled by the publisher',
+      postedAt: POSTED,
+      source: 'scheduled',
+      nextPollAt: new Date(POSTED.getTime() + 24 * 60 * 60 * 1000),
+    });
+
+    expect(ingestPulledTweet(pulled('dm1_sched'), NOW)).toBe('snapshotted');
+
+    const row = await readRow('dm1_sched');
+    expect(row?.retired).toBe(true);
+    expect(row?.nextPollAt).toBeNull();
+    expect(row?.source).toBe('scheduled'); // provenance survives adoption
+    expect(await snapshotCount('dm1_sched')).toBe(1);
+  });
+
+  test('a reply is snapshotted too — the row is free once the pull is paid for', async () => {
+    const outcome = ingestPulledTweet(
+      pulled('dm1_reply', {
+        in_reply_to_user_id: '999',
+        referenced_tweets: [{ type: 'replied_to', id: 'parent-1' }],
+      }),
+      NOW,
+    );
+    expect(outcome).toBe('discovered');
+    expect((await readRow('dm1_reply'))?.isReply).toBe(true);
+    // Playbook reply attribution reads these; dropping them would save $0.
+    expect(await snapshotCount('dm1_reply')).toBe(1);
   });
 });
 
@@ -364,6 +546,66 @@ describe('reply prompt (§7.1)', () => {
     expect(REPLY_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
   });
 
+  test('template asks for three variants, one per angle (RU.1)', () => {
+    expect(REPLY_PROMPT_TEMPLATE).toContain('## The three variants');
+    expect(REPLY_PROMPT_TEMPLATE).toContain('exactly three');
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('two variants');
+    for (const angle of ['extends', 'contrarian', 'debate']) {
+      expect(REPLY_PROMPT_TEMPLATE).toContain(angle);
+    }
+  });
+
+  // N0.4 equivalence guarantee: with the untouched seed niche (all defaults),
+  // the assembled prompt must carry the ORIGINAL "Who I am" body byte-exact,
+  // in place. The fixture is an independent copy of the pre-extraction text —
+  // deliberately NOT read from the .md (which now holds the placeholder) nor
+  // from DEFAULT_NICHE (which is what's under test).
+  const ORIGINAL_WHO_I_AM_BODY = `- I'm a **solopreneur**.
+- I'm **passionate about programming, AI, and marketing**.
+- I **build in public**.
+
+That is the entire biography you have. Never invent or imply anything else — no age, no location, no day job, no family, no client stories, no career arc. You can voice opinions and stances as mine, in first person. You cannot invent autobiographical facts — no "I shipped X in 14 days", no "my clients", no made-up numbers. If the steer gives a fact, use it; otherwise stay at the level of stance and observation. A fabricated "37%" or a fake anecdote is worse than no specific at all.`;
+
+  test('N0.4: template holds the placeholder, not the persona', () => {
+    expect(REPLY_PROMPT_TEMPLATE).toContain('{{REPLY_PERSONA}}');
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('solopreneur');
+  });
+
+  test('N0.4 equivalence: seed niche restores the original "Who I am" body byte-exact', () => {
+    // DEFAULT_NICHE itself must not have drifted from the original prose.
+    expect(DEFAULT_NICHE.replyPersona).toBe(ORIGINAL_WHO_I_AM_BODY);
+
+    const [msg] = buildGrokInput(promptCtx);
+    const content = msg?.content ?? '';
+    expect(content).toContain(
+      `## Who I am (the COMPLETE persona — infer nothing beyond these three facts)\n\n${ORIGINAL_WHO_I_AM_BODY}\n\n---`,
+    );
+    expect(content).not.toContain('{{REPLY_PERSONA}}');
+  });
+
+  test('N0.4: custom reply persona substitutes in place of the builder identity', () => {
+    const [msg] = buildGrokInput(promptCtx, undefined, undefined, undefined, {
+      replyPersona: 'NUTRITION REPLY PERSONA BLOCK',
+    });
+    const content = msg?.content ?? '';
+    expect(content).toContain('NUTRITION REPLY PERSONA BLOCK');
+    expect(content).not.toContain('solopreneur');
+    expect(content).not.toContain('{{REPLY_PERSONA}}');
+  });
+
+  test('N0.4: custom override without the token passes through untouched', () => {
+    const [msg] = buildGrokInput(
+      promptCtx,
+      'Custom prompt: {{TWEET_CONTEXT}}',
+      undefined,
+      undefined,
+      {
+        replyPersona: 'NUTRITION REPLY PERSONA BLOCK',
+      },
+    );
+    expect(msg?.content).not.toContain('NUTRITION REPLY PERSONA BLOCK');
+  });
+
   test('buildGrokInput substitutes the idea into the tag', () => {
     const [msg] = buildGrokInput(promptCtx, undefined, 'fă-l să sune ca un constructor');
     expect(msg?.content).toContain('<idea>fă-l să sune ca un constructor</idea>');
@@ -483,32 +725,111 @@ describe('batch replies (Radar §7.2)', () => {
     expect(msg?.content.trimEnd().endsWith('<idea>fii contrarian</idea>')).toBe(true);
   });
 
+  test('batch head keeps the voice block, not the single-reply variants section', () => {
+    const content = buildBatchGrokInput(tweets)[0]?.content ?? '';
+    // The persona + forbidden lists live verbatim in the standalone batch
+    // template (AI.5 — the anti-drift test below locks them to the single
+    // default). Single-reply-only content must never leak in.
+    expect(content).toContain('Forbidden openers');
+    expect(content).toContain('solopreneur');
+    expect(content).not.toContain('not three paraphrases');
+    expect(content).not.toContain('{{TWEET_CONTEXT}}');
+    // The template's own {{POSTS}}/{{IDEA}} tokens must be fully substituted.
+    expect(content).not.toContain('{{POSTS}}');
+    expect(content).not.toContain('{{IDEA}}');
+    // N0.4: the voice block carries {{REPLY_PERSONA}} — the batch builder must
+    // substitute it, never ship the raw token to Grok.
+    expect(content).not.toContain('{{REPLY_PERSONA}}');
+  });
+
+  test('N0.4: batch grounds on the seed persona by default, custom persona via opts', () => {
+    const defaultContent = buildBatchGrokInput(tweets)[0]?.content ?? '';
+    expect(defaultContent).toContain("- I'm a **solopreneur**.");
+    expect(defaultContent).toContain('That is the entire biography you have.');
+
+    const custom = buildBatchGrokInput(tweets, undefined, undefined, undefined, undefined, {
+      replyPersona: 'NUTRITION REPLY PERSONA BLOCK',
+    })[0]?.content;
+    expect(custom).toContain('NUTRITION REPLY PERSONA BLOCK');
+    expect(custom).not.toContain('solopreneur');
+    expect(custom).not.toContain('{{REPLY_PERSONA}}');
+  });
+
   test('buildBatchGrokInput leaves an empty idea tag when none given', () => {
     const [msg] = buildBatchGrokInput(tweets);
     expect(msg?.content.trimEnd().endsWith('<idea></idea>')).toBe(true);
   });
 
-  test('parseBatchReplies maps id→tweetId, trims, coerces unknown angles', () => {
+  test('AI.5 anti-drift: the standalone batch DEFAULT embeds the reply DEFAULT voice block verbatim', () => {
+    // The old slicer's headings, now applied to DEFAULTS only (Decision 2):
+    // both defaults carry the raw {{REPLY_PERSONA}} token (D3), so the sliced
+    // block compares verbatim. A voice edit to reply prompt.md that isn't
+    // mirrored into REPLY_BATCH_PROMPT_TEMPLATE fails here.
+    const start = REPLY_PROMPT_TEMPLATE.indexOf('## Who I am');
+    const end = REPLY_PROMPT_TEMPLATE.indexOf('## The three variants');
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const voiceBlock = REPLY_PROMPT_TEMPLATE.slice(start, end).trimEnd();
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain(voiceBlock);
+    // The render contract: posts + idea at the variable tail, persona in place.
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain('{{POSTS}}');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain('{{IDEA}}');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).toContain('{{REPLY_PERSONA}}');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE.indexOf('{{POSTS}}')).toBeLessThan(
+      REPLY_BATCH_PROMPT_TEMPLATE.indexOf('{{IDEA}}'),
+    );
+  });
+
+  test('AI.5: a reply-batch template override changes the rendered batch prompt', () => {
+    const custom = 'CUSTOM BATCH HEAD\n\nPOSTS:\n{{POSTS}}\n\nSTEER: <idea>{{IDEA}}</idea>';
+    const content =
+      buildBatchGrokInput(tweets, 'go', undefined, undefined, undefined, { template: custom })[0]
+        ?.content ?? '';
+    expect(content.startsWith('CUSTOM BATCH HEAD')).toBe(true);
+    expect(content).toContain('id: 111');
+    expect(content).toContain('<idea>go</idea>');
+    expect(content).not.toContain('{{POSTS}}');
+    expect(content).not.toContain('solopreneur');
+  });
+
+  test('parseBatchReplies maps id→tweetId, keeps variants, trims, coerces unknown angles', () => {
     const out = parseBatchReplies(
-      '{"replies":[{"id":"111","text":" hot take ","angle":"contrarian"},{"id":"222","text":"x","angle":"weird"}]}',
+      '{"replies":[{"id":"111","variants":[{"text":" hot take ","angle":"contrarian"},{"text":"x","angle":"weird"}]}]}',
     );
     expect(out).toEqual([
-      { tweetId: '111', text: 'hot take', angle: 'contrarian' },
-      { tweetId: '222', text: 'x', angle: 'extends' },
+      {
+        tweetId: '111',
+        variants: [
+          { text: 'hot take', angle: 'contrarian' },
+          { text: 'x', angle: 'extends' },
+        ],
+      },
     ]);
   });
 
-  test('parseBatchReplies blank-line-separates multi-line replies', () => {
+  test('parseBatchReplies blank-line-separates each variant', () => {
     expect(
-      parseBatchReplies('{"replies":[{"id":"111","text":"a\\nb\\nc","angle":"extends"}]}'),
-    ).toEqual([{ tweetId: '111', text: 'a\n\nb\n\nc', angle: 'extends' }]);
+      parseBatchReplies(
+        '{"replies":[{"id":"111","variants":[{"text":"a\\nb\\nc","angle":"extends"}]}]}',
+      ),
+    ).toEqual([{ tweetId: '111', variants: [{ text: 'a\n\nb\n\nc', angle: 'extends' }] }]);
   });
 
-  test('parseBatchReplies rejects garbage and blank text', () => {
+  test('parseBatchReplies rejects garbage, blank text, and a missing/empty variants array', () => {
     expect(parseBatchReplies('not json')).toBeNull();
-    expect(parseBatchReplies('{"replies":[{"id":"1","text":"   ","angle":"extends"}]}')).toBeNull();
-    expect(parseBatchReplies('{"replies":[{"text":"x","angle":"extends"}]}')).toBeNull();
-    // empty array is a valid (if useless) batch response, not a parse failure
+    // blank variant text
+    expect(
+      parseBatchReplies('{"replies":[{"id":"1","variants":[{"text":"   ","angle":"extends"}]}]}'),
+    ).toBeNull();
+    // missing id
+    expect(
+      parseBatchReplies('{"replies":[{"variants":[{"text":"x","angle":"extends"}]}]}'),
+    ).toBeNull();
+    // old flat shape (no variants array) → null
+    expect(parseBatchReplies('{"replies":[{"id":"1","text":"x","angle":"extends"}]}')).toBeNull();
+    // empty variants array → null (a post must carry ≥1 variant)
+    expect(parseBatchReplies('{"replies":[{"id":"1","variants":[]}]}')).toBeNull();
+    // empty replies array is a valid (if useless) batch response, not a parse failure
     expect(parseBatchReplies('{"replies":[]}')).toEqual([]);
   });
 
@@ -535,6 +856,49 @@ describe('batch replies (Radar §7.2)', () => {
     ).toEqual({ error: 'too_many_tweets' });
   });
 
+  // UI.5: the cap is `x.ai.batchReplyCap` (ceiling 50); the constant survives
+  // only as this pure param's default, so both directions must hold.
+  test('parseBatchTweets honors a configured batch cap in both directions', () => {
+    const batch = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ tweetId: String(i), handle: 'a', text: 'x' }));
+
+    const raised = parseBatchTweets(batch(26), 50);
+    if ('error' in raised) throw new Error(raised.error);
+    expect(raised.tweets.length).toBe(26);
+
+    expect(parseBatchTweets(batch(6), 5)).toEqual({ error: 'too_many_tweets' });
+    // A refusal, never a silent truncation — the caller learns the batch was
+    // too big instead of paying for a call that drops tweets.
+    const atCap = parseBatchTweets(batch(5), 5);
+    if ('error' in atCap) throw new Error(atCap.error);
+    expect(atCap.tweets.length).toBe(5);
+  });
+
+  // UI.5: the reply house defaults askLLM merges last (body > `ai` blob > these).
+  test('replyLlmDefaults reads the x.ai knobs and moves with a PATCH', () => {
+    expect(replyLlmDefaults()).toEqual({
+      temperature: 0.7,
+      maxOutputTokens: 520,
+      reasoningEffort: 'low',
+    });
+    try {
+      setSettings({
+        'x.ai.replyTemperature': 1.2,
+        'x.ai.replyMaxOutputTokens': 900,
+        'x.ai.replyReasoningEffort': 'medium',
+      });
+      expect(replyLlmDefaults()).toEqual({
+        temperature: 1.2,
+        maxOutputTokens: 900,
+        reasoningEffort: 'medium',
+      });
+    } finally {
+      // Process-global store — never leave the override for another suite.
+      resetSettings({ group: 'ai' });
+    }
+    expect(replyLlmDefaults().maxOutputTokens).toBe(520);
+  });
+
   test('parseBatchTweets carries band + signals through (C0) and rejects junk', () => {
     const signals = { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false };
     const ok = parseBatchTweets([
@@ -545,6 +909,13 @@ describe('batch replies (Radar §7.2)', () => {
     expect(ok.tweets[0]?.band).toBe('hot');
     expect(ok.tweets[0]?.signals).toEqual(signals);
     expect('band' in (ok.tweets[1] ?? {})).toBe(false);
+
+    // A ⊕ manual add (RU.8) carries band: 'manual' through to radar_drafts.
+    const manual = parseBatchTweets([
+      { tweetId: '333', handle: 'carol', text: 'c', band: 'manual' },
+    ]);
+    if ('error' in manual) throw new Error(manual.error);
+    expect(manual.tweets[0]?.band).toBe('manual');
 
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
@@ -570,12 +941,35 @@ describe('radar drafts (C0)', () => {
     { tweetId: '222', handle: 'bob', author: 'bob', text: 'AI take' },
   ];
 
-  test('buildRadarDraftRows pairs replies with their tweets and keeps signals', () => {
-    const rows = buildRadarDraftRows(tweets, [
-      { tweetId: '111', text: 'my reply', angle: 'contrarian' },
-      { tweetId: '222', text: 'other reply', angle: 'extends' },
-      { tweetId: '999', text: 'unknown id dropped', angle: 'extends' },
-    ]);
+  test('buildRadarDraftRows pairs replies with their tweets, keeps signals, stores variants, threads model', () => {
+    const rows = buildRadarDraftRows(
+      tweets,
+      [
+        {
+          tweetId: '111',
+          text: 'my reply',
+          angle: 'contrarian',
+          variants: [
+            { text: 'my reply', angle: 'contrarian' },
+            { text: 'push it further', angle: 'extends' },
+            { text: 'pick a side', angle: 'debate' },
+          ],
+        },
+        {
+          tweetId: '222',
+          text: 'other reply',
+          angle: 'extends',
+          variants: [{ text: 'other reply', angle: 'extends' }],
+        },
+        {
+          tweetId: '999',
+          text: 'unknown id dropped',
+          angle: 'extends',
+          variants: [{ text: 'unknown id dropped', angle: 'extends' }],
+        },
+      ],
+      'grok-4',
+    );
     expect(rows).toHaveLength(2);
     expect(rows[0]).toEqual({
       tweetId: '111',
@@ -587,10 +981,26 @@ describe('radar drafts (C0)', () => {
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
       replyText: 'my reply',
       angle: 'contrarian',
+      variants: [
+        { text: 'my reply', angle: 'contrarian' },
+        { text: 'push it further', angle: 'extends' },
+        { text: 'pick a side', angle: 'debate' },
+      ],
+      model: 'grok-4',
     });
     expect(rows[1]?.author).toBeNull();
     expect(rows[1]?.band).toBeNull();
     expect(rows[1]?.url).toBeNull();
+    expect(rows[1]?.model).toBe('grok-4');
+    // A caller supplying only the primary (no variants) → null (RU.2 "unknown"
+    // semantics); null model threads through too (CLI callers).
+    const primaryOnly = buildRadarDraftRows(
+      tweets,
+      [{ tweetId: '111', text: 'x', angle: 'debate' }],
+      null,
+    );
+    expect(primaryOnly[0]?.model).toBeNull();
+    expect(primaryOnly[0]?.variants).toBeNull();
   });
 
   test('radarDraftExpired flips at exactly 48h', () => {
@@ -700,6 +1110,97 @@ describe('replies parseContext signals', () => {
     expect(parseContext({ ...baseCtx, parent: {} })).toEqual({
       error: 'invalid_context_parent',
     });
+  });
+});
+
+describe('ME.3 personal-context injection at the variable tail', () => {
+  // The builders append ctx.me / meContext / meBrief verbatim as opaque strings,
+  // so unique sentinels prove placement/order/count without a real rendered block
+  // (and can never collide with the template prose).
+  const POST_BLOCK = 'MEBLOCK::post-context-for-grounding';
+  const BRIEF = 'MEBRIEF::reply-personal-context';
+
+  const ctx: PostContext = {
+    url: 'https://x.com/someone/status/1',
+    tweetId: '1',
+    author: 'Some One',
+    handle: 'someone',
+    text: 'agents are eating SaaS',
+    postedAt: '2026-06-10T08:00:00Z',
+    metrics: { views: 100, replies: 1, reposts: 0, likes: 2 },
+    topComments: [],
+  };
+
+  test('post drafter: meContext appended purely at the tail; absent → byte-identical', () => {
+    const base = { winners: [] };
+    const cold = buildPostDraftInput(base)[0]?.content ?? '';
+    expect(cold).not.toContain(POST_BLOCK);
+
+    const warm = buildPostDraftInput({ ...base, meContext: POST_BLOCK })[0]?.content ?? '';
+    // Purely additive at the tail — the cold prompt is an exact prefix.
+    expect(warm).toBe(`${cold}\n\n${POST_BLOCK}`);
+
+    // Whitespace-only meContext counts as absent (no change).
+    expect(buildPostDraftInput({ ...base, meContext: '   ' })[0]?.content).toBe(cold);
+  });
+
+  test('post drafter: meContext sits before the guidance line', () => {
+    const both =
+      buildPostDraftInput({ winners: [], meContext: POST_BLOCK, guidance: 'GUIDE::structures' })[0]
+        ?.content ?? '';
+    expect(both.indexOf(POST_BLOCK)).toBeGreaterThan(-1);
+    expect(both.indexOf('GUIDE::structures')).toBeGreaterThan(both.indexOf(POST_BLOCK));
+  });
+
+  test('single reply: ctx.me appended after the idea, only when stamped', () => {
+    const cold = buildGrokInput(ctx)[0]?.content ?? '';
+    expect(cold).not.toContain(BRIEF);
+
+    const warm = buildGrokInput({ ...ctx, me: BRIEF })[0]?.content ?? '';
+    expect(warm).toContain(BRIEF);
+    expect(warm.indexOf(BRIEF)).toBeGreaterThan(warm.indexOf('</idea>'));
+
+    // Empty me → no change.
+    expect(buildGrokInput({ ...ctx, me: '' })[0]?.content).toBe(cold);
+  });
+
+  test('single reply: tail order is relationship → me → guidance', () => {
+    const warm =
+      buildGrokInput({ ...ctx, relationship: 'REL::block', me: BRIEF, guidance: 'GUIDE::block' })[0]
+        ?.content ?? '';
+    expect(warm.indexOf(BRIEF)).toBeGreaterThan(warm.indexOf('REL::block'));
+    expect(warm.indexOf('GUIDE::block')).toBeGreaterThan(warm.indexOf(BRIEF));
+  });
+
+  test('batch: meBrief rides exactly once at the tail, only when supplied', () => {
+    const t: BatchTweet = { tweetId: '1', handle: 'someone', author: 'SO', text: 'post one' };
+    const cold = buildBatchGrokInput([t])[0]?.content ?? '';
+    expect(cold).not.toContain(BRIEF);
+
+    const warm =
+      buildBatchGrokInput([t, { ...t, tweetId: '2' }], undefined, undefined, undefined, undefined, {
+        meBrief: BRIEF,
+      })[0]?.content ?? '';
+    // Exactly once — it describes me, not each of the 2 posts.
+    expect(warm.split(BRIEF).length - 1).toBe(1);
+    // At the very tail, after the last post.
+    expect(warm.indexOf(BRIEF)).toBeGreaterThan(warm.indexOf('POST 2'));
+  });
+
+  test('parseContext never copies a client-supplied me (server-stamped only)', () => {
+    const out = parseContext({
+      tweetId: '123456',
+      handle: '@someone',
+      author: 'Some One',
+      text: 'a tweet',
+      url: 'https://x.com/someone/status/123456',
+      postedAt: '2026-06-10T08:00:00Z',
+      metrics: { views: 10, replies: 0, reposts: 0, likes: 0 },
+      topComments: [],
+      me: 'INJECTED BY CLIENT',
+    });
+    if ('error' in out) throw new Error(out.error);
+    expect('me' in out).toBe(false);
   });
 });
 
@@ -821,6 +1322,47 @@ describe('replies band gate (§7.3)', () => {
     const res = await post({ context: ctx(), override: 'yes' });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_override');
+  });
+
+  // UI.7: the gate classifies with the CONFIGURED thresholds, read per request.
+  // Both assertions stay on the refusal side of the ladder on purpose — the
+  // loosening direction would run the real Grok call, so "a PATCH lets a post
+  // through" is proven in replyBand.test.ts (pure) and by the browser check,
+  // never by spending here. The store is process-global across test files, so
+  // the override is reset in `finally` (UI.2 gotcha).
+  describe('configurable thresholds (UI.7)', () => {
+    // 1500 views / 8 replies / 60 min: 'hot' under the shipped defaults, as the
+    // pure cases above assert. Raising the view floor past it must gate it.
+    test('a raised view floor turns a hot post into a 422', async () => {
+      try {
+        setSettings({ 'x.band.bigViews': 5000 });
+        const res = await post({ context: ctx() });
+        expect(res.status).toBe(422);
+        const out = (await res.json()) as { error: string; band: unknown };
+        expect(out.error).toBe('band_gate');
+        expect(out.band).toBeNull();
+      } finally {
+        resetSettings({ group: 'band' });
+      }
+    });
+
+    // The same context, two refusals, a different VERDICT each time — which is
+    // what proves the route read the store rather than a constant.
+    test('the buried cutoff moves the reported band without spending', async () => {
+      const buried = ctx({ metrics: { views: 50, replies: 150, reposts: 0, likes: 1 } });
+      const bandOf = async (): Promise<unknown> => {
+        const res = await post({ context: buried });
+        expect(res.status).toBe(422);
+        return ((await res.json()) as { band: unknown }).band;
+      };
+      expect(await bandOf()).toBe('skip');
+      try {
+        setSettings({ 'x.band.midReplies': 200 });
+        expect(await bandOf()).toBeNull();
+      } finally {
+        resetSettings({ group: 'band' });
+      }
+    });
   });
 });
 
@@ -1124,6 +1666,29 @@ describe('brief annotateGaps (S0.4)', () => {
     expect(gap?.sufficient).toBe(false);
     expect(gap?.n).toBe(0);
   });
+
+  test('carries audience intensity when a capture exists, never reordering (A3.4)', () => {
+    const cells = [c(3, 9, 5, 400)]; // only Wed 9h is measured
+    // Wed audience hot at 18h, cold elsewhere. Columns are Mon..Su → col (3+6)%7.
+    const audGrid = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => 0));
+    (audGrid[(3 + 6) % 7] as number[])[18] = 1;
+    const audience: ActiveTimesGrid = {
+      cols: 7,
+      rows: 24,
+      grid: audGrid,
+      tzOffsetMin: 0,
+      metric: 'likes',
+    };
+    const withAud = annotateGaps([9, 13, 18], cells, 3, audience);
+    const byHour = new Map(withAud.map((g) => [g.hour, g]));
+    expect(byHour.get(18)?.audienceScore).toBe(1); // the audience peak
+    expect(byHour.get(9)?.audienceScore).toBe(0); // measured but cold audience
+    // Ordering stays own-score-first — audience is display data, not a key.
+    const noAud = annotateGaps([9, 13, 18], cells, 3);
+    expect(noAud.every((g) => g.audienceScore === null)).toBe(true);
+    expect(withAud.map((g) => g.hour)).toEqual(noAud.map((g) => g.hour));
+    expect(withAud[0]?.hour).toBe(9); // the measured hole still leads
+  });
 });
 
 describe('brief followerTrend', () => {
@@ -1387,6 +1952,71 @@ describe('post prompt (§8.1)', () => {
     expect(POST_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
   });
 
+  // N0.3 equivalence guarantee: with the untouched seed niche (all defaults),
+  // the assembled prompt must carry the ORIGINAL §1 and §5 bodies byte-exact,
+  // in place. Fixtures are independent copies of the pre-extraction text —
+  // deliberately NOT read from the .md (which now holds the placeholder) nor
+  // from DEFAULT_NICHE (which is what's under test).
+  const ORIGINAL_SECTION_1_BODY = `- 51 years old. Live in **Pitești, Romania.**
+- Day job: **IT administrator at a public hospital**, 08:00–15:00, Mon–Fri. Personal projects run after 15:00 and on weekends. ~2–4h/day.
+- Trained as an **economist** (ASE București, Faculty of Management). Spent **10 years as head of the hospital's accounting office** before IT.
+- **30 years of coding** — a serious hobby since the 386 era. Arc: 386 → Turbo Pascal → FoxPro → Delphi 3 → today, AI coding agents (Claude Code). Four years ago a simple CRUD took me days; now I ship quality code fast.
+- Building **Alteramens** — a lab turning ideas into products. Goal: solopreneur income, **5K MRR**, then leave the hospital job. Working in a **ship-or-die** cadence (one project to publish every 30 days).
+- **My wife is an independent accountant** with ~20 SMB clients. I help her with the books → I see real business problems daily, from both sides.
+- **My son David** is prepping for the UMF (med-school) admission exam.
+- I'm Romanian. **I think in Romanian and publish in English.** My English is plain and direct, not flowery — that's a feature, not a gap.
+
+My unfair angle: economist **+** 30-year dev **+** 51 in a junior-dominated AI space **+** access to two laboratories nobody on SF Twitter sees (a Romanian public hospital and ~20 SMB accounting clients). I don't claim to be an "AI expert." I'm a practitioner who writes code and ships.
+
+These facts are the ONLY biography you may use. Never invent or imply anything else — no client stories I didn't give you, no made-up shipping timelines, no fabricated numbers. If the steer gives a fact, use it; otherwise stay inside this list. A fabricated "37%" or a fake anecdote is worse than no specific at all.`;
+
+  const ORIGINAL_SECTION_5_BODY = `Content should **encode judgment, not just transmit information.** Start from a principle I actually believe (often Naval-derived — productize yourself, specific knowledge, leverage, compounding games, authenticity removes competition), anchor it in the **present AI moment**, and land it on something concrete I've lived.
+
+Active stances you can voice as mine:
+- **Authentic human voice > sterilized AI fluency.** Identifiability is the asset.
+- **Shipping > perfection.** Weekly publishing beats finished drafts.
+- **Encoded judgment > mechanical functionality.** Skills/tools with opinions, not just APIs.
+- **Pragmatic > elegant.** What works beats what's refined.
+- **Bias for action.** Small iterations, tangible results, better done than perfect.
+- **In the AI era, sustained focus + simplification are the highest-leverage skills.**
+- **Marketing is now harder than writing code.** AI compressed execution; distribution is the real bottleneck.
+- **Organic growth, no shortcuts** — zero bots, auto-reply, or engagement pods.
+
+A background tension I own honestly: I scatter across too many projects out of enthusiasm, and I **procrastinate on publishing** — the bottleneck is hitting *publish*, not producing. Confession and real stakes are fair game. Founder-porn is not.`;
+
+  test('N0.3 equivalence: seed niche restores the original §1/§5 bodies byte-exact', () => {
+    // DEFAULT_NICHE itself must not have drifted from the original prose.
+    expect(DEFAULT_NICHE.persona).toBe(ORIGINAL_SECTION_1_BODY);
+    expect(DEFAULT_NICHE.beliefs).toBe(ORIGINAL_SECTION_5_BODY);
+
+    const [msg] = buildPostDraftInput({ winners: [] });
+    const content = msg?.content ?? '';
+    expect(content).toContain(
+      `## 1. Who I am (grounding — use these for specificity, NEVER invent biography)\n\n${ORIGINAL_SECTION_1_BODY}\n\n---`,
+    );
+    expect(content).toContain(
+      `## 5. What I believe (take these positions — don't fence-sit, don't contradict them)\n\n${ORIGINAL_SECTION_5_BODY}\n\n---`,
+    );
+    expect(content).not.toContain('{{PERSONA}}');
+    expect(content).not.toContain('{{BELIEFS}}');
+  });
+
+  test('N0.3: custom persona/beliefs substitute in place of the builder identity', () => {
+    const [msg] = buildPostDraftInput({
+      winners: [],
+      persona: 'NUTRITION PERSONA BLOCK',
+      beliefs: 'NUTRITION BELIEFS BLOCK',
+    });
+    const content = msg?.content ?? '';
+    expect(content).toContain('NUTRITION PERSONA BLOCK');
+    expect(content).toContain('NUTRITION BELIEFS BLOCK');
+    // §1/§5-only markers (Pitești/386 still appear in §6's palette — not these).
+    expect(content).not.toContain('Alteramens');
+    expect(content).not.toContain('Naval-derived');
+    expect(content).not.toContain('{{PERSONA}}');
+    expect(content).not.toContain('{{BELIEFS}}');
+  });
+
   test('buildPostDraftInput substitutes every placeholder, incl. pillars', () => {
     const [msg] = buildPostDraftInput({
       winners: [{ text: 'won post', views: 412, profileVisits: 9 }],
@@ -1480,6 +2110,240 @@ describe('post prompt (§8.1)', () => {
   });
 });
 
+describe('thread prompt (AI.7)', () => {
+  test('embedded template stays in sync with thread prompt.md', async () => {
+    const md = await Bun.file(new URL('../thread prompt.md', import.meta.url)).text();
+    expect(THREAD_PROMPT_TEMPLATE.trimEnd()).toBe(md.trimEnd());
+  });
+
+  test('variable content sits at the very end (cacheable prefix)', () => {
+    const fewShotAt = THREAD_PROMPT_TEMPLATE.indexOf('{{FEW_SHOT}}');
+    expect(fewShotAt).toBeGreaterThan(THREAD_PROMPT_TEMPLATE.length * 0.8);
+    expect(THREAD_PROMPT_TEMPLATE.trimEnd().endsWith('<idea>{{IDEA}}</idea>')).toBe(true);
+    // §1/§5 persona family substitutes in place, not at the tail.
+    expect(THREAD_PROMPT_TEMPLATE.indexOf('{{PERSONA}}')).toBeLessThan(
+      THREAD_PROMPT_TEMPLATE.length * 0.5,
+    );
+  });
+
+  const SLUGS = ['ai-craft', 'builder-51', 'unsexy-problems'];
+
+  test('parseThreadDraft returns pillar + ordered tweets, trims, flags no over-longs', () => {
+    const raw = JSON.stringify({ pillar: 'ai-craft', tweets: ['  one  ', 'two', 'three'] });
+    const out = parseThreadDraft(raw, SLUGS);
+    expect(out).toEqual({ pillar: 'ai-craft', tweets: ['one', 'two', 'three'], overLong: [] });
+  });
+
+  test('parseThreadDraft detects 280-char over-longs (1-based positions)', () => {
+    const long = 'x'.repeat(281);
+    const out = parseThreadDraft(
+      JSON.stringify({ pillar: 'builder-51', tweets: ['ok', long, 'ok'] }),
+      SLUGS,
+    );
+    expect(out?.overLong).toEqual([2]);
+  });
+
+  test('parseThreadDraft rejects a pillar outside the allowed set', () => {
+    expect(parseThreadDraft(JSON.stringify({ pillar: 'growth', tweets: ['a', 'b'] }), SLUGS)).toBe(
+      null,
+    );
+  });
+
+  test('parseThreadDraft rejects non-thread / malformed shapes', () => {
+    expect(parseThreadDraft('not json', SLUGS)).toBe(null);
+    expect(
+      parseThreadDraft(JSON.stringify({ pillar: 'ai-craft', tweets: ['only one'] }), SLUGS),
+    ).toBe(null);
+    expect(parseThreadDraft(JSON.stringify({ pillar: 'ai-craft', tweets: ['a', ''] }), SLUGS)).toBe(
+      null,
+    );
+    expect(parseThreadDraft(JSON.stringify({ pillar: 'ai-craft', tweets: 'nope' }), SLUGS)).toBe(
+      null,
+    );
+  });
+
+  test('buildThreadDraftInput folds pillar + count into the steer, keeps persona in place', () => {
+    const [msg] = buildThreadDraftInput({
+      winners: [],
+      pillar: 'ai-craft',
+      tweetCount: 5,
+      idea: 'de ce AI',
+    });
+    expect(msg?.content).toContain('Serve the "ai-craft" content pillar.');
+    expect(msg?.content).toContain('Write exactly 5 tweets.');
+    expect(msg?.content).toContain('de ce AI');
+    // Persona/beliefs substituted (no leftover tokens), few-shot placeholder gone.
+    expect(msg?.content).not.toContain('{{PERSONA}}');
+    expect(msg?.content).not.toContain('{{BELIEFS}}');
+    expect(msg?.content).not.toContain('{{FEW_SHOT}}');
+    expect(msg?.content).toContain('(no measured winners yet)');
+  });
+
+  test('buildThreadDraftInput appends meContext + guidance at the tail only', () => {
+    const base = buildThreadDraftInput({ winners: [] })[0]?.content ?? '';
+    const withTail = buildThreadDraftInput({
+      winners: [],
+      meContext: 'ME BLOCK',
+      guidance: 'GUIDANCE LINE',
+    })[0]?.content;
+    expect(withTail).toBe(`${base}\n\nME BLOCK\n\nGUIDANCE LINE`);
+  });
+});
+
+describe('rewrite prompt (AI.8)', () => {
+  test('variable content ({{DRAFT}}/{{INSTRUCTION}}) sits at the very end', () => {
+    const draftAt = REWRITE_PROMPT_TEMPLATE.indexOf('{{DRAFT}}');
+    expect(draftAt).toBeGreaterThan(REWRITE_PROMPT_TEMPLATE.length * 0.7);
+    expect(REWRITE_PROMPT_TEMPLATE.trimEnd().endsWith('{{INSTRUCTION}}')).toBe(true);
+  });
+
+  test('parseRewrite returns trimmed variants of the three known kinds', () => {
+    const raw = JSON.stringify({
+      variants: [
+        { text: '  tight one  ', kind: 'tightened' },
+        { text: 'hook two', kind: 'rehooked' },
+        { text: 'shape three', kind: 'restructured' },
+      ],
+    });
+    expect(parseRewrite(raw)).toEqual([
+      { text: 'tight one', kind: 'tightened' },
+      { text: 'hook two', kind: 'rehooked' },
+      { text: 'shape three', kind: 'restructured' },
+    ]);
+  });
+
+  test('parseRewrite drops over-long and empty variants, keeps the survivors', () => {
+    const long = 'x'.repeat(561);
+    const raw = JSON.stringify({
+      variants: [
+        { text: long, kind: 'tightened' },
+        { text: '   ', kind: 'rehooked' },
+        { text: 'keeper', kind: 'restructured' },
+      ],
+    });
+    expect(parseRewrite(raw)).toEqual([{ text: 'keeper', kind: 'restructured' }]);
+    // The 560-char boundary is inclusive.
+    const edge = JSON.stringify({ variants: [{ text: 'y'.repeat(560), kind: 'tightened' }] });
+    expect(parseRewrite(edge)).toHaveLength(1);
+  });
+
+  test('parseRewrite skips unknown kinds and non-object entries, never the whole call', () => {
+    const raw = JSON.stringify({
+      variants: [
+        { text: 'ok', kind: 'punchier' },
+        'not an object',
+        { text: 'good', kind: 'tightened' },
+      ],
+    });
+    expect(parseRewrite(raw)).toEqual([{ text: 'good', kind: 'tightened' }]);
+  });
+
+  test('parseRewrite returns null on malformed shape, [] on an empty variants array', () => {
+    expect(parseRewrite('not json')).toBe(null);
+    expect(parseRewrite(JSON.stringify({ variants: 'nope' }))).toBe(null);
+    expect(parseRewrite(JSON.stringify({ nope: [] }))).toBe(null);
+    expect(parseRewrite(JSON.stringify({ variants: [] }))).toEqual([]);
+  });
+
+  test('buildRewriteInput substitutes the draft + instruction at the tail', () => {
+    const [msg] = buildRewriteInput({ draft: 'my $5 draft', instruction: 'fă-l mai tăios' });
+    expect(msg?.content).toContain('my $5 draft');
+    expect(msg?.content).toContain('fă-l mai tăios');
+    expect(msg?.content).not.toContain('{{DRAFT}}');
+    expect(msg?.content).not.toContain('{{INSTRUCTION}}');
+  });
+
+  test('buildRewriteInput fills a placeholder when no instruction is given', () => {
+    const [msg] = buildRewriteInput({ draft: 'a draft' });
+    expect(msg?.content).not.toContain('{{INSTRUCTION}}');
+    expect(msg?.content).toContain('(none — just sharpen it)');
+  });
+});
+
+describe('ideas prompt (AI.9)', () => {
+  const SLUGS = ['ai-craft', 'builder-51', 'unsexy-problems'];
+
+  test('variable content ({{PILLARS}}/{{WINNERS}}/{{STEER}}) sits at the very end', () => {
+    const pillarsAt = IDEAS_PROMPT_TEMPLATE.indexOf('{{PILLARS}}');
+    expect(pillarsAt).toBeGreaterThan(IDEAS_PROMPT_TEMPLATE.length * 0.5);
+    expect(IDEAS_PROMPT_TEMPLATE.trimEnd().endsWith('{{STEER}}')).toBe(true);
+  });
+
+  test('parseIdeaProposals returns trimmed proposals of the known angles', () => {
+    const raw = JSON.stringify({
+      ideas: [
+        { text: '  an observation about agents  ', pillar: 'ai-craft', angle: 'observation' },
+        { text: 'a hot take', pillar: 'unsexy-problems', angle: 'stance' },
+      ],
+    });
+    expect(parseIdeaProposals(raw, SLUGS)).toEqual([
+      { text: 'an observation about agents', pillar: 'ai-craft', angle: 'observation' },
+      { text: 'a hot take', pillar: 'unsexy-problems', angle: 'stance' },
+    ]);
+  });
+
+  test('parseIdeaProposals NULLS a pillar outside the active set, never drops the idea', () => {
+    const raw = JSON.stringify({
+      ideas: [{ text: 'still a good idea', pillar: 'not-a-real-pillar', angle: 'story' }],
+    });
+    expect(parseIdeaProposals(raw, SLUGS)).toEqual([
+      { text: 'still a good idea', pillar: null, angle: 'story' },
+    ]);
+  });
+
+  test('parseIdeaProposals drops empty/over-long text and unknown angles, keeps survivors', () => {
+    const long = 'x'.repeat(501);
+    const raw = JSON.stringify({
+      ideas: [
+        { text: long, pillar: 'ai-craft', angle: 'observation' },
+        { text: '   ', pillar: 'ai-craft', angle: 'stance' },
+        { text: 'bad angle', pillar: 'ai-craft', angle: 'rant' },
+        'not an object',
+        { text: 'keeper', pillar: 'builder-51', angle: 'question' },
+      ],
+    });
+    expect(parseIdeaProposals(raw, SLUGS)).toEqual([
+      { text: 'keeper', pillar: 'builder-51', angle: 'question' },
+    ]);
+  });
+
+  test('parseIdeaProposals clamps to maxCount and null/[]-guards malformed shapes', () => {
+    const ideasArr = Array.from({ length: 6 }, (_, i) => ({
+      text: `idea ${i}`,
+      pillar: 'ai-craft',
+      angle: 'observation',
+    }));
+    expect(parseIdeaProposals(JSON.stringify({ ideas: ideasArr }), SLUGS, 3)).toHaveLength(3);
+    expect(parseIdeaProposals('not json', SLUGS)).toBe(null);
+    expect(parseIdeaProposals(JSON.stringify({ ideas: 'nope' }), SLUGS)).toBe(null);
+    expect(parseIdeaProposals(JSON.stringify({ nope: [] }), SLUGS)).toBe(null);
+    expect(parseIdeaProposals(JSON.stringify({ ideas: [] }), SLUGS)).toEqual([]);
+  });
+
+  test('buildIdeasInput renders pillars/winners/steer at the tail, $-safe', () => {
+    const [msg] = buildIdeasInput({
+      pillars: [{ slug: 'ai-craft', label: 'AI craft', body: 'lab journal' }],
+      winners: [{ text: 'my $5 winner', views: 4200, profileVisits: 30 }],
+      steer: 'despre agenți',
+      count: 5,
+    });
+    expect(msg?.content).toContain('ai-craft');
+    expect(msg?.content).toContain('my $5 winner');
+    expect(msg?.content).toContain('4200 views');
+    expect(msg?.content).toContain('despre agenți');
+    expect(msg?.content).toContain('Return exactly 5 ideas.');
+    expect(msg?.content).not.toContain('{{PILLARS}}');
+    expect(msg?.content).not.toContain('{{WINNERS}}');
+    expect(msg?.content).not.toContain('{{STEER}}');
+  });
+
+  test('buildIdeasInput fills placeholders when winners + steer are empty', () => {
+    const [msg] = buildIdeasInput({ winners: [] });
+    expect(msg?.content).toContain('(no measured winners yet)');
+    expect(msg?.content).toContain('(none — spread the ideas across the pillars)');
+  });
+});
+
 describe('content pillars (§8.6)', () => {
   const SLUGS = ['growth', 'edge-cases', 'tooling'];
 
@@ -1567,6 +2431,36 @@ describe('content pillars (§8.6)', () => {
     expect(tweakMsg[0]?.content).toContain('Revise this existing content pillar');
     expect(tweakMsg[0]?.content).toContain('Keep its slug exactly as "ai-craft"');
     expect(tweakMsg[0]?.content).toContain('make it spicier');
+  });
+
+  test('buildPillarDraftInput grounds on the niche persona (N0.3)', () => {
+    // Default: the builder niche persona (no hardcoded biography left here).
+    const defaulted = buildPillarDraftInput({ mode: 'new', existing: DEFAULT_PILLARS });
+    expect(defaulted[0]?.content).toContain('Alteramens');
+
+    const custom = buildPillarDraftInput({
+      mode: 'new',
+      existing: DEFAULT_PILLARS,
+      persona: 'NUTRITION COACH PERSONA',
+    });
+    expect(custom[0]?.content).toContain('NUTRITION COACH PERSONA');
+    expect(custom[0]?.content).not.toContain('Alteramens');
+    expect(custom[0]?.content).not.toContain('Pitești');
+  });
+
+  test('AI.5: a pillar-draft template override changes the prompt; jobs stay code-built', () => {
+    const msg = buildPillarDraftInput({
+      mode: 'new',
+      existing: [],
+      template: 'MY TEMPLATE | {{PERSONA}} | {{EXISTING_PILLARS}} | {{JOB}}',
+      persona: 'P',
+      idea: 'steer',
+    });
+    const content = msg[0]?.content ?? '';
+    expect(content.startsWith('MY TEMPLATE | P | (none yet) | ')).toBe(true);
+    expect(content).toContain('Propose ONE new content pillar');
+    expect(content).toContain('steer');
+    expect(content).not.toContain('{{JOB}}');
   });
 });
 
@@ -1736,6 +2630,13 @@ describe('parseExtractedTemplate (§8.3)', () => {
   test('missing field → null', () => {
     expect(parseExtractedTemplate(JSON.stringify({ hookType: 'x' }))).toBeNull();
     expect(parseExtractedTemplate('garbage')).toBeNull();
+  });
+
+  test('AI.5: EXTRACT_PROMPT_TEMPLATE renders the tweet at the tail (old prefix+text parity)', () => {
+    const rendered = EXTRACT_PROMPT_TEMPLATE.split('{{TWEET_TEXT}}').join('MY FIXTURE TWEET');
+    expect(rendered.startsWith('Analyze the STRUCTURE')).toBe(true);
+    expect(rendered.endsWith('THE POST:\n\nMY FIXTURE TWEET')).toBe(true);
+    expect(rendered).not.toContain('{{TWEET_TEXT}}');
   });
 });
 

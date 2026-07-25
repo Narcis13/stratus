@@ -10,10 +10,13 @@ import { and, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { GrokApiError } from '../../grok/index.ts';
+import { LlmNotConfiguredError, askLLM, llmConfigured } from '../../llm/index.ts';
+import { OpenRouterApiError } from '../../openrouter/index.ts';
 import {
   accountSnapshots,
   digests,
+  meGoals,
   metricsSnapshots,
   people,
   personEvents,
@@ -25,13 +28,21 @@ import {
 import {
   DIGEST_SCHEMA,
   type DigestFacts,
+  type DigestGoal,
   buildDigestFacts,
   buildDigestInput,
   parseDigestNarrative,
   weekBounds,
 } from '../digest.ts';
+import type { GoalVerdict } from '../goals.ts';
+import { resolveGoals } from '../me/profile.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import { INBOUND_TYPES, type Stage, stageRank } from '../people/stage.ts';
 import { buildMediaEffectiveness } from '../playbook.ts';
+import { loadPromptSafe } from '../prompts/registry.ts';
+import { localDayKey } from '../quests.ts';
+import { getSetting } from '../settings/registry.ts';
+import { loadCommitmentsWithDebt, loadFlowCurrents, loadGoalsWithPacing } from './goals.ts';
 import {
   loadMediaRows,
   loadPostGuidanceSafe,
@@ -42,12 +53,15 @@ import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const WEEK_RE = /^\d{4}-\d{2}-\d{2}$/;
-const NEGLECTED_CAP = 5;
+// The neglected-list cap and its two windows are settings-backed (UI.3): the cap
+// is the `digest` group's own knob (default 5), and the windows read the
+// `followups` group's neglectedTargetDays / neglectedAllyDays — one owner (the
+// follow-up queue), two consumers — so tuning a window moves both the daily queue
+// and this weekly list. The handler reads all three via getSetting and passes
+// them to loadNeglectedTargets / loadNeglectedAllies.
 const STAGE_TRANSITION_CAP = 10;
-const NEGLECTED_TARGET_DAYS = 7;
-const NEGLECTED_ALLY_DAYS = 14;
-const DIGEST_CACHE_KEY = 'stratus-digest';
-const DIGEST_MAX_OUTPUT_TOKENS = 700;
+// The narration's token ceiling is settings-backed (`x.ai.digestMaxOutputTokens`,
+// UI.5) — the registry owns the number, read per request at the call site.
 
 export const digest = new Hono();
 
@@ -94,44 +108,66 @@ digest.get('/digest', async (c) => {
     }
   }
 
-  const facts = await loadFacts(start, end, weekKey);
+  const facts = await loadFacts(start, end, weekKey, tzOffsetMin, now);
 
   if (factsOnly) {
     return c.json({ weekKey, from: start, to: end, facts, narrative: null, cached: false });
   }
-  if (!process.env.XAI_API_KEY) {
+  if (!llmConfigured()) {
     return c.json({
       weekKey,
       from: start,
       to: end,
       facts,
       narrative: null,
-      narrativeError: 'grok_not_configured',
+      narrativeError: 'llm_not_configured',
       cached: false,
     });
   }
+
+  // Registry prompt (AI.6): DB override else the shipped default; its per-body
+  // cache bucket replaces the old static key (grok-only, ignored on OpenRouter).
+  const prompt = loadPromptSafe('digest');
 
   let narrative: string | null = null;
   let narrativeError: string | undefined;
   let model: string | null = null;
   let costUsd: number | null = null;
   try {
-    const result = await askGrok({
-      messages: buildDigestInput(facts),
-      reasoningEffort: 'low',
-      maxOutputTokens: DIGEST_MAX_OUTPUT_TOKENS,
-      temperature: 0.7,
-      jsonSchema: { name: 'sunday_digest', schema: DIGEST_SCHEMA },
-      promptCacheKey: DIGEST_CACHE_KEY,
-    });
+    // AI.6: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
+    // house floor below — the digest's low-effort narration defaults, which a
+    // stored global AI setting may override per Decision 4).
+    const result = await askLLM(
+      {
+        messages: buildDigestInput(facts, prompt.body),
+        jsonSchema: { name: 'sunday_digest', schema: DIGEST_SCHEMA },
+        promptCacheKey: prompt.cacheKey,
+      },
+      {
+        defaults: {
+          reasoningEffort: 'low',
+          // UI.5: settings-backed ceiling for the one narration call, read per
+          // request (the facts around it are free SQL).
+          maxOutputTokens: getSetting<number>('x.ai.digestMaxOutputTokens'),
+          temperature: 0.7,
+        },
+      },
+    );
     model = result.model;
     costUsd = result.costUsd;
     narrative = parseDigestNarrative(result.text);
-    if (narrative === null) narrativeError = 'grok_parse_error';
+    if (narrative === null) narrativeError = 'llm_parse_error';
   } catch (err) {
-    // Facts are still the page — a Grok hiccup degrades the card, never 5xxs
+    // Facts are still the page — an LLM hiccup degrades the card, never 5xxs
     // it. Nothing is cached, so the next open retries for free.
-    narrativeError = err instanceof GrokApiError ? `grok_${err.status}` : 'grok_failed';
+    narrativeError =
+      err instanceof LlmNotConfiguredError
+        ? 'llm_not_configured'
+        : err instanceof GrokApiError
+          ? `grok_${err.status}`
+          : err instanceof OpenRouterApiError
+            ? `openrouter_${err.status}`
+            : 'llm_failed';
     console.error('/x/digest narration failed:', err instanceof Error ? err.message : err);
   }
 
@@ -160,7 +196,13 @@ digest.get('/digest', async (c) => {
 
 // ------------------------------------------------------------ fact loading
 
-async function loadFacts(start: Date, end: Date, weekKey: string): Promise<DigestFacts> {
+async function loadFacts(
+  start: Date,
+  end: Date,
+  weekKey: string,
+  tzOffsetMin: number,
+  now: Date,
+): Promise<DigestFacts> {
   const prevStart = new Date(start.getTime() - 7 * DAY_MS);
 
   const [snaps, published, transitions, costRows, streakRows] = await Promise.all([
@@ -177,6 +219,9 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
         tweetId: postsPublished.tweetId,
         text: postsPublished.text,
         isReply: postsPublished.isReply,
+        // GR.9: the scorecard's cadence component needs the local day each
+        // original landed on; it never reaches the facts JSON.
+        postedAt: postsPublished.postedAt,
       })
       .from(postsPublished)
       .where(and(gte(postsPublished.postedAt, start), lt(postsPublished.postedAt, end))),
@@ -236,9 +281,16 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
     loadFanCounts(prevStart, start),
   ]);
 
+  const neglectedCap = getSetting<number>('x.digest.neglectedCap');
   const [neglectedTargets, neglectedAllies] = await Promise.all([
-    loadNeglectedTargets(end),
-    loadNeglectedAllies(end),
+    loadNeglectedTargets(end, {
+      neglectedDays: getSetting<number>('x.followups.neglectedTargetDays'),
+      cap: neglectedCap,
+    }),
+    loadNeglectedAllies(end, {
+      neglectedDays: getSetting<number>('x.followups.neglectedAllyDays'),
+      cap: neglectedCap,
+    }),
   ]);
 
   const [replyGuidance, postGuidance] = await Promise.all([
@@ -249,11 +301,48 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
   // §S0.7 — where the week's posted replies landed vs my 2–10x target band.
   const rosterCoverage = await loadRosterCoverage(start, end);
 
+  // M1 (ME.5) — active goals with progress (all-time latest snapshot, like the
+  // Me tab); the narration may mention progress without inventing numbers.
+  const goals = await loadGoals(new Date());
+
   // §S4 — the week's AI image spend (isolated under platform 'xai') and the
   // all-time media-vs-text lift the studio exists to earn (gated n≥20/side).
   const imageSpendUsd =
     Math.round(Number(costRows.find((r) => r.platform === 'xai')?.costUsd ?? 0) * 1e5) / 1e5;
   const mediaVsText = buildMediaEffectiveness(await loadMediaRows());
+
+  // §GR.9 — the scorecard's own inputs (everything else it needs is derived
+  // inside buildDigestFacts from the rows above).
+  //
+  // `loadGoalsWithPacing` is the SAME loader the brief and `GET /x/goals` use —
+  // one reading of "on pace" across every surface (the loadMonitorInputs rule).
+  // It applies GR.7's lazy `active→achieved|missed` flip, so **generating a
+  // digest settles finished goals**; it is idempotent and only advances, but
+  // nothing may poll this route expecting a pure read. The cached path returns
+  // long before here, so re-opening Sunday's digest does not re-flip.
+  const [commitmentViews, goalViews, prevScore] = await Promise.all([
+    loadCommitmentsWithDebt(now, tzOffsetMin),
+    loadGoalsWithPacing(now),
+    loadPrevScore(weekKey),
+  ]);
+  const doctrine = loadDoctrine();
+  // The debt half of the commitment view is unused here; the loader is imported
+  // anyway so "which commitment is active" has exactly one reading (GR.8).
+  const repliesDailyTarget =
+    commitmentViews.find((c) => c.key === 'replies' && c.active)?.dailyTarget ??
+    doctrine.replyTargetMin;
+  // 7 once the week is over, the elapsed days while it is still running — a
+  // Wednesday read is graded against three days of target, not seven.
+  const daysInWeek = Math.max(
+    1,
+    Math.min(7, Math.ceil((Math.min(now.getTime(), end.getTime()) - start.getTime()) / DAY_MS)),
+  );
+  const daysWithOriginal = new Set(
+    published.filter((p) => !p.isReply).map((p) => localDayKey(p.postedAt, tzOffsetMin)),
+  ).size;
+  const goalVerdicts: GoalVerdict[] = goalViews
+    .filter((g) => g.status === 'active')
+    .map((g) => g.pacing.verdict);
 
   return buildDigestFacts({
     weekKey,
@@ -279,11 +368,57 @@ async function loadFacts(start: Date, end: Date, weekKey: string): Promise<Diges
       costUsd: Math.round(Number(r.costUsd) * 1e5) / 1e5,
     })),
     streakDays: streakRows,
+    goals,
     guidance: { reply: replyGuidance, post: postGuidance },
     rosterCoverage,
     imageSpendUsd,
     mediaVsText,
+    scorecardInputs: {
+      daysWithOriginal,
+      daysInWeek,
+      repliesTargetWeek: repliesDailyTarget * daysInWeek,
+      targetReplyPct: doctrine.weekReplyTargetPct,
+      goalVerdicts,
+      prevScore,
+    },
   });
+}
+
+/** GR.9 — last week's grade, read off last week's cached digest. A week that was
+ *  never generated, or one generated before the scorecard existed, has none, and
+ *  the delta stays null rather than becoming a comparison against zero. */
+async function loadPrevScore(weekKey: string): Promise<number | null> {
+  const [row] = await db
+    .select({ facts: digests.facts })
+    .from(digests)
+    .where(eq(digests.weekKey, dayKeyPlus(weekKey, -7)));
+  if (!row) return null;
+  return (row.facts as Partial<DigestFacts> | null)?.scorecard?.score ?? null;
+}
+
+/** M1 (ME.5) — active Me goals with computed progress. followers goals read the
+ *  latest account snapshot (all-time latest, like the Me tab); the GR.7 counted
+ *  kinds read their value from the goals loader; mrr/custom use the manual
+ *  currentValue. null when there are none, so the narration skips it. Unlike the
+ *  injected me-block, the weekly digest DOES narrate the counted kinds — a reply
+ *  quota is exactly what a week in review is about. */
+async function loadGoals(now: Date): Promise<DigestGoal[] | null> {
+  const goals = await db.select().from(meGoals).where(eq(meGoals.status, 'active'));
+  if (goals.length === 0) return null;
+  const [acct] = await db
+    .select({ followersCount: accountSnapshots.followersCount })
+    .from(accountSnapshots)
+    .orderBy(desc(accountSnapshots.snapshotAt))
+    .limit(1);
+  const latestFollowers = acct ? acct.followersCount : null;
+  const flowCurrents = await loadFlowCurrents(goals, now);
+  return resolveGoals(goals, latestFollowers, now, flowCurrents).map((g) => ({
+    label: g.label,
+    unit: g.unit,
+    target: g.target,
+    current: g.progress?.current ?? null,
+    pct: g.progress?.pct ?? null,
+  }));
 }
 
 async function loadFanCounts(
@@ -304,16 +439,23 @@ async function loadFanCounts(
   return rows.map((r) => ({ handle: r.handle, inbound: Number(r.inbound) }));
 }
 
-/** 2–10x roster targets with no pasted reply in the trailing week (same
+/** 2–10x roster targets with no pasted reply in the trailing window (same
  *  reading as the brief's quest and C5's neglected_target). */
-async function loadNeglectedTargets(asOf: Date): Promise<string[]> {
+async function loadNeglectedTargets(
+  asOf: Date,
+  opts: { neglectedDays: number; cap: number },
+): Promise<string[]> {
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
     .from(accountSnapshots)
     .orderBy(desc(accountSnapshots.snapshotAt))
     .limit(1);
   if (!acct) return [];
-  const band = targetBand(acct.followersCount);
+  const doctrine = loadDoctrine();
+  const band = targetBand(acct.followersCount, {
+    minX: doctrine.targetBandMinX,
+    maxX: doctrine.targetBandMaxX,
+  });
   const authors = await db
     .select({ handle: voiceAuthors.handle, followersCount: voiceAuthors.followersCount })
     .from(voiceAuthors)
@@ -342,13 +484,14 @@ async function loadNeglectedTargets(asOf: Date): Promise<string[]> {
     .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`);
   for (const r of rows) lastByHandle.set(r.handle, r.last);
 
-  const cutoff = asOf.getTime() - NEGLECTED_TARGET_DAYS * DAY_MS;
-  return targets
-    .filter((h) => (lastByHandle.get(h)?.getTime() ?? 0) < cutoff)
-    .slice(0, NEGLECTED_CAP);
+  const cutoff = asOf.getTime() - opts.neglectedDays * DAY_MS;
+  return targets.filter((h) => (lastByHandle.get(h)?.getTime() ?? 0) < cutoff).slice(0, opts.cap);
 }
 
-async function loadNeglectedAllies(asOf: Date): Promise<string[]> {
+async function loadNeglectedAllies(
+  asOf: Date,
+  opts: { neglectedDays: number; cap: number },
+): Promise<string[]> {
   const rows = await db
     .select({
       handle: people.handle,
@@ -357,13 +500,13 @@ async function loadNeglectedAllies(asOf: Date): Promise<string[]> {
     })
     .from(people)
     .where(and(eq(people.retired, false), inArray(people.stage, ['mutual', 'ally'])));
-  const cutoff = asOf.getTime() - NEGLECTED_ALLY_DAYS * DAY_MS;
+  const cutoff = asOf.getTime() - opts.neglectedDays * DAY_MS;
   return rows
     .filter(
       (p) => Math.max(p.lastInboundAt?.getTime() ?? 0, p.lastOutboundAt?.getTime() ?? 0) < cutoff,
     )
     .map((p) => p.handle)
-    .slice(0, NEGLECTED_CAP);
+    .slice(0, opts.cap);
 }
 
 function dayKeyPlus(day: string, days: number): string {

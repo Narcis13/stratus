@@ -15,9 +15,19 @@
 import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { GrokApiError, askGrok } from '../../grok/index.ts';
+import { GrokApiError } from '../../grok/index.ts';
+import {
+  type AskLlmResult,
+  LlmNotConfiguredError,
+  type LlmProvider,
+  askLLM,
+  llmConfigured,
+} from '../../llm/index.ts';
+import { OpenRouterApiError } from '../../openrouter/index.ts';
+import { BAND, type BandThresholds } from '../../shared/replyBand.ts';
 import {
   accountSnapshots,
+  harvestRows,
   ideas,
   metricsSnapshots,
   people,
@@ -25,9 +35,11 @@ import {
   postsPublished,
   radarDrafts,
   replyDrafts,
+  replyListUses,
   scheduledPosts,
   voiceAuthors,
 } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import {
   type AngleRow,
   DEFAULT_MIN_CELL_N,
@@ -35,35 +47,42 @@ import {
   type LatencyRow,
   type MeasuredOutcome,
   type MediaRow,
+  type ModelRow,
   type PillarRegisterRow,
   type ReplyOrigin,
   type RosterCoverage,
   type StructureRow,
+  type TimelineFunnel,
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
   buildIdeaEffectiveness,
   buildLatencyEffectiveness,
+  buildMeEffectiveness,
   buildMediaEffectiveness,
+  buildModelEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildRosterCoverage,
   buildStructureEffectiveness,
+  buildTimelineFunnel,
   classifyReplyOrigin,
+  normalizeReplyText,
   resolveAgeMin,
   scoreReplyOutcome,
   topAngles,
   topStructures,
 } from '../playbook.ts';
+import { loadPromptSafe, renderPrompt } from '../prompts/registry.ts';
 import type { PostContext, ReplyVariant } from '../replies/prompt.ts';
-import { targetBand } from './voice.ts';
+import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
+import { getSetting } from '../settings/registry.ts';
 import {
-  EXTRACT_PROMPT_PREFIX,
-  TEMPLATE_EXTRACT_CACHE_KEY,
   TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
   TEMPLATE_SCHEMA,
   parseExtractedTemplate,
-} from './voiceExtract.ts';
+} from '../voice/extractPrompt.ts';
+import { targetBand } from './voice.ts';
 
 // Full posted history — same ceiling as /replies/outcomes (the crosstab wants
 // everything; a single user is nowhere near it).
@@ -112,8 +131,10 @@ async function latestOutcomes(ids: string[]): Promise<Map<string, SnapOutcome>> 
 
 interface ReplyRow {
   angle: string | null;
+  model: string;
   handle: string;
   hasRelationship: boolean;
+  hasMe: boolean;
   signals: PostContext['signals'] | null;
   sourceMetrics: PostContext['metrics'] | null;
   sourceText: string;
@@ -131,6 +152,7 @@ async function loadReplyRows(): Promise<ReplyRow[]> {
       contextSnapshot: replyDrafts.contextSnapshot,
       replyText: replyDrafts.replyText,
       variants: replyDrafts.variants,
+      model: replyDrafts.model,
       postedTweetId: replyDrafts.postedTweetId,
       createdAt: replyDrafts.createdAt,
     })
@@ -148,8 +170,10 @@ async function loadReplyRows(): Promise<ReplyRow[]> {
     const variants = d.variants as ReplyVariant[] | null;
     return {
       angle: variants?.find((v) => v.text === d.replyText)?.angle ?? null,
+      model: d.model,
       handle: d.sourceAuthorUsername.toLowerCase(),
       hasRelationship: typeof ctx?.relationship === 'string' && ctx.relationship.trim() !== '',
+      hasMe: typeof ctx?.me === 'string' && ctx.me.trim() !== '',
       signals: ctx?.signals ?? null,
       sourceMetrics: ctx?.metrics ?? null,
       sourceText: d.sourceText,
@@ -204,6 +228,12 @@ function toLatencyRows(rows: ReplyRow[]): LatencyRow[] {
   }));
 }
 
+/** Reply rows keyed by drafting model (AI.12) — the judge of the OpenRouter
+ *  experiment. `model` is non-null on every posted reply, grouped as-is. */
+function toModelRows(rows: ReplyRow[]): ModelRow[] {
+  return rows.map((r) => ({ model: r.model, outcome: r.outcome }));
+}
+
 // --------------------------------------------------- roster coverage (§S0.7)
 
 /** My current 2–10x target band from the latest account snapshot, or null when
@@ -215,7 +245,12 @@ async function loadMyTargetBand(): Promise<{ min: number; max: number } | null> 
     .from(accountSnapshots)
     .orderBy(desc(accountSnapshots.snapshotAt))
     .limit(1);
-  return acct ? targetBand(acct.followersCount) : null;
+  if (!acct) return null;
+  const doctrine = loadDoctrine();
+  return targetBand(acct.followersCount, {
+    minX: doctrine.targetBandMinX,
+    maxX: doctrine.targetBandMaxX,
+  });
 }
 
 /** §S0.7 — of the posted replies pasted in [since, until), how many went to
@@ -356,6 +391,64 @@ export async function loadIdeaRows(): Promise<IdeaRow[]> {
   ];
 }
 
+// ------------------------------------- timeline opportunity funnel (HV.5)
+
+/** Shorter than the 60-day passive retention on purpose: what I failed to reply
+ *  to two months ago is history, not a decision I can still change. */
+const TIMELINE_FUNNEL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+/** `mode` is the ONLY thing separating the ambient home-timeline corpus from
+ *  the user's hand-run harvests (HV.1) — every reader carries this filter or it
+ *  silently mixes two corpora. */
+const PASSIVE_HARVEST_MODE = 'timeline';
+
+/** Seen-vs-replied over the passive corpus. `min(captured_at)` with bare columns
+ *  is SQLite's documented first-sighting-per-tweet form (with exactly one
+ *  min/max aggregate, every bare column comes from the matching input row) — the
+ *  band that mattered is the one at first sighting, not at the tenth re-scroll.
+ *  Unwindowed row volume is structurally bounded (HV.1's 2,000-rows/day cap ×
+ *  the 30-day window), so no extra limit is worth a truncated denominator.
+ *  $0: nothing on this path can reach xFetch. */
+export async function loadTimelineFunnel(
+  minN = DEFAULT_MIN_CELL_N,
+  thresholds: BandThresholds = BAND,
+): Promise<TimelineFunnel> {
+  const since = new Date(Date.now() - TIMELINE_FUNNEL_WINDOW_MS);
+  const seen = await db
+    .select({
+      tweetId: harvestRows.tweetId,
+      capturedAt: sql<number>`min(${harvestRows.capturedAt})`,
+      views: harvestRows.views,
+      comments: harvestRows.comments,
+      text: harvestRows.text,
+      tweetTime: harvestRows.tweetTime,
+    })
+    .from(harvestRows)
+    .where(and(eq(harvestRows.mode, PASSIVE_HARVEST_MODE), gte(harvestRows.capturedAt, since)))
+    .groupBy(harvestRows.tweetId);
+  if (seen.length === 0) return buildTimelineFunnel([], new Set(), minN, thresholds);
+
+  // Posted drafts only — the paste-time reading every other cell uses. The set
+  // is unwindowed; intersecting it with `seen` is what bounds it.
+  const replied = await db
+    .select({ sourceTweetId: replyDrafts.sourceTweetId })
+    .from(replyDrafts)
+    .where(eq(replyDrafts.status, 'posted'));
+
+  return buildTimelineFunnel(
+    seen.map((r) => ({
+      tweetId: r.tweetId,
+      views: r.views,
+      comments: r.comments,
+      text: r.text,
+      tweetTimeMs: r.tweetTime === null ? null : r.tweetTime.getTime(),
+      capturedAtMs: Number(r.capturedAt),
+    })),
+    new Set(replied.map((r) => r.sourceTweetId)),
+    minN,
+    thresholds,
+  );
+}
+
 // ---------------------------------------------------- batch vs single rows
 
 async function loadOriginRows(): Promise<{
@@ -374,12 +467,15 @@ async function loadOriginRows(): Promise<{
     .limit(MAX_PUBLISHED_REPLIES);
 
   const draftLinks = await db
-    .select({ postedTweetId: replyDrafts.postedTweetId })
+    .select({ postedTweetId: replyDrafts.postedTweetId, source: replyDrafts.source })
     .from(replyDrafts)
     .where(and(eq(replyDrafts.status, 'posted'), isNotNull(replyDrafts.postedTweetId)));
-  const draftPostedIds = new Set(
-    draftLinks.flatMap((d) => (d.postedTweetId ? [d.postedTweetId] : [])),
-  );
+  // postedTweetId → reply_drafts.source (RU.9): exact attribution beats the
+  // radar text-match heuristic below. null source = pre-source legacy row.
+  const draftSourceByPostedId = new Map<string, string | null>();
+  for (const d of draftLinks) {
+    if (d.postedTweetId) draftSourceByPostedId.set(d.postedTweetId, d.source ?? null);
+  }
 
   const radarRows = await db
     .select({ tweetId: radarDrafts.tweetId, replyText: radarDrafts.replyText })
@@ -391,10 +487,21 @@ async function loadOriginRows(): Promise<{
     radarByTarget.set(r.tweetId, list);
   }
 
+  // RL.7: every canned reply the user ever composed, as its rendered text
+  // (typos and all). Unwindowed like radarRows — the published side is what
+  // bounds the population. A use row outlives its list/item on purpose (the
+  // table is FK-free), so a deleted list never erases its own attribution.
+  const useRows = await db.select({ renderedText: replyListUses.renderedText }).from(replyListUses);
+  const cannedTexts = new Set<string>();
+  for (const u of useRows) {
+    const t = normalizeReplyText(u.renderedText);
+    if (t !== '') cannedTexts.add(t);
+  }
+
   const classified: Array<{ origin: ReplyOrigin; tweetId: string }> = [];
   let unattributed = 0;
   for (const p of published) {
-    const origin = classifyReplyOrigin(p, draftPostedIds, radarByTarget);
+    const origin = classifyReplyOrigin(p, draftSourceByPostedId, radarByTarget, cannedTexts);
     if (origin === null) {
       unattributed++;
       continue;
@@ -411,17 +518,28 @@ async function loadOriginRows(): Promise<{
 
 // -------------------------------------------------------- guidance loaders
 
+/** UI.4: the configured per-cell sample gate (`x.gates.minCellN`), read from the
+ *  settings store at request time — sync, Map-cached, no new billed read. The
+ *  registry default is DEFAULT_MIN_CELL_N; `?minN=` still overrides per read. */
+function configuredMinCellN(): number {
+  return getSetting<number>('x.gates.minCellN');
+}
+
 /** Reply-prompt guidance line (gated topAngles over the full posted history).
- *  Always uses the DEFAULT gate — a prompt must never be steered by a lower
- *  bar than the page shows. */
+ *  Always uses the CONFIGURED gate, never a lower one — a prompt must not be
+ *  steered by a thinner bar than the page shows. */
 export async function loadReplyGuidance(): Promise<string | null> {
   const rows = await loadReplyRows();
-  return topAngles(buildAngleEffectiveness(toAngleRows(rows, new Map())).overall);
+  return topAngles(
+    buildAngleEffectiveness(toAngleRows(rows, new Map()), configuredMinCellN()).overall,
+  );
 }
 
 /** Post-drafter guidance line (gated topStructures over own-winner templates). */
 export async function loadPostGuidance(): Promise<string | null> {
-  return topStructures(buildStructureEffectiveness(await loadStructureRows()));
+  return topStructures(
+    buildStructureEffectiveness(await loadStructureRows(), configuredMinCellN()),
+  );
 }
 
 /** The playbook informs a draft; it never blocks one. Same discipline as the
@@ -455,7 +573,10 @@ export async function loadPostGuidanceSafe(): Promise<string | null> {
 export const playbook = new Hono();
 
 playbook.get('/playbook', async (c) => {
-  let minN = DEFAULT_MIN_CELL_N;
+  // UI.4: the store-configured gate is the default; `?minN=` still wins for a
+  // one-off exploratory read (the plan's contract — the knob moves the baseline,
+  // the query param moves this request).
+  let minN = configuredMinCellN();
   const minNStr = c.req.query('minN');
   if (minNStr !== undefined) {
     const n = Number(minNStr);
@@ -500,15 +621,21 @@ playbook.get('/playbook', async (c) => {
       replyRows.map((r) => ({ hasRelationship: r.hasRelationship, outcome: r.outcome })),
       minN,
     ),
+    meEffectiveness: buildMeEffectiveness(
+      replyRows.map((r) => ({ hasMe: r.hasMe, outcome: r.outcome })),
+      minN,
+    ),
     mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
+    modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
+    timelineFunnel: await loadTimelineFunnel(minN, bandThresholdsFromSettings()),
     rosterCoverage: await loadRosterCoverage(
       new Date(Date.now() - ROSTER_WINDOW_MS),
       new Date(),
       minN,
     ),
-    // What the prompts would inject right now (always the default gate).
+    // What the prompts would inject right now (at this read's gate).
     guidance: {
       reply: topAngles(angleEffectiveness.overall),
       post: topStructures(structures),
@@ -520,10 +647,13 @@ playbook.get('/playbook', async (c) => {
 // Bounded ≤20/call; already-extracted winners are skipped, so re-running only
 // picks up newly measured posts — rerunnable without re-spending.
 playbook.post('/playbook/extract-winners', async (c) => {
-  if (!process.env.XAI_API_KEY) return c.json({ error: 'grok_not_configured' }, 503);
+  // AI.6: any-provider gate (Grok or OpenRouter); askLLM enforces the resolved
+  // provider's key per candidate. String kept stable for the panel matcher.
+  if (!llmConfigured()) return c.json({ error: 'grok_not_configured' }, 503);
 
   const raw = await c.req.json().catch(() => ({}));
   let limit = MAX_WINNER_EXTRACT;
+  let provider: LlmProvider | undefined;
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     const l = (raw as Record<string, unknown>).limit;
     if (l !== undefined && l !== null) {
@@ -531,6 +661,12 @@ playbook.post('/playbook/extract-winners', async (c) => {
         return c.json({ error: 'invalid_limit' }, 400);
       }
       limit = Math.min(MAX_WINNER_EXTRACT, l);
+    }
+    // AI.5: per-request LLM provider override; absent → the stored AI setting.
+    const p = (raw as Record<string, unknown>).provider;
+    if (p !== undefined && p !== null) {
+      if (p !== 'grok' && p !== 'openrouter') return c.json({ error: 'invalid_provider' }, 400);
+      provider = p;
     }
   }
 
@@ -552,6 +688,9 @@ playbook.post('/playbook/extract-winners', async (c) => {
     })
     .sort((a, b) => b.views - a.views);
 
+  // Registry prompt (AI.5): the same `voice-extract` key + cache bucket as the
+  // §8.3 voice-tweet extract path, so the two extract paths can't drift.
+  const prompt = loadPromptSafe('voice-extract');
   const batch = candidates.slice(0, limit);
   let extracted = 0;
   let costUsd = 0;
@@ -561,20 +700,34 @@ playbook.post('/playbook/extract-winners', async (c) => {
       failures.push({ tweetId: post.tweetId, error: 'empty_text' });
       continue;
     }
-    let result: Awaited<ReturnType<typeof askGrok>>;
+    let result: AskLlmResult;
     try {
-      result = await askGrok({
-        prompt: EXTRACT_PROMPT_PREFIX + post.text,
-        reasoningEffort: 'low',
-        maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
-        temperature: 0.2,
-        jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
-        promptCacheKey: TEMPLATE_EXTRACT_CACHE_KEY,
-      });
+      result = await askLLM(
+        {
+          prompt: renderPrompt(prompt.body, { TWEET_TEXT: post.text }),
+          ...(provider !== undefined ? { provider } : {}),
+          jsonSchema: { name: 'tweet_template', schema: TEMPLATE_SCHEMA },
+          promptCacheKey: prompt.cacheKey,
+        },
+        {
+          defaults: {
+            reasoningEffort: 'low',
+            maxOutputTokens: TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
+            temperature: 0.2,
+          },
+        },
+      );
     } catch (err) {
       failures.push({
         tweetId: post.tweetId,
-        error: err instanceof GrokApiError ? `grok_${err.status}` : String(err),
+        error:
+          err instanceof LlmNotConfiguredError
+            ? 'llm_not_configured'
+            : err instanceof GrokApiError
+              ? `grok_${err.status}`
+              : err instanceof OpenRouterApiError
+                ? `openrouter_${err.status}`
+                : String(err),
       });
       continue;
     }

@@ -9,6 +9,8 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
   accountSnapshots,
+  harvestRows,
+  harvestRuns,
   ideas,
   metricsSnapshots,
   people,
@@ -16,11 +18,13 @@ import {
   postsPublished,
   radarDrafts,
   replyDrafts,
+  replyListUses,
   scheduledPosts,
 } from '../db/schema.ts';
 import { buildIdeaEffectiveness } from '../playbook.ts';
 import { buildPostDraftInput } from '../posts/prompt.ts';
 import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
+import { getSetting, resetSettings, setSettings } from '../settings/registry.ts';
 import {
   loadIdeaRows,
   loadPostGuidance,
@@ -43,6 +47,8 @@ async function seedReply(opts: {
   profileVisits: number;
   handle?: string;
   relationship?: string;
+  me?: string;
+  source?: 'radar' | 'reply_master';
 }): Promise<void> {
   const replyText = `reply ${opts.id}`;
   await db
@@ -58,10 +64,12 @@ async function seedReply(opts: {
         signals: { band: 'hot', views: 5000, replies: 4, ageMin: 12, vpm: 400, bait: true },
         metrics: { views: 5000, replies: 4, reposts: 1, likes: 20 },
         ...(opts.relationship ? { relationship: opts.relationship } : {}),
+        ...(opts.me ? { me: opts.me } : {}),
       },
       replyText,
       variants: [{ text: replyText, angle: opts.angle }],
       model: 'test',
+      ...(opts.source ? { source: opts.source } : {}),
       status: 'posted',
       postedTweetId: opts.postedTweetId,
       createdAt: at(500),
@@ -100,6 +108,7 @@ describe('playbook route', () => {
       views: 400,
       profileVisits: 6,
       relationship: '## My history with @pb_author',
+      me: 'ME: Goal: 5K MRR — at 800 (16%)',
     });
     await seedReply({
       id: 'a0000000-0000-4000-8000-000000000002',
@@ -242,6 +251,14 @@ describe('playbook route', () => {
     expect(body.relationshipLift.withoutRelationship.n).toBe(1);
     expect(body.relationshipLift.viewsLift).toBeNull(); // gated
 
+    // M1 (ME.5) personal-context lift — pb_r1 carries a me-brief, pb_r2 doesn't.
+    expect(body.meEffectiveness.withMe.n).toBe(1);
+    expect(body.meEffectiveness.withoutMe.n).toBe(1);
+    expect(body.meEffectiveness.viewsLift).toBeNull(); // gated
+    expect(body.meEffectiveness.withMe.n + body.meEffectiveness.withoutMe.n).toBe(
+      body.meEffectiveness.totalMeasured,
+    );
+
     // §S0.7 roster coverage rides along — assert the partition invariants
     // (band-value correctness is covered by the pure test, which doesn't depend
     // on whatever account snapshot other test files left as "latest").
@@ -310,6 +327,23 @@ describe('playbook route', () => {
     expect(open.latencyEffectiveness.viewsLift).toBeNull();
   });
 
+  test('model effectiveness buckets posted replies by drafting model (AI.12)', async () => {
+    const body = (await (await app.request('/x/playbook')).json()) as {
+      modelEffectiveness: {
+        cells: Array<{ model: string; posted: number; n: number; medianViews: number | null }>;
+        totalMeasured: number;
+      };
+    };
+    // Both posted single replies seed model 'test' (pb_r1 400, pb_r2 100).
+    const testBucket = body.modelEffectiveness.cells.find((c) => c.model === 'test');
+    expect(testBucket).toMatchObject({ posted: 2, n: 2, medianViews: 250 });
+    expect(body.modelEffectiveness.totalMeasured).toBe(2);
+    // Partition invariant: every measured reply lands in exactly one bucket.
+    expect(body.modelEffectiveness.cells.reduce((s, c) => s + c.n, 0)).toBe(
+      body.modelEffectiveness.totalMeasured,
+    );
+  });
+
   test('minN=1 opens the gates and the guidance speaks', async () => {
     const res = await app.request('/x/playbook?minN=1');
     // biome-ignore lint/suspicious/noExplicitAny: the test walks the whole payload
@@ -319,6 +353,7 @@ describe('playbook route', () => {
     );
     expect(contrarian?.sufficient).toBe(true);
     expect(body.relationshipLift.viewsLift).toBe(4); // 400 / 100
+    expect(body.meEffectiveness.viewsLift).toBe(4); // 400 (with me) / 100 (cold)
     // guidance stays on the DEFAULT gate even when the page opens its own.
     expect(body.guidance.reply).toBeNull();
   });
@@ -367,10 +402,15 @@ describe('playbook route', () => {
     expect(post.endsWith(line)).toBe(true);
   });
 
-  test('extract-winners without XAI_API_KEY is 503', async () => {
+  test('extract-winners with no LLM provider is 503', async () => {
     const prev = process.env.XAI_API_KEY;
+    const prevOr = process.env.OPENROUTER_API_KEY;
+    // AI.6: the gate is llmConfigured() now — both keys must be off, else the
+    // pre-flight passes and the route would reach askLLM.
     // biome-ignore lint/performance/noDelete: assigning undefined leaves the env var set
     delete process.env.XAI_API_KEY;
+    // biome-ignore lint/performance/noDelete: assigning undefined leaves the env var set
+    delete process.env.OPENROUTER_API_KEY;
     try {
       const res = await app.request('/x/playbook/extract-winners', {
         method: 'POST',
@@ -380,6 +420,7 @@ describe('playbook route', () => {
       expect(res.status).toBe(503);
     } finally {
       if (prev !== undefined) process.env.XAI_API_KEY = prev;
+      if (prevOr !== undefined) process.env.OPENROUTER_API_KEY = prevOr;
     }
   });
 });
@@ -579,4 +620,276 @@ describe('loadIdeaRows (S0.8)', () => {
     expect(idea.posts.viewsLift).toBeNull();
     expect(idea.replies.viewsLift).toBeNull();
   });
+});
+
+describe('radar source-exact attribution (RU.9)', () => {
+  // A radar-confirmed draft: a posted reply_drafts row carrying source='radar'
+  // and a postedTweetId link, whose text matches NO radar_drafts row (its
+  // target 4242 has none). Under the old draftPostedIds→'single' rule this was
+  // misattributed 'single'; the source column now attributes it 'radar' with
+  // zero text equality. The main describe's permanent pb_r1/pb_r2 (single) and
+  // pb_r3 (radar, via legacy text-match) still stand, so this adds one to radar.
+  const ID = 'a0000000-0000-4000-8000-0000000000f9';
+
+  beforeAll(async () => {
+    await seedReply({
+      id: ID,
+      angle: 'extends',
+      postedTweetId: 'pb_ru9',
+      views: 300,
+      profileVisits: 3,
+      source: 'radar',
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(replyDrafts).where(eq(replyDrafts.id, ID));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, 'pb_ru9'));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, 'pb_ru9'));
+  });
+
+  test('a confirmed+posted radar draft classifies radar without text equality', async () => {
+    const res = await app.request('/x/playbook');
+    expect(res.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+    const body = (await res.json()) as any;
+    // pb_r1, pb_r2 stay single; pb_r3 (legacy fallback) + pb_ru9 (source) = radar.
+    expect(body.batchVsSingle.single.n).toBe(2);
+    expect(body.batchVsSingle.radar.n).toBe(2);
+  });
+});
+
+describe('canned attribution (RL.7)', () => {
+  // A canned reply leaves NO reply_drafts row — only a reply_list_uses row with
+  // the rendered text. reply_list_uses is FK-free (D79i) so this seed carries no
+  // list/item rows, and other suites may leave strays behind: assert the delta
+  // this describe causes, never an absolute count.
+  const TEXT = 'thanks for the early read, this one lands';
+  const USE_ID = 'c0000000-0000-4000-8000-0000000000c1';
+
+  let before = { canned: 0, unattributed: 0 };
+
+  async function batchVsSingle(): Promise<{
+    canned: { n: number; medianViews: number | null };
+    unattributed: number;
+  }> {
+    const res = await app.request('/x/playbook');
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+    const body = (await res.json()) as any;
+    return body.batchVsSingle;
+  }
+
+  beforeAll(async () => {
+    // The published reply exists first and is unattributed — the use row is
+    // what moves it, which is exactly what the delta proves.
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: 'pb_canned1',
+        text: `${TEXT}\n`, // trailing whitespace: the match is normalized, not literal
+        postedAt: at(150),
+        isReply: true,
+        inReplyToTweetId: '4242',
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db.insert(metricsSnapshots).values({
+      tweetId: 'pb_canned1',
+      publicMetrics: { impression_count: 120, like_count: 1, reply_count: 0 },
+      nonPublicMetrics: { user_profile_clicks: 3 },
+    });
+    const b = await batchVsSingle();
+    before = { canned: b.canned.n, unattributed: b.unattributed };
+
+    await db.insert(replyListUses).values({
+      id: USE_ID,
+      listId: 'c0000000-0000-4000-8000-0000000000a1',
+      itemId: 'c0000000-0000-4000-8000-0000000000b1',
+      renderedText: TEXT,
+      targetTweetId: '4242',
+      targetHandle: 'pb_author',
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(replyListUses).where(eq(replyListUses.id, USE_ID));
+    await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, 'pb_canned1'));
+    await db.delete(postsPublished).where(eq(postsPublished.tweetId, 'pb_canned1'));
+  });
+
+  test('a published reply matching a use rendered text moves to the canned cell', async () => {
+    const b = await batchVsSingle();
+    expect(b.canned.n).toBe(before.canned + 1);
+    expect(b.unattributed).toBe(before.unattributed - 1);
+    // Only a clean run (no stray use rows) can pin the median to our seed.
+    if (before.canned === 0) expect(b.canned.medianViews).toBe(120);
+  });
+});
+
+// HV.5 opportunity funnel. Rows are seeded DIRECTLY (a multi-sighting history is
+// unbuildable through POST /harvest/passive's 30-min recapture gate) under this
+// suite's own mode='timeline' run, and everything is deleted in afterAll — the
+// in-memory DB is shared, harvest.test.ts asserts that NO timeline run exists,
+// and a stray posted reply_drafts row would move other suites' cells. Kept LAST
+// in the file for the same reason.
+describe('loadTimelineFunnel (HV.5)', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000f1';
+  const DRAFT_ID = 'd0000000-0000-4000-8000-0000000000f2';
+
+  async function funnel(minN?: number): Promise<{
+    cells: Array<{ band: string | null; seen: number; replied: number; rate: number | null }>;
+    totalSeen: number;
+    totalReplied: number;
+  }> {
+    const res = await app.request(`/x/playbook${minN === undefined ? '' : `?minN=${minN}`}`);
+    expect(res.status).toBe(200);
+    // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+    const body = (await res.json()) as any;
+    return body.timelineFunnel;
+  }
+
+  beforeAll(async () => {
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: 'timeline', mode: 'timeline', scope: 'passive' })
+      .onConflictDoNothing();
+    const row = (o: {
+      tweetId: string;
+      views?: number;
+      comments?: number;
+      tweetTime?: Date | null;
+      capturedAt: Date;
+    }) => ({
+      runId: RUN_ID,
+      tweetId: o.tweetId,
+      handle: 'hv5_author',
+      mode: 'timeline',
+      text: 'a plain statement about shipping',
+      views: o.views ?? 5000,
+      comments: o.comments ?? 3,
+      tweetTime:
+        o.tweetTime === undefined ? new Date(o.capturedAt.getTime() - 30 * 60_000) : o.tweetTime,
+      capturedAt: o.capturedAt,
+    });
+    await db.insert(harvestRows).values([
+      // hv5_a: hot at first sighting, re-scrolled 3h later as a buried thread.
+      row({ tweetId: 'hv5_a', capturedAt: at(300) }),
+      row({ tweetId: 'hv5_a', views: 300_000, comments: 900, capturedAt: at(120) }),
+      // hv5_b: hot, and the one I actually replied to.
+      row({ tweetId: 'hv5_b', capturedAt: at(240) }),
+      // hv5_c: no tweet time → unknown, never the null band.
+      row({ tweetId: 'hv5_c', tweetTime: null, capturedAt: at(200) }),
+      // Outside the 30-day window.
+      row({ tweetId: 'hv5_old', capturedAt: at(40 * 24 * 60) }),
+    ]);
+
+    await db
+      .insert(replyDrafts)
+      .values({
+        id: DRAFT_ID,
+        sourceTweetId: 'hv5_b',
+        sourceAuthorUsername: 'hv5_author',
+        sourceText: 'a plain statement about shipping',
+        sourceUrl: 'https://x.com/hv5_author/status/hv5_b',
+        contextSnapshot: {},
+        replyText: 'shipped mine last week',
+        model: 'test',
+        status: 'posted',
+        createdAt: at(230),
+      })
+      .onConflictDoNothing();
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+    await db.delete(replyDrafts).where(eq(replyDrafts.id, DRAFT_ID));
+  });
+
+  test('bands at first sighting, counts distinct tweets, windows at 30 days', async () => {
+    const f = await funnel(1);
+    expect(f.totalSeen).toBe(3); // hv5_a (twice) + hv5_b + hv5_c, hv5_old excluded
+    expect(f.totalReplied).toBe(1);
+    // The 900-reply re-sighting of hv5_a must not re-band it into 'skip'.
+    expect(f.cells.map((c) => c.band)).toEqual(['hot', 'unknown']);
+    const hot = f.cells.find((c) => c.band === 'hot');
+    expect(hot?.seen).toBe(2);
+    expect(hot?.replied).toBe(1);
+    expect(hot?.rate).toBe(0.5);
+  });
+
+  test('a posted draft on a tweet I never saw is not credited', async () => {
+    const f = await funnel(1);
+    // The main describe's posted drafts all target 4242, which is not in the
+    // ambient corpus — the intersection is what counts, not the draft count.
+    expect(f.totalReplied).toBe(1);
+  });
+
+  test('the default gate keeps a thin cell silent', async () => {
+    const f = await funnel();
+    expect(f.cells.every((c) => c.rate === null)).toBe(true);
+  });
+});
+
+// UI.4: `x.gates.minCellN` is the DEFAULT gate for a bare read; `?minN=` still
+// wins per read. Demonstrated on the funnel because its population is entirely
+// this block's own rows (the HV.5 block above deleted its own in afterAll), so
+// a 12-sample cell is buildable without moving any other suite's medians. Last
+// in the file for the same reason the HV.5 block is.
+describe('x.gates.minCellN is the default playbook gate', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000f3';
+
+  beforeAll(async () => {
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: 'timeline', mode: 'timeline', scope: 'passive' })
+      .onConflictDoNothing();
+    // 12 distinct sightings, all banding the same way — one cell, n = 12.
+    await db.insert(harvestRows).values(
+      Array.from({ length: 12 }, (_, i) => ({
+        runId: RUN_ID,
+        tweetId: `ui4_${i}`,
+        handle: 'ui4_author',
+        mode: 'timeline',
+        text: 'a plain statement about shipping',
+        views: 5000,
+        comments: 3,
+        tweetTime: at(150 + i),
+        capturedAt: at(120 + i),
+      })),
+    );
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+    resetSettings({ keys: ['x.gates.minCellN'] });
+  });
+
+  test('PATCHing the gate to 10 flips the 12-sample cell to sufficient', async () => {
+    const thin = await funnelCells();
+    expect(thin.some((c) => c.seen >= 12)).toBe(true);
+    expect(thin.every((c) => c.rate === null)).toBe(true); // default gate 20
+
+    setSettings({ 'x.gates.minCellN': 10 });
+    const open = await funnelCells();
+    expect(open.find((c) => c.seen >= 12)?.rate).not.toBeNull();
+
+    // …and an explicit ?minN= still overrides the configured baseline.
+    const strict = await funnelCells(20);
+    expect(strict.every((c) => c.rate === null)).toBe(true);
+  });
+
+  async function funnelCells(
+    minN?: number,
+  ): Promise<Array<{ band: string | null; seen: number; rate: number | null }>> {
+    const res = await app.request(`/x/playbook${minN === undefined ? '' : `?minN=${minN}`}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      minN: number;
+      timelineFunnel: { cells: Array<{ band: string | null; seen: number; rate: number | null }> };
+    };
+    expect(body.minN).toBe(minN ?? getSetting<number>('x.gates.minCellN'));
+    return body.timelineFunnel.cells;
+  }
 });

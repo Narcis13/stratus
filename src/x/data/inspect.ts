@@ -10,7 +10,7 @@
 import { Database, type Statement } from 'bun:sqlite';
 import { getTableName, is } from 'drizzle-orm';
 import { SQLiteTable } from 'drizzle-orm/sqlite-core';
-import { sqlite } from '../../db/client.ts';
+import { sqlite, sqlitePath } from '../../db/client.ts';
 import * as sharedSchema from '../../db/shared-schema.ts';
 import * as xSchema from '../db/schema.ts';
 
@@ -98,7 +98,10 @@ function whitelist(): Set<string> {
 let cachedConn: Database | null = null;
 function conn(): Database {
   if (cachedConn) return cachedConn;
-  const path = process.env.SQLITE_PATH ?? './stratus.db';
+  // Same resolution as the writer connection (client.ts) — a bare `bun test`
+  // run defaults to :memory: there, and a drifted default here would open the
+  // real ./stratus.db against an in-memory writer (the D40d/D25d trap).
+  const path = sqlitePath;
   if (path === ':memory:' || path === '' || path.startsWith('file::memory:')) {
     // Reuse the primary connection so the inspector sees in-memory data.
     cachedConn = sqlite;

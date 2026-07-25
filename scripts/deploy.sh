@@ -40,11 +40,13 @@ rsync -az --delete \
   --exclude 'node_modules' \
   --exclude 'extension/node_modules' \
   --exclude 'extension/dist' \
-  --exclude '.tokens.json' \
+  --exclude '.tokens*' \
   --exclude 'stratus.db' \
   --exclude 'stratus.db-wal' \
   --exclude 'stratus.db-shm' \
+  --exclude 'stratus.db.backup*' \
   --exclude '*.sqlite' \
+  --exclude '*.db.backup*' \
   --exclude '.env' \
   --exclude '.env.local' \
   --exclude '.DS_Store' \

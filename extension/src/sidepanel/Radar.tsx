@@ -10,7 +10,13 @@
 
 import { type JSX, useEffect, useState } from 'react';
 import { formatCount } from '../replyBand.ts';
-import type { RadarClick, RadarDismiss, RadarRehydrate, RadarReplies } from '../shared/messages.ts';
+import type {
+  RadarClick,
+  RadarConfirm,
+  RadarDismiss,
+  RadarRehydrate,
+  RadarReplies,
+} from '../shared/messages.ts';
 import {
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
@@ -19,13 +25,22 @@ import {
   rankSightings,
   splitClicked,
 } from '../shared/radar.ts';
+import { radarBatchSize } from '../shared/serverSettings.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import type { SettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
-// One Grok call per click; cap how many tweets ride along so the batch stays
-// cheap and the model keeps each reply anchored.
-const RADAR_DRAFT_CAP = 20;
+// UI.12 — the batch size is now two knobs, not one baked constant: the display
+// cap (how many tweets THIS click sends) clamped by the server's own batch cap
+// (how many it will accept at all). `radarBatchSize` is the one place that
+// clamp lives; reading `radarDraftCap` raw here would resurrect the failed-click
+// footgun the mirror was widened to remove.
+const RADAR_KEYS = ['x.display.radarDraftCap', 'x.ai.batchReplyCap'];
 
 function useRadarSightings(): RadarSighting[] {
   const [sightings, setSightings] = useState<RadarSighting[]>([]);
@@ -86,13 +101,30 @@ function markClicked(tweetId: string): void {
   })();
 }
 
+// Promote this row's radar draft into a real reply_drafts row (RU.6) — the
+// background POSTs the confirm endpoint and stamps the returned draft id onto
+// the sighting for the on-page paste flow (RU.7). Best-effort, like markClicked.
+function confirmDraft(tweetId: string): void {
+  const msg: RadarConfirm = { type: 'stratus/radar-confirm', tweetId };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar confirm failed', err);
+    }
+  })();
+}
+
 export function RadarSection({
   settings,
   onOpenPerson,
+  editor,
 }: {
   settings: Settings;
   onOpenPerson: (handle: string) => void;
+  editor: SettingsEditor;
 }): JSX.Element {
+  const server = useServerSettings();
   const ranked = rankSightings(useRadarSightings());
   const { queue, clicked } = splitClicked(ranked);
   const { ready, fresh } = groupQueue(queue);
@@ -110,7 +142,7 @@ export function RadarSection({
   }, []);
 
   // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
-  const undrafted = fresh.slice(0, RADAR_DRAFT_CAP);
+  const undrafted = fresh.slice(0, radarBatchSize(server));
 
   const draftReplies = async (): Promise<void> => {
     if (undrafted.length === 0) return;
@@ -132,7 +164,11 @@ export function RadarSection({
       if (res.replies.length > 0) {
         const msg: RadarReplies = {
           type: 'stratus/radar-replies',
-          replies: res.replies.map((r) => ({ tweetId: r.tweetId, reply: r.text })),
+          replies: res.replies.map((r) => ({
+            tweetId: r.tweetId,
+            reply: r.text,
+            variants: r.variants,
+          })),
         };
         await chrome.runtime.sendMessage(msg);
       }
@@ -147,10 +183,10 @@ export function RadarSection({
   const shown = view === 'queue' ? queue : clicked;
 
   return (
-    <section className="brief-section">
-      <div className="radar-head">
-        <h3>Radar</h3>
-        <div className="radar-actions">
+    <Section
+      title="Radar"
+      actions={
+        <>
           {view === 'queue' && (
             <button
               type="button"
@@ -173,9 +209,15 @@ export function RadarSection({
               Clear
             </button>
           )}
-        </div>
-      </div>
-
+          <SettingsGear
+            editor={editor}
+            keys={RADAR_KEYS}
+            label="Configure radar drafting"
+            note="One click, one Grok call — the batch is the lower of these two. What lands on the radar at all is the Reply band group in Settings → Tuning, the same twelve thresholds the on-page badge uses."
+          />
+        </>
+      }
+    >
       <div className="radar-tabs">
         <button
           type="button"
@@ -197,7 +239,10 @@ export function RadarSection({
 
       {view === 'queue' ? (
         queue.length === 0 ? (
-          <div className="muted">Browse X — hot/warm tweets you scroll past queue up here.</div>
+          <EmptyState
+            line="Browse X — hot/warm tweets you scroll past queue up here."
+            hint="Nothing is fetched for this; it's what the page already showed you, banded and ranked."
+          />
         ) : (
           <>
             {ready.length > 0 && (
@@ -219,7 +264,10 @@ export function RadarSection({
           </>
         )
       ) : clicked.length === 0 ? (
-        <div className="muted">Replies you copy land here — most recent first.</div>
+        <EmptyState
+          line="Replies you copy land here — most recent first."
+          hint="Opening a drafted tweet copies its reply and moves the row across."
+        />
       ) : (
         <ul className="radar-list">
           {clicked.map((s) => (
@@ -227,7 +275,7 @@ export function RadarSection({
           ))}
         </ul>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -275,6 +323,7 @@ function RadarRow({
   const onOpen = (): void => {
     if (!s.reply) return;
     markClicked(s.tweetId);
+    confirmDraft(s.tweetId);
     void navigator.clipboard
       .writeText(s.reply)
       .then(() => {
@@ -309,6 +358,11 @@ function RadarRow({
           </button>
         )}
         {s.reply && <span className="radar-ready">reply ready</span>}
+        {s.variants && s.variants.length > 1 && (
+          <span className="radar-angles" title="Angle variants ready on the tweet page">
+            {s.variants.length} angles
+          </span>
+        )}
         <button
           type="button"
           className="radar-dismiss"
@@ -353,6 +407,11 @@ function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
 // "1.5k views · 8 replies · 22m · 70/min · bait"
 function whyLine(s: RadarSighting): string {
   const { views, replies, vpm, bait } = s.signals;
+  // A ⊕ manual add (RU.8) with no captured metrics — don't render a line of
+  // zeros; a cold tweet the human pinned has nothing to quantify yet.
+  if (s.band === 'manual' && views === 0 && replies === 0) {
+    return `manually added · ${fmtAge(displayAgeMin(s))}`;
+  }
   const parts = [`${formatCount(views)} views`, `${replies} replies`, fmtAge(displayAgeMin(s))];
   if (vpm >= 1) parts.push(`${formatCount(Math.round(vpm))}/min`);
   if (bait) parts.push('bait');

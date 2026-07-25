@@ -21,20 +21,47 @@
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
 
 import { suggestChannels } from './channelSuggest.ts';
-import { initHarvest } from './harvester.ts';
-import { BAND_LABEL, classifyBand, formatCount, textLooksLikeReplyBait } from './replyBand.ts';
-import type { Band, TweetSignals } from './replyBand.ts';
+import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
+import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
+import type { BandThresholds, TweetSignals } from './replyBand.ts';
+import {
+  type ExtractedActiveTimes,
+  extractActiveTimesSection,
+  gridsEqual,
+  parseHeatColors,
+} from './shared/activeTimes.ts';
 import { parseEarlyReplies } from './shared/earlyReplies.ts';
+import { GLANCE_TTL_MS, buildPersonChips } from './shared/glance.ts';
+import type { GlanceMap } from './shared/glance.ts';
+import type { HarvestIngestRow } from './shared/harvest.ts';
 import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
 import type {
   ApiRequest,
   ApiResponse,
   LaunchGet,
   LaunchReport,
+  NotifContextGet,
+  NotifContextMap,
+  NotifContextResponse,
+  OpenPerson,
   RadarReport,
+  RadarVariantPasted,
+  RadarVariantsGet,
 } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
-import type { RadarBand, RadarSighting } from './shared/radar.ts';
+import { parseNotificationCell } from './shared/notifications.ts';
+import type { EngagementKind } from './shared/notifications.ts';
+import {
+  PASSIVE_BATCH_MAX,
+  PASSIVE_FLUSH_MS,
+  PASSIVE_HARVEST_KEY,
+  isHomeTimelinePath,
+  shouldRecordPassive,
+  toPassiveIngestRow,
+} from './shared/passiveHarvest.ts';
+import { personTierFor } from './shared/radar.ts';
+import type { PersonTier, RadarBand, RadarSighting, RankMap } from './shared/radar.ts';
+import { SERVER_DEFAULTS, SERVER_SETTINGS_KEY, readServerConfig } from './shared/serverSettings.ts';
 import {
   type HoverCardData,
   type PersonSighting,
@@ -44,22 +71,35 @@ import {
   mergePendingSighting,
   shouldReportSighting,
 } from './shared/sightings.ts';
+import { buildTweetContextModel } from './shared/tweetContext.ts';
+import type { Dossier, TweetContextModel } from './shared/tweetContext.ts';
 import type {
   AuthorProfile,
   PostContext,
   ReplyDraft,
+  ReplyVariant,
   ScrapeBody,
   ScrapedAuthor,
   ScrapedTweet,
   TopComment,
 } from './shared/types.ts';
+import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
 
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
 const CHAN_CHIP_CLASS = 'stratus-chan-chip';
 const CHAN_WRAP_CLASS = 'stratus-chan-chips';
-const BAND_BADGE_CLASS = 'stratus-band-badge';
+const PERSON_CHIPS_CLASS = 'stratus-person-chips';
+const PERSON_CHIP_CLASS = 'stratus-person-chip';
+const CONTEXT_PANEL_CLASS = 'stratus-context-panel';
+// On-page radar variant chips (RU.7).
+const VARIANT_CHIPS_CLASS = 'stratus-variant-chips';
+const VARIANT_CHIP_CLASS = 'stratus-variant-chip';
+const VARIANT_ANGLE_CLASS = 'stratus-variant-angle';
+const VARIANT_PREVIEW_CLASS = 'stratus-variant-preview';
+const VARIANT_HINT_CLASS = 'stratus-variant-hint';
+const RADAR_ADD_CLASS = 'stratus-radar-add-btn';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -108,11 +148,53 @@ interface ScrapeResult {
   url: string;
 }
 
+// UI.16 — the ONE palette every injected overlay reads. These are deliberately
+// NOT the panel's `--strat-*` tokens: overlays sit on X's own timeline (white /
+// dim / black, the user's choice) so they must be theme-neutral, which is what
+// the `rgb()` + low-alpha-fill pairs buy. Values are X's companion palette (the
+// DS `--x-*` block: blue #1d9bf0, muted #71767b, red #f4212e) plus the band
+// signal colors the side panel mirrors in `--strat-band-*`.
+//
+// Alpha ramp, uniform across tones: `-line` = the 1px outline, `-fill` = the
+// tinted background, `-hairline` = a structural divider. A future chip family
+// (augmented-x-ui, notifications) adds a tone here and references it — never a
+// fresh literal, or the two families drift apart one hex at a time.
+const OVERLAY_TOKENS = `
+    :root {
+      --stratus-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+      --stratus-muted: rgb(113, 118, 123);
+      --stratus-muted-line: rgba(113, 118, 123, 0.4);
+      --stratus-muted-fill: rgba(113, 118, 123, 0.12);
+      --stratus-muted-hairline: rgba(113, 118, 123, 0.3);
+
+      --stratus-blue: rgb(29, 155, 240);
+      --stratus-blue-line: rgba(29, 155, 240, 0.5);
+      --stratus-blue-fill: rgba(29, 155, 240, 0.12);
+
+      --stratus-hot: rgb(0, 186, 124);
+      --stratus-hot-line: rgba(0, 186, 124, 0.5);
+      --stratus-hot-fill: rgba(0, 186, 124, 0.12);
+
+      --stratus-warm: rgb(255, 179, 0);
+      --stratus-warm-text: rgb(214, 150, 0);
+      --stratus-warm-line: rgba(255, 179, 0, 0.5);
+      --stratus-warm-fill: rgba(255, 179, 0, 0.12);
+
+      --stratus-danger: rgb(244, 33, 46);
+      --stratus-danger-fill: rgba(244, 33, 46, 0.12);
+
+      --stratus-pillar: rgb(170, 100, 220);
+      --stratus-pillar-hover: rgb(192, 132, 232);
+      --stratus-pillar-line: rgba(170, 100, 220, 0.5);
+      --stratus-pillar-fill: rgba(170, 100, 220, 0.12);
+    }`;
+
 function injectStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  style.textContent = `
+  style.textContent = `${OVERLAY_TOKENS}
     .${BUTTON_CLASS}, .${AUTHOR_BTN_CLASS} {
       all: unset;
       display: inline-flex;
@@ -120,36 +202,63 @@ function injectStyles(): void {
       justify-content: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 12px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 4px 10px;
       border-radius: 9999px;
-      color: rgb(113, 118, 123);
-      border: 1px solid rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
       background: transparent;
       margin-left: 6px;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
     .${AUTHOR_BTN_CLASS} { font-size: 13px; padding: 6px 14px; }
     .${BUTTON_CLASS}:hover, .${AUTHOR_BTN_CLASS}:hover {
-      color: rgb(29, 155, 240);
-      border-color: rgb(29, 155, 240);
-      background: rgba(29, 155, 240, 0.1);
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
     }
     .${BUTTON_CLASS}[data-state="saving"], .${AUTHOR_BTN_CLASS}[data-state="saving"] {
-      color: rgb(113, 118, 123);
-      border-color: rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border-color: var(--stratus-muted-line);
       cursor: progress;
     }
     .${BUTTON_CLASS}[data-state="saved"], .${AUTHOR_BTN_CLASS}[data-state="saved"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${BUTTON_CLASS}[data-state="failed"], .${AUTHOR_BTN_CLASS}[data-state="failed"] {
-      color: rgb(244, 33, 46);
-      border-color: rgb(244, 33, 46);
-      background: rgba(244, 33, 46, 0.12);
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
+    }
+    .${RADAR_ADD_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      width: 22px;
+      height: 22px;
+      font: 600 14px/1 var(--stratus-font);
+      border-radius: 9999px;
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
+      background: transparent;
+      margin-left: 6px;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${RADAR_ADD_CLASS}:hover {
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
+    }
+    .${RADAR_ADD_CLASS}[data-state="added"] {
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${REPLY_BTN_CLASS} {
       all: unset;
@@ -158,53 +267,147 @@ function injectStyles(): void {
       justify-content: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 12px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 4px 10px;
       border-radius: 9999px;
-      color: rgb(170, 100, 220);
-      border: 1px solid rgba(170, 100, 220, 0.5);
+      color: var(--stratus-pillar);
+      border: 1px solid var(--stratus-pillar-line);
       background: transparent;
       margin-left: 6px;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
     .${REPLY_BTN_CLASS}:hover {
-      color: rgb(192, 132, 232);
-      border-color: rgb(192, 132, 232);
-      background: rgba(170, 100, 220, 0.12);
+      color: var(--stratus-pillar-hover);
+      border-color: var(--stratus-pillar-hover);
+      background: var(--stratus-pillar-fill);
     }
     .${REPLY_BTN_CLASS}[data-state="working"] {
-      color: rgb(113, 118, 123);
-      border-color: rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border-color: var(--stratus-muted-line);
       cursor: progress;
     }
     .${REPLY_BTN_CLASS}[data-state="done"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${REPLY_BTN_CLASS}[data-state="failed"] {
-      color: rgb(244, 33, 46);
-      border-color: rgb(244, 33, 46);
-      background: rgba(244, 33, 46, 0.12);
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
     }
-    article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 rgb(0, 186, 124); }
-    article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 rgb(255, 179, 0); }
+    article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 var(--stratus-hot); }
+    article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 var(--stratus-warm); }
     article[data-testid="tweet"][data-stratus-band="skip"] { opacity: 0.45; }
-    .${BAND_BADGE_CLASS} {
+    .${PERSON_CHIPS_CLASS} {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 4px;
+      flex-shrink: 0;
+      overflow: hidden;
+      vertical-align: middle;
+    }
+    .${PERSON_CHIP_CLASS} {
       all: unset;
       display: inline-flex;
       align-items: center;
       box-sizing: border-box;
-      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      cursor: pointer;
+      font: 600 11px/1 var(--stratus-font);
       letter-spacing: 0.02em;
-      padding: 3px 8px;
+      padding: 2px 7px;
       border-radius: 9999px;
-      margin-left: 8px;
       white-space: nowrap;
+      border: 1px solid transparent;
     }
-    .${BAND_BADGE_CLASS}[data-band="hot"]  { color: rgb(0, 186, 124); border: 1px solid rgba(0, 186, 124, 0.5); background: rgba(0, 186, 124, 0.10); }
-    .${BAND_BADGE_CLASS}[data-band="warm"] { color: rgb(214, 150, 0); border: 1px solid rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${PERSON_CHIP_CLASS}[data-tone="ally"]      { color: var(--stratus-hot);       border-color: var(--stratus-hot-line);   background: var(--stratus-hot-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="mutual"]    { color: var(--stratus-blue);      border-color: var(--stratus-blue-line);  background: var(--stratus-blue-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="responded"] { color: var(--stratus-warm-text); border-color: var(--stratus-warm-line);  background: var(--stratus-warm-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="engaged"]   { color: var(--stratus-muted);     border-color: var(--stratus-muted-line); background: var(--stratus-muted-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="target"]    { color: var(--stratus-blue);      border-color: var(--stratus-blue-line);  background: var(--stratus-blue-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="warn"]      { color: var(--stratus-warm-text); border-color: var(--stratus-warm-line);  background: var(--stratus-warm-fill); }
+    .${PERSON_CHIP_CLASS}:hover { filter: brightness(1.15); }
+    /* Notifications surface (C10). Muted gray reads on both X themes, same as
+       every other injected control here. */
+    .${NOTIF_CTX_CLASS} {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+      font: 400 12px/1.3 var(--stratus-font);
+      color: var(--stratus-muted);
+    }
+    .stratus-notif-ctx-quote { font-style: italic; }
+    .stratus-notif-answered {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      font-weight: 600;
+      color: var(--stratus-hot);
+      border: 1px solid var(--stratus-hot-line);
+      background: var(--stratus-hot-fill);
+    }
+    .${NOTIF_TIERS_CLASS} {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .${NOTIF_TIER_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 11px/1 var(--stratus-font);
+      letter-spacing: 0.02em;
+      padding: 2px 7px;
+      border-radius: 9999px;
+      white-space: nowrap;
+      border: 1px solid transparent;
+    }
+    .${NOTIF_TIER_CLASS}[data-tone="ally"]   { color: var(--stratus-hot);       border-color: var(--stratus-hot-line);  background: var(--stratus-hot-fill); }
+    .${NOTIF_TIER_CLASS}[data-tone="mutual"] { color: var(--stratus-blue);      border-color: var(--stratus-blue-line); background: var(--stratus-blue-fill); }
+    .${NOTIF_TIER_CLASS}[data-tone="target"] { color: var(--stratus-warm-text); border-color: var(--stratus-warm-line); background: var(--stratus-warm-fill); }
+    .${NOTIF_TIER_CLASS}:hover { filter: brightness(1.15); }
+    .${NOTIF_SYNC_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 12px/1 var(--stratus-font);
+      letter-spacing: 0.02em;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      margin-left: 10px;
+      white-space: nowrap;
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
+      background: transparent;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${NOTIF_SYNC_CLASS}:hover {
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
+    }
+    .${NOTIF_SYNC_CLASS}[data-state="working"] { cursor: progress; }
+    .${NOTIF_SYNC_CLASS}[data-state="done"] {
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
+    }
+    .${NOTIF_SYNC_CLASS}[data-state="failed"] {
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
+    }
     .${CHAN_WRAP_CLASS} { display: inline-flex; gap: 4px; margin-left: 4px; align-items: center; }
     .${CHAN_CHIP_CLASS} {
       all: unset;
@@ -212,21 +415,150 @@ function injectStyles(): void {
       align-items: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 11px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 3px 8px;
       border-radius: 9999px;
-      color: rgb(29, 155, 240);
-      border: 1px dashed rgba(29, 155, 240, 0.5);
+      color: var(--stratus-blue);
+      border: 1px dashed var(--stratus-blue-line);
       background: transparent;
       white-space: nowrap;
     }
-    .${CHAN_CHIP_CLASS}:hover { background: rgba(29, 155, 240, 0.1); }
+    .${CHAN_CHIP_CLASS}:hover { background: var(--stratus-blue-fill); }
     .${CHAN_CHIP_CLASS}[data-state="tagged"] {
-      color: rgb(0, 186, 124);
-      border: 1px solid rgb(0, 186, 124);
+      color: var(--stratus-hot);
+      border: 1px solid var(--stratus-hot);
       cursor: default;
     }
+    /* The purple sparkle circle is injected by the retired standalone "Reply
+       Master" extension (~/newme/clipx/reply-master), NOT by stratus — the real
+       fix is uninstalling it in chrome://extensions. This defensive rule only
+       guarantees it stays hidden if that extension is ever re-enabled. */
+    #reply-master-btn { display: none !important; }
+    .${CONTEXT_PANEL_CLASS} {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 12px 16px;
+      border-top: 1px solid var(--stratus-muted-hairline);
+      font: 400 13px/1.4 var(--stratus-font);
+      color: inherit;
+    }
+    .stratus-ctx-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stratus-ctx-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 auto;
+      min-width: 0;
+      cursor: pointer;
+    }
+    .stratus-ctx-since { color: var(--stratus-muted); font-size: 12px; }
+    .stratus-ctx-toggle {
+      all: unset;
+      cursor: pointer;
+      color: var(--stratus-muted);
+      font-size: 13px;
+      line-height: 1;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+    .stratus-ctx-toggle:hover { background: var(--stratus-muted-fill); }
+    .${CONTEXT_PANEL_CLASS}[data-collapsed="true"] .stratus-ctx-body { display: none; }
+    .stratus-ctx-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .stratus-ctx-meta { color: var(--stratus-muted); font-size: 12px; }
+    .stratus-ctx-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+    .stratus-ctx-tag {
+      font-size: 11px;
+      padding: 1px 7px;
+      border-radius: 9999px;
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-hairline);
+    }
+    .stratus-ctx-banner {
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
+    }
+    .stratus-ctx-row { display: flex; flex-direction: column; gap: 3px; }
+    .stratus-ctx-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--stratus-muted);
+    }
+    .stratus-ctx-val { font-size: 13px; }
+    .stratus-ctx-list { display: flex; flex-direction: column; gap: 4px; }
+    .stratus-ctx-loop { font-size: 12px; }
+    .stratus-ctx-outcome { display: flex; flex-direction: column; gap: 1px; }
+    .stratus-ctx-outcome-text { font-size: 12px; }
+    .stratus-ctx-outcome-meta { font-size: 11px; color: var(--stratus-muted); }
+    .stratus-ctx-notes {
+      font-size: 12px;
+      color: var(--stratus-muted);
+      white-space: pre-wrap;
+      border-left: 2px solid var(--stratus-muted-hairline);
+      padding-left: 8px;
+    }
+    .stratus-ctx-empty { font-size: 12px; color: var(--stratus-muted); }
+    .${VARIANT_CHIPS_CLASS} {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 4px;
+      margin-left: 8px;
+      max-width: 260px;
+      vertical-align: middle;
+    }
+    .${VARIANT_CHIP_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 6px;
+      box-sizing: border-box;
+      cursor: pointer;
+      max-width: 100%;
+      font: 400 12px/1.2 var(--stratus-font);
+      padding: 3px 9px;
+      border-radius: 9999px;
+      color: var(--stratus-pillar);
+      border: 1px solid var(--stratus-pillar-line);
+      background: transparent;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${VARIANT_CHIP_CLASS}:hover { background: var(--stratus-pillar-fill); }
+    .${VARIANT_CHIP_CLASS}[data-active="1"] {
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
+    }
+    .${VARIANT_ANGLE_CLASS} {
+      flex: 0 0 auto;
+      font-weight: 600;
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+    .${VARIANT_PREVIEW_CLASS} {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--stratus-muted);
+    }
+    .${VARIANT_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); }
+    .${VARIANT_HINT_CLASS}:empty { display: none; }
   `;
   document.head.appendChild(style);
 }
@@ -818,7 +1150,7 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     postedAt,
     metrics,
     topComments,
-    ...(sig ? { signals: { band: classifyBand(sig), ...sig } } : {}),
+    ...(sig ? { signals: { band: classifyBand(sig, bandThresholds), ...sig } } : {}),
   };
 }
 
@@ -989,11 +1321,166 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
   replyMasterHandled.add(actionRow);
 }
 
+// -------------------------------------------------- on-page variant chips (RU.7)
+//
+// When a radar-drafted tweet's status page is open, inject a strip of angle
+// chips (extends / contrarian / debate) next to its action row. Clicking a chip
+// types that variant into the reply box (clipboard fallback) and marks the
+// draft posted — the radar reply becomes a measured reply_drafts row. Posting
+// stays manual (§7.28): the chip only fills the composer; the human hits Reply.
+
+// tweetId → variants (null = fetched, none). Fetched once per tweetId (a drafted
+// tweet's variants don't change within a session; a page reload clears this).
+const variantCache = new Map<string, ReplyVariant[] | null>();
+const variantFetchInFlight = new Set<string>();
+const variantChipsHandled = new WeakSet<Element>();
+
+function syncVariantChips(focusedId: string | null): void {
+  if (!focusedId) return;
+  for (const article of document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+    const permalink = findPermalink(article);
+    if (!permalink || permalink.tweetId !== focusedId) continue;
+    const reply = article.querySelector('[data-testid="reply"]');
+    if (!reply) return;
+    const actionRow = reply.closest('div[role="group"]');
+    if (!actionRow || variantChipsHandled.has(actionRow)) return;
+
+    if (!variantCache.has(focusedId)) {
+      requestVariants(focusedId); // chips inject on the re-scan after it resolves
+      return;
+    }
+    const variants = variantCache.get(focusedId);
+    if (!variants || variants.length === 0) return; // fetched, no radar variants
+    injectVariantChips(actionRow, focusedId, variants);
+    variantChipsHandled.add(actionRow);
+    return;
+  }
+}
+
+function requestVariants(tweetId: string): void {
+  if (variantFetchInFlight.has(tweetId)) return;
+  variantFetchInFlight.add(tweetId);
+  const msg: RadarVariantsGet = { type: 'stratus/radar-variants-get', tweetId };
+  void chrome.runtime
+    .sendMessage(msg)
+    .then((res: { ok?: boolean; variants?: unknown } | undefined) => {
+      variantCache.set(tweetId, res?.ok && isReplyVariants(res.variants) ? res.variants : null);
+    })
+    .catch((err) => {
+      console.warn('[stratus] radar variants-get failed', err);
+      variantCache.set(tweetId, null);
+    })
+    .finally(() => {
+      variantFetchInFlight.delete(tweetId);
+      scheduleScan();
+    });
+}
+
+function injectVariantChips(actionRow: Element, tweetId: string, variants: ReplyVariant[]): void {
+  const strip = document.createElement('div');
+  strip.className = VARIANT_CHIPS_CLASS;
+  strip.dataset.tweetId = tweetId;
+  for (const v of variants) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = VARIANT_CHIP_CLASS;
+    btn.title = v.text;
+    const angleEl = document.createElement('span');
+    angleEl.className = VARIANT_ANGLE_CLASS;
+    angleEl.textContent = v.angle;
+    const previewEl = document.createElement('span');
+    previewEl.className = VARIANT_PREVIEW_CLASS;
+    previewEl.textContent = variantChipPreview(v.text);
+    btn.append(angleEl, previewEl);
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      void onVariantChipClick(btn, strip, tweetId, v.text);
+    });
+    strip.appendChild(btn);
+  }
+  const hint = document.createElement('span');
+  hint.className = VARIANT_HINT_CLASS;
+  strip.appendChild(hint);
+  actionRow.appendChild(strip);
+}
+
+// Clear X's Draft.js reply composer before typing a variant in — selectAll +
+// delete only when it's non-empty (don't fight an empty editor's selection).
+function clearReplyEditor(editor: HTMLElement): void {
+  editor.focus();
+  if ((editor.textContent ?? '').trim() === '') return;
+  document.execCommand('selectAll');
+  document.execCommand('delete');
+}
+
+async function onVariantChipClick(
+  btn: HTMLButtonElement,
+  strip: HTMLElement,
+  tweetId: string,
+  text: string,
+): Promise<void> {
+  for (const el of strip.querySelectorAll<HTMLElement>(`.${VARIANT_CHIP_CLASS}`)) {
+    el.removeAttribute('data-active');
+  }
+  btn.dataset.active = '1';
+  const hint = strip.querySelector<HTMLElement>(`.${VARIANT_HINT_CLASS}`);
+
+  const editor = findReplyEditor();
+  if (editor) {
+    clearReplyEditor(editor);
+    await typeTextInto(editor, text);
+    if (hint) hint.textContent = '';
+  } else {
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      copied = false;
+    }
+    if (hint)
+      hint.textContent = copied ? 'Copied — open the reply box' : 'Open the reply box first';
+  }
+
+  // Confirm-if-needed + flip to posted happens in the background (single
+  // Authorization owner). Best-effort — the text is already in the composer.
+  const msg: RadarVariantPasted = { type: 'stratus/radar-variant-pasted', tweetId, text };
+  try {
+    await chrome.runtime.sendMessage(msg);
+  } catch (err) {
+    console.warn('[stratus] variant paste report failed', err);
+  }
+}
+
 // --------------------------------------------------------- reply-target band
 
 // Highlight timeline tweets that sit in the 1k–8k-view sweet spot worth
 // replying to early. Every signal is read from the DOM ($0). The scoring model
 // lives in replyBand.ts; the rationale is in evals/reply-eval-*.md.
+
+// UI.7: the thresholds come from the mirrored settings blob the background
+// writes (§7.24/7.25 — the page never fetches them itself), so the badge and
+// the server's /x/replies/generate gate classify with the same twelve numbers.
+// Baked defaults until the first read resolves: an unconfigured, offline or
+// half-loaded profile bands exactly as it did before this knob existed, never
+// blank.
+let bandThresholds: BandThresholds = SERVER_DEFAULTS.band;
+
+function initBandThresholds(): void {
+  chrome.storage.local
+    .get(SERVER_SETTINGS_KEY)
+    .then((out) => {
+      bandThresholds = readServerConfig(out[SERVER_SETTINGS_KEY]).band;
+    })
+    .catch(() => {
+      /* keep defaults */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[SERVER_SETTINGS_KEY];
+    if (change) bandThresholds = readServerConfig(change.newValue).band;
+  });
+}
 
 function looksLikeReplyBait(article: Element): boolean {
   const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
@@ -1025,38 +1512,429 @@ function readTweetSignals(article: Element): TweetSignals | null {
   };
 }
 
-// The badge is recomputed every scan (NOT WeakSet-deduped): X recycles article
-// nodes as you scroll, and metrics climb as a tweet ages, so a cached verdict
-// goes stale. Re-querying the row each pass self-corrects recycled nodes.
-function renderBandBadge(article: Element, band: Band, sig: TweetSignals | null): void {
-  const reply = article.querySelector('[data-testid="reply"]');
-  const actionRow = reply?.closest('div[role="group"]');
-  if (!actionRow) return;
+function applyBand(article: HTMLElement): void {
+  const sig = readTweetSignals(article);
+  const band = sig ? classifyBand(sig, bandThresholds) : null;
+  if (band) article.dataset.stratusBand = band;
+  else delete article.dataset.stratusBand;
+  if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+  // Every band, including skip — the opportunity funnel needs the denominator.
+  // A null sig is an ad/promoted row (no metrics label), which filters itself.
+  if (sig) recordPassiveHarvest(article);
+}
 
-  const existing = actionRow.querySelector<HTMLSpanElement>(`.${BAND_BADGE_CLASS}`);
-  if (!sig || (band !== 'hot' && band !== 'warm')) {
-    existing?.remove(); // 'skip' is conveyed by dimming; null shows nothing
+// ----------------------------------------------------- person chips (AX.3, $0)
+//
+// Right of the name/handle line, small native-looking chips for people stratus
+// knows: a stage chip (engaged+), a ◎ target marker, an amber ↩ owed when they
+// have unanswered mentions in my inbox, and an `Nd` neglect mark. All derived
+// client-side from GET /x/people/glance (pure SQL, $0), cached per session
+// (GLANCE_TTL_MS, the channels-cache pattern). The view-model is
+// shared/glance.ts; this is only the DOM plumbing. Recomputed every scan (NOT
+// deduped) — X recycles article nodes and the neglect age ticks, so a cached
+// chip goes stale; a data-sig guard skips the DOM write when nothing changed.
+
+let glanceCache: { map: GlanceMap; at: number } | null = null;
+let glanceInFlight: Promise<void> | null = null;
+
+async function refreshGlanceMap(): Promise<void> {
+  const request: ApiRequest = { type: 'stratus/api', method: 'GET', path: '/x/people/glance' };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as
+      | ApiResponse<{ count: number; map: GlanceMap }>
+      | undefined;
+    if (res?.ok && res.data && typeof res.data.map === 'object') {
+      glanceCache = { map: res.data.map, at: Date.now() };
+    }
+    // A fresh install (no bearer) returns `unconfigured` — silent: chips just
+    // don't render, like the save button on an unconfigured extension.
+  } catch (err) {
+    console.warn('[stratus] glance fetch failed', err);
+  }
+}
+
+// scan() is synchronous, so this returns whatever's cached now (stale or empty)
+// and kicks off a background refresh when the cache is expired — the fresh map
+// lands for the next mutation scan (X emits them constantly).
+function getGlanceMap(): GlanceMap {
+  const fresh = glanceCache && Date.now() - glanceCache.at < GLANCE_TTL_MS;
+  if (!fresh && !glanceInFlight) {
+    glanceInFlight = refreshGlanceMap().finally(() => {
+      glanceInFlight = null;
+    });
+  }
+  return glanceCache?.map ?? {};
+}
+
+// AX.6: a timeline chip or the tweet-page context-panel header opens the
+// person's dossier in the side panel. The background owns sidePanel.open (the
+// click is a user gesture) and the `stratus:openPerson` session handoff key.
+function sendOpenPerson(handle: string): void {
+  const msg: OpenPerson = { type: 'stratus/open-person', handle };
+  void chrome.runtime.sendMessage(msg).catch(() => {});
+}
+
+function applyPersonChips(article: Element, glance: GlanceMap): void {
+  const permalink = findPermalink(article);
+  const existing = article.querySelector<HTMLSpanElement>(`.${PERSON_CHIPS_CLASS}`);
+
+  const handle = permalink ? permalink.username.toLowerCase() : '';
+  const entry = handle ? glance[handle] : undefined;
+  const chips = entry ? buildPersonChips(entry, Date.now()).slice(0, 4) : [];
+
+  // querySelector returns the FIRST User-Name = the outer tweet's author (quote
+  // previews nest below), so chips decorate the real author's line only.
+  const userName = article.querySelector('[data-testid="User-Name"]');
+  if (chips.length === 0 || !userName) {
+    existing?.remove(); // unknown handle / no header row → clear any recycled span
     return;
   }
 
-  const badge = existing ?? document.createElement('span');
-  if (!existing) {
-    badge.className = BAND_BADGE_CLASS;
-    actionRow.appendChild(badge);
+  const sig = chips.map((c) => `${c.kind}:${c.label}:${c.tone}`).join('|');
+  if (existing && existing.dataset.handle === handle && existing.dataset.sig === sig) {
+    return; // unchanged — skip the DOM write (X mutates the subtree furiously)
   }
-  badge.dataset.band = band;
-  const age = sig.ageMin < 60 ? `${Math.round(sig.ageMin)}m` : `${Math.floor(sig.ageMin / 60)}h`;
-  const baitMark = sig.bait ? ' · ?' : '';
-  badge.textContent = `${formatCount(sig.views)} · ${sig.replies}r · ${age}${baitMark} · ${BAND_LABEL[band]}`;
+
+  const span = existing ?? document.createElement('span');
+  if (!existing) {
+    span.className = PERSON_CHIPS_CLASS;
+    userName.insertAdjacentElement('afterend', span);
+  }
+  span.dataset.handle = handle;
+  span.dataset.sig = sig;
+  span.textContent = '';
+  for (const chip of chips) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = PERSON_CHIP_CLASS;
+    btn.dataset.tone = chip.tone;
+    btn.dataset.handle = handle;
+    btn.title = chip.tooltip;
+    btn.textContent = chip.label;
+    // AX.6: open the dossier; preventDefault/stopPropagation so the click never
+    // bubbles into X's row → tweet navigation.
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      sendOpenPerson(handle);
+    });
+    span.appendChild(btn);
+  }
 }
 
-function applyBand(article: HTMLElement): void {
-  const sig = readTweetSignals(article);
-  const band = sig ? classifyBand(sig) : null;
-  if (band) article.dataset.stratusBand = band;
-  else delete article.dataset.stratusBand;
-  renderBandBadge(article, band, sig);
-  if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+// -------------------------------------------- tweet-page context panel (AX.5, $0)
+//
+// On a /status/ page, below the focused tweet's action row, a collapsible panel
+// shows who this person is to me: stage, exchanges, followers + momentum, tags,
+// whether I already replied to THIS tweet, open loops I owe them, my last
+// measured replies with outcomes, the angle that works, and my notes. All from
+// the C1 dossier (GET /x/people/:handle, pure SQL, $0), cached per handle for 5
+// min. The pure view-model is shared/tweetContext.ts; this is DOM plumbing only.
+
+const CONTEXT_COLLAPSED_KEY = 'augment:contextCollapsed';
+const DOSSIER_TTL_MS = 5 * 60_000;
+const CONTEXT_OUTCOME_MAX = 3;
+
+// engaged+ stages have their own tone class; below that (stranger/noticed) fall
+// back to the neutral gray `engaged` tone so a stage chip always renders.
+const TONED_STAGES = new Set(['engaged', 'responded', 'mutual', 'ally']);
+
+type DossierState = 'ready' | 'missing' | 'unavailable';
+interface DossierCacheEntry {
+  state: DossierState;
+  dossier: Dossier | null;
+  at: number;
+}
+
+let contextCollapsed = false;
+const dossierCache = new Map<string, DossierCacheEntry>();
+const dossierInFlight = new Set<string>();
+
+function initContextCollapsed(): void {
+  chrome.storage.local
+    .get(CONTEXT_COLLAPSED_KEY)
+    .then((out) => {
+      contextCollapsed = out[CONTEXT_COLLAPSED_KEY] === true;
+    })
+    .catch(() => {
+      /* keep default (expanded) */
+    });
+}
+
+async function refreshDossier(handle: string): Promise<void> {
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'GET',
+    path: `/x/people/${encodeURIComponent(handle)}`,
+  };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as ApiResponse<Dossier> | undefined;
+    if (res?.ok && res.data) {
+      dossierCache.set(handle, { state: 'ready', dossier: res.data, at: Date.now() });
+    } else if (res && !res.ok && res.status === 404) {
+      dossierCache.set(handle, { state: 'missing', dossier: null, at: Date.now() });
+    } else {
+      // unconfigured (no bearer) / network / other — cache so we don't refetch
+      // every scan, but render nothing (not a "no file" line).
+      dossierCache.set(handle, { state: 'unavailable', dossier: null, at: Date.now() });
+    }
+  } catch (err) {
+    console.warn('[stratus] dossier fetch failed', err);
+    dossierCache.set(handle, { state: 'unavailable', dossier: null, at: Date.now() });
+  }
+}
+
+// Returns the last cached entry (possibly stale, shown while refreshing) and
+// kicks a background fetch when expired. Unlike the timeline glance cache this
+// re-triggers a scan on fetch completion — a status page can be mutation-quiet,
+// so nothing else would re-render the panel once the dossier lands.
+function getDossier(handle: string): DossierCacheEntry | null {
+  const key = handle.toLowerCase();
+  const cached = dossierCache.get(key) ?? null;
+  const fresh = cached && Date.now() - cached.at < DOSSIER_TTL_MS;
+  if (!fresh && !dossierInFlight.has(key)) {
+    dossierInFlight.add(key);
+    void refreshDossier(key).finally(() => {
+      dossierInFlight.delete(key);
+      scheduleScan();
+    });
+  }
+  return cached;
+}
+
+function stageTone(stage: string): string {
+  return TONED_STAGES.has(stage) ? stage : 'engaged';
+}
+
+function ctxEl(tag: string, className: string, text?: string): HTMLElement {
+  const e = document.createElement(tag);
+  e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function compactNum(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}K`.replace('.0K', 'K');
+  return `${(n / 1_000_000).toFixed(1)}M`.replace('.0M', 'M');
+}
+
+function humanizeMinutes(min: number): string {
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function agoLabel(iso: string | null, nowMs: number): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return humanizeMinutes(Math.max(0, Math.floor((nowMs - t) / 60_000)));
+}
+
+function renderMissingPanel(handle: string, tweetId: string): HTMLElement {
+  const panel = ctxEl('div', CONTEXT_PANEL_CLASS);
+  panel.dataset.tweetId = tweetId;
+  panel.dataset.handle = handle;
+  panel.appendChild(ctxEl('div', 'stratus-ctx-empty', `No stratus file on @${handle}`));
+  return panel;
+}
+
+function renderContextPanel(
+  model: TweetContextModel,
+  handle: string,
+  tweetId: string,
+): HTMLElement {
+  const now = Date.now();
+  const h = model.header;
+  const panel = ctxEl('div', CONTEXT_PANEL_CLASS);
+  panel.dataset.tweetId = tweetId;
+  panel.dataset.handle = handle;
+  panel.dataset.collapsed = contextCollapsed ? 'true' : 'false';
+
+  const header = ctxEl('div', 'stratus-ctx-header');
+  const title = ctxEl('div', 'stratus-ctx-title');
+  title.dataset.handle = handle;
+  // AX.6: the title opens the dossier. The collapse toggle is a sibling (not a
+  // child of title), so a toggle click never lands here.
+  title.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    sendOpenPerson(handle);
+  });
+
+  const stageChip = ctxEl('span', PERSON_CHIP_CLASS, h.stage);
+  stageChip.dataset.tone = stageTone(h.stage);
+  title.appendChild(stageChip);
+  title.appendChild(
+    ctxEl(
+      'span',
+      'stratus-ctx-since',
+      h.sinceDays !== null ? `in your circles · ${h.sinceDays}d` : 'in your circles',
+    ),
+  );
+  header.appendChild(title);
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'stratus-ctx-toggle';
+  toggle.title = 'Collapse / expand stratus context';
+  toggle.textContent = contextCollapsed ? '▸' : '▾';
+  toggle.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    contextCollapsed = !contextCollapsed;
+    panel.dataset.collapsed = contextCollapsed ? 'true' : 'false';
+    toggle.textContent = contextCollapsed ? '▸' : '▾';
+    void chrome.storage.local.set({ [CONTEXT_COLLAPSED_KEY]: contextCollapsed }).catch(() => {});
+  });
+  header.appendChild(toggle);
+  panel.appendChild(header);
+
+  const body = ctxEl('div', 'stratus-ctx-body');
+
+  const metaBits: string[] = [];
+  if (h.followersCount !== null) metaBits.push(`${compactNum(h.followersCount)} followers`);
+  if (h.momentumPerDay !== null && h.momentumPerDay !== 0) {
+    metaBits.push(`${h.momentumPerDay > 0 ? '+' : ''}${h.momentumPerDay}/day`);
+  }
+  if (metaBits.length) body.appendChild(ctxEl('div', 'stratus-ctx-meta', metaBits.join(' · ')));
+
+  if (h.tags.length) {
+    const tagRow = ctxEl('div', 'stratus-ctx-tags');
+    for (const t of h.tags) tagRow.appendChild(ctxEl('span', 'stratus-ctx-tag', t));
+    body.appendChild(tagRow);
+  }
+
+  if (model.alreadyReplied) {
+    body.appendChild(
+      ctxEl(
+        'div',
+        'stratus-ctx-banner',
+        `You already replied to this tweet · ${humanizeMinutes(model.alreadyReplied.ageMin)}`,
+      ),
+    );
+  }
+
+  const r = model.relationship;
+  if (r.inbound > 0 || r.outbound > 0) {
+    const bits = [`${r.inbound} from them`, `${r.outbound} from you`];
+    const lastIn = agoLabel(r.lastInboundAt, now);
+    const lastOut = agoLabel(r.lastOutboundAt, now);
+    if (lastIn) bits.push(`last in ${lastIn}`);
+    if (lastOut) bits.push(`last out ${lastOut}`);
+    body.appendChild(ctxRow('exchanges', bits.join(' · ')));
+  }
+
+  if (model.openLoops.length) {
+    const row = ctxEl('div', 'stratus-ctx-row');
+    row.appendChild(ctxEl('span', 'stratus-ctx-label', `you owe · ${model.openLoops.length}`));
+    const list = ctxEl('div', 'stratus-ctx-list');
+    for (const loop of model.openLoops.slice(0, CONTEXT_OUTCOME_MAX)) {
+      list.appendChild(ctxEl('div', 'stratus-ctx-loop', `${loop.ageDays}d · ${loop.text}`));
+    }
+    row.appendChild(list);
+    body.appendChild(row);
+  }
+
+  if (model.outcomes.length) {
+    const row = ctxEl('div', 'stratus-ctx-row');
+    row.appendChild(ctxEl('span', 'stratus-ctx-label', 'your last replies'));
+    const list = ctxEl('div', 'stratus-ctx-list');
+    for (const o of model.outcomes) {
+      const item = ctxEl('div', 'stratus-ctx-outcome');
+      item.appendChild(ctxEl('div', 'stratus-ctx-outcome-text', o.text));
+      const bits: string[] = [];
+      if (o.views !== null) bits.push(`${compactNum(o.views)} views`);
+      if (o.profileVisits !== null) bits.push(`${compactNum(o.profileVisits)} profile`);
+      if (o.angle) bits.push(o.angle);
+      if (bits.length) item.appendChild(ctxEl('div', 'stratus-ctx-outcome-meta', bits.join(' · ')));
+      list.appendChild(item);
+    }
+    row.appendChild(list);
+    body.appendChild(row);
+  }
+
+  if (model.anglePreference) {
+    body.appendChild(
+      ctxRow(
+        'best angle',
+        `${model.anglePreference.angle} · ${model.anglePreference.measured} measured`,
+      ),
+    );
+  }
+
+  if (model.notes) body.appendChild(ctxEl('div', 'stratus-ctx-notes', model.notes));
+
+  panel.appendChild(body);
+  return panel;
+}
+
+function ctxRow(label: string, value: string): HTMLElement {
+  const row = ctxEl('div', 'stratus-ctx-row');
+  row.appendChild(ctxEl('span', 'stratus-ctx-label', label));
+  row.appendChild(ctxEl('span', 'stratus-ctx-val', value));
+  return row;
+}
+
+// Once-per-scan: upsert the context panel under the focused tweet, and tear a
+// stale panel down on SPA navigation (to the timeline or a different status).
+function syncContextPanel(focusedId: string | null): void {
+  const existing = document.querySelector<HTMLElement>(`.${CONTEXT_PANEL_CLASS}`);
+  if (!focusedId) {
+    existing?.remove(); // left the status page
+    return;
+  }
+
+  let focusedArticle: HTMLElement | null = null;
+  let handle = '';
+  for (const article of document.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
+    const permalink = findPermalink(article);
+    if (permalink && permalink.tweetId === focusedId) {
+      focusedArticle = article;
+      handle = permalink.username.toLowerCase();
+      break;
+    }
+  }
+  if (!focusedArticle || !handle) {
+    if (existing && existing.dataset.tweetId !== focusedId) existing.remove();
+    return;
+  }
+
+  const entry = getDossier(handle);
+  if (!entry || entry.state === 'unavailable') {
+    existing?.remove(); // loading with nothing cached, or unconfigured → render nothing
+    return;
+  }
+
+  const renderKey =
+    entry.state === 'ready'
+      ? `ready:${focusedId}:${handle}:${entry.at}`
+      : `missing:${focusedId}:${handle}`;
+  if (
+    existing &&
+    existing.dataset.renderKey === renderKey &&
+    focusedArticle.nextElementSibling === existing
+  ) {
+    return; // unchanged and still anchored — skip the rebuild
+  }
+
+  existing?.remove();
+  const panel =
+    entry.state === 'ready' && entry.dossier
+      ? renderContextPanel(
+          buildTweetContextModel(entry.dossier, focusedId, Date.now()),
+          handle,
+          focusedId,
+        )
+      : renderMissingPanel(handle, focusedId);
+  panel.dataset.renderKey = renderKey;
+  // Insert into the article's PARENT flow (as its next sibling), not inside the
+  // article: the action row is the article's last block, so this reads as "below
+  // the action row", and a sibling isn't carried when X recycles the article node.
+  focusedArticle.insertAdjacentElement('afterend', panel);
 }
 
 // --------------------------------------------------------------- radar (§7.2)
@@ -1122,6 +2000,89 @@ function flushRadar(): void {
       await chrome.runtime.sendMessage(msg);
     } catch (err) {
       console.warn('[stratus] radar report failed', err);
+    }
+  })();
+}
+
+// ------------------------------------------------- manual add to Radar (RU.8)
+//
+// A round ⊕ on every tweet's action row pushes it into the Radar queue
+// regardless of band — "I want to reply to this one, period." The sighting
+// carries band: 'manual' (queue metadata, ranked first; never a classifier
+// verdict — the confirm endpoint coerces it away from the reply snapshot), real
+// signals when the metrics label is present, synthesized zeros otherwise. Sent
+// through the same radar-report path the background (single writer, §7.24) owns,
+// flushed immediately — it's one deliberate click, not a scroll-time capture.
+
+const radarAddHandled = new WeakSet<Element>();
+
+function synthManualSignals(article: Element): TweetSignals {
+  const dt = article.querySelector('time')?.getAttribute('datetime');
+  const posted = dt ? Date.parse(dt) : Number.NaN;
+  const ageMin = Number.isNaN(posted) ? 0 : Math.max(0, (Date.now() - posted) / 60000);
+  return { views: 0, replies: 0, ageMin, vpm: 0, bait: false };
+}
+
+function attachRadarAddButton(article: Element): void {
+  const reply = article.querySelector('[data-testid="reply"]');
+  if (!reply) return;
+  const actionRow = reply.closest('div[role="group"]');
+  if (!actionRow || radarAddHandled.has(actionRow)) return;
+  if (!findPermalink(article)) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = RADAR_ADD_CLASS;
+  btn.title = 'Add this tweet to the stratus Radar queue';
+  btn.textContent = '⊕';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    onRadarAddClick(btn);
+  });
+
+  actionRow.appendChild(btn);
+  radarAddHandled.add(actionRow);
+}
+
+function onRadarAddClick(btn: HTMLButtonElement): void {
+  const article = btn.closest<HTMLElement>('article[data-testid="tweet"]');
+  if (!article) return;
+  const permalink = findPermalink(article);
+  if (!permalink) return;
+
+  const sig = readTweetSignals(article) ?? synthManualSignals(article);
+  const text = article.querySelector('[data-testid="tweetText"]')?.textContent?.trim() ?? '';
+  const userNameEl = article.querySelector('[data-testid="User-Name"]');
+  const author = userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  const now = new Date().toISOString();
+
+  const sighting: RadarSighting = {
+    tweetId: permalink.tweetId,
+    url: permalink.url,
+    handle: permalink.username,
+    author,
+    text: text.slice(0, 500),
+    band: 'manual',
+    signals: { ...sig, ageMin: Math.round(sig.ageMin), vpm: Math.round(sig.vpm * 10) / 10 },
+    firstSeenAt: now,
+    lastSeenAt: now,
+  };
+
+  // Flip to ✓ optimistically; the background is the single buffer writer (§7.24).
+  btn.textContent = '✓';
+  btn.dataset.state = 'added';
+  window.setTimeout(() => {
+    btn.textContent = '⊕';
+    delete btn.dataset.state;
+  }, 1500);
+
+  const msg: RadarReport = { type: 'stratus/radar-report', sightings: [sighting] };
+  void (async () => {
+    try {
+      await chrome.runtime.sendMessage(msg);
+    } catch (err) {
+      console.warn('[stratus] radar add failed', err);
     }
   })();
 }
@@ -1249,6 +2210,239 @@ function flushSightings(): void {
   })();
 }
 
+// ------------------------------------------ passive timeline harvest (HV.2)
+//
+// Every tweet the algorithm puts in front of you on /home joins the same
+// harvest_rows longitudinal series a hand-run harvest fills, at $0 — the swipe
+// file and the band-calibration denominators grow from normal scrolling. The
+// row is built by the harvester's own DOM reader (§7.27: one reader, not two)
+// and shipped on the flushSightings transport. A failed flush warns and drops
+// and is never retried: a lost sighting is a missing point on a view curve,
+// never a lost user action. The server owns the per-day run, the recapture
+// gate, the 2,000/day cap and the 60-day prune (POST /x/harvest/passive).
+
+// Default ON (opt-out via Settings): absent key means enabled.
+let passiveHarvestEnabled = true;
+
+function initPassiveHarvestSetting(): void {
+  chrome.storage.local
+    .get(PASSIVE_HARVEST_KEY)
+    .then((out) => {
+      passiveHarvestEnabled = out[PASSIVE_HARVEST_KEY] !== false;
+    })
+    .catch(() => {
+      /* keep default */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[PASSIVE_HARVEST_KEY];
+    if (change) passiveHarvestEnabled = change.newValue !== false;
+  });
+}
+
+const pendingPassive = new Map<string, HarvestIngestRow>();
+const passiveSentAt = new Map<string, number>();
+let passiveFlushTimer: number | null = null;
+
+function recordPassiveHarvest(article: Element): void {
+  if (!passiveHarvestEnabled) return;
+  // Re-read per call, not once at start(): X navigates without reloading.
+  if (!isHomeTimelinePath(location.pathname)) return;
+  if (isHarvestActive()) return;
+
+  // Cheap gate first — applyBand re-runs on every mutation burst, so the
+  // throttle is settled off one querySelector before extractArticle's full read.
+  const permalink = findPermalink(article);
+  if (!permalink) return;
+  const tweetId = permalink.tweetId;
+  if (pendingPassive.has(tweetId)) return;
+  if (!shouldRecordPassive(passiveSentAt.get(tweetId), Date.now())) return;
+
+  const row = toPassiveIngestRow(extractArticle(article));
+  if (!row) return;
+  pendingPassive.set(tweetId, row);
+  if (passiveFlushTimer === null) {
+    passiveFlushTimer = window.setTimeout(flushPassiveHarvest, PASSIVE_FLUSH_MS);
+  }
+}
+
+function flushPassiveHarvest(): void {
+  passiveFlushTimer = null;
+  if (pendingPassive.size === 0) return;
+  const batch = [...pendingPassive.entries()].slice(0, PASSIVE_BATCH_MAX);
+  for (const [tweetId] of batch) pendingPassive.delete(tweetId);
+  if (pendingPassive.size > 0) {
+    // Overflow beyond one server batch waits for the next window.
+    passiveFlushTimer = window.setTimeout(flushPassiveHarvest, PASSIVE_FLUSH_MS);
+  }
+
+  // One entry per distinct tweet seen this session. A marathon scroll resets the
+  // map rather than pruning it — forgetting costs one early re-send per tweet,
+  // which the server's own recapture gate absorbs as skippedRecent.
+  if (passiveSentAt.size > 5000) passiveSentAt.clear();
+  const at = Date.now();
+  for (const [tweetId] of batch) passiveSentAt.set(tweetId, at);
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/harvest/passive',
+    body: { rows: batch.map(([, row]) => row) },
+  };
+  void (async () => {
+    try {
+      const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+      if (res && !res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] passive harvest failed', res.code);
+      }
+    } catch (err) {
+      console.warn('[stratus] passive harvest failed', err);
+    }
+  })();
+}
+
+// ---------------------------------------- active-times capture (A3.3)
+//
+// x.com/i/account_analytics renders the audience "Active times" heat grid —
+// presence data the Composer's best-slot ranking blends in below own measured
+// cells (A3.4). Captured passively whenever the user happens to visit the
+// page ($0, no tab automation — decision 3): once per visit, parsed by the
+// A3.1 shared module (§7.27 — one parser), shipped through ApiRequest. The
+// server route is append-only and never suppresses (a duplicate POST is
+// harmless); the only chatter gate is client-side — skip when the grid is
+// unchanged AND the last send is under 12h old, stamped in
+// chrome.storage.local. A failed send retries on the next mutation scan.
+
+// Verify live on first run — X owns this path; sub-tabs (Audience) share the prefix.
+const ACTIVE_TIMES_PATH_PREFIX = '/i/account_analytics';
+// Duplicated from the shared DOM extractor (module-private there): only used
+// to anchor the metric-dropdown read next to the same section.
+const ACTIVE_TIMES_HEADING_SELECTOR = 'h1, h2, h3, h4, [role="heading"]';
+const ACTIVE_TIMES_HEADING_RE = /active times/i;
+const ACTIVE_TIMES_METRIC_SELECTOR = 'select, [role="combobox"]';
+const ACTIVE_TIMES_METRIC_HOPS = 8;
+/** Mirrors the server's metric length clamp (routes/analytics.ts). */
+const ACTIVE_TIMES_METRIC_MAX = 40;
+const ACTIVE_TIMES_FALLBACK_METRIC = 'likes';
+const ACTIVE_TIMES_LAST_SENT_KEY = 'activeTimes:lastSent';
+const ACTIVE_TIMES_RESEND_MS = 12 * 60 * 60 * 1000;
+
+interface ActiveTimesLastSent {
+  grid: number[][];
+  sentAt: number;
+}
+
+let activeTimesDone = false; // sent or suppressed this visit
+let activeTimesInFlight = false;
+let activeTimesFailLogged = false;
+
+function parseActiveTimesLastSent(raw: unknown): ActiveTimesLastSent | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const rec = raw as { grid?: unknown; sentAt?: unknown };
+  if (!Array.isArray(rec.grid) || typeof rec.sentAt !== 'number') return null;
+  return { grid: rec.grid as number[][], sentAt: rec.sentAt };
+}
+
+function dropdownLabel(el: Element | null): string | null {
+  if (!el) return null;
+  const text =
+    el instanceof HTMLSelectElement
+      ? el.selectedOptions[0]?.textContent || el.value
+      : el.textContent;
+  return text?.trim().toLowerCase().slice(0, ACTIVE_TIMES_METRIC_MAX) || null;
+}
+
+// The analytics dropdown names which metric the heatmap is showing ('likes',
+// …). Best-effort: the capture is worth storing even when the label isn't
+// readable, so an unfound dropdown falls back rather than blocking.
+function readActiveTimesMetric(): string {
+  const headings = [...document.querySelectorAll(ACTIVE_TIMES_HEADING_SELECTOR)];
+  const heading = headings.find((h) => ACTIVE_TIMES_HEADING_RE.test(h.textContent ?? ''));
+  let container: Element | null = heading?.parentElement ?? null;
+  for (let hop = 0; hop < ACTIVE_TIMES_METRIC_HOPS && container; hop++) {
+    const label = dropdownLabel(container.querySelector(ACTIVE_TIMES_METRIC_SELECTOR));
+    if (label) return label;
+    container = container.parentElement;
+  }
+  // Live (verified 2026-07-24): the metric combobox ("Likes") sits above the
+  // whole Audience tab, outside every ≤8-hop ancestor of the section heading,
+  // and it is that page's only combobox — the page-level read is unambiguous.
+  return (
+    dropdownLabel(document.querySelector(ACTIVE_TIMES_METRIC_SELECTOR)) ??
+    ACTIVE_TIMES_FALLBACK_METRIC
+  );
+}
+
+async function sendActiveTimes(extracted: ExtractedActiveTimes, grid: number[][]): Promise<void> {
+  let last: ActiveTimesLastSent | null = null;
+  try {
+    const out = await chrome.storage.local.get(ACTIVE_TIMES_LAST_SENT_KEY);
+    last = parseActiveTimesLastSent(out[ACTIVE_TIMES_LAST_SENT_KEY]);
+  } catch {
+    // Unreadable stamp = never sent; worst case is one early re-send.
+  }
+  if (last && gridsEqual(last.grid, grid) && Date.now() - last.sentAt < ACTIVE_TIMES_RESEND_MS) {
+    activeTimesDone = true; // unchanged and fresh — nothing new to store
+    return;
+  }
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/analytics/active-times',
+    body: {
+      metric: readActiveTimesMetric(),
+      tzOffsetMin: -new Date().getTimezoneOffset(),
+      cols: extracted.cols,
+      rows: extracted.rows,
+      grid,
+    },
+  };
+  try {
+    const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+    if (res?.ok) {
+      activeTimesDone = true;
+      const stamp: ActiveTimesLastSent = { grid, sentAt: Date.now() };
+      void chrome.storage.local.set({ [ACTIVE_TIMES_LAST_SENT_KEY]: stamp }).catch(() => {});
+      return;
+    }
+    if (res && res.code === 'unconfigured') {
+      activeTimesDone = true; // no server to talk to — stop asking this visit
+      return;
+    }
+    if (!activeTimesFailLogged) {
+      activeTimesFailLogged = true;
+      console.warn('[stratus] active-times capture failed', res?.code);
+    }
+  } catch (err) {
+    if (!activeTimesFailLogged) {
+      activeTimesFailLogged = true;
+      console.warn('[stratus] active-times capture failed', err);
+    }
+  }
+}
+
+function syncActiveTimesCapture(): void {
+  // Pathname re-read per scan, not once: X navigates without reloading. The
+  // off-page branch is also the visit reset — returning later captures again.
+  if (!location.pathname.startsWith(ACTIVE_TIMES_PATH_PREFIX)) {
+    activeTimesDone = false;
+    activeTimesFailLogged = false;
+    return;
+  }
+  if (!passiveCaptureEnabled) return;
+  if (activeTimesDone || activeTimesInFlight) return;
+  // Gate order is the perf contract (HV.2): the flags above settle for free;
+  // the DOM walk below runs only on the analytics page while uncaptured.
+  const extracted = extractActiveTimesSection(document);
+  if (!extracted) return; // section still rendering — next mutation scan retries
+  const grid = parseHeatColors(extracted.colors, extracted.cols, extracted.rows);
+  if (!grid) return;
+  activeTimesInFlight = true;
+  void sendActiveTimes(extracted, grid).finally(() => {
+    activeTimesInFlight = false;
+  });
+}
+
 // --------------------------------------------------------- launch room (C7)
 //
 // While a Launch Room is live and the user has the launched tweet open, the
@@ -1323,18 +2517,365 @@ function flushLaunchReplies(): void {
   })();
 }
 
+// ------------------------------------------- notifications surface (C10, NT.5)
+//
+// x.com/notifications is the only place likes, reposts and follows are visible
+// at all — the relationship signals stratus otherwise never sees. Three
+// read-only augmentations plus one $0 harvest, all gated on the pathname (X
+// navigates without reloads, so the check is per scan, not once):
+//
+//   (a) every reply notification stratus already knows (an API-pulled `mentions`
+//       row) gets a "↳ on your post: …" line, plus ✓ when the inbox already
+//       settled it — no more clicking through to remember which post it's on;
+//   (b) aggregated cells get a tier chip per handle that matters (ally / mutual
+//       / in-band target) so the eye goes to the people worth answering;
+//   (c) those same cells are harvested into people rows + timeline events,
+//       behind the existing passiveCapture toggle — no new setting (decision 5);
+//   (d) a "sync replies" chip runs the capped mentions pull on a human click.
+//
+// Only (d) spends, one already-capped POST per deliberate click: a page visit is
+// never consent to spend (decision 4), so nothing here auto-refreshes.
+//
+// The `mentions` table is NEVER written from this surface. Its max stored
+// tweet_id IS the since_id checkpoint, so inserting a DOM-scraped reply id would
+// skip every mention the API hasn't returned yet (§4; C7's launch.ts routes
+// around the same trap). Parent context is a pure read of what the daily pull
+// already billed for.
+
+const NOTIF_CTX_CLASS = 'stratus-notif-ctx';
+const NOTIF_TIERS_CLASS = 'stratus-notif-tiers';
+const NOTIF_TIER_CLASS = 'stratus-notif-tier';
+const NOTIF_SYNC_CLASS = 'stratus-notif-sync';
+const NOTIF_SYNC_LABEL = 'stratus: sync replies';
+
+const NOTIF_CONTEXT_THROTTLE_MS = 60_000;
+const NOTIF_PARENT_MAX = 90;
+const NOTIF_TIER_CHIP_MAX = 3;
+const ENGAGEMENT_FLUSH_MS = 2000;
+// Mirrors MAX_ENGAGEMENTS_PER_BATCH server-side; an over-long batch is a 400
+// for the WHOLE batch, so the client never lets one form.
+const ENGAGEMENT_BATCH_MAX = 50;
+const ENGAGEMENT_KEY_TARGET_CHARS = 40;
+
+/** What crosses the wire to POST /x/people/engagements. `'other'` is dropped
+ *  client-side and deliberately isn't representable (the server's whitelist
+ *  would 400 the whole batch on it). */
+interface EngagementReport {
+  kind: Exclude<EngagementKind, 'other'>;
+  handle: string;
+  targetText: string | null;
+  seenAt: string;
+}
+
+let notifMentions: NotifContextMap = {};
+let notifRankMap: RankMap = {};
+let notifContextAt = 0;
+let notifContextInFlight: Promise<void> | null = null;
+
+const engagementHandled = new WeakSet<Element>();
+const pendingEngagements = new Map<string, EngagementReport>();
+const engagementSent = new Set<string>();
+let engagementFlushTimer: number | null = null;
+
+function onNotificationsPage(): boolean {
+  return location.pathname.startsWith('/notifications');
+}
+
+function clipText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+// One message serves both augmentations: it warms the background's 5-min
+// mentions cache and the 10-min S0.3 rank map in parallel. The response is
+// always ok:true — an unconfigured extension, a failed fetch or a thrown
+// handler all degrade to empty (or last-good) maps, so `{}` means "no context
+// yet", never an error worth surfacing on someone else's page.
+async function fetchNotifContext(force: boolean): Promise<void> {
+  const msg: NotifContextGet = force
+    ? { type: 'stratus/notif-context', force: true }
+    : { type: 'stratus/notif-context' };
+  try {
+    const res = (await chrome.runtime.sendMessage(msg)) as NotifContextResponse | undefined;
+    if (res?.ok) {
+      notifMentions = res.mentions;
+      notifRankMap = res.rankMap;
+    }
+  } catch (err) {
+    console.warn('[stratus] notif context failed', err);
+  }
+  // Stamped on settle, not only on success: the background already decides what
+  // to cache on failure (it keeps the last good map), so this throttle only
+  // governs how often we ask — and stamping unconditionally is what stops a
+  // failing ask from re-firing on every animation frame.
+  notifContextAt = Date.now();
+  // The notifications page can go mutation-quiet between arrivals, so nothing
+  // else would repaint the lines once the maps land.
+  scheduleScan();
+}
+
+// scan() is synchronous: use whatever is cached now and kick a refresh when the
+// throttle window has passed. The forced variant (sync chip) never comes through
+// here — it must not be swallowed by an in-flight bare ask.
+function syncNotifContext(): void {
+  if (notifContextInFlight) return;
+  if (notifContextAt !== 0 && Date.now() - notifContextAt < NOTIF_CONTEXT_THROTTLE_MS) return;
+  notifContextInFlight = fetchNotifContext(false).finally(() => {
+    notifContextInFlight = null;
+  });
+}
+
+// (a) The reply notification's own tweet id is what findPermalink yields here,
+// and that is exactly how the mentions map is keyed.
+function applyNotifParentContext(article: Element): void {
+  const existing = article.querySelector<HTMLElement>(`.${NOTIF_CTX_CLASS}`);
+  const permalink = findPermalink(article);
+  const entry = permalink ? notifMentions[permalink.tweetId] : undefined;
+  const parentText = entry?.parentText ?? null;
+  const answered = entry?.status === 'answered';
+
+  // Nothing known about this reply — also clears a line a recycled node kept.
+  if (!parentText && !answered) {
+    existing?.remove();
+    return;
+  }
+
+  const sig = `${answered ? 'a' : '-'}:${parentText ? clipText(parentText, NOTIF_PARENT_MAX) : ''}`;
+  if (existing && existing.dataset.sig === sig) return;
+
+  const line = existing ?? document.createElement('div');
+  if (!existing) {
+    line.className = NOTIF_CTX_CLASS;
+    // Under the reply's own text when there is one; X sometimes renders a
+    // media-only reply, and then the cell itself is the only anchor.
+    const anchor = article.querySelector('[data-testid="tweetText"]');
+    if (anchor) anchor.insertAdjacentElement('afterend', line);
+    else article.appendChild(line);
+  }
+  line.dataset.sig = sig;
+  line.textContent = '';
+  if (parentText) {
+    line.appendChild(ctxEl('span', 'stratus-notif-ctx-label', '↳ on your post: '));
+    line.appendChild(
+      ctxEl('span', 'stratus-notif-ctx-quote', `“${clipText(parentText, NOTIF_PARENT_MAX)}”`),
+    );
+  }
+  // An answered mention with no parent post of mine still earns the chip — it is
+  // the "don't reply to this twice" signal, which is the point.
+  if (answered) line.appendChild(ctxEl('span', 'stratus-notif-answered', '✓ answered'));
+}
+
+// (b) Tweet-article notifications already get the richer AX.3 glance chips from
+// the shared scan loop; this covers the aggregated cells, which carry up to ~8
+// handles and no User-Name row, so one compact chip per handle that matters is
+// the right density.
+function applyNotifTierChips(cell: Element, handles: string[]): void {
+  const existing = cell.querySelector<HTMLElement>(`.${NOTIF_TIERS_CLASS}`);
+  const chips: { handle: string; tier: PersonTier }[] = [];
+  for (const handle of handles) {
+    const tier = personTierFor(notifRankMap[handle]);
+    if (tier) chips.push({ handle, tier });
+    if (chips.length >= NOTIF_TIER_CHIP_MAX) break;
+  }
+
+  const header = cell.querySelector('[dir]');
+  if (chips.length === 0 || !header) {
+    existing?.remove();
+    return;
+  }
+
+  const sig = chips.map((c) => `${c.tier}:${c.handle}`).join('|');
+  if (existing && existing.dataset.sig === sig) return;
+
+  const span = existing ?? document.createElement('span');
+  if (!existing) {
+    span.className = NOTIF_TIERS_CLASS;
+    // AFTER the header block, never inside it: the parser reads the first [dir]
+    // element as the header line and the longest [dir="auto"] as the target
+    // post, so chips nested in either would feed our own text back into the
+    // next parse. A plain span with no dir attribute is invisible to both.
+    header.insertAdjacentElement('afterend', span);
+  }
+  span.dataset.sig = sig;
+  span.textContent = '';
+  for (const chip of chips) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = NOTIF_TIER_CLASS;
+    btn.dataset.tone = chip.tier;
+    btn.dataset.handle = chip.handle;
+    btn.title = `@${chip.handle} — ${chip.tier}. Open their dossier.`;
+    btn.textContent = `${chip.tier} @${chip.handle}`;
+    btn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      sendOpenPerson(chip.handle);
+    });
+    span.appendChild(btn);
+  }
+}
+
+// (b) + (c) share one parse per cell per scan.
+function scanNotificationCells(): void {
+  for (const cell of document.querySelectorAll('article[data-testid="notification"]')) {
+    const parsed = parseNotificationCell(cell);
+    if (!parsed) continue;
+    applyNotifTierChips(cell, parsed.handles);
+
+    if (!passiveCaptureEnabled || engagementHandled.has(cell)) continue;
+    // 'other' is X's bell cell ("New post notifications for … and 6 others") —
+    // never sent. An empty handle list is a skeleton X hasn't filled in yet:
+    // leave both unmarked so a later scan retries them once they resolve
+    // (the capturePassiveHoverCards discipline).
+    if (parsed.kind === 'other' || parsed.handles.length === 0) continue;
+
+    engagementHandled.add(cell);
+    const seenAt = new Date().toISOString();
+    for (const handle of parsed.handles) {
+      recordEngagement({ kind: parsed.kind, handle, targetText: parsed.targetText, seenAt });
+    }
+  }
+}
+
+function recordEngagement(engagement: EngagementReport): void {
+  const key = `${engagement.kind}:${engagement.handle}:${
+    engagement.targetText?.slice(0, ENGAGEMENT_KEY_TARGET_CHARS) ?? ''
+  }`;
+  if (engagementSent.has(key)) return;
+  pendingEngagements.set(key, engagement);
+  if (engagementFlushTimer === null) {
+    engagementFlushTimer = window.setTimeout(flushEngagements, ENGAGEMENT_FLUSH_MS);
+  }
+}
+
+function flushEngagements(): void {
+  engagementFlushTimer = null;
+  if (pendingEngagements.size === 0) return;
+
+  const engagements: EngagementReport[] = [];
+  for (const [key, engagement] of pendingEngagements) {
+    if (engagements.length >= ENGAGEMENT_BATCH_MAX) break;
+    engagements.push(engagement);
+    pendingEngagements.delete(key);
+    engagementSent.add(key);
+  }
+  if (pendingEngagements.size > 0) {
+    // Overflow beyond one server batch waits for the next window.
+    engagementFlushTimer = window.setTimeout(flushEngagements, ENGAGEMENT_FLUSH_MS);
+  }
+  // Chatter guard only: the server's deterministic event ids make a re-send a
+  // no-op, so forgetting keys costs one redundant POST, never a double event.
+  if (engagementSent.size > 3000) engagementSent.clear();
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/people/engagements',
+    body: { engagements },
+  };
+  void (async () => {
+    try {
+      const res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+      if (res && !res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] engagement report failed', res.code);
+      }
+    } catch (err) {
+      console.warn('[stratus] engagement report failed', err);
+    }
+  })();
+}
+
+// (d) One chip per notifications pageview, next to X's own "Notifications"
+// heading. Re-injected when X rebuilds the header (sub-tab switches do).
+function syncNotifSyncChip(): void {
+  if (document.querySelector(`.${NOTIF_SYNC_CLASS}`)) return;
+  const header = document.querySelector('[data-testid="primaryColumn"] h2');
+  if (!header) return;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = NOTIF_SYNC_CLASS;
+  btn.textContent = NOTIF_SYNC_LABEL;
+  btn.title =
+    'Pull the newest mentions so the "on your post" lines cover fresh replies (capped 6/day)';
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    void onSyncChipClick(btn);
+  });
+  header.insertAdjacentElement('afterend', btn);
+}
+
+function resetSyncChip(btn: HTMLButtonElement): void {
+  setTimeout(() => {
+    if (btn.isConnected) {
+      btn.dataset.state = 'idle';
+      btn.textContent = NOTIF_SYNC_LABEL;
+    }
+  }, STATUS_PERSIST_MS);
+}
+
+async function onSyncChipClick(btn: HTMLButtonElement): Promise<void> {
+  if (btn.dataset.state === 'working') return;
+  btn.dataset.state = 'working';
+  btn.textContent = 'syncing…';
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/mentions/refresh',
+    body: {},
+  };
+  let res: ApiResponse | undefined;
+  try {
+    res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+  } catch (err) {
+    console.warn('[stratus] mentions refresh failed', err);
+  }
+
+  if (!res?.ok) {
+    // The server's 6/day cap is the real limit and stays the only one — no
+    // client-side bypass, and no retry loop that would spend on its own.
+    const limited = res?.status === 429 || res?.code === 'refresh_limit';
+    btn.dataset.state = 'failed';
+    btn.textContent = limited ? 'limit reached' : 'sync failed';
+    resetSyncChip(btn);
+    return;
+  }
+
+  // The pull is already paid for: force past the background's 5-min mentions
+  // cache (it drains any in-flight pull first) so the rows it just fetched show
+  // up now rather than up to five minutes from now.
+  await fetchNotifContext(true);
+  btn.dataset.state = 'done';
+  btn.textContent = 'synced';
+  resetSyncChip(btn);
+}
+
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
   const focusedId = focusedTweetIdFromUrl();
+  const glance = getGlanceMap();
+  const onNotifications = onNotificationsPage();
   for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
+    attachRadarAddButton(article);
     applyBand(article);
+    applyPersonChips(article, glance);
     if (focusedId) attachReplyMasterButton(article, focusedId);
+    if (onNotifications) applyNotifParentContext(article);
   }
+  syncContextPanel(focusedId);
+  syncVariantChips(focusedId);
   syncAuthorButton();
   capturePassiveHoverCards();
   captureLaunchReplies();
+  syncActiveTimesCapture();
+  if (onNotifications) {
+    syncNotifContext();
+    scanNotificationCells();
+    syncNotifSyncChip();
+  }
 }
 
 let scheduled = false;
@@ -1354,6 +2895,9 @@ function start(): void {
   initHarvest();
   initTypeFromClipboard();
   initPassiveCaptureSetting();
+  initPassiveHarvestSetting();
+  initContextCollapsed();
+  initBandThresholds();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });

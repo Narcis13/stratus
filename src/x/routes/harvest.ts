@@ -3,9 +3,11 @@
 // in this file — rows arrive pre-scraped from the content script.
 //
 // Routes:
-//   POST /harvest/runs   { handle, mode, scope }      create a run, returns the row
-//   POST /harvest/rows   { runId, rows: [...] }       batched insert (≤500/call)
-//   GET  /harvest/runs   ?limit=                      recent runs, newest first
+//   POST /harvest/runs     { handle, mode, scope }    create a run, returns the row
+//   POST /harvest/rows     { runId, rows: [...] }     batched insert (≤500/call)
+//   POST /harvest/passive  { rows: [...] }            ambient timeline ingest (≤100/call)
+//   GET  /harvest/runs     ?limit=                    recent runs, newest first
+//   GET  /harvest/affinity ?days=&limit=&minDays=     who the algorithm keeps showing me
 //
 // Repeated harvests of the same tweet create new rows on purpose — that is the
 // longitudinal curve. Replies-mode batches also reconcile against reply_drafts:
@@ -13,11 +15,18 @@
 // without a link fall back to a text+time match against posted-but-unlinked
 // drafts and, on a unique match, backfill the draft's missing postedTweetId —
 // the systematic fix for drafts whose PATCH-after-paste never happened.
+//
+// HV.1 passive capture: what the algorithm fed the home timeline, shipped by the
+// content script while browsing. Same table, discriminated by mode='timeline',
+// hung off one server-created run per UTC day — clients cannot forge those runs
+// (POST /harvest/runs still rejects the mode). Band is never stored: it stays
+// recomputable from views/comments/tweetTime/capturedAt/text (§7.12).
 
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { harvestRows, harvestRuns, replyDrafts } from '../db/schema.ts';
+import { harvestRows, harvestRuns, people, replyDrafts, voiceAuthors } from '../db/schema.ts';
+import type { Stage } from '../people/stage.ts';
 import {
   type PersonEventInput,
   normalizePersonHandle,
@@ -37,6 +46,26 @@ type Scope = (typeof SCOPES)[number];
 const MAX_ROWS_PER_BATCH = 500;
 const DEFAULT_RUNS_LIMIT = 20;
 const MAX_RUNS_LIMIT = 100;
+
+// Passive timeline capture (HV.1). All four numbers are opening guesses sized
+// for natural browsing — revisit after ~30 days of real volume.
+const PASSIVE_MODE = 'timeline';
+const PASSIVE_SCOPE = 'passive';
+const PASSIVE_HANDLE = 'timeline';
+const MAX_PASSIVE_BATCH = 100;
+const PASSIVE_DAILY_CAP = 2000;
+const PASSIVE_RECAPTURE_MS = 30 * 60 * 1000;
+const PASSIVE_RETENTION_DAYS = 60;
+
+// Timeline affinity (HV.4). `minDays` is the noise floor: one day of scrolling
+// past someone means nothing, three separate days is the algorithm insisting.
+// Another opening guess — revisit with the other four.
+const DEFAULT_AFFINITY_DAYS = 30;
+const MIN_AFFINITY_DAYS = 7;
+const MAX_AFFINITY_DAYS = 90;
+const DEFAULT_AFFINITY_LIMIT = 20;
+const MAX_AFFINITY_LIMIT = 50;
+const DEFAULT_AFFINITY_MIN_DAYS = 3;
 
 // Fallback-match sanity window: the harvested reply must have been posted
 // after its draft was generated (small slack for clock skew) and within a week
@@ -214,6 +243,113 @@ harvest.post('/harvest/rows', async (c) => {
   );
 });
 
+harvest.post('/harvest/passive', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!Array.isArray(body.rows) || body.rows.length === 0) {
+    return c.json({ error: 'rows_required' }, 400);
+  }
+  if (body.rows.length > MAX_PASSIVE_BATCH) {
+    return c.json({ error: 'too_many_rows', max: MAX_PASSIVE_BATCH }, 400);
+  }
+
+  const rows: IngestRow[] = [];
+  for (let i = 0; i < body.rows.length; i++) {
+    const parsed = parseIngestRow(body.rows[i]);
+    if ('error' in parsed) return c.json({ error: parsed.error, index: i }, 400);
+    rows.push(parsed);
+  }
+
+  const now = new Date();
+  await prunePassiveRuns(now);
+  const run = await findOrCreatePassiveRun(now);
+
+  let skippedRecent = 0;
+
+  // A tweet scrolled past twice in the same flush window is one sighting.
+  const batchSeen = new Set<string>();
+  const unique: IngestRow[] = [];
+  for (const r of rows) {
+    if (batchSeen.has(r.tweetId)) {
+      skippedRecent++;
+      continue;
+    }
+    batchSeen.add(r.tweetId);
+    unique.push(r);
+  }
+
+  // Re-seeing the same tweet is only worth a row once the metrics have had time
+  // to move — that gap IS the longitudinal curve. Indexed by (tweet_id, captured_at).
+  const recent = await db
+    .select({ tweetId: harvestRows.tweetId })
+    .from(harvestRows)
+    .where(
+      and(
+        eq(harvestRows.mode, PASSIVE_MODE),
+        inArray(
+          harvestRows.tweetId,
+          unique.map((r) => r.tweetId),
+        ),
+        gt(harvestRows.capturedAt, new Date(now.getTime() - PASSIVE_RECAPTURE_MS)),
+      ),
+    );
+  const recentIds = new Set(recent.map((r) => r.tweetId));
+
+  const fresh: IngestRow[] = [];
+  for (const r of unique) {
+    if (recentIds.has(r.tweetId)) {
+      skippedRecent++;
+      continue;
+    }
+    fresh.push(r);
+  }
+
+  // Volume guard, not an invariant: concurrent tabs can overshoot by a batch.
+  const room = Math.max(0, PASSIVE_DAILY_CAP - run.rowCount);
+  const accepted = fresh.slice(0, room);
+  const skippedCap = fresh.length - accepted.length;
+
+  if (accepted.length > 0) {
+    db.transaction((tx) => {
+      tx.insert(harvestRows)
+        .values(
+          // orig*/groupPosition/matchedDraftId stay null — passive rows carry no
+          // reply pairing, and decision 6 keeps them out of the people layer.
+          accepted.map((r) => ({
+            runId: run.id,
+            tweetId: r.tweetId,
+            handle: r.handle,
+            mode: PASSIVE_MODE,
+            text: r.text,
+            comments: r.comments,
+            reposts: r.reposts,
+            likes: r.likes,
+            bookmarks: r.bookmarks,
+            views: r.views,
+            tweetTime: r.tweetTime,
+            capturedAt: now,
+            hasPhoto: r.hasPhoto,
+            hasVideo: r.hasVideo,
+            isQuote: r.isQuote,
+            textLen: r.textLen,
+            lineBreaks: r.lineBreaks,
+          })),
+        )
+        .run();
+      tx.update(harvestRuns)
+        .set({ rowCount: run.rowCount + accepted.length })
+        .where(eq(harvestRuns.id, run.id))
+        .run();
+    });
+  }
+
+  return c.json({ runId: run.id, inserted: accepted.length, skippedRecent, skippedCap }, 201);
+});
+
 harvest.get('/harvest/runs', async (c) => {
   const limitStr = c.req.query('limit');
   let limit = DEFAULT_RUNS_LIMIT;
@@ -231,6 +367,144 @@ harvest.get('/harvest/runs', async (c) => {
 
   return c.json(runs);
 });
+
+// ---------------------------------------------------------------- affinity
+
+export interface AffinityAuthor {
+  handle: string;
+  distinctDays: number;
+  sightings: number;
+  lastSeenAt: string;
+  avgViews: number;
+  stage: Stage | null;
+  inRoster: boolean;
+}
+
+// Who the algorithm keeps putting in front of me (HV.4). Read-time SQL over the
+// ambient corpus only — mode='timeline' is the ONLY discriminator between it and
+// the user's hand-run harvests, so every reader here must carry that filter.
+// $0: nothing on this path can reach xFetch.
+//
+// Ranked by distinct days rather than raw sightings on purpose: one viral thread
+// re-scrolled twenty times in an afternoon is not affinity, being fed the same
+// author on four separate days is. `inRoster` is what makes the list actionable
+// — it flags the handles stratus already knows, so what's left is the discovery.
+harvest.get('/harvest/affinity', async (c) => {
+  const days = intParam(
+    c.req.query('days'),
+    DEFAULT_AFFINITY_DAYS,
+    MIN_AFFINITY_DAYS,
+    MAX_AFFINITY_DAYS,
+  );
+  if (days === null) return c.json({ error: 'invalid_days' }, 400);
+
+  const limit = intParam(c.req.query('limit'), DEFAULT_AFFINITY_LIMIT, 1, MAX_AFFINITY_LIMIT);
+  if (limit === null) return c.json({ error: 'invalid_limit' }, 400);
+
+  // No upper clamp worth having: a floor longer than the longest window is
+  // simply unsatisfiable and answers with an empty roster.
+  const minDays = intParam(c.req.query('minDays'), DEFAULT_AFFINITY_MIN_DAYS, 1, MAX_AFFINITY_DAYS);
+  if (minDays === null) return c.json({ error: 'invalid_min_days' }, 400);
+
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  // UTC days, matching the run boundary (utcDayStart) and the panel's
+  // passiveRowsToday — a local-midnight bucket would disagree for hours a day.
+  const distinctDays = sql<number>`count(distinct strftime('%Y-%m-%d', ${harvestRows.capturedAt} / 1000, 'unixepoch'))`;
+  const sightings = sql<number>`count(*)`;
+
+  const rows = await db
+    .select({
+      handle: harvestRows.handle,
+      distinctDays,
+      sightings,
+      lastSeenAt: sql<number>`max(${harvestRows.capturedAt})`,
+      avgViews: sql<number>`avg(${harvestRows.views})`,
+    })
+    .from(harvestRows)
+    .where(and(eq(harvestRows.mode, PASSIVE_MODE), gte(harvestRows.capturedAt, since)))
+    .groupBy(harvestRows.handle)
+    .having(gte(distinctDays, minDays))
+    .orderBy(desc(distinctDays), desc(sightings))
+    .limit(limit);
+
+  if (rows.length === 0) return c.json({ days, minDays, authors: [] });
+
+  // Handles are lowercased on every side (parseIngestRow, normalizePersonHandle,
+  // the voice scrape), so these join without a lower() wrapper.
+  const handles = rows.map((r) => r.handle);
+  const [personRows, voiceRows] = await Promise.all([
+    db
+      .select({ handle: people.handle, stage: people.stage, retired: people.retired })
+      .from(people)
+      .where(inArray(people.handle, handles)),
+    db
+      .select({ handle: voiceAuthors.handle })
+      .from(voiceAuthors)
+      .where(inArray(voiceAuthors.handle, handles)),
+  ]);
+
+  const personByHandle = new Map(personRows.map((p) => [p.handle, p]));
+  const voiceHandles = new Set(voiceRows.map((v) => v.handle));
+
+  const authors: AffinityAuthor[] = rows.map((r) => {
+    const person = personByHandle.get(r.handle);
+    return {
+      handle: r.handle,
+      distinctDays: Number(r.distinctDays),
+      sightings: Number(r.sightings),
+      lastSeenAt: new Date(Number(r.lastSeenAt)).toISOString(),
+      avgViews: Math.round(Number(r.avgViews)),
+      // A retired person has no current stage — but they ARE known, so they
+      // still read as in-roster and never get nagged as a fresh candidate.
+      stage: person && !person.retired ? (person.stage as Stage) : null,
+      inRoster: person !== undefined || voiceHandles.has(r.handle),
+    };
+  });
+
+  return c.json({ days, minDays, authors });
+});
+
+// ----------------------------------------------------------------- passive
+
+// Exported for unit tests (pure).
+export function utcDayStart(now: Date): Date {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+// Retention is lazy — no worker for a job that only matters while rows arrive.
+// Scoped to mode='timeline': a hand-run harvest is the user's, kept forever.
+async function prunePassiveRuns(now: Date): Promise<void> {
+  const cutoff = new Date(now.getTime() - PASSIVE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+  const stale = await db
+    .select({ id: harvestRuns.id })
+    .from(harvestRuns)
+    .where(and(eq(harvestRuns.mode, PASSIVE_MODE), lt(harvestRuns.createdAt, cutoff)));
+  if (stale.length === 0) return;
+
+  const ids = stale.map((r) => r.id);
+  db.transaction((tx) => {
+    tx.delete(harvestRows).where(inArray(harvestRows.runId, ids)).run();
+    tx.delete(harvestRuns).where(inArray(harvestRuns.id, ids)).run();
+  });
+}
+
+async function findOrCreatePassiveRun(now: Date): Promise<typeof harvestRuns.$inferSelect> {
+  const [existing] = await db
+    .select()
+    .from(harvestRuns)
+    .where(and(eq(harvestRuns.mode, PASSIVE_MODE), gte(harvestRuns.createdAt, utcDayStart(now))))
+    .orderBy(desc(harvestRuns.createdAt))
+    .limit(1);
+  if (existing) return existing;
+
+  const [created] = await db
+    .insert(harvestRuns)
+    .values({ handle: PASSIVE_HANDLE, mode: PASSIVE_MODE, scope: PASSIVE_SCOPE })
+    .returning();
+  if (!created) throw new Error('passive_run_insert_failed');
+  return created;
+}
 
 // --------------------------------------------------------------- validation
 
@@ -427,6 +701,22 @@ function isMode(v: unknown): v is Mode {
 
 function isScope(v: unknown): v is Scope {
   return typeof v === 'string' && (SCOPES as readonly string[]).includes(v);
+}
+
+// Query-param integers, the `GET /harvest/runs` limit rule generalized: absent →
+// the default, out of range → clamped, anything that isn't a positive integer →
+// null so the caller can 400 with its own code (a typo'd param must not silently
+// read as "the default").
+function intParam(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number | null {
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return Math.min(max, Math.max(min, n));
 }
 
 function normalizeHandle(value: unknown): string | null {

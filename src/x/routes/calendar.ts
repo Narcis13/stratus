@@ -3,6 +3,11 @@
 // Status lifecycle:
 //   draft       no scheduled_for; not eligible for the publisher worker
 //   pending     scheduled_for set; publisher will pick it up at that minute
+//   manual      scheduled_for set; the USER posts it by hand at that minute
+//               (A3.5). The publisher claims `status='pending'` only, so a
+//               manual row is unclaimable by construction — no publish_mode
+//               column, no publisher edit. → posted via mark-posted below, or
+//               via the daily text-match reconcile.
 //   segment     thread tail row (§8.2, thread_position ≥ 2) — never claimed
 //               directly; the publisher drives it after the thread head posts.
 //               Text is editable until then; schedule/status ride with the head.
@@ -25,17 +30,24 @@
 // the documented cheap pattern (link-in-first-reply, $0.015 vs $0.20 — §8.2).
 
 import { randomUUID } from 'node:crypto';
-import { type SQL, and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { type SQL, and, asc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { ideas, scheduledPosts } from '../db/schema.ts';
+import { ideas, postsPublished, scheduledPosts } from '../db/schema.ts';
 import { containsUrl } from '../endpoints.ts';
+import {
+  NEAR_DUPLICATE_THRESHOLD,
+  NEAR_DUPLICATE_WINDOW_MS,
+  SCHEDULE_CLUSTER_MS,
+  shingleJaccard,
+} from '../monitor.ts';
 import { parsePillar } from '../posts/pillars.ts';
 import { getActivePillars } from './pillars.ts';
 
 const STATUSES = [
   'draft',
   'pending',
+  'manual',
   'segment',
   'publishing',
   'posted',
@@ -45,7 +57,7 @@ const STATUSES = [
 type Status = (typeof STATUSES)[number];
 // States a client may write. `publishing`/`posted` are worker-owned;
 // `segment` rows are created only by POST /posts/threads.
-const WRITABLE_STATUSES = ['draft', 'pending', 'failed', 'cancelled'] as const;
+const WRITABLE_STATUSES = ['draft', 'pending', 'manual', 'failed', 'cancelled'] as const;
 
 const MAX_THREAD_SEGMENTS = 25;
 
@@ -67,15 +79,19 @@ calendar.post('/posts/scheduled', async (c) => {
   let status: Status;
   if (body.status === undefined || body.status === null) {
     status = scheduledFor ? 'pending' : 'draft';
-  } else if (body.status === 'draft' || body.status === 'pending') {
+  } else if (body.status === 'draft' || body.status === 'pending' || body.status === 'manual') {
     status = body.status;
   } else {
-    return c.json({ error: 'create_status_must_be_draft_or_pending' }, 400);
+    return c.json({ error: 'create_status_must_be_draft_pending_or_manual' }, 400);
   }
 
-  if (status === 'pending' && !scheduledFor) {
+  // A manual slot is still a slot — without a time there is nothing to remind.
+  if ((status === 'pending' || status === 'manual') && !scheduledFor) {
     return c.json({ error: 'scheduled_for_required_when_pending' }, 400);
   }
+  // Deliberately `pending` only, NOT `manual` (decision 5): the surcharge is
+  // billed on the API call, and a manual row is pasted by hand — no API call
+  // ever happens. Manual mode IS the sanctioned $0 link-post path.
   if (status === 'pending' && containsUrl(text)) {
     return c.json(
       {
@@ -111,8 +127,134 @@ calendar.post('/posts/scheduled', async (c) => {
     })
     .returning();
 
-  return c.json(row, 201);
+  // Advisory only, and computed AFTER the write on purpose (GR.6): a warning
+  // must never cost a saved post, so a failed read degrades to "no advice"
+  // rather than turning a 201 into a 500.
+  let warnings: string[] = [];
+  if (row) {
+    try {
+      warnings = await scheduleWarnings(row);
+    } catch {
+      warnings = [];
+    }
+  }
+
+  return c.json({ ...row, warnings }, 201);
 });
+
+const MIN_MS = 60_000;
+const DAY_MS = 24 * 60 * MIN_MS;
+
+/** Schedule-time advisory (Guardrails §B, GR.6): the two monitor patterns the
+ *  user can still cheaply undo — a slot too close to another pending one, and
+ *  text that repeats something already out (or already queued).
+ *
+ *  Non-blocking by contract: this returns strings, never an error. The URL
+ *  surcharge guard stays the only content check on this route that can refuse a
+ *  post — everything here is "you may not have noticed", not "no".
+ *
+ *  Thresholds are imported from the monitor, never re-declared: the Today card
+ *  and this warning have to agree about what "too close together" means, or the
+ *  panel contradicts itself between the Composer and Today. */
+async function scheduleWarnings(row: {
+  id: string;
+  text: string;
+  status: string;
+  scheduledFor: Date | null;
+}): Promise<string[]> {
+  // A draft is a scratchpad — nothing is scheduled to happen, so there is no
+  // cadence risk to describe yet. `manual` is first-class here (A3.7/D117): the
+  // user pastes it at its slot, so a manual post crowded against another slot,
+  // or repeating something already out, is exactly the cadence smell this warns
+  // about — the publish mechanism doesn't change how it reads to followers.
+  if ((row.status !== 'pending' && row.status !== 'manual') || !row.scheduledFor) return [];
+  const at = row.scheduledFor.getTime();
+  const now = Date.now();
+
+  const [pending, recentOriginals] = await Promise.all([
+    // Unbounded by design: the calendar runs about a week ahead at single-user
+    // scale, so this is a few dozen rows and one read covers both checks. Both
+    // `pending` and `manual` slots count as neighbors (A3.7/D117) — a cadence
+    // warning blind to the manual half of the calendar is wrong once manual
+    // rows exist.
+    db
+      .select({
+        id: scheduledPosts.id,
+        text: scheduledPosts.text,
+        scheduledFor: scheduledPosts.scheduledFor,
+      })
+      .from(scheduledPosts)
+      .where(
+        and(
+          inArray(scheduledPosts.status, ['pending', 'manual']),
+          isNotNull(scheduledPosts.scheduledFor),
+        ),
+      ),
+    // Originals only, same as the monitor's duplicate rule: thread tails are
+    // self-replies and a reply repeating a phrase is not the penalty shape.
+    db
+      .select({ text: postsPublished.text, postedAt: postsPublished.postedAt })
+      .from(postsPublished)
+      .where(
+        and(
+          eq(postsPublished.isReply, false),
+          gte(postsPublished.postedAt, new Date(now - NEAR_DUPLICATE_WINDOW_MS)),
+        ),
+      ),
+  ]);
+
+  const others = pending.filter((p) => p.id !== row.id);
+  const warnings: string[] = [];
+
+  const near = others
+    .map((p) => ({ gapMs: Math.abs((p.scheduledFor as Date).getTime() - at) }))
+    .filter((x) => x.gapMs < SCHEDULE_CLUSTER_MS)
+    .sort((a, b) => a.gapMs - b.gapMs);
+  if (near.length > 0) {
+    const closest = Math.round((near[0] as { gapMs: number }).gapMs / MIN_MS);
+    warnings.push(
+      `${near.length} other scheduled post${near.length === 1 ? '' : 's'} within ${SCHEDULE_CLUSTER_MS / MIN_MS} min of this slot — the closest is ${closest} min away. Spreading them out reads calmer.`,
+    );
+  }
+
+  // Loudest match wins: one line about the closest twin says more than a list.
+  let publishedTwin: { similarity: number; daysAgo: number } | null = null;
+  for (const p of recentOriginals) {
+    const similarity = shingleJaccard(row.text, p.text);
+    if (similarity < NEAR_DUPLICATE_THRESHOLD) continue;
+    if (publishedTwin !== null && similarity <= publishedTwin.similarity) continue;
+    publishedTwin = {
+      similarity,
+      daysAgo: Math.max(0, Math.round((now - p.postedAt.getTime()) / DAY_MS)),
+    };
+  }
+  if (publishedTwin !== null) {
+    const when =
+      publishedTwin.daysAgo === 0
+        ? 'today'
+        : `${publishedTwin.daysAgo} day${publishedTwin.daysAgo === 1 ? '' : 's'} ago`;
+    warnings.push(
+      `Very similar to a post from ${when} (${pct(publishedTwin.similarity)} overlap) — repetitive content is its own penalty.`,
+    );
+  }
+
+  // The monitor can only see this pair once BOTH are published, which is too
+  // late to fix cheaply — a queued twin is the one duplicate still one click
+  // from being rewritten.
+  let pendingTwin = 0;
+  for (const p of others) pendingTwin = Math.max(pendingTwin, shingleJaccard(row.text, p.text));
+  if (pendingTwin >= NEAR_DUPLICATE_THRESHOLD) {
+    warnings.push(
+      `Very similar to another post already queued (${pct(pendingTwin)} overlap) — they will read as a repeat when both go out.`,
+    );
+  }
+
+  return warnings;
+}
+
+function pct(similarity: number): string {
+  return `${Math.round(similarity * 100)}%`;
+}
 
 // Threads (§8.2): one schedulable unit, N rows. The head (position 1) is a
 // normal draft/pending row carrying scheduled_for; tails are status='segment'
@@ -141,6 +283,10 @@ calendar.post('/posts/threads', async (c) => {
   let status: Status;
   if (body.status === undefined || body.status === null) {
     status = scheduledFor ? 'pending' : 'draft';
+  } else if (body.status === 'manual') {
+    // Decision 7: manual mode v1 is single posts only — a manual thread is
+    // segment-by-segment paste choreography nobody asked for yet.
+    return c.json({ error: 'manual_threads_unsupported' }, 400);
   } else if (body.status === 'draft' || body.status === 'pending') {
     status = body.status;
   } else {
@@ -289,16 +435,26 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     if (!(WRITABLE_STATUSES as readonly string[]).includes(body.status)) {
       return c.json({ error: 'status_not_settable_via_patch' }, 400);
     }
+    // Decision 7 by construction: POST /posts/threads refuses `manual`, and a
+    // thread member flipped manual via PATCH would strand its tail segments
+    // (mark-posted flips one row; the publisher drives tails off a `pending`
+    // head only) — so the promotion path is closed here too.
+    if (body.status === 'manual' && existing.threadId) {
+      return c.json({ error: 'manual_threads_unsupported' }, 400);
+    }
     updates.status = body.status;
   }
 
   const finalStatus = updates.status ?? existing.status;
   const finalScheduledFor =
     updates.scheduledFor !== undefined ? updates.scheduledFor : existing.scheduledFor;
-  if (finalStatus === 'pending' && !finalScheduledFor) {
+  if ((finalStatus === 'pending' || finalStatus === 'manual') && !finalScheduledFor) {
     return c.json({ error: 'scheduled_for_required_when_pending' }, 400);
   }
   const finalText = updates.text ?? existing.text;
+  // `pending` only, NOT `manual` (decision 5): no API call, no surcharge — a
+  // URL rides free in a hand-pasted post. A manual→pending flip lands here
+  // with finalStatus 'pending', so promotion back to API publishing re-checks.
   if (finalStatus === 'pending' && containsUrl(finalText)) {
     return c.json(
       {
@@ -318,6 +474,30 @@ calendar.patch('/posts/scheduled/:id', async (c) => {
     .where(eq(scheduledPosts.id, id))
     .returning();
 
+  return c.json(row);
+});
+
+// The one sanctioned manual→posted transition (§7.23): the user pasted the
+// text into X and is telling us so. It flips status ONLY — it must NEVER
+// insert into posts_published (decision 6, the discovery-checkpoint trap):
+// discovery's since_id is max(posts_published.tweet_id), so writing a
+// user-supplied or DOM-known id here would silently skip every tweet posted
+// between that id and the real head. The daily pass discovers the tweet and
+// the manual reconcile (A3.6) links it back to this row by text match.
+// No body is read — there is deliberately no tweetId parameter to accept.
+calendar.post('/posts/scheduled/:id/mark-posted', async (c) => {
+  const id = c.req.param('id');
+  if (!isUuid(id)) return c.json({ error: 'invalid_id' }, 400);
+
+  const [existing] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, id));
+  if (!existing) return c.json({ error: 'not_found' }, 404);
+  if (existing.status !== 'manual') return c.json({ error: 'not_manual' }, 409);
+
+  const [row] = await db
+    .update(scheduledPosts)
+    .set({ status: 'posted', updatedAt: new Date() })
+    .where(eq(scheduledPosts.id, id))
+    .returning();
   return c.json(row);
 });
 

@@ -17,6 +17,7 @@ const BARE = 'c9_ice_bare';
 const GROUNDED = 'c9_ice_grounded';
 
 let savedKey: string | undefined;
+let savedOrKey: string | undefined;
 
 async function post(path: string): Promise<{ status: number; body: Record<string, unknown> }> {
   const res = await app.request(path, { method: 'POST' });
@@ -26,9 +27,12 @@ async function post(path: string): Promise<{ status: number; body: Record<string
 describe('icebreakers route ($0 paths)', () => {
   beforeAll(async () => {
     savedKey = process.env.XAI_API_KEY;
-    // '' is falsy for the route's runtime check; assigning undefined would
-    // coerce to the string "undefined" and read as configured.
+    savedOrKey = process.env.OPENROUTER_API_KEY;
+    // AI.6: the pre-flight gate is now llmConfigured() (either provider) — force
+    // BOTH off so a grounded person hits the $0 503 refusal instead of a paid
+    // call. '' is falsy for the check; undefined would coerce to "undefined".
     process.env.XAI_API_KEY = '';
+    process.env.OPENROUTER_API_KEY = '';
     await db.insert(people).values({ handle: BARE, source: 'test' }).onConflictDoNothing();
     await db
       .insert(people)
@@ -38,6 +42,7 @@ describe('icebreakers route ($0 paths)', () => {
 
   afterAll(async () => {
     process.env.XAI_API_KEY = savedKey ?? '';
+    process.env.OPENROUTER_API_KEY = savedOrKey ?? '';
     await db.delete(people).where(eq(people.handle, BARE));
     await db.delete(people).where(eq(people.handle, GROUNDED));
   });
@@ -53,7 +58,7 @@ describe('icebreakers route ($0 paths)', () => {
     expect(body.error).toBe('no_shared_context');
   });
 
-  test('grounded person without a key → 503, never a silent fabrication', async () => {
+  test('grounded person with no LLM provider → 503, never a silent fabrication', async () => {
     const { status, body } = await post(`/x/people/${GROUNDED}/icebreakers`);
     expect(status).toBe(503);
     expect(body.error).toBe('grok_not_configured');

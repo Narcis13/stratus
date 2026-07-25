@@ -7,6 +7,7 @@
 
 import { Hono } from 'hono';
 import { mountGrok } from './grok/index.ts';
+import { mountLlm } from './llm/index.ts';
 import { mountMcp } from './mcp.ts';
 import { bearerAuth } from './middleware/auth.ts';
 import { corsMiddleware } from './middleware/cors.ts';
@@ -25,6 +26,8 @@ app.route('/', healthz);
 app.use('/x/*', bearerAuth());
 app.use('/cost/*', bearerAuth());
 app.use('/grok/*', bearerAuth());
+// AI-layer provider dispatch (askLLM) settings + model picker.
+app.use('/llm/*', bearerAuth());
 // S2 MCP server — same bearer as everything else; an unauthenticated request
 // never reaches a tool. Tools then call /x and /cost routes in-process.
 app.use('/mcp', bearerAuth());
@@ -32,6 +35,8 @@ app.use('/mcp', bearerAuth());
 app.route('/', cost);
 mountX(app);
 mountGrok(app);
+// Always mounts (unlike mountGrok): /llm/settings must work with no LLM key.
+mountLlm(app);
 // Mount MCP after mountX so the routes its curated tools call are registered.
 mountMcp(app);
 

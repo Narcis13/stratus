@@ -351,6 +351,199 @@ $0.07 generation).
 
 ---
 
+## 5b. Phase S5 — Studio 2.0: mascot, template gallery, patterns & presets — SHIPPED 2026-07-18
+
+> **Status: done.** Full build plan in **`plans/2026-07-16-studio-2.md`** (tasks ST.1–ST.9);
+> see CLAUDE.md §"Surfaces S5" and **[docs/s3-studio.md](./docs/s3-studio.md)** (the single
+> authoritative Studio doc) for the shipped shape.
+
+**Job:** turn the four static S3 templates into a memorable branded *system*, all $0
+recurring, no new X reads/writes, no new Grok text calls — everything new is client-side
+canvas.
+
+- **Cloud mascot** (`extension/src/studio/mascot.ts`) — a deterministic vector cloud
+  (chosen over an AI mascot: $0, pixel-identical, snapshot-testable), poses `happy /
+  celebrating / thinking / sleeping` tied to real data, all colors `shade(kit.accent,…)`
+  so it re-skins with the brand. `BrandKit.mascot` gates it; an AI background suppresses it.
+- **Six new templates** (milestone, streak, code/terminal, thread cover, numbered list,
+  chart card) — a gallery of ten, each a pure `spec(data,kit) → RenderSpec`. The code card
+  uses a measure-free fixed-advance layout (`MONO_ADVANCE = 0.6`, bundled JetBrains Mono);
+  milestone/chart pull already-billed `/x/metrics/account` + `/x/metrics/best-times`.
+- **Deterministic background patterns** (`dots · grid · diagonal · plus · blobs`) as $0
+  alternatives to AI backgrounds, via a new `pattern` layer kind + a seeded `mulberry32`
+  PRNG (`Math.random` banned in the Studio — determinism is the preview-IS-artifact contract).
+- **Named theme presets** — `studio:brandKits` bundle (Midnight / Paper / Neon starters),
+  legacy single-kit migrated on load; save-as / rename / delete; export/import accepts
+  both shapes.
+- **Registry refactor first** — `Studio.tsx` split into a shell + `registry.ts` (metadata
+  + `buildSpec` dispatch) + `fields.tsx` + `KitEditor.tsx`, so the eleventh template costs
+  a fraction of the fifth. No server data changes, no migrations; the only server touch was
+  widening the `ASSET_KINDS` whitelist (additive, unknown kinds degrade to `'other'`).
+
+**Cost:** $0 recurring (the S4 AI-background click is unchanged). **Done when:** the gallery
+renders all ten templates with the bundled fonts, the mascot poses track real data, presets
+re-skin instantly, patterns are deterministic, and Copy PNG pastes into X. **Browser-verified
+2026-07-18** over a render harness (all ten templates × three presets, fonts, mascot poses,
+determinism, Copy-PNG); the first real mascot-card pasted into a live tweet is the remaining
+real-world tail.
+
+**Tests:** `mascot.test.ts`, `milestones.test.ts`, `codeTokens.test.ts`, `chartData.test.ts`,
+expanded `compose.test.ts` / `templates.test.ts` / `brandKit.test.ts`; `scripts/smoke-studio.ts`
+extended so every S5 asset kind survives the whitelist ($0 default).
+
+---
+
+## 5c. Phase S6 — Augmented X UI: people chips + full-context panel on x.com — SHIPPED 2026-07-21
+
+> **Status: done.** Full build plan in **`plans/2026-07-16-augmented-x-ui.md`** (tasks
+> AX.1–AX.7); see CLAUDE.md §"Surfaces S6" and **[docs/s6-augmented-ui.md](./docs/s6-augmented-ui.md)**
+> for the shipped shape. (The plan text said "Surfaces S5" — stale: S5 is Studio 2.0, so
+> this shipped as **S6**.)
+
+**Job:** render Circles context where the decision actually happens — on x.com itself —
+at **$0** (all new reads are SQL over already-billed stratus data, fetched through the
+existing background `ApiRequest` transport with client-side caches; no X API, no Grok).
+
+- **Green stats pill gone everywhere** — the left border still marks hot/warm/skip and
+  the radar stream is byte-untouched; the badge's signals survive in chip tooltips and
+  the radar "why" line.
+- **`GET /x/people/glance`** (in `routes/people.ts`, registered **before `:handle`** §7.20)
+  — the timeline-decoration map: all non-retired `people` + unanswered-mention open-loop
+  counts + `loadTargetHandles()` backfill → `{count, map: {lowercased handle → {stage,
+  isTarget, openLoops, lastOutboundAt, lastInboundAt, followersCount}}}`. Rankmap stays
+  untouched (different membership/contract, feeds the radar tier stamp).
+- **Person chips on the timeline** (`extension/src/shared/glance.ts` `buildPersonChips`,
+  bun-tested, inlined into the content IIFE) — right of the name/handle line: a stage chip
+  (only `engaged`+, `noticed`/`stranger` would be noise), `◎` for the 2–10x target roster,
+  amber `↩ n` when that person has unanswered mentions, `Nd` neglect mark (`NEGLECT_DAYS=7`).
+- **Full-context panel on the tweet page** (`extension/src/shared/tweetContext.ts`
+  `buildTweetContextModel`, bun-tested) — on `/status/` pages, a collapsible "stratus
+  context" panel below the tweet: who this person is to me (stage, since, followers +
+  momentum, tags), an "already replied to this tweet" banner, open loops I owe them, my
+  last measured replies with outcomes + the angle that works (gated ≥3 measured), and my
+  notes verbatim. Collapse flag in `chrome.storage.local['augment:contextCollapsed']`.
+- **Dossier click-through** — clicking a chip or the panel header fires
+  `stratus/open-person {handle}`; the background opens the side panel (best-effort gesture
+  hop) and writes the `stratus:openPerson` session handoff key (single writer); `App.tsx`
+  reads it → People dossier → clears it.
+- **Legacy button kill rule** — a defensive `#reply-master-btn { display: none !important }`
+  hides the retired standalone "Reply Master" extension's purple sparkle; the real fix is
+  the user uninstalling that extension in `chrome://extensions`.
+
+**Cost:** $0 (no X API, no Grok, no writes, no schema change, no new MCP tool — 19 tools
+unchanged). No `rankmap`/`stampTiers`/band-threshold changes; chips/panel are read-only
+except the one navigation affordance. **Done when:** no stats pill anywhere; a
+mutual-stage target with an unanswered mention shows stage + `◎` + `↩`; the status-page
+panel renders stage/exchanges/open loops/≥1 measured reply/notes; clicking a chip opens
+the dossier; `scripts/smoke-glance.ts` passes ($0). **Live-selector tail:** the
+`[data-testid="User-Name"]` insertion point and action-row anchors are X DOM and can
+drift — the browser walk over an unpacked extension is the remaining real-world check.
+
+**Tests:** `glance.test.ts`, `tweetContext.test.ts`, `messages.test.ts` (new guards) +
+the `routes/people.test.ts` glance describe; `scripts/smoke-glance.ts` ($0, real DB).
+
+---
+
+## 5d. Phase S7 — Reply lists: premade, templated, humanized canned replies — SHIPPED 2026-07-23
+
+> **Status: done.** Full build plan in **`plans/2026-07-16-reply-lists.md`** (tasks
+> RL.1–RL.8); see CLAUDE.md §"Surfaces S7", **[docs/replies-tab.md](./docs/replies-tab.md)**
+> (Lists subtab) and **[docs/today-tab.md](./docs/today-tab.md)** (the pickers). (The plan
+> text said "(S5)" — stale: S5 is Studio 2.0 and S6 the Augmented X UI, so this shipped
+> as **S7**.)
+
+**Job:** fast, human-sounding acknowledgment replies for the exact moments the machinery
+already surfaces — Launch Room early commenters and Conversations open loops — at **$0
+per use** (deterministic, no AI at use time). Posting stays a manual paste.
+
+- **Three tables** (migration `0018`, DDL-only): `reply_lists` (per-list `humanizer`
+  JSON, null = engine defaults) → `reply_list_items` (cascade; `last_used_at`/`use_count`
+  = the anti-repeat state) → `reply_list_uses` (**FK-free on purpose** — audit log +
+  measurement hook, outlives a deleted list).
+- **Pure engine** `src/x/replyLists/engine.ts` (injected `rng`, bun-tested): missing-var
+  degradation with adjacent-punctuation cleanup; the anti-repeat pick (exclude the
+  `min(n-1, floor(n/2))` most recent, then **uniform random** among the rest); the
+  humanizer (prefix .25 / suffix .20 / lowercase .15 / drop-period .10 / **typo .05**,
+  ≤280 enforced each step, **never inside a name/handle/URL**).
+- **Routes** `src/x/routes/replyLists.ts` (always mounted, all $0 but `/generate`): list +
+  item CRUD, `/items` append|replace in one sync txn, and `POST /:id/use` — pick, compose,
+  stamp (`preview:true` writes nothing; `409 no_enabled_items`). **Shuffle state lives
+  server-side**, so it survives browser restarts and the panel never picks locally.
+- **AI generator** `POST /:id/generate` — one `askLLM` structured-outputs call filling a
+  list from a category prompt (~$0.003–$0.01), **proposal-only**: nothing persists until
+  the human clicks Append/Overwrite through the plain `/items` CRUD. Prompt is the
+  editable registry key `reply-list`; no key → 503, unknown list → 404 before any spend.
+- **Extension** — a `Reply Master | Lists` subtab (`ReplyLists.tsx`: items, humanizer,
+  Test render, generate) plus the shared **`canned ▾` QuickReplyPicker** on every Launch
+  Room early-replier row and Conversations open loop: one click = one real `/use`, copied
+  in the same handler, text kept visible if the clipboard refuses.
+- **Measurement** — the Playbook's batch-vs-single gained a **`canned`** cell, attributed
+  by matching a published reply against `reply_list_uses.renderedText` (stored typos and
+  all). Text-match only ⇒ an edited-after-paste reply falls back to `unattributed` —
+  **undercount, never overcount**.
+
+**Cost:** $0 recurring, $0 X API; the only spend is the optional generate click. **Done
+when:** 10 consecutive uses show no immediate repeats with vars filled; one click in the
+Launch Room puts a humanized reply on the clipboard; generate previews then persists only
+on an explicit click; the Playbook shows a `canned` bucket;
+`scripts/smoke-reply-lists.ts` passes $0 and cleans up. **Live tails:** the first real
+paste (watch X's paste normalization vs the doubled-space typo variant) and the first
+`canned` count the morning after.
+
+**Tests:** `replyLists/{engine,generate}.test.ts`, `routes/replyLists.test.ts`, the
+`canned` describes in `{playbook,routes/playbook}.test.ts`; `scripts/smoke-reply-lists.ts`
+($0, real DB, `--live` = one generate call).
+
+---
+
+## 5e. Phase S8 — Cockpit overhaul: design system + the configurability moat — SHIPPED 2026-07-25
+
+> **Status: done.** Full build plan in **`plans/2026-07-17-ui-overhaul-settings-moat.md`**
+> (tasks UI.1–UI.17, executed through `plans/MASTERPLAN.md` as Wave 5); see
+> **[docs/settings-tab.md](./docs/settings-tab.md)** for the registry map and every other
+> `docs/*-tab.md` for the per-tab polish. Phase entries in
+> **[docs/PHASE-HISTORY.md](./docs/PHASE-HISTORY.md)**.
+
+**Job:** make the panel a polished instrument *and* make its numbers the user's, not the
+build's. Two workstreams, one plan — no new capability, no new spend.
+
+- **The settings platform.** `app_settings` (key/value/updated_at, migration `0013`,
+  overrides only) → a sync read-through store `src/settings/store.ts` (platform-agnostic)
+  → the typed catalog `src/x/settings/registry.ts` → `src/x/routes/settings.ts`
+  (`GET /settings`, `GET /settings/values?scope=mirrored`, `PATCH`, `POST /reset`).
+  **61 knobs in 14 groups.** Validation is registry-driven, and **the floors and ceilings
+  ARE the money guard** (image budget hard-capped at $2.00, mention pull ≤100) — the same
+  wall an agent hits through the `x_settings` / `x_update_setting` MCP tools.
+- **Pure modules stay pure.** Routes and workers are the only store consumers; pure
+  functions gained trailing defaulted parameter objects, so every pre-existing test and
+  fixture is byte-valid and the store is mockable.
+- **One number, both sides.** 27 knobs are `scope:'mirrored'`; the background service
+  worker is the single fetcher/writer of the `settings:server` blob, so the on-page band
+  badge and the server's draft gate read the identical thresholds — no rebuild, no fork.
+- **The design system.** `styles.css` runs on the `--strat-*` tokens lifted from
+  `Stratus Design System/`, with a light theme, a density and a scale setting; a `ui/`
+  primitive set (Section, EmptyState, SubTabs, SettingRow, Slider, GearPopover) and a
+  grouped tab rail; one `.chip` family; the injected on-page overlays on their own
+  theme-neutral `--stratus-*` block, and `/explorer` + `/writer` on `light-dark()`.
+- **Config where the feature is.** A crowded, searchable Settings → Tuning subtab plus
+  **eleven inline ⚙ affordances** editing the very same keys with the same discipline
+  (optimistic, debounced, server-refused values snap back).
+
+**Cost:** $0 recurring, $0 X API, no LLM. Settings can *raise* existing ceilings, never
+past the registry's hard bounds; the checks themselves were never made toggleable.
+**Done when:** `GET /x/settings` returns ≥55 knobs across ≥12 groups and
+`bun run scripts/smoke-settings.ts` passes — which it does, restoring every override it
+wrote and writing no rows at all.
+
+**Tests:** `src/x/settings/registry.test.ts` (the store's behavior is covered through the
+bound registry) + `src/x/routes/settings.test.ts` — the exact group/key/scope/mirrored
+lists, so a mirrored key with no `ServerConfig` field fails;
+`extension/src/shared/serverSettings.test.ts`,
+`extension/src/sidepanel/{comingSoon,settingsClient}.test.ts`;
+`scripts/smoke-settings.ts` ($0, real DB, no `--live` — nothing paid exists to verify).
+
+---
+
 ## 6. Explicitly NOT doing (this plan)
 
 - **OAuth 1.0a media upload** — no API-attached images, no auto-posted visuals. The

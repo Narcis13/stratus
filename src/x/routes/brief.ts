@@ -12,9 +12,11 @@ import { and, asc, desc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { costEvents } from '../../db/shared-schema.ts';
+import { type ActiveTimesGrid, audienceScoreFor } from '../../shared/activeTimes.ts';
 import { type ConversionTweet, computeConversion } from '../conversion.ts';
 import {
   accountSnapshots,
+  audienceActivity,
   mentions,
   metricsSnapshots,
   postsPublished,
@@ -23,6 +25,8 @@ import {
   streaks,
   voiceAuthors,
 } from '../db/schema.ts';
+import { runMonitor, worstOf } from '../monitor.ts';
+import { loadDoctrine } from '../niche/store.ts';
 import {
   allQuestsDone,
   completedMap,
@@ -32,22 +36,28 @@ import {
   localDayKey,
   neglectedTargetsAtDayStart,
 } from '../quests.ts';
-import { type BestTimeCell, bestTimeCellFor, bestTimeScore, loadBestTimeCells } from './metrics.ts';
+import { getSetting } from '../settings/registry.ts';
+import { type CommitmentView, loadCommitmentsWithDebt, loadGoalsWithPacing } from './goals.ts';
+import {
+  BEST_TIME_MIN_N,
+  type BestTimeCell,
+  bestTimeCellFor,
+  bestTimeScore,
+  loadBestTimeCells,
+} from './metrics.ts';
+import { loadMonitorInputs } from './monitor.ts';
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Doctrine numbers (OVERHAUL-PLAN §9): 10–20 band-gated replies/day, 70%
-// replies / 30% originals over the week.
-const REPLY_TARGET = { min: 10, max: 20 } as const;
-const WEEK_REPLY_TARGET_PCT = 70;
-
-// Cadence anchors from md_to_schedule.ts — 3/day and 4/day local hours.
+// Cadence anchors from md_to_schedule.ts — 3/day and 4/day local hours. These are
+// the module DEFAULTS; the brief route overrides them per request from the mirrored
+// x.doctrine.anchors3/anchors4/ladderSwitchAt settings (UI.2). The former
+// SPARKLINE_DAYS / LEADER_COUNT constants now live in the settings store's `display`
+// group (x.display.sparklineDays / x.display.leaderCount).
 const ANCHORS_3 = [9, 13, 18];
 const ANCHORS_4 = [8, 12, 16, 20];
-
-const SPARKLINE_DAYS = 14;
-const LEADER_COUNT = 3;
+const LADDER_SWITCH_AT = 4;
 
 // S0.1 conversion needs a longer horizon than the 14-day sparkline: the 28-day
 // window wants a follower baseline ~28d old (fetch a little extra for it) plus
@@ -77,10 +87,27 @@ export function localMinuteOfDay(t: Date, tzOffsetMin: number): number {
   return shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
 }
 
+/** The cadence config the brief passes down — anchor hours for each ladder and the
+ *  filled-slot count at which the 4/day ladder takes over. Defaults are the module
+ *  constants; the route overrides them from the settings store (UI.2). */
+export interface AnchorConfig {
+  anchors3: number[];
+  anchors4: number[];
+  ladderSwitchAt: number;
+}
+const ANCHOR_DEFAULTS: AnchorConfig = {
+  anchors3: ANCHORS_3,
+  anchors4: ANCHORS_4,
+  ladderSwitchAt: LADDER_SWITCH_AT,
+};
+
 /** Compare today's filled slots against the cadence that best matches them —
- *  4+ filled slots means the 4/day ladder, otherwise the 3/day one. */
-export function pickAnchors(filledSlotCount: number): number[] {
-  return filledSlotCount >= 4 ? ANCHORS_4 : ANCHORS_3;
+ *  `ladderSwitchAt`+ filled slots means the 4/day ladder, otherwise the 3/day one. */
+export function pickAnchors(
+  filledSlotCount: number,
+  cfg: AnchorConfig = ANCHOR_DEFAULTS,
+): number[] {
+  return filledSlotCount >= cfg.ladderSwitchAt ? cfg.anchors4 : cfg.anchors3;
 }
 
 /** Assign each scheduled time (local minutes since midnight) to its nearest
@@ -110,17 +137,25 @@ export interface AnnotatedGap {
   avgViews: number | null;
   score: number | null;
   sufficient: boolean;
+  /** A3.4: captured audience presence for this local (weekday, hour), 0..1, or
+   *  null with no capture. Display data for the TodayPlan row — NEVER a reorder
+   *  key (§7.19/decision 10: own measured cells rank; audience is labeled). */
+  audienceScore: number | null;
 }
 
 export function annotateGaps(
   gapHours: number[],
   cells: BestTimeCell[],
   localWeekday: number,
+  audience?: ActiveTimesGrid | null,
+  // UI.4: the advice gate, settings-backed at the route (`x.gates.bestTimeMinN`).
+  // Defaulted to today's constant so every existing caller/test is unchanged.
+  minN = BEST_TIME_MIN_N,
 ): AnnotatedGap[] {
   return gapHours
     .map((hour) => {
       const cell = bestTimeCellFor(cells, localWeekday, hour);
-      const score = bestTimeScore(cell);
+      const score = bestTimeScore(cell, minN);
       return {
         hour,
         n: cell?.posts ?? 0,
@@ -128,6 +163,7 @@ export function annotateGaps(
         avgViews: cell?.avgViews ?? null,
         score,
         sufficient: score != null,
+        audienceScore: audience ? audienceScoreFor(audience, localWeekday, hour) : null,
       };
     })
     .sort((a, b) => {
@@ -231,9 +267,12 @@ export function attachLatestSnapshots(posts: PublishedRow[], snaps: SnapRow[]): 
 // Profile visits land on the pinned tweet, so a stale or out-performed pin
 // leaks the account's best first impression. Two nudges, never an action
 // (pinning stays manual in the X app): warn when the pin hasn't changed in
-// >21 days, or when a recent post has ≥3× its measured views.
+// >21 days, or when a recent post has ≥3× its measured views. Both thresholds
+// are settings-backed (UI.3, the `pinned` group); buildPinnedWatch takes them as
+// params defaulted here, and the brief handler reads the overrides.
 const PIN_STALE_DAYS = 21;
 const PIN_OUTPERFORM_RATIO = 3;
+const PIN_DEFAULTS = { staleDays: PIN_STALE_DAYS, outperformRatio: PIN_OUTPERFORM_RATIO };
 /** Only originals posted this recently count as "your best work isn't pinned"
  *  candidates — an old post the user already chose not to pin isn't news. */
 const PIN_CANDIDATE_DAYS = 30;
@@ -297,10 +336,11 @@ export function buildPinnedWatch(
   pinnedViews: number | null,
   recentPosts: PinnedWatchPost[],
   now: Date,
+  opts: { staleDays: number; outperformRatio: number } = PIN_DEFAULTS,
 ): PinnedWatch {
   const ageDays =
     pin.since === null ? null : Math.floor((now.getTime() - pin.since.getTime()) / DAY_MS);
-  const stale = ageDays !== null && ageDays > PIN_STALE_DAYS;
+  const stale = ageDays !== null && ageDays > opts.staleDays;
 
   let outperformer: PinnedWatch['outperformer'] = null;
   // Need a known pin and a positive view count to compare against.
@@ -310,7 +350,7 @@ export function buildPinnedWatch(
         (p) =>
           p.tweetId !== pin.pinnedTweetId &&
           p.views !== null &&
-          p.views >= pinnedViews * PIN_OUTPERFORM_RATIO,
+          p.views >= pinnedViews * opts.outperformRatio,
       )
       .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0];
     if (best && best.views !== null) {
@@ -347,6 +387,32 @@ brief.get('/brief', async (c) => {
     tzOffsetMin = n;
   }
 
+  // Doctrine numbers (OVERHAUL-PLAN §9), now owned by the active niche (N0.5):
+  // the reply band (default 10–20/day) and the week reply-ratio target (default
+  // 70%). Loaded once per request — one sync SELECT, no caching needed.
+  const doctrine = loadDoctrine();
+  const replyTarget = { min: doctrine.replyTargetMin, max: doctrine.replyTargetMax };
+
+  // UI.2: display, cadence and quest knobs from the settings store (app_settings).
+  // The reply band/ratio above stay NICHE-owned (loadDoctrine); these are genuinely
+  // app-level. Sync Map lookups (override cache), no new reads billed.
+  const sparklineDays = getSetting<number>('x.display.sparklineDays');
+  const leaderCount = getSetting<number>('x.display.leaderCount');
+  const anchorCfg: AnchorConfig = {
+    anchors3: getSetting<number[]>('x.doctrine.anchors3'),
+    anchors4: getSetting<number[]>('x.doctrine.anchors4'),
+    ladderSwitchAt: getSetting<number>('x.doctrine.ladderSwitchAt'),
+  };
+  const questOpts = {
+    originalsTarget: getSetting<number>('x.quests.originalsTarget'),
+    neglectedTargetsCount: getSetting<number>('x.quests.neglectedTargetsCount'),
+  };
+  const neglectedTargetDays = getSetting<number>('x.quests.neglectedTargetDays');
+  const launchAttendWindowMs = getSetting<number>('x.quests.launchAttendWindowMin') * 60_000;
+  // UI.4: the same advice gate GET /x/metrics/best-times uses — one owner, two
+  // consumers, so a raised bar hides thin cells on Today and in the list alike.
+  const bestTimeMinN = getSetting<number>('x.gates.bestTimeMinN');
+
   const now = new Date();
   const todayStart = localDayStart(now, tzOffsetMin);
   const tomorrowStart = new Date(todayStart.getTime() + DAY_MS);
@@ -364,6 +430,10 @@ brief.get('/brief', async (c) => {
     postedDraftRows,
     costRows,
     bestTimes,
+    monitorInputs,
+    commitmentViews,
+    goalViews,
+    audienceRows,
   ] = await Promise.all([
     db
       .select({
@@ -371,7 +441,7 @@ brief.get('/brief', async (c) => {
         followersCount: accountSnapshots.followersCount,
       })
       .from(accountSnapshots)
-      .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - SPARKLINE_DAYS * DAY_MS)))
+      .where(gte(accountSnapshots.snapshotAt, new Date(now.getTime() - sparklineDays * DAY_MS)))
       .orderBy(asc(accountSnapshots.snapshotAt)),
     // S0.1: follower series over the conversion horizon (superset of the
     // sparkline window, so the 28d baseline exists). S0.9 rides on the same
@@ -421,7 +491,9 @@ brief.get('/brief', async (c) => {
         and(
           gte(scheduledPosts.scheduledFor, todayStart),
           lt(scheduledPosts.scheduledFor, tomorrowStart),
-          inArray(scheduledPosts.status, ['pending', 'posted', 'failed']),
+          // A3.5: a `manual` row is a filled slot like any pending one — it
+          // shows in the plan and its anchor must not be re-proposed as a gap.
+          inArray(scheduledPosts.status, ['pending', 'manual', 'posted', 'failed']),
         ),
       )
       .orderBy(asc(scheduledPosts.scheduledFor)),
@@ -455,6 +527,27 @@ brief.get('/brief', async (c) => {
     // S0.4: best-times cells bucketed by the viewer's local clock so each
     // cadence gap can carry the score of its (weekday, hour) cell.
     loadBestTimeCells(tzOffsetMin),
+    // GR.6: the activity monitor's own loader, imported rather than re-written
+    // here — the windows and column choices are decisions, and a second copy of
+    // that SQL would be a second set of them (the `loadBestTimeCells` precedent
+    // one line up). $0: read-time SQL over rows already collected.
+    loadMonitorInputs(now),
+    // GR.8: the accountability pair, both through the loaders `GET /x/goals`
+    // and `GET /x/commitments` use — same reason as the monitor one line up.
+    // The debt window ends yesterday, so reading the diary here (before this
+    // request rewrites today's streaks row further down) changes nothing.
+    loadCommitmentsWithDebt(now, tzOffsetMin),
+    // NOTE this one WRITES: it settles `active → achieved | missed` on read
+    // (GR.7's lazy flip). Opening Today is now what advances a finished goal.
+    loadGoalsWithPacing(now),
+    // A3.4: newest audience Active-times capture ($0 select). The gap
+    // annotation blends its intensity below own measured cells; absent when
+    // X Analytics was never visited, in which case audienceScore stays null.
+    db
+      .select()
+      .from(audienceActivity)
+      .orderBy(desc(audienceActivity.capturedAt), desc(audienceActivity.id))
+      .limit(1),
   ]);
 
   const tweetIds = published.map((p) => p.tweetId);
@@ -553,7 +646,15 @@ brief.get('/brief', async (c) => {
       views: pinViewsByTweet.get(p.tweetId) ?? null,
     })),
     now,
+    {
+      staleDays: getSetting<number>('x.pinned.staleDays'),
+      outperformRatio: getSetting<number>('x.pinned.outperformRatio'),
+    },
   );
+
+  // GR.6: account health. `runMonitor` is the same call `GET /x/monitor` makes,
+  // over the same inputs — the Today card and the MCP tool can never disagree.
+  const monitorAlerts = runMonitor(monitorInputs);
 
   const yesterdayTweets = weekTweets.filter(
     (t) => t.postedAt >= yesterdayStart && t.postedAt < todayStart,
@@ -561,12 +662,13 @@ brief.get('/brief', async (c) => {
   const profileClickLeaders = weekTweets
     .filter((t) => (t.metrics?.profileVisits ?? 0) > 0)
     .sort((a, b) => (b.metrics?.profileVisits ?? 0) - (a.metrics?.profileVisits ?? 0))
-    .slice(0, LEADER_COUNT);
+    .slice(0, leaderCount);
 
-  // Gaps compare against pending/posted only — a failed row still occupies the
-  // list (so the user sees what to fix) but its slot reads as unfilled.
+  // Gaps compare against pending/manual/posted only — a failed row still
+  // occupies the list (so the user sees what to fix) but its slot reads as
+  // unfilled.
   const slotted = scheduled.filter((s) => s.status !== 'failed' && s.scheduledFor !== null);
-  const anchors = pickAnchors(slotted.length);
+  const anchors = pickAnchors(slotted.length, anchorCfg);
   const gapHours = findScheduleGaps(
     slotted.map((s) => localMinuteOfDay(s.scheduledFor as Date, tzOffsetMin)),
     anchors,
@@ -575,7 +677,16 @@ brief.get('/brief', async (c) => {
   // local weekday, highest-value hole first. `todayStart` is local midnight as
   // a UTC instant, so shifting it back yields today's local weekday.
   const todayLocalWeekday = new Date(todayStart.getTime() - tzOffsetMin * 60_000).getUTCDay();
-  const gaps = annotateGaps(gapHours, bestTimes.cells, todayLocalWeekday);
+  // A3.4: the newest capture is a full audience_activity row — a structural
+  // superset of ActiveTimesGrid, so audienceScoreFor reads it directly.
+  const audienceGrid: ActiveTimesGrid | null = audienceRows[0] ?? null;
+  const gaps = annotateGaps(
+    gapHours,
+    bestTimes.cells,
+    todayLocalWeekday,
+    audienceGrid,
+    bestTimeMinN,
+  );
 
   const weekReplies = published.filter((p) => p.isReply).length;
   const weekPosts = published.length - weekReplies;
@@ -626,7 +737,10 @@ brief.get('/brief', async (c) => {
   const myFollowers = snaps.at(-1)?.followersCount ?? null;
   const targetHandles = new Set<string>();
   if (myFollowers !== null) {
-    const band = targetBand(myFollowers);
+    const band = targetBand(myFollowers, {
+      minX: doctrine.targetBandMinX,
+      maxX: doctrine.targetBandMaxX,
+    });
     for (const a of voiceRows) {
       if (a.followersCount !== null && a.followersCount >= band.min && a.followersCount <= band.max)
         targetHandles.add(a.handle);
@@ -653,27 +767,47 @@ brief.get('/brief', async (c) => {
       .groupBy(sql`lower(${replyDrafts.sourceAuthorUsername})`);
     for (const r of priorRows) priorOutbound.set(r.handle, r.last);
   }
-  const neglectedAtStart = neglectedTargetsAtDayStart(targetHandles, priorOutbound, todayStart);
+  const neglectedAtStart = neglectedTargetsAtDayStart(
+    targetHandles,
+    priorOutbound,
+    todayStart,
+    neglectedTargetDays,
+  );
   const repliedTodayHandles = new Set(
     postedDraftRows.map((d) => d.sourceAuthorUsername.toLowerCase()),
   );
   let targetsTouched = 0;
   for (const h of neglectedAtStart) if (repliedTodayHandles.has(h)) targetsTouched++;
 
-  const questItems = computeQuests({
-    repliesPostedToday: postedDraftRows.length,
-    repliesTarget: REPLY_TARGET.min,
-    originalsPostedToday: originalsToday.length,
-    neglectedTargetsAtDayStart: neglectedAtStart.size,
-    neglectedTargetsTouched: targetsTouched,
-    loopsClosedToday: Number(answeredToday?.n ?? 0),
-    openLoopsNow: Number(unansweredNow?.n ?? 0),
-    launchesToday: originalsToday.length,
-    launchesAttended: launchesAttended(
-      originalsToday.map((p) => p.postedAt),
-      replyPasteTimes,
-    ),
-  });
+  // GR.8: a daily commitment is a promise I made to myself, so it outranks the
+  // doctrine default — but only while it is ACTIVE. An absent or paused row
+  // changes nothing, which is why the table ships with no seed.
+  const activeCommitment = (key: string): CommitmentView | undefined =>
+    commitmentViews.find((c) => c.key === key && c.active);
+  const repliesCommitment = activeCommitment('replies');
+  const originalsCommitment = activeCommitment('originals');
+
+  const questItems = computeQuests(
+    {
+      repliesPostedToday: postedDraftRows.length,
+      repliesTarget: repliesCommitment?.dailyTarget ?? replyTarget.min,
+      originalsPostedToday: originalsToday.length,
+      // Undefined ⇒ computeQuests falls back to questOpts.originalsTarget (the
+      // configured default); an active commitment still overrides it (GR.8).
+      originalsTarget: originalsCommitment?.dailyTarget,
+      neglectedTargetsAtDayStart: neglectedAtStart.size,
+      neglectedTargetsTouched: targetsTouched,
+      loopsClosedToday: Number(answeredToday?.n ?? 0),
+      openLoopsNow: Number(unansweredNow?.n ?? 0),
+      launchesToday: originalsToday.length,
+      launchesAttended: launchesAttended(
+        originalsToday.map((p) => p.postedAt),
+        replyPasteTimes,
+        launchAttendWindowMs,
+      ),
+    },
+    questOpts,
+  );
 
   // Idempotent per day: every brief read overwrites today's row with the
   // freshest quest state — the streak table is a diary, not an event log.
@@ -708,6 +842,9 @@ brief.get('/brief', async (c) => {
     },
     // S0.9: pinned-post watch — stale or out-performed pin, a nudge to re-pin.
     pinnedWatch,
+    // GR.6: activity monitor — empty `alerts` (and null `worst`) is the normal,
+    // silent case; the Today card renders nothing then.
+    monitor: { alerts: monitorAlerts, worst: worstOf(monitorAlerts) },
     yesterday: {
       from: yesterdayStart,
       to: todayStart,
@@ -726,20 +863,28 @@ brief.get('/brief', async (c) => {
     },
     replyQuota: {
       postedToday: postedDraftRows.length,
-      target: REPLY_TARGET,
+      target: replyTarget,
     },
     quests: {
       day: dayKey,
       items: questItems,
       streak,
     },
+    // GR.8: accountability (Guardrails §C). ACTIVE goals only — the loader has
+    // already settled anything that hit its target or ran out of days on this
+    // very read, and a finished goal belongs to the Me tab's ledger, not to the
+    // coach surface. Empty is the normal case; the Today card renders nothing.
+    goals: goalViews.filter((g) => g.status === 'active'),
+    // Both keys, active or not: the panel needs the paused ones to show what
+    // the debt was measured against before it stopped counting.
+    commitments: commitmentViews,
     week: {
       from: weekAgo,
       to: now,
       posts: weekPosts,
       replies: weekReplies,
       replyPct: weekTotal === 0 ? null : Math.round((weekReplies / weekTotal) * 100),
-      targetReplyPct: WEEK_REPLY_TARGET_PCT,
+      targetReplyPct: doctrine.weekReplyTargetPct,
     },
     spend: {
       from: utcDayStart,

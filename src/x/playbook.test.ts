@@ -7,20 +7,27 @@ import {
   type IdeaRow,
   type LatencyRow,
   type MeasuredOutcome,
+  type ModelRow,
   type ScoredReply,
+  type TimelineBand,
+  type TimelineSeenRow,
   authorSizeBucket,
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
   buildIdeaEffectiveness,
   buildLatencyEffectiveness,
+  buildMeEffectiveness,
   buildMediaEffectiveness,
+  buildModelEffectiveness,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildRosterCoverage,
   buildStructureEffectiveness,
+  buildTimelineFunnel,
   classifyReplyOrigin,
   classifyRosterBand,
+  deriveTimelineBand,
   latencyBucket,
   median,
   normalizeReplyText,
@@ -133,39 +140,98 @@ describe('buildStructureEffectiveness', () => {
 });
 
 describe('classifyReplyOrigin', () => {
-  const draftIds = new Set(['901']);
+  // postedTweetId → reply_drafts.source (RU.9). null = reply_master / legacy.
+  const draftSource = new Map<string, string | null>([
+    ['901', null],
+    ['905', 'radar'],
+  ]);
   const radar = new Map([['777', ['Ship it.\n\nThen fix it.']]]);
+  // reply_list_uses.renderedText, normalized (RL.7). 'Ship it. Then fix it.'
+  // is deliberately BOTH a radar draft and a canned use here.
+  const canned = new Set(['thanks for the early read, Ana!', 'Ship it. Then fix it.']);
 
   test('draft link wins even when a radar match also exists', () => {
     expect(
       classifyReplyOrigin(
         { tweetId: '901', inReplyToTweetId: '777', text: 'Ship it. Then fix it.' },
-        draftIds,
+        draftSource,
         radar,
+        canned,
       ),
     ).toBe('single');
   });
 
-  test('radar needs target AND collapsed-whitespace text equality', () => {
+  test('source=radar on a linked draft beats a text mismatch', () => {
+    expect(
+      classifyReplyOrigin(
+        { tweetId: '905', inReplyToTweetId: null, text: 'nothing like any radar draft' },
+        draftSource,
+        radar,
+        canned,
+      ),
+    ).toBe('radar');
+  });
+
+  test('radar needs target AND collapsed-whitespace text equality (legacy, null source)', () => {
     expect(
       classifyReplyOrigin(
         { tweetId: '902', inReplyToTweetId: '777', text: 'Ship it.  Then fix it.' },
-        draftIds,
+        draftSource,
         radar,
+        canned,
       ),
     ).toBe('radar');
     expect(
       classifyReplyOrigin(
         { tweetId: '903', inReplyToTweetId: '777', text: 'Something I typed myself' },
-        draftIds,
+        draftSource,
         radar,
+        canned,
       ),
     ).toBeNull();
     expect(
       classifyReplyOrigin(
         { tweetId: '904', inReplyToTweetId: '778', text: 'Ship it. Then fix it.' },
-        draftIds,
+        draftSource,
         radar,
+        canned,
+      ),
+    ).toBe('canned'); // right text, wrong radar target — falls through to the use log
+  });
+
+  test('a rendered-text match with no draft link classifies canned', () => {
+    expect(
+      classifyReplyOrigin(
+        {
+          tweetId: '906',
+          inReplyToTweetId: '888',
+          text: 'thanks for the early read,  Ana!\n',
+        },
+        draftSource,
+        radar,
+        canned,
+      ),
+    ).toBe('canned');
+  });
+
+  test('canned is checked last: a posted draft that also matches a use counts single', () => {
+    expect(
+      classifyReplyOrigin(
+        { tweetId: '901', inReplyToTweetId: null, text: 'thanks for the early read, Ana!' },
+        draftSource,
+        radar,
+        canned,
+      ),
+    ).toBe('single');
+  });
+
+  test('no match anywhere stays unattributed', () => {
+    expect(
+      classifyReplyOrigin(
+        { tweetId: '907', inReplyToTweetId: '888', text: 'wrote this one myself' },
+        draftSource,
+        radar,
+        canned,
       ),
     ).toBeNull();
   });
@@ -182,11 +248,19 @@ describe('buildBatchVsSingle', () => {
         { origin: 'single', outcome: out(100, 2) },
         { origin: 'single', outcome: out(200, 4) },
         { origin: 'radar', outcome: out(50, 1) },
+        { origin: 'canned', outcome: out(30, 0) },
+        { origin: 'canned', outcome: out(70, 2) },
       ],
       2,
     );
     expect(r.single).toMatchObject({ n: 2, medianViews: 150, sufficient: true });
     expect(r.radar).toMatchObject({ n: 1, sufficient: false });
+    expect(r.canned).toMatchObject({ n: 2, medianViews: 50, sufficient: true });
+  });
+
+  test('an empty canned bucket is a zero cell, not a missing key', () => {
+    const r = buildBatchVsSingle([{ origin: 'single', outcome: out(100, 2) }], 2);
+    expect(r.canned).toMatchObject({ n: 0, medianViews: null, sufficient: false });
   });
 });
 
@@ -288,6 +362,33 @@ describe('buildRelationshipLift', () => {
     const open = buildRelationshipLift(rows, 2);
     expect(open.viewsLift).toBe(3);
     expect(open.profileVisitsLift).toBe(2.5);
+  });
+});
+
+describe('buildMeEffectiveness', () => {
+  const rows = [
+    { hasMe: true, outcome: out(200, 4) },
+    { hasMe: true, outcome: out(400, 6) },
+    { hasMe: false, outcome: out(100, 2) },
+    { hasMe: false, outcome: out(100, 2) },
+    { hasMe: false, outcome: null }, // posted, unmeasured
+  ];
+
+  test('splits on me present/absent; lift gated on both sides', () => {
+    const gated = buildMeEffectiveness(rows, 3);
+    expect(gated.withMe.n).toBe(2);
+    expect(gated.withoutMe.n).toBe(2);
+    expect(gated.viewsLift).toBeNull(); // 2 < 3 per side
+
+    const open = buildMeEffectiveness(rows, 2);
+    expect(open.viewsLift).toBe(3); // 300 / 100
+    expect(open.profileVisitsLift).toBe(2.5); // 5 / 2
+  });
+
+  test('partition invariant: every measured row lands in exactly one cell', () => {
+    const r = buildMeEffectiveness(rows, 2);
+    expect(r.withMe.n + r.withoutMe.n).toBe(r.totalMeasured);
+    expect(r.totalMeasured).toBe(4); // the null row is unmeasured
   });
 });
 
@@ -481,6 +582,129 @@ describe('buildLatencyEffectiveness', () => {
     const r = buildLatencyEffectiveness(rows);
     expect(r.viewsLift).toBeNull();
     expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+  });
+});
+
+describe('buildModelEffectiveness', () => {
+  const rows: ModelRow[] = [
+    { model: 'grok-4.3', outcome: out(500, 10) },
+    { model: 'grok-4.3', outcome: out(300, 6) },
+    { model: 'grok-4.3', outcome: null }, // posted but unmeasured
+    { model: 'anthropic/claude-sonnet-4.5', outcome: out(200, 4) },
+  ];
+
+  test('buckets by raw model string, provider slash kept as-is', () => {
+    const r = buildModelEffectiveness(rows, 2);
+    expect(r.cells.map((c) => c.model)).toContain('anthropic/claude-sonnet-4.5');
+    const grok = r.cells.find((c) => c.model === 'grok-4.3');
+    // posted counts the unmeasured row; n does not.
+    expect(grok).toMatchObject({ posted: 3, n: 2, medianViews: 400, sufficient: true });
+  });
+
+  test('most-sampled bucket first', () => {
+    const r = buildModelEffectiveness(rows, 2);
+    expect(r.cells[0]?.model).toBe('grok-4.3');
+  });
+
+  test('partition invariant: Σ bucket n = totalMeasured, Σ posted = rows', () => {
+    const r = buildModelEffectiveness(rows, 2);
+    expect(r.cells.reduce((s, c) => s + c.n, 0)).toBe(r.totalMeasured);
+    expect(r.totalMeasured).toBe(3);
+    expect(r.cells.reduce((s, c) => s + c.posted, 0)).toBe(rows.length);
+  });
+
+  test('gate: each bucket independently below minN is insufficient', () => {
+    const gated = buildModelEffectiveness(rows, 3);
+    expect(gated.cells.find((c) => c.model === 'grok-4.3')?.sufficient).toBe(false);
+    const open = buildModelEffectiveness(rows, 2);
+    expect(open.cells.find((c) => c.model === 'grok-4.3')?.sufficient).toBe(true);
+  });
+
+  test('default gate is 20 — silent on a thin sample', () => {
+    const r = buildModelEffectiveness(rows);
+    expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+  });
+});
+
+describe('buildTimelineFunnel (HV.5)', () => {
+  const NOW = 1_800_000_000_000;
+  const seenRow = (id: string, o: Partial<TimelineSeenRow> = {}): TimelineSeenRow => ({
+    tweetId: id,
+    views: 5000,
+    comments: 3,
+    text: 'a plain statement about shipping',
+    tweetTimeMs: NOW - 30 * 60_000,
+    capturedAtMs: NOW,
+    ...o,
+  });
+  const bandOf = (o: Partial<TimelineSeenRow>): TimelineBand => deriveTimelineBand(seenRow('t', o));
+
+  test('a row without a tweet time is unknown, never the null band', () => {
+    expect(bandOf({ tweetTimeMs: null })).toBe('unknown');
+    // Same metrics WITH a time classify as a real band — unknown is only ever
+    // about the missing timestamp.
+    expect(bandOf({})).toBe('hot');
+  });
+
+  test('bait text flips a would-be-null row into a band', () => {
+    const small = { views: 200, comments: 2, capturedAtMs: NOW, tweetTimeMs: NOW - 60 * 60_000 };
+    expect(bandOf({ ...small, text: 'shipped the thing today.' })).toBeNull();
+    expect(bandOf({ ...small, text: 'shipped the thing today. am i wrong?' })).toBe('hot');
+  });
+
+  test('first sighting bands the tweet; re-sightings never re-band or double-count', () => {
+    const r = buildTimelineFunnel(
+      [
+        // Later re-scroll first in the array on purpose: order must not matter.
+        seenRow('a', { views: 300_000, comments: 900, capturedAtMs: NOW + 3 * 3600_000 }),
+        seenRow('a'),
+      ],
+      new Set(),
+      1,
+    );
+    expect(r.totalSeen).toBe(1);
+    expect(r.cells).toHaveLength(1);
+    expect(r.cells[0]?.band).toBe('hot'); // not 'skip' from the 900-reply re-sighting
+    expect(r.cells[0]?.seen).toBe(1);
+  });
+
+  test('replied counts distinct seen tweets; ids never seen are not credited', () => {
+    const r = buildTimelineFunnel(
+      [seenRow('a'), seenRow('a', { capturedAtMs: NOW + 60_000 }), seenRow('b')],
+      new Set(['a', 'ghost']),
+      1,
+    );
+    expect(r.totalSeen).toBe(2);
+    expect(r.totalReplied).toBe(1);
+    expect(r.cells[0]?.replied).toBe(1);
+    expect(r.cells[0]?.rate).toBe(0.5);
+  });
+
+  test('gate: 19 seen is silent, 20 quotes the capture rate', () => {
+    const rows = Array.from({ length: 19 }, (_, i) => seenRow(`t${i}`));
+    const thin = buildTimelineFunnel(rows, new Set(['t0']), 20);
+    expect(thin.cells[0]?.sufficient).toBe(false);
+    expect(thin.cells[0]?.rate).toBeNull();
+
+    const full = buildTimelineFunnel([...rows, seenRow('t19')], new Set(['t0']), 20);
+    expect(full.cells[0]?.sufficient).toBe(true);
+    expect(full.cells[0]?.rate).toBe(0.05);
+  });
+
+  test('cells stay in band order and the gate is per band', () => {
+    const r = buildTimelineFunnel(
+      [
+        seenRow('a'),
+        seenRow('b'),
+        seenRow('c', { comments: 300 }), // deep thread → skip
+        seenRow('d', { tweetTimeMs: null }),
+      ],
+      new Set(),
+      2,
+    );
+    expect(r.cells.map((c) => c.band)).toEqual(['hot', 'skip', 'unknown']);
+    expect(r.cells[0]?.sufficient).toBe(true);
+    expect(r.cells[1]?.sufficient).toBe(false);
   });
 });
 

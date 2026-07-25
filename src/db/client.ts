@@ -11,9 +11,15 @@ import * as sharedSchema from './shared-schema.ts';
 // SYNCHRONOUS — transactions must use sync .all()/.get()/.run() callbacks (no
 // async I/O inside a transaction). See token-store.ts for the one place that
 // needed an in-process mutex instead of a DB row lock.
-const path = process.env.SQLITE_PATH ?? './stratus.db';
+// Bare `bun test` (without the package.json script's SQLITE_PATH=:memory:)
+// would open the REAL ./stratus.db and every beforeAll seed would land in
+// production data — this happened, and the "flaky" brief.test.ts failures were
+// stale test rows in the live DB. Bun sets NODE_ENV=test under `bun test`, so
+// default test runs to :memory: instead of the production file.
+export const sqlitePath =
+  process.env.SQLITE_PATH ?? (process.env.NODE_ENV === 'test' ? ':memory:' : './stratus.db');
 
-export const sqlite = new Database(path, { create: true });
+export const sqlite = new Database(sqlitePath, { create: true });
 sqlite.exec('PRAGMA journal_mode = WAL;'); // readers never block the single writer
 sqlite.exec('PRAGMA busy_timeout = 5000;'); // wait out a momentary write lock, don't throw
 sqlite.exec('PRAGMA foreign_keys = ON;');

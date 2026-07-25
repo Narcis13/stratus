@@ -6,6 +6,7 @@
 
 import type { GrokMessage } from '../grok/index.ts';
 import { conversionRate } from './conversion.ts';
+import { type GoalVerdict, type Scorecard, computeScorecard } from './goals.ts';
 import type { MediaEffectiveness, RosterCoverage } from './playbook.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -49,6 +50,48 @@ export interface DigestTweet {
   profileVisits: number | null;
 }
 
+/** M1 (ME.5) — one active goal with its computed progress, for the coach to
+ *  narrate. `current`/`pct` are null when the goal has no value yet (a followers
+ *  goal before the first daily snapshot). */
+export interface DigestGoal {
+  label: string;
+  unit: string | null;
+  target: number;
+  current: number | null;
+  pct: number | null;
+}
+
+/** GR.9 — the week's 0–100 grade as it rides in the facts. `sufficient`/
+ *  `daysTracked` come straight from `computeScorecard`; the two delta fields are
+ *  the only thing this layer adds. */
+export interface DigestScorecard extends Scorecard {
+  /** The previous week's score, from that week's cached digest. null = there is
+   *  nothing comparable (no digest, or one generated before GR.9) — never 0. */
+  prevScore: number | null;
+  /** score − prevScore, null when either side is missing. */
+  delta: number | null;
+}
+
+/** GR.9 — what the scorecard needs that the week's rows can't say. The quest and
+ *  activity halves are deliberately NOT here: `buildDigestFacts` derives them
+ *  and feeds them to `computeScorecard` itself, so the grade can never disagree
+ *  with the facts it is a grade of (the `conversionRate` precedent below). */
+export interface ScorecardFactInputs {
+  /** Days of the week with ≥1 own original — bucketed in the viewer's local
+   *  days, the same boundary the C9 streak diary is written in. */
+  daysWithOriginal: number;
+  /** Days the week covers: 7 once it is over, the elapsed days while it runs. */
+  daysInWeek: number;
+  /** Daily reply target × daysInWeek — an ACTIVE `replies` commitment, else
+   *  doctrine's floor (the same resolution the brief's quests use, GR.8). */
+  repliesTargetWeek: number;
+  /** Doctrine's target reply share of the week's tweets. */
+  targetReplyPct: number;
+  /** Verdicts of the ACTIVE goals; empty drops the component. */
+  goalVerdicts: GoalVerdict[];
+  prevScore: number | null;
+}
+
 export interface DigestFactInputs {
   weekKey: string;
   start: Date;
@@ -67,6 +110,8 @@ export interface DigestFactInputs {
   spendByPlatform: Array<{ platform: string; costUsd: number }>;
   /** streaks rows whose day falls inside the week. */
   streakDays: Array<{ day: string; allDone: boolean }>;
+  /** M1 (ME.5) — active Me goals with progress; null when there are none. */
+  goals: DigestGoal[] | null;
   /** The Playbook's gated guidance lines (null when the gate isn't met). */
   guidance: { reply: string | null; post: string | null };
   /** §S0.7 — where the week's posted replies went vs my 2–10x target band. */
@@ -77,6 +122,8 @@ export interface DigestFactInputs {
    *  studio's whole job is to earn this lift). Numbers only when both sides
    *  clear n≥20; below the gate the cells read insufficient. */
   mediaVsText: MediaEffectiveness;
+  /** §GR.9 — the half of the scorecard the route must supply. */
+  scorecardInputs: ScorecardFactInputs;
 }
 
 export interface DigestFacts {
@@ -93,12 +140,22 @@ export interface DigestFacts {
   neglected: { targets: string[]; allies: string[] };
   spend: { totalUsd: number; byPlatform: Array<{ platform: string; costUsd: number }> };
   quests: { daysAllDone: number; daysTracked: number };
+  // M1 (ME.5): active goals with progress; null when there are none. Absent on
+  // digests cached before this landed (same contract as rosterCoverage/S4).
+  goals: DigestGoal[] | null;
   guidance: { reply: string | null; post: string | null };
   // S0.7: where this week's posted replies landed vs my 2–10x target band.
   rosterCoverage: RosterCoverage;
   // S4: the week's AI image spend + the media-vs-text lift the studio earns.
   imageSpendUsd: number;
   mediaVsText: MediaEffectiveness;
+  // GR.9: the week graded 0–100. **null whenever the week can't honestly be
+  // graded** — under the tracked-days gate, or on digests cached before this
+  // landed (the rosterCoverage/S4 contract). Nulling the whole card rather than
+  // just the score is deliberate: the narration is told to skip nulls, and a
+  // card carrying component scores over a two-day week is exactly the confident
+  // grade the gate exists to prevent.
+  scorecard: DigestScorecard | null;
 }
 
 export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
@@ -128,6 +185,37 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
 
   const totalUsd = Math.round(i.spendByPlatform.reduce((s, p) => s + p.costUsd, 0) * 1e5) / 1e5;
 
+  const quests = {
+    daysAllDone: i.streakDays.filter((d) => d.allDone).length,
+    daysTracked: i.streakDays.length,
+  };
+  const replyPct = i.tweets.length === 0 ? null : Math.round((replies / i.tweets.length) * 100);
+
+  // GR.9: graded from the numbers just derived, never from a second count of
+  // the same rows (the conversionRate precedent) — the grade and the facts it
+  // grades come out of one pass. `sufficient` alone isn't enough to publish:
+  // a week where every component dropped out has a null score and nothing to say.
+  const s = i.scorecardInputs;
+  const card = computeScorecard({
+    daysTracked: quests.daysTracked,
+    daysAllDone: quests.daysAllDone,
+    daysWithOriginal: s.daysWithOriginal,
+    daysInWeek: s.daysInWeek,
+    repliesPosted: replies,
+    repliesTargetWeek: s.repliesTargetWeek,
+    replyPct,
+    targetReplyPct: s.targetReplyPct,
+    goalVerdicts: s.goalVerdicts,
+  });
+  const scorecard: DigestScorecard | null =
+    card.sufficient && card.score !== null
+      ? {
+          ...card,
+          prevScore: s.prevScore,
+          delta: s.prevScore === null ? null : card.score - s.prevScore,
+        }
+      : null;
+
   return {
     weekKey: i.weekKey,
     from: i.start.toISOString(),
@@ -142,24 +230,19 @@ export function buildDigestFacts(i: DigestFactInputs): DigestFacts {
       followerDelta,
       rate: conversionRate(profileClicks, followerDelta),
     },
-    activity: {
-      posts,
-      replies,
-      replyPct: i.tweets.length === 0 ? null : Math.round((replies / i.tweets.length) * 100),
-    },
+    activity: { posts, replies, replyPct },
     topTweets,
     stageTransitions: i.stageTransitions.map((s) => ({ handle: s.handle, stage: s.stage })),
     topFans,
     neglected: { targets: i.neglectedTargets, allies: i.neglectedAllies },
     spend: { totalUsd, byPlatform: i.spendByPlatform },
-    quests: {
-      daysAllDone: i.streakDays.filter((d) => d.allDone).length,
-      daysTracked: i.streakDays.length,
-    },
+    quests,
+    goals: i.goals,
     guidance: i.guidance,
     rosterCoverage: i.rosterCoverage,
     imageSpendUsd: i.imageSpendUsd,
     mediaVsText: i.mediaVsText,
+    scorecard,
   };
 }
 
@@ -177,10 +260,10 @@ export const DIGEST_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-// Static instruction prefix — the FACTS block rides at the variable tail so
-// the prefix stays prompt-cacheable (same pattern as every other Grok prompt
-// in this repo).
-const DIGEST_INSTRUCTIONS = `You are my growth coach for X (Twitter). I'm a solopreneur building an audience by replying well, posting daily, and taking care of the people who reply back. Once a week you write me a short Sunday note about the week that just ended.
+// Registry default (key `digest`, AI.6) — the static instruction prefix; the
+// FACTS block substitutes at the {{FACTS}} tail so the prefix stays
+// prompt-cacheable (same pattern as every other LLM prompt in this repo).
+export const DIGEST_PROMPT_TEMPLATE = `You are my growth coach for X (Twitter). I'm a solopreneur building an audience by replying well, posting daily, and taking care of the people who reply back. Once a week you write me a short Sunday note about the week that just ended.
 
 Write the digest in second person ("you"), 150-220 words, 2-4 short paragraphs, plain text (no markdown, no headings, no bullet lists, no emoji).
 
@@ -189,15 +272,26 @@ HARD RULES:
 - Shape: what worked this week → who moved closer (the people) → ONE specific thing to change next week (pick it from the facts: a neglected person, a quest that kept missing, a guidance line).
 - Tone: warm, direct, concrete. A coach who watched the week, not a report. No guilt, no scolding, no hype words, no exclamation marks.
 
-Return JSON {"narrative": "..."} — nothing else.`;
+Return JSON {"narrative": "..."} — nothing else.
 
-export function buildDigestInput(facts: DigestFacts): GrokMessage[] {
-  return [
-    {
-      role: 'user',
-      content: `${DIGEST_INSTRUCTIONS}\n\nFACTS:\n${JSON.stringify(facts, null, 1)}`,
-    },
-  ];
+FACTS:
+{{FACTS}}`;
+
+const FACTS_PLACEHOLDER = '{{FACTS}}';
+
+// AI.6: `template` is the registry-loaded body (DB override or the default
+// above). The facts JSON substitutes at {{FACTS}} — byte-identical to the old
+// `${prefix}\n\nFACTS:\n${json}` concatenation when the default template runs.
+// A custom override that dropped the token still gets the facts appended.
+export function buildDigestInput(
+  facts: DigestFacts,
+  template: string = DIGEST_PROMPT_TEMPLATE,
+): GrokMessage[] {
+  const factsJson = JSON.stringify(facts, null, 1);
+  const content = template.includes(FACTS_PLACEHOLDER)
+    ? template.split(FACTS_PLACEHOLDER).join(factsJson)
+    : `${template}\n\nFACTS:\n${factsJson}`;
+  return [{ role: 'user', content }];
 }
 
 /** Strict structured outputs guarantee the shape; degrade odd output to null

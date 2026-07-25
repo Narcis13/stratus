@@ -79,6 +79,7 @@ export async function xFetch<T>(endpoint: string, opts: FetchOptions): Promise<T
 
       if (res.ok) {
         const data = (await res.json()) as T;
+        logIncludes(method, endpoint, data);
         onCost?.({
           endpoint,
           method,
@@ -162,6 +163,24 @@ function itemCount(body: unknown): number | null {
   if (Array.isArray(b.data)) return b.data.length;
   if (typeof b.meta?.result_count === 'number') return b.meta.result_count;
   return null;
+}
+
+// CA.2 step 1 instrumentation (2026-07-23 cost audit): X bills every object in
+// the response body, but itemCount only counts `data`. The `expansions` param
+// drags parent tweets/authors into `includes` — on 90-reply days that's ~90
+// hidden objects per discovery read, which matches the console-vs-/cost/today
+// gap. Log the counts so the next 03:00 passes confirm (or refute) the
+// mechanism before any cost_usd change. Grep journal for `[cost-audit]`.
+function logIncludes(method: string, endpoint: string, body: unknown): void {
+  if (body == null || typeof body !== 'object') return;
+  const inc = (body as { includes?: { tweets?: unknown; users?: unknown } }).includes;
+  if (inc == null || typeof inc !== 'object') return;
+  const tweets = Array.isArray(inc.tweets) ? inc.tweets.length : 0;
+  const users = Array.isArray(inc.users) ? inc.users.length : 0;
+  if (tweets === 0 && users === 0) return;
+  console.log(
+    `[cost-audit] ${method} ${endpoint}: data=${itemCount(body) ?? 1} includes.tweets=${tweets} includes.users=${users}`,
+  );
 }
 
 function buildUrl(

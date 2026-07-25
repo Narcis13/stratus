@@ -2,12 +2,21 @@
 // The DB is shared across test files, so assertions check this file's
 // distinctive rows and structural invariants, never exact totals.
 
-import { beforeAll, describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { mentions, postsPublished, replyDrafts, streaks } from '../db/schema.ts';
+import {
+  commitments,
+  meGoals,
+  mentions,
+  postsPublished,
+  replyDrafts,
+  scheduledPosts,
+  streaks,
+} from '../db/schema.ts';
 import { localDayKey } from '../quests.ts';
+import { resetSettings, setSettings } from '../settings/registry.ts';
 import { brief } from './brief.ts';
 
 const app = new Hono();
@@ -15,6 +24,11 @@ app.route('/x', brief);
 
 const ORIGINAL_ID = '97000000000000001';
 const MENTION_ID = '97000000000000002';
+// GR.6: a pending pair used to prove the monitor block is wired. Deliberately
+// ~200 days out — far from every other suite's calendar fixture, outside the
+// brief's own today-window, and `scheduleCluster` reads no clock, so the alert
+// it produces is deterministic rather than baseline-relative.
+const SLOT_IDS = ['gr6-brief-slot-a', 'gr6-brief-slot-b'];
 
 interface Quest {
   key: string;
@@ -50,16 +64,51 @@ interface PinnedWatchBody {
   outperformer: { tweetId: string; text: string; views: number; ratio: number } | null;
 }
 
+interface MonitorBlock {
+  alerts: Array<{ rule: string; severity: string; message: string }>;
+  worst: string | null;
+}
+
+interface GoalBlock {
+  id: string;
+  label: string;
+  status: string;
+  target: number;
+  pacing: {
+    current: number | null;
+    pctComplete: number | null;
+    daysLeft: number | null;
+    requiredPerDay: number | null;
+    actualPerDay: number | null;
+    verdict: string;
+    projectedAt: string | null;
+  };
+}
+
+interface CommitmentBlock {
+  key: string;
+  dailyTarget: number;
+  active: boolean;
+  debt: { missedLast7: number; missedLast30: number; trackedLast7: number; tier: number };
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   pinnedWatch: PinnedWatchBody;
-  replyQuota: { postedToday: number };
-  today: { anchors: number[]; gaps: BriefGap[] };
+  monitor: MonitorBlock;
+  replyQuota: { postedToday: number; target: { min: number; max: number } };
+  today: {
+    anchors: number[];
+    gaps: BriefGap[];
+    scheduled: Array<{ id: string; status: string }>;
+  };
   quests: {
     day: string;
     items: Quest[];
     streak: { current: number; todayComplete: boolean };
   };
+  goals: GoalBlock[];
+  commitments: CommitmentBlock[];
 }
 
 async function getBrief(): Promise<BriefBody> {
@@ -106,6 +155,28 @@ describe('brief quests (C9)', () => {
         answeredAt: now,
       })
       .onConflictDoNothing();
+
+    const far = now.getTime() + 200 * 24 * 3_600_000;
+    await db.insert(scheduledPosts).values([
+      {
+        id: SLOT_IDS[0] as string,
+        text: 'gr6 brief monitor slot one',
+        scheduledFor: new Date(far),
+        status: 'pending',
+        source: 'test',
+      },
+      {
+        id: SLOT_IDS[1] as string,
+        text: 'gr6 brief monitor slot two',
+        scheduledFor: new Date(far + 30 * 60_000),
+        status: 'pending',
+        source: 'test',
+      },
+    ]);
+  });
+
+  afterAll(async () => {
+    await db.delete(scheduledPosts).where(inArray(scheduledPosts.id, SLOT_IDS));
   });
 
   test('quest block has all five quests and reads the seeded rows', async () => {
@@ -173,6 +244,24 @@ describe('brief quests (C9)', () => {
     expect(body.account.conversion.d28.windowDays).toBe(28);
   });
 
+  test('carries the GR.6 monitor block, one alert per rule, worst derived from it', async () => {
+    const body = await getBrief();
+    expect(Array.isArray(body.monitor.alerts)).toBe(true);
+    // The alert contract the Today card keys on: never two rows for one rule.
+    const rules = body.monitor.alerts.map((a) => a.rule);
+    expect(new Set(rules).size).toBe(rules.length);
+    // `worst` is derived from the alerts shipped alongside it, never stale —
+    // and they arrive severity-desc, so it is the first one's severity.
+    if (body.monitor.alerts.length === 0) expect(body.monitor.worst).toBeNull();
+    else expect(body.monitor.worst).toBe(body.monitor.alerts[0]?.severity as string);
+
+    // The wiring claim: the seeded pending pair is 30 min apart, so the brief
+    // must be running the same rules over the same rows as GET /x/monitor.
+    const cluster = body.monitor.alerts.find((a) => a.rule === 'scheduleCluster');
+    expect(cluster?.severity).toBe('info');
+    expect(typeof cluster?.message).toBe('string');
+  });
+
   test('streak row is written idempotently — one row per day', async () => {
     await getBrief();
     await getBrief();
@@ -183,5 +272,188 @@ describe('brief quests (C9)', () => {
     const body = await getBrief();
     expect(body.quests.day).toBe(dayKey);
     expect(typeof body.quests.streak.current).toBe('number');
+  });
+});
+
+// A3.5 — a `manual` row is a filled slot: it must show in today's plan and its
+// anchor must vanish from the gap list. This is the one fixture in the file
+// that sits INSIDE the today-window on purpose; it is status 'manual', so the
+// monitor's pending-only cluster rule never sees it, and it is deleted before
+// the suite ends.
+describe('brief manual slots (A3.5)', () => {
+  const MANUAL_ID = 'a35-brief-manual-slot';
+
+  afterAll(async () => {
+    await db.delete(scheduledPosts).where(eq(scheduledPosts.id, MANUAL_ID));
+  });
+
+  test('a manual row shows in the plan and fills its anchor', async () => {
+    const before = await getBrief();
+    // Loud, never vacuous: with every suite cleaning its today-window calendar
+    // rows, at least one anchor is open here. A failure means a leaked fixture.
+    expect(before.today.gaps.length).toBeGreaterThan(0);
+    const hour = (before.today.gaps[0] as BriefGap).hour;
+
+    // tzOffsetMin=0 → today's local midnight is UTC midnight.
+    const utcMidnight = new Date(new Date().setUTCHours(0, 0, 0, 0));
+    await db.insert(scheduledPosts).values({
+      id: MANUAL_ID,
+      text: 'a35 manual slot fixture',
+      scheduledFor: new Date(utcMidnight.getTime() + hour * 3_600_000 + 12 * 60_000),
+      status: 'manual',
+      source: 'test',
+    });
+
+    const after = await getBrief();
+    const mine = after.today.scheduled.find((s) => s.id === MANUAL_ID);
+    expect(mine?.status).toBe('manual');
+    // The slot claims its nearest anchor, so that hour is no longer a gap.
+    expect(after.today.gaps.every((g) => g.hour !== hour)).toBe(true);
+  });
+});
+
+// GR.8 — the accountability blocks. Every test sets up the commitments state it
+// needs at its own start (the table is tiny and only this file and
+// goals.test.ts ever write it), so no assertion depends on test order.
+describe('brief accountability blocks (GR.8)', () => {
+  const GOAL_ID = 'gr8-brief-goal';
+  const DAY = 86_400_000;
+
+  beforeAll(async () => {
+    const now = Date.now();
+    await db.delete(commitments);
+    // A `custom` goal so the pacing arithmetic is fully seeded here and can't
+    // move with whatever account_snapshots other suites leave behind: 40 of 100
+    // in 10 days (4/day measured) with 30 days left (2/day required) = ahead.
+    await db.insert(meGoals).values({
+      id: GOAL_ID,
+      label: 'gr8 brief goal',
+      kind: 'custom',
+      target: 100,
+      currentValue: 40,
+      baselineValue: 0,
+      baselineAt: new Date(now - 10 * DAY),
+      deadline: new Date(now + 30 * DAY),
+      status: 'active',
+    });
+  });
+
+  afterAll(async () => {
+    await db.delete(commitments);
+    await db.delete(meGoals).where(eq(meGoals.id, GOAL_ID));
+  });
+
+  test('with no commitments the quest targets are the shipped defaults', async () => {
+    await db.delete(commitments);
+    const body = await getBrief();
+    const byKey = new Map(body.quests.items.map((q) => [q.key, q]));
+    expect(byKey.get('replies')?.target).toBe(body.replyQuota.target.min);
+    expect(byKey.get('original')?.target).toBe(1);
+    expect(body.commitments).toEqual([]);
+  });
+
+  test('an active replies commitment outranks the doctrine quota target', async () => {
+    await db.delete(commitments);
+    await db
+      .insert(commitments)
+      .values({ key: 'replies', dailyTarget: 17, active: true, updatedAt: new Date() });
+    const body = await getBrief();
+    const replies = body.quests.items.find((q) => q.key === 'replies');
+    expect(replies?.target).toBe(17);
+    expect(replies?.label).toBe('17 quality replies');
+    // The doctrine band itself is untouched — the commitment is a personal
+    // minimum, not a redefinition of the 10–20/day reply doctrine.
+    expect(body.replyQuota.target.min).not.toBe(17);
+  });
+
+  test('a paused commitment changes nothing', async () => {
+    await db.delete(commitments);
+    await db
+      .insert(commitments)
+      .values({ key: 'replies', dailyTarget: 17, active: false, updatedAt: new Date() });
+    const body = await getBrief();
+    const replies = body.quests.items.find((q) => q.key === 'replies');
+    expect(replies?.target).toBe(body.replyQuota.target.min);
+    // …but it still ships, so the panel can show what is paused.
+    expect(body.commitments.find((c) => c.key === 'replies')?.active).toBe(false);
+  });
+
+  test('an active originals commitment raises the original quest', async () => {
+    await db.delete(commitments);
+    await db
+      .insert(commitments)
+      .values({ key: 'originals', dailyTarget: 3, active: true, updatedAt: new Date() });
+    const body = await getBrief();
+    const original = body.quests.items.find((q) => q.key === 'original');
+    expect(original?.target).toBe(3);
+    expect(original?.label).toBe('3 original posts');
+  });
+
+  test('commitments carry the debt tier over the streak diary', async () => {
+    await db.delete(commitments);
+    // Promised three days ago → exactly three days are on the hook (the window
+    // ends yesterday; today is still in progress and can never be a miss).
+    await db.insert(commitments).values({
+      key: 'replies',
+      dailyTarget: 12,
+      active: true,
+      activeSince: new Date(Date.now() - 3 * DAY),
+      updatedAt: new Date(),
+    });
+    const body = await getBrief();
+    const c = body.commitments.find((x) => x.key === 'replies');
+    expect(c?.dailyTarget).toBe(12);
+    expect(c?.debt.trackedLast7).toBe(3);
+    expect(c?.debt.missedLast7).toBeLessThanOrEqual(3);
+    // Tier ladder (cutoffs 1/3/5) — asserted against whatever the shared diary
+    // actually holds rather than a fixed count other suites could perturb.
+    const missed = c?.debt.missedLast7 ?? 0;
+    expect(c?.debt.tier).toBe(missed >= 5 ? 3 : missed >= 3 ? 2 : missed >= 1 ? 1 : 0);
+  });
+
+  test('goals arrive active-only with live pacing', async () => {
+    const body = await getBrief();
+    for (const g of body.goals) expect(g.status).toBe('active');
+    const g = body.goals.find((x) => x.id === GOAL_ID);
+    expect(g?.pacing.current).toBe(40);
+    expect(g?.pacing.pctComplete).toBe(40);
+    expect(g?.pacing.daysLeft).toBe(30);
+    expect(g?.pacing.requiredPerDay).toBeCloseTo(2, 5);
+    expect(g?.pacing.actualPerDay).toBeCloseTo(4, 1);
+    expect(g?.pacing.verdict).toBe('ahead');
+  });
+});
+
+// UI.2 — the brief reads the doctrine cadence + quest knobs from the settings store
+// at request time. Each test resets the group it touched: the store is process-global
+// (shared over the in-memory DB), so an override left behind would leak into another
+// suite. The niche-owned reply band is NOT a store key (D2/D30c) — it is not asserted
+// here; the store-owned consumers below are what UI.2 wired.
+describe('brief honors store settings (UI.2)', () => {
+  afterEach(() => {
+    resetSettings({ group: 'quests' });
+    resetSettings({ group: 'doctrine' });
+  });
+
+  test('a patched x.quests.originalsTarget moves the original quest default', async () => {
+    await db.delete(commitments); // no commitment ⇒ the configured default applies
+    setSettings({ 'x.quests.originalsTarget': 3 });
+    const body = await getBrief();
+    const original = body.quests.items.find((q) => q.key === 'original');
+    expect(original?.target).toBe(3);
+    expect(original?.label).toBe('3 original posts');
+  });
+
+  test('patched anchors flow into today.anchors', async () => {
+    setSettings({
+      'x.doctrine.anchors3': [7, 11, 15],
+      'x.doctrine.anchors4': [6, 10, 14, 17],
+    });
+    const body = await getBrief();
+    // pickAnchors returns one ladder or the other depending on how many slots are
+    // filled today, but it must be one of the two PATCHed arrays — never the module
+    // defaults — which proves the store value reached the route.
+    const anchors = JSON.stringify(body.today.anchors);
+    expect([JSON.stringify([7, 11, 15]), JSON.stringify([6, 10, 14, 17])]).toContain(anchors);
   });
 });

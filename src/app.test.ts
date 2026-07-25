@@ -140,6 +140,16 @@ describe.if(authed && Boolean(process.env.XAI_API_KEY))('drafter guards (§8.1/�
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
   });
+
+  test('AI.5: unknown provider → 400 before any LLM spend', async () => {
+    const res = await app.request('/x/posts/draft', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ provider: 'gemini' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_provider');
+  });
 });
 
 describe.if(authed)('pillars guards (§8.6)', () => {
@@ -161,6 +171,27 @@ describe.if(authed)('pillars guards (§8.6)', () => {
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_label_or_body');
+  });
+});
+
+describe.if(authed)('backfill guard', () => {
+  test('non-numeric tweet id → 400 before any read or DB write', async () => {
+    const res = await app.request('/x/posts/backfill', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ tweetId: 'not-a-tweet-id' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
+  });
+
+  test('missing tweet id → 400', async () => {
+    const res = await app.request('/x/posts/backfill', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
   });
 });
 
@@ -205,5 +236,54 @@ describe.if(authed)('batch reply guards (Radar §7.2)', () => {
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id_0');
+  });
+
+  test('AI.5: unknown provider → 400 before any LLM spend', async () => {
+    const res = await app.request('/x/replies/generate-batch', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({
+        tweets: [{ tweetId: '123', handle: 'a', text: 'x' }],
+        provider: 'gemini',
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_provider');
+  });
+});
+
+describe.if(authed)('reply band gate (§7.3)', () => {
+  const deadContext = {
+    tweetId: '123456',
+    handle: 'someone',
+    author: 'Some One',
+    text: 'a quiet post nobody saw',
+    url: 'https://x.com/someone/status/123456',
+    postedAt: new Date(Date.now() - 24 * 60 * 60_000).toISOString(),
+    metrics: { views: 50, replies: 2, reposts: 0, likes: 1 },
+    topComments: [],
+  };
+
+  // A dead post (old, tiny, not bait) refuses with 422 BEFORE any Grok spend —
+  // and before the niche read (N0.4: refuse-before-work keeps this path
+  // byte-identical to the pre-niche behavior).
+  test('dead post without override → 422 band_gate', async () => {
+    const res = await app.request('/x/replies/generate', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ context: deadContext }),
+    });
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as { error: string }).error).toBe('band_gate');
+  });
+
+  test('AI.5: unknown provider → 400 invalid_provider, ahead of the band gate', async () => {
+    const res = await app.request('/x/replies/generate', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ context: deadContext, provider: 'gemini' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_provider');
   });
 });

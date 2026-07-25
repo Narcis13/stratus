@@ -21,6 +21,13 @@ stratus.db-shm
 *.sqlite-wal
 *.sqlite-shm
 
+# Hand-made DB snapshots (`sqlite3 .backup stratus.db.pre-deploy-…`) and their
+# sidecars. The bare `stratus.db` rule above does NOT match these — one such
+# backup was committed and pushed to the public repo before this rule existed.
+stratus.db.backup*
+*.db.backup*
+*.db.pre-*
+
 # OS / editor
 .DS_Store
 *.swp
