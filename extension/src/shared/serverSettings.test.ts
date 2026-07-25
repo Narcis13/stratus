@@ -17,6 +17,9 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
         'x.display.radarDraftCap': 12,
         'x.ai.batchReplyCap': 40,
         'x.followups.neglectedTargetDays': 10,
+        'x.display.dossierListLen': 12,
+        'x.display.channelPostsShown': 20,
+        'x.display.voiceListLimit': 250,
       }),
     ).toEqual({
       anchors3: [8, 14, 19],
@@ -31,6 +34,9 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       radarDraftCap: 12,
       batchReplyCap: 40,
       neglectedTargetDays: 10,
+      dossierListLen: 12,
+      channelPostsShown: 20,
+      voiceListLimit: 250,
     });
   });
 
@@ -94,13 +100,16 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'band',
       'batchReplyCap',
       'bestTimeMinN',
+      'channelPostsShown',
       'doNextCap',
       'doNextSnoozeH',
+      'dossierListLen',
       'fansAmberTopN',
       'ladderSwitchAt',
       'neglectedTargetDays',
       'panelRefreshCap',
       'radarDraftCap',
+      'voiceListLimit',
     ]);
   });
 });

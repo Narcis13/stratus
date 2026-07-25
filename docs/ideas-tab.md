@@ -62,7 +62,7 @@ Crucially, **generating writes nothing to your inbox.** The proposals are a prev
 
 ## The idea list
 
-Below the quick-add box is your list of ideas. A **Status** dropdown lets you choose which ideas to show:
+Below the **Quick add** and **Generate with AI** blocks is your list of ideas, headed **Inbox (N)**. Above it, a segmented control chooses which ideas to show:
 
 | Filter | Shows |
 |---|---|
@@ -71,13 +71,13 @@ Below the quick-add box is your list of ideas. A **Status** dropdown lets you ch
 | **Discarded** | Ideas you set aside. |
 | **All** | Everything, regardless of status. |
 
-A small line next to the dropdown shows how many ideas are currently listed (e.g. *"4 shown"*). There's also a **Refresh** button in the tab header (top right) to reload the list — useful after an idea gets consumed elsewhere and you want the inbox to catch up.
+The section heading carries the count (e.g. **Inbox (4)**). There's also a **Refresh** button in the tab header (top right) to reload the list — useful after an idea gets consumed elsewhere and you want the inbox to catch up.
 
 ### What each row shows
 
 Each idea in the list is a card with:
 
-- **A status badge** — a colored tag reading `open`, `consumed`, or `discarded` so you can see its state at a glance.
+- **A status chip** — reading `open`, `consumed`, or `discarded` so you can see its state at a glance. The tones are the panel's shared ones: `open` takes the accent stratus uses everywhere for "this is yours to act on", `consumed` reads as a closed loop, `discarded` goes quiet.
 - **A relative time** — how long ago you added it (e.g. *"2m ago"*, *"3h ago"*, or a date for older ones).
 - **The idea text** — exactly what you captured.
 - **Tags** — a channel-tag picker sits on every idea (see "Tags" below). It also suggests tags based on the idea's own text.
@@ -157,8 +157,8 @@ Changed your mind about an idea you set aside? Switch the **Status** dropdown to
 ## States you'll see
 
 - **Loading** — while the list is fetching, the header button reads **"Loading…"** and the area shows *"Loading…"* until your ideas appear.
-- **Empty inbox (Open filter)** — if you have no open ideas, you'll see: *"No open ideas. Ideas you add here appear as dropdown seeds in the Composer and Reply Master."* — a reminder of what the inbox is for.
-- **Empty (other filters)** — under Consumed / Discarded / All with nothing to show, you'll see a plain *"Nothing here."*
+- **Empty inbox (Open filter)** — if you have no open ideas, you'll see *"No open ideas."* with a reminder of what the inbox is for: open ideas are what seed the Composer and Reply Master dropdowns, so an empty one means nothing is waiting to be written.
+- **Empty (other filters)** — under Consumed / Discarded / All with nothing to show, you'll see *"Nothing in this state."* and a pointer back to the other states.
 - **Error** — if a save, update, or load fails, a short error message appears near the top (for example if the server is unreachable). Fix the underlying issue (often the token/URL in Settings) and try again.
 
 ---

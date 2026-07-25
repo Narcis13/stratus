@@ -51,13 +51,17 @@ Every person sits at one of six **stages**. A stage describes *reciprocity* — 
 
 People are grouped under stage headings, strongest first: **ally → mutual → responded → engaged → noticed → stranger**. Empty stages are hidden, and each heading shows how many people are in it, e.g. `mutual (3)`. The tab title shows your total, e.g. `People (42)`.
 
+The heading names the stage, so there is no stage chip repeating it beside the count — the chips live where a person appears *outside* their group (timeline affinity, the Channels room, Today's cards).
+
 ### The search box
 
 At the top is a **Search handle or name…** box. Type to filter the whole roster by handle or display name; results update as you type (with a short pause so it isn't jumpy). Clear it to see everyone again.
 
 ### The stage filter
 
-Below the search box is a row of filter buttons: **All**, then one per stage (`ally`, `mutual`, `responded`, `engaged`, `noticed`, `stranger`). Tap a stage to show only those people; tap it again (or tap **All**) to clear the filter. Search and stage filter work together.
+Below the search box is a segmented control: **All**, then one per stage (`ally`, `mutual`, `responded`, `engaged`, `noticed`, `stranger`). Tap a stage to show only those people; tap **All** to clear the filter. Search and stage filter work together.
+
+When a filter or a search hides everyone, the list says so and tells you which of the two is doing it — an empty roster and an over-narrow filter look identical otherwise.
 
 ### What each row shows
 
@@ -155,7 +159,7 @@ A person who vanishes from a complete pass without you ticking them is marked **
 
 ### The Ledger drawer
 
-Collapsed at the bottom: **Ledger** — search and a status filter over the whole following list (`active`, `queued`, `done`, `confirmed`, `gone`). This is also the **only way to un-pin someone**: the batch's `keep` button only pins, so if you change your mind, find them here and toggle `kept ✓` back off. Un-keeping reopens their eligibility immediately.
+Collapsed at the bottom: **Ledger** — search and a status filter (the same segmented control the roster's stage filter uses) over the whole following list (`active`, `queued`, `done`, `confirmed`, `gone`), each row's status shown as a toned chip: `queued` warns because it is the only one asking you for something, `confirmed` reads as a closed loop, `gone` goes quiet. This is also the **only way to un-pin someone**: the batch's `keep` button only pins, so if you change your mind, find them here and toggle `kept ✓` back off. Un-keeping reopens their eligibility immediately.
 
 ### Cost
 
@@ -165,13 +169,19 @@ Collapsed at the bottom: **Ledger** — search and a status filter over the whol
 
 ## The dossier view
 
-Tapping any row opens that person's **dossier** — everything the system knows about one human, on one screen. At the top are a **← People** button (to go back to the roster) and an **open on X ↗** link (opens their X profile in a new tab). The rest of the dossier is a stack of sections.
+Tapping any row opens that person's **dossier** — everything the system knows about one human, on one screen. At the top are a **← People** button (to go back to the roster), an **open on X ↗** link (opens their X profile in a new tab), and a **⚙** that sets how many rows the capped lists below show. The rest of the dossier is a stack of sections.
+
+### ⚙ Dossier list rows
+
+The gear in the dossier header holds one number, **Dossier list rows** (`x.display.dossierListLen`, default 5, range 3–25). It caps three lists at once — *My replies to them*, *Their mentions of me*, and *Their saved tweets* — and each of them says `+N more` when there is more behind the cap. The **Timeline** is deliberately never capped: the whole point of the dossier is the full history.
+
+It is the same knob as Settings → Tuning → Display, edited in either place.
 
 ### Header — identity, stage, and tags
 
 The top block shows the person's display name, `@handle`, and, when known: their follower count, when you last heard *from* them (**last inbound**), and when you last replied *to* them (**last reply**). Their X bio appears below if it's on file.
 
-- **Stage picker** — a small dropdown, colored to match the stage, sitting next to the name. It shows the current stage; pick a different one to override it by hand. This is the one place you can move someone *down* a stage as well as up. Its tooltip reminds you: *"Stage auto-advances from events; setting it by hand overrides (may demote)."* An override sticks until the person's activity re-earns a higher rank.
+- **Stage picker** — the whole six-rung ladder as a row of chips (`ally … stranger`), each in its stage color, with the current one filled in. Tap another rung to override the stage by hand. This is the one place you can move someone *down* a stage as well as up. Its tooltip reminds you: *"Stage auto-advances from events; setting it by hand overrides (may demote)."* An override sticks until the person's activity re-earns a higher rank.
 - **Channel tags** — a row of chips (`#slug`) for your topic *channels* (saved topic views elsewhere in stratus). Click a chip to tag or untag this person to that channel; the change saves immediately. Channels the system guesses from their bio are suggested first with a hint dot — you always confirm by clicking. Any tags that aren't channels are kept untouched. (If you haven't created any channels, this row is empty.)
 
 ### Notes — your private memory
@@ -197,7 +207,7 @@ Right below Openers, the **Draft DM** section drafts a full direct message (not 
 
 ### My replies to them — with measured outcomes
 
-If you've replied to this person, this section lists your recent replies (up to 5) and how each one actually performed. The heading shows the totals, e.g. *My replies to them (7, 5 measured)* — how many replies, and how many have real metrics yet.
+If you've replied to this person, this section lists your recent replies (as many as the header's **⚙** allows, 5 by default) and how each one actually performed. The heading shows the totals, e.g. *My replies to them (7, 5 measured)* — how many replies, and how many have real metrics yet.
 
 Each reply shows its text plus, once measured, its **views**, **replies**, and **profile visits** (how many people clicked through to *your* profile from that reply — the number that actually grows your following). Replies not yet scored read **not measured yet**.
 
@@ -205,11 +215,11 @@ Each reply shows its text plus, once measured, its **views**, **replies**, and *
 
 ### Their mentions of me
 
-Up to 5 recent tweets where this person mentioned or replied to you, each with its status (e.g. `answered`, `unanswered`) and how long ago. A quick way to see how they've engaged with you.
+The most recent tweets where this person mentioned or replied to you (5 by default — the header's **⚙** sets it), each with its status (e.g. `answered`, `unanswered`) and how long ago. A quick way to see how they've engaged with you.
 
 ### Their saved tweets
 
-Up to 5 of their tweets you've stashed in your Voice/swipe library, each stamped with when you saved it. Useful context for their style and what you found worth keeping.
+The most recent of their tweets you've stashed in your Voice/swipe library (same cap), each stamped with when you saved it. Useful context for their style and what you found worth keeping.
 
 ### Follower series
 
@@ -217,19 +227,20 @@ When enough follower snapshots exist, the dossier can show how their follower co
 
 ### Timeline — the full history
 
-The complete, newest-first log of every interaction, each with an icon, a short summary, and how long ago it happened. The icons:
+The complete, newest-first log of every interaction, each with a glyph, a short summary, and how long ago it happened. **This list is never capped** — the three lists above are summaries, this is the answer to "what is my history with this person?". Hovering a glyph shows the raw event type. The glyphs:
 
-| Icon | Event | Meaning |
+| Glyph | Event | Meaning |
 |---|---|---|
-| 📌 | saved tweet | You saved one of their tweets. |
-| 📇 | saved author | You saved them as an author. |
+| ❑ | saved tweet | You saved one of their tweets. |
+| ❐ | saved author | You saved them as an author. |
 | ↗ | my reply | You replied to them. |
 | ↘ | their mention | They mentioned you. |
-| ⚡ | their reply to me | They replied to one of your replies (the strongest inbound signal). |
-| 👀 | hover sighting | Their profile card was captured while you browsed. |
-| 🌾 | harvest seen | Seen during a bulk harvest of a conversation. |
-| 📝 | note | A note you logged. |
+| ⇄ | their reply to me | They replied to one of your replies (the strongest inbound signal). |
+| ◔ | hover sighting | Their profile card was captured while you browsed. |
+| ≋ | harvest seen | Seen during a bulk harvest of a conversation. |
+| ✎ | note | A note you logged. |
 | ✉ | DM sent | A manual DM you logged. |
+| ♥ / ⟳ / ✚ | their like / repost / follow | Captured from your notifications. |
 
 ---
 
@@ -289,7 +300,7 @@ The refusals mirror the icebreaker: a **thin dossier** (no real shared context) 
 
 ## Tips and good to know
 
-- **Passive capture is on by default.** The first time you open the People tab you'll see a one-time note: *"👀 Passive capture is on: hover cards you see while browsing X grow this roster automatically. Turn it off in Settings."* This means simply hovering over people's profile cards as you scroll X can quietly add them to your roster — no clicking required. It only reads what X already shows you, and it never triggers hovers on its own. If you'd rather keep the roster to people you deliberately engage, turn **passive capture** off in the **Settings** tab. Tap **Got it** to dismiss the note.
+- **Passive capture is on by default.** The first time you open the People tab you'll see a one-time note: *"◔ Passive capture is on: hover cards you see while browsing X grow this roster automatically. Turn it off in Settings."* This means simply hovering over people's profile cards as you scroll X can quietly add them to your roster — no clicking required. It only reads what X already shows you, and it never triggers hovers on its own. If you'd rather keep the roster to people you deliberately engage, turn **passive capture** off in the **Settings** tab. Tap **Got it** to dismiss the note.
 - **Costs are tiny and only on demand.** Browsing the roster and dossiers is free. The only thing that costs money is **Suggest an opener** (~$0.005 per click), and only when you press it. Everything else here is built from data stratus already collected.
 - **Stages are guesses, not verdicts.** They're a helpful sorting of your relationships, tuned by opening-guess thresholds. Trust the direction (stranger → ally) more than the exact boundary, and override by hand whenever your judgment differs.
 - **Click-through is everywhere.** Almost any handle in stratus opens that person's dossier here. When you're deciding whether to reply to someone, that one click gives you their whole history first. This now reaches onto x.com itself: clicking a **person chip** on the timeline or the header of the **stratus context panel** on a tweet page ([S6](./s6-augmented-ui.md)) routes here too — the background hands the panel a `stratus:openPerson` key and App.tsx opens this tab on that dossier.

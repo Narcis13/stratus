@@ -7,6 +7,7 @@
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { IcebreakerBox } from './Icebreakers.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type DmDraft,
@@ -23,6 +24,9 @@ import {
   type TimelineAffinityAuthor,
   api,
 } from './api.ts';
+import { dmChip, followingChip, stageChip } from './chips.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import { type SettingsEditor, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
 import { EmptyState } from './ui/EmptyState.tsx';
 import { Section } from './ui/Section.tsx';
@@ -30,15 +34,23 @@ import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 const STAGES: PersonStage[] = ['ally', 'mutual', 'responded', 'engaged', 'noticed', 'stranger'];
 
+/** The one knob the dossier's gear tunes — it caps three lists at once, which
+ *  is why the gear sits in the dossier header rather than on any one of them. */
+const DOSSIER_SETTING_KEYS = ['x.display.dossierListLen'];
+
+// Text glyphs, not emoji (UI.14): emoji render at a different weight and
+// baseline than the panel's type in every theme, and a timeline is a column of
+// twelve of them. Each one is a direction or an object, and the `title` carries
+// the event type for anything ambiguous.
 const EVENT_ICONS: Record<PersonEvent['type'], string> = {
-  saved_tweet: '📌',
-  saved_author: '📇',
+  saved_tweet: '❑',
+  saved_author: '❐',
   my_reply: '↗',
   their_mention: '↘',
-  their_reply_to_me: '⚡',
-  hover_sighting: '👀',
-  harvest_seen: '🌾',
-  note: '📝',
+  their_reply_to_me: '⇄',
+  hover_sighting: '◔',
+  harvest_seen: '≋',
+  note: '✎',
   manual_dm_logged: '✉',
   their_like: '♥',
   their_repost: '⟳',
@@ -71,7 +83,7 @@ function PassiveCaptureNote(): JSX.Element | null {
   if (!show) return null;
   return (
     <div className="status-line">
-      👀 Passive capture is <strong>on</strong>: hover cards you see while browsing X grow this
+      ◔ Passive capture is <strong>on</strong>: hover cards you see while browsing X grow this
       roster automatically. Turn it off in Settings.{' '}
       <button
         type="button"
@@ -93,9 +105,28 @@ const PEOPLE_SUBTABS: SubTab<PeopleView>[] = [
   { id: 'following', label: 'Following' },
 ];
 
+// The two filter rows are single-select segmented controls, so they are the
+// SubTabs primitive with an `all` sentinel rather than two hand-rolled pill
+// rows. Clearing is "pick All"; the old click-the-active-one-to-clear is gone.
+const STAGE_FILTER_TABS: SubTab<PersonStage | 'all'>[] = [
+  { id: 'all', label: 'All' },
+  ...STAGES.map((s) => ({ id: s, label: s })),
+];
+
+const LEDGER_FILTER_TABS: SubTab<FollowingStatus | 'all'>[] = [
+  { id: 'all', label: 'All' },
+  ...(['active', 'queued', 'done', 'confirmed', 'gone'] as FollowingStatus[]).map((s) => ({
+    id: s,
+    label: s,
+  })),
+];
+
 export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.Element {
   const [selected, setSelected] = useState<string | null>(openHandle);
   const [view, setView] = useState<PeopleView>('roster');
+  // ONE editor for the whole tab (D135d) — the dossier gear is its only
+  // consumer today, but a second gear takes this same instance as a prop.
+  const editor = useSettingsEditor(settings);
 
   useEffect(() => {
     if (openHandle) setSelected(openHandle);
@@ -109,7 +140,7 @@ export function PeoplePanel({ settings, openHandle, onClearOpen }: Props): JSX.E
   return (
     <div className="panel">
       {selected ? (
-        <DossierView settings={settings} handle={selected} onBack={back} />
+        <DossierView settings={settings} handle={selected} onBack={back} editor={editor} />
       ) : (
         <>
           <SubTabs tabs={PEOPLE_SUBTABS} active={view} onSelect={setView} />
@@ -186,40 +217,29 @@ function PeopleList({
         onChange={(e) => setQ(e.target.value)}
       />
 
-      <div className="radar-tabs people-stage-filter">
-        <button
-          type="button"
-          className={`radar-tab${stage === null ? ' active' : ''}`}
-          onClick={() => setStage(null)}
-        >
-          All
-        </button>
-        {STAGES.map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={`radar-tab${stage === s ? ' active' : ''}`}
-            onClick={() => setStage(stage === s ? null : s)}
-          >
-            {s}
-          </button>
-        ))}
-      </div>
+      <SubTabs
+        tabs={STAGE_FILTER_TABS}
+        active={stage ?? 'all'}
+        onSelect={(id) => setStage(id === 'all' ? null : id)}
+      />
 
       {error && <div className="error">{error}</div>}
 
       {!loading && rows.length === 0 && !error && (
-        <div className="muted">
-          Nobody yet. People appear as you reply, save tweets, and pull mentions — or run{' '}
-          <code>scripts/backfill-people.ts</code> to seed from history.
-        </div>
+        <EmptyState
+          line={q.trim() || stage ? 'Nobody matches that filter.' : 'Nobody in the roster yet.'}
+          hint={
+            q.trim() || stage
+              ? 'Clear the search or pick All — the roster is grouped by stage, so a filter can hide a whole tier.'
+              : 'People appear as you reply, save tweets and pull mentions. To seed from history, run scripts/backfill-people.ts.'
+          }
+        />
       )}
 
+      {/* The list is already grouped BY stage and the eyebrow names it, so the
+          stage chip that used to sit here would have repeated the heading. */}
       {groups.map((g) => (
-        <section key={g.stage} className="brief-section">
-          <h3>
-            <span className={`stage-chip stage-${g.stage}`}>{g.stage}</span> ({g.rows.length})
-          </h3>
+        <Section key={g.stage} title={`${g.stage} (${g.rows.length})`}>
           <ul className="people-list">
             {g.rows.map((p) => (
               <li key={p.handle} className="people-row">
@@ -236,7 +256,7 @@ function PeopleList({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       ))}
     </>
   );
@@ -320,7 +340,7 @@ function TimelineAffinity({
                     <span className="people-name">
                       <span className="people-handle">@{a.handle}</span>{' '}
                       {a.stage ? (
-                        <span className={`stage-chip stage-${a.stage}`}>{a.stage}</span>
+                        <span className={stageChip(a.stage)}>{a.stage}</span>
                       ) : (
                         !a.inRoster && <span className="people-ago">Start their file →</span>
                       )}
@@ -354,7 +374,6 @@ function TimelineAffinity({
 // after each PATCH is the whole state management here.
 const STALE_SYNC_MS = 7 * 24 * 60 * 60 * 1000;
 
-const LEDGER_STATUSES: FollowingStatus[] = ['active', 'queued', 'done', 'confirmed', 'gone'];
 const LEDGER_LIMIT = 200;
 
 function FollowingView({
@@ -591,25 +610,11 @@ function FollowingLedger({
             onChange={(e) => setQ(e.target.value)}
           />
 
-          <div className="radar-tabs people-stage-filter">
-            <button
-              type="button"
-              className={`radar-tab${status === '' ? ' active' : ''}`}
-              onClick={() => setStatus('')}
-            >
-              All
-            </button>
-            {LEDGER_STATUSES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                className={`radar-tab${status === s ? ' active' : ''}`}
-                onClick={() => setStatus(status === s ? '' : s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
+          <SubTabs
+            tabs={LEDGER_FILTER_TABS}
+            active={status === '' ? 'all' : status}
+            onSelect={(id) => setStatus(id === 'all' ? '' : id)}
+          />
 
           {error && <div className="error">{error}</div>}
 
@@ -633,7 +638,7 @@ function FollowingLedger({
                     >
                       @{r.handle}
                     </button>
-                    <span className="stage-chip">{r.status}</span>
+                    <span className={followingChip(r.status)}>{r.status}</span>
                     {r.followsBack && <span className="following-mutual">follows back</span>}
                     <span className="following-meta">first seen {fmtAgo(r.firstSeenAt)}</span>
                     <button
@@ -665,10 +670,12 @@ function DossierView({
   settings,
   handle,
   onBack,
+  editor,
 }: {
   settings: Settings;
   handle: string;
   onBack: () => void;
+  editor: SettingsEditor;
 }): JSX.Element {
   const [dossier, setDossier] = useState<PersonDossier | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -692,13 +699,24 @@ function DossierView({
 
   return (
     <>
+      {/* The gear lives on the dossier's own header because the knob it holds
+          caps three of the lists below at once — hanging it off any one of them
+          would understate its reach, and two of the three are conditional. */}
       <div className="panel-header">
         <button type="button" onClick={onBack}>
           ← People
         </button>
-        <a href={`https://x.com/${handle}`} target="_blank" rel="noreferrer">
-          open on X ↗
-        </a>
+        <div className="row">
+          <a href={`https://x.com/${handle}`} target="_blank" rel="noreferrer">
+            open on X ↗
+          </a>
+          <SettingsGear
+            editor={editor}
+            keys={DOSSIER_SETTING_KEYS}
+            label="Configure how many rows each dossier list shows"
+            note="Caps my replies, their mentions and their saved tweets. The timeline below is never capped — the whole history is the point."
+          />
+        </div>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -740,13 +758,18 @@ function NotYetKnown({
     }
   };
   return (
-    <div className="brief-section">
-      <div className="muted">No file on @{handle} yet.</div>
+    <>
       {error && <div className="error">{error}</div>}
-      <button type="button" disabled={busy} onClick={() => void create()}>
-        {busy ? 'Creating…' : 'Start their file'}
-      </button>
-    </div>
+      <EmptyState
+        line={`No file on @${handle} yet.`}
+        hint="Starting one logs a note event — from then on every reply, mention and saved tweet lands on their timeline."
+        action={
+          <button type="button" disabled={busy} onClick={() => void create()}>
+            {busy ? 'Creating…' : 'Start their file'}
+          </button>
+        }
+      />
+    </>
   );
 }
 
@@ -761,6 +784,7 @@ function Dossier({
 }): JSX.Element {
   const { person, voiceAuthor, events, replies, angles, mentions, savedTweets, followerSeries } =
     dossier;
+  const listLen = useServerSettings().dossierListLen;
   const followers =
     person.followersCount ??
     voiceAuthor?.followersCount ??
@@ -775,13 +799,15 @@ function Dossier({
           <strong>{person.displayName ?? `@${person.handle}`}</strong>{' '}
           <span className="people-handle">@{person.handle}</span>
         </div>
+        {/* The ladder gets its own row: six chips plus the meta spans on one
+            wrapping line interleave into an unreadable jumble. */}
+        <StagePicker
+          settings={settings}
+          handle={person.handle}
+          stage={person.stage}
+          onChanged={onChanged}
+        />
         <div className="people-head-meta">
-          <StagePicker
-            settings={settings}
-            handle={person.handle}
-            stage={person.stage}
-            onChanged={onChanged}
-          />
           {followers !== null && <span>{fmtNum(followers)} followers</span>}
           {person.lastInboundAt && <span>last inbound {fmtAgo(person.lastInboundAt)}</span>}
           {person.lastOutboundAt && <span>last reply {fmtAgo(person.lastOutboundAt)}</span>}
@@ -803,27 +829,22 @@ function Dossier({
 
       {/* C9 — two Grok-drafted conversation starters, grounded strictly on
           this dossier. Sending stays manual. */}
-      <section className="brief-section">
-        <h3>Openers</h3>
+      <Section title="Openers">
         <IcebreakerBox settings={settings} handle={person.handle} />
-      </section>
+      </Section>
 
       {/* A3.10 — a grounded outbound DM, same grounding + refusal ladder as
           Openers. Sending stays manual; "Mark sent" logs the timeline event, so
           the dossier reload (onChanged) surfaces it below. */}
-      <section className="brief-section">
-        <h3>Draft DM</h3>
+      <Section title="Draft DM">
         <DmBox settings={settings} handle={person.handle} onSent={onChanged} />
-      </section>
+      </Section>
 
       {replies.count > 0 && (
-        <section className="brief-section">
-          <h3>
-            My replies to them ({replies.count}, {replies.measured} measured)
-          </h3>
+        <Section title={`My replies to them (${replies.count}, ${replies.measured} measured)`}>
           {angles.filter((a) => a.angle !== null).length > 0 && <AngleChips angles={angles} />}
           <ul className="brief-tweets">
-            {replies.outcomes.slice(0, 5).map((o) => (
+            {replies.outcomes.slice(0, listLen).map((o) => (
               <li key={o.draftId} className="brief-tweet">
                 <div className="brief-tweet-text">{o.replyText}</div>
                 <div className="brief-tweet-metrics">
@@ -841,14 +862,14 @@ function Dossier({
               </li>
             ))}
           </ul>
-        </section>
+          <MoreLine shown={listLen} total={replies.outcomes.length} />
+        </Section>
       )}
 
       {mentions.length > 0 && (
-        <section className="brief-section">
-          <h3>Their mentions of me ({mentions.length})</h3>
+        <Section title={`Their mentions of me (${mentions.length})`}>
           <ul className="brief-tweets">
-            {mentions.slice(0, 5).map((m) => (
+            {mentions.slice(0, listLen).map((m) => (
               <li key={m.tweetId} className="brief-tweet">
                 <div className="brief-tweet-text">{m.text}</div>
                 <div className="brief-tweet-metrics muted">
@@ -857,27 +878,32 @@ function Dossier({
               </li>
             ))}
           </ul>
-        </section>
+          <MoreLine shown={listLen} total={mentions.length} />
+        </Section>
       )}
 
       {savedTweets.length > 0 && (
-        <section className="brief-section">
-          <h3>Their saved tweets ({savedTweets.length})</h3>
+        <Section title={`Their saved tweets (${savedTweets.length})`}>
           <ul className="brief-tweets">
-            {savedTweets.slice(0, 5).map((t) => (
+            {savedTweets.slice(0, listLen).map((t) => (
               <li key={t.tweetId} className="brief-tweet">
                 <div className="brief-tweet-text">{t.text}</div>
                 <div className="brief-tweet-metrics muted">saved {fmtAgo(t.savedAt)}</div>
               </li>
             ))}
           </ul>
-        </section>
+          <MoreLine shown={listLen} total={savedTweets.length} />
+        </Section>
       )}
 
-      <section className="brief-section">
-        <h3>Timeline ({events.length})</h3>
+      {/* Deliberately uncapped — the three lists above are summaries, this is
+          the answer to "what is my history with this person?" */}
+      <Section title={`Timeline (${events.length})`}>
         {events.length === 0 ? (
-          <div className="muted">No interactions logged yet.</div>
+          <EmptyState
+            line="No interactions logged yet."
+            hint="Replies, mentions, saved tweets and hover sightings land here on their own; Quick log above adds the ones that happen off-platform."
+          />
         ) : (
           <ul className="people-timeline">
             {events.map((e) => (
@@ -891,9 +917,16 @@ function Dossier({
             ))}
           </ul>
         )}
-      </section>
+      </Section>
     </>
   );
+}
+
+/** The overflow line under a capped list — the same "+N more" contract the Today
+ *  strip uses: everything past the cap still counts, it just isn't drawn. */
+function MoreLine({ shown, total }: { shown: number; total: number }): JSX.Element | null {
+  if (total <= shown) return null;
+  return <div className="status-line">+{total - shown} more — raise the row cap with ⚙ above.</div>;
 }
 
 // A3.10 — draft a grounded outbound DM from the dossier. One explicit-button
@@ -1026,7 +1059,7 @@ function DmBox({
         <ul className="dm-prior">
           {prior.map((d) => (
             <li key={d.id} className="dm-prior-row">
-              <span className={`dm-status dm-status-${d.status}`}>{d.status}</span>
+              <span className={dmChip(d.status)}>{d.status}</span>
               <span className="dm-prior-text">{d.text}</span>
               <span className="people-ago">{fmtAgo(d.sentAt ?? d.createdAt)}</span>
             </li>
@@ -1074,20 +1107,27 @@ function StagePicker({
       setBusy(false);
     }
   };
+  // A row of chips rather than a <select>: the ladder is six rungs and the
+  // whole point of the dossier head is seeing at a glance where someone sits on
+  // it. The current rung is `aria-pressed`, which is also what tints it.
   return (
-    <select
-      className={`stage-chip stage-${stage}`}
-      value={stage}
-      disabled={busy}
-      onChange={(e) => void change(e.target.value as PersonStage)}
+    <div
+      className="chip-row"
       title="Stage auto-advances from events; setting it by hand overrides (may demote)"
     >
       {[...STAGES].reverse().map((s) => (
-        <option key={s} value={s}>
+        <button
+          key={s}
+          type="button"
+          className={stageChip(s)}
+          aria-pressed={s === stage}
+          disabled={busy}
+          onClick={() => void change(s)}
+        >
           {s}
-        </option>
+        </button>
       ))}
-    </select>
+    </div>
   );
 }
 
@@ -1122,8 +1162,7 @@ function NotesEditor({
   };
 
   return (
-    <section className="brief-section">
-      <h3>Notes</h3>
+    <Section title="Notes">
       <textarea
         className="people-notes"
         rows={3}
@@ -1137,7 +1176,7 @@ function NotesEditor({
       <button type="button" disabled={busy || saved} onClick={() => void save()}>
         {busy ? 'Saving…' : saved ? 'Saved' : 'Save notes'}
       </button>
-    </section>
+    </Section>
   );
 }
 

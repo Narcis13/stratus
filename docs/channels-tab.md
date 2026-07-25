@@ -36,7 +36,7 @@ There's also a **Refresh** button in the tab header (top right) that reloads the
 
 ## The channel room
 
-The **room** is the right-hand panel that opens when you select a channel. At the top is a header showing the channel's **label**, a `pillar: <name>` badge if it's linked to a pillar, an `inactive` badge if it's switched off, and an **Edit** button. Just below, a "suggests on:" line lists the channel's keywords (if any) so you can see what text will trigger this channel's suggestions.
+The **room** is the right-hand panel that opens when you select a channel. At the top is a header showing the channel's **label**, a `pillar: <name>` chip if it's linked to a pillar, a quiet `inactive` chip if it's switched off, and an **Edit** button. Just below, a "suggests on:" line lists the channel's keywords (if any) so you can see what text will trigger this channel's suggestions.
 
 Below the header, the room is a stack of sections. Each section header shows a count in parentheses, e.g. **People (4)**. Here's what each block shows.
 
@@ -44,7 +44,7 @@ Below the header, the room is a stack of sections. Each section header shows a c
 
 Everyone you've tagged into this channel. Each row shows the person's display name and `@handle`, plus a colored **stage chip** — the person's relationship stage in stratus (for example `stranger`, `noticed`, `engaged`, `responded`, `mutual`, or `ally`), which reflects how far your back-and-forth with them has developed. Click any person row to jump straight to their **dossier** (their full profile in the People tab).
 
-If nobody's tagged yet, you'll see: *"Nobody tagged yet — tag people from their dossier."*
+If nobody's tagged yet, you'll see *"Nobody tagged into this channel yet."* with a hint pointing at the dossier's tag picker.
 
 ### My posts in #`<pillar>` (only when a pillar is linked)
 
@@ -52,19 +52,23 @@ This block appears **only if the channel is linked to a content pillar**. It sho
 
 - A header count like **My posts in #ai-craft (12, 8 measured)** — total posts and how many have measured metrics.
 - A summary line: **median … views · … profile visits** across the measured posts.
-- Up to 8 individual posts, each with its text and metrics (**views / likes / visits**), the post's register label if it has one, and an **open ↗** link to the tweet on X. Posts not yet measured show *"not measured yet."*
+- Individual posts — 8 by default, set by this section's **⚙** — each with its text and metrics (**views / likes / visits**), the post's register label if it has one, and an **open ↗** link to the tweet on X. Posts not yet measured show *"not measured yet."* Anything past the cap reads as `+N more`.
 
 If no posted tweets carry the pillar yet, you'll see *"No posted tweets carry this pillar yet."* If the channel has no pillar linked, this whole block is absent.
+
+#### ⚙ Channel post rows
+
+The gear on this section's header holds one number, **Channel post rows** (`x.display.channelPostsShown`, default 8, range 3–30) — the same knob as Settings → Tuning → Display. It sizes **this list only**: the *median views · profile visits* line above it is computed over every measured post in the pillar, however few are drawn.
 
 ### Swipe file
 
 The saved tweets ("swipe file" = your collection of other people's tweets kept for style and structure reference) that you've tagged into this channel. Each row shows the tweet's text, a clickable **@author** handle (opens that author's dossier), the tweet's hook type if it's been analyzed, and an **open ↗** link to the original tweet.
 
-Empty state: *"No saved tweets tagged — tag them in the Voice tab or at save time."*
+Empty state: *"No saved tweets tagged into this channel."*, hinting at the Voice tab and the Save-to-stratus pill on x.com.
 
 ### Open ideas
 
-Your **open** ideas (ideas you haven't yet used or discarded) that carry this channel's tag. Each row shows the idea's text. Empty state: *"No open ideas tagged — tag them in the Ideas tab."*
+Your **open** ideas (ideas you haven't yet used or discarded) that carry this channel's tag. Each row shows the idea's text. Empty state: *"No open ideas tagged into this channel."*, hinting at the Ideas tab.
 
 ### Radar drafts
 
@@ -188,9 +192,9 @@ Go to the **Channels** tab, click the channel in the rail, and the room shows �
 | State | What you see |
 |---|---|
 | **Loading channels** | The rail is still populating; the room area shows *"Loading…"* |
-| **No channels yet** | The rail shows only **+ new channel**, and the room reads *"No channels yet. Create one — a channel is just tags plus this view."* |
+| **No channels yet** | The rail shows only **+ new channel**, and the room reads *"No channels yet."* with a **Create a channel** button. |
 | **Room loading** | After selecting a channel, the room area briefly shows *"Loading…"* |
-| **Empty room** | The channel exists but nothing's tagged yet — each section shows its own empty hint (e.g. *"Nobody tagged yet…"*, *"No saved tweets tagged…"*, *"No open ideas tagged…"*). This is normal for a brand-new channel; it fills in as you tag. |
+| **Empty room** | The channel exists but nothing's tagged yet — each section shows its own empty state, naming what is missing and where to add it. This is normal for a brand-new channel; it fills in as you tag. |
 | **Error** | A red message at the top of the tab (e.g. failed to load) — try **Refresh**. |
 
 ---

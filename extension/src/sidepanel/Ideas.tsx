@@ -6,17 +6,23 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { ApiError, type Idea, type IdeaProposal, type IdeaStatus, api } from './api.ts';
+import { ideaChip } from './chips.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 interface Props {
   settings: Settings;
 }
 
-const FILTERS: { value: IdeaStatus | 'all'; label: string }[] = [
-  { value: 'open', label: 'Open' },
-  { value: 'consumed', label: 'Consumed' },
-  { value: 'discarded', label: 'Discarded' },
-  { value: 'all', label: 'All' },
+// The lifecycle IS the filter, so it reads as a segmented control rather than a
+// labelled <select> tucked under the generator.
+const FILTERS: SubTab<IdeaStatus | 'all'>[] = [
+  { id: 'open', label: 'Open' },
+  { id: 'consumed', label: 'Consumed' },
+  { id: 'discarded', label: 'Discarded' },
+  { id: 'all', label: 'All' },
 ];
 
 const CONSUMER_LABEL: Record<string, string> = {
@@ -150,30 +156,32 @@ export function IdeasPanel({ settings }: Props): JSX.Element {
         </button>
       </div>
 
-      <form onSubmit={onAdd}>
-        <label className="field">
-          <span>Quick add (Romanian welcome)</span>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={2}
-            maxLength={2000}
-            placeholder="A seed for a future post or reply — one idea per entry."
-          />
-        </label>
-        <div className="row">
-          <button type="submit" className="primary" disabled={adding || text.trim() === ''}>
-            {adding ? 'Adding…' : 'Add idea'}
-          </button>
-          <small className="muted">
-            Tip: select text on any page → right-click → "Send selection to stratus ideas".
-          </small>
-        </div>
-      </form>
+      <Section title="Quick add">
+        <form onSubmit={onAdd}>
+          <label className="field">
+            <span>Quick add (Romanian welcome)</span>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={2}
+              maxLength={2000}
+              placeholder="A seed for a future post or reply — one idea per entry."
+            />
+          </label>
+          <div className="row">
+            <button type="submit" className="primary" disabled={adding || text.trim() === ''}>
+              {adding ? 'Adding…' : 'Add idea'}
+            </button>
+            <small className="muted">
+              Tip: select text on any page → right-click → "Send selection to stratus ideas".
+            </small>
+          </div>
+        </form>
+      </Section>
 
       {error && <div className="error">{error}</div>}
 
-      <div className="ai-idea-gen" style={{ marginTop: 12 }}>
+      <Section title="Generate with AI">
         <label className="field">
           <span>Generate ideas with AI (optional steer — Romanian welcome)</span>
           <textarea
@@ -198,8 +206,8 @@ export function IdeasPanel({ settings }: Props): JSX.Element {
             {proposals.map((p) => (
               <li key={`${p.angle}:${p.text}`} className="voice-tweet">
                 <div className="voice-tweet-head">
-                  {p.pillar && <span className="badge badge-pending">{p.pillar}</span>}
-                  <span className="badge">{p.angle}</span>
+                  {p.pillar && <span className="chip chip-accent">{p.pillar}</span>}
+                  <span className="chip">{p.angle}</span>
                 </div>
                 <div className="voice-tweet-text">{p.text}</div>
                 <div className="row">
@@ -223,106 +231,84 @@ export function IdeasPanel({ settings }: Props): JSX.Element {
             ))}
           </ul>
         )}
-      </div>
+      </Section>
 
-      <div className="voice-controls" style={{ marginTop: 12 }}>
-        <label className="field">
-          <span>Status</span>
-          <select
-            value={filter}
-            onChange={(e) => setFilter(e.target.value as IdeaStatus | 'all')}
-            disabled={loading}
-          >
-            {FILTERS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
+      <SubTabs tabs={FILTERS} active={filter} onSelect={setFilter} />
+
+      <Section title={`Inbox (${ideas.length})`}>
+        {loading && ideas.length === 0 ? (
+          <p className="muted">Loading…</p>
+        ) : ideas.length === 0 ? (
+          <EmptyState
+            line={filter === 'open' ? 'No open ideas.' : 'Nothing in this state.'}
+            hint={
+              filter === 'open'
+                ? 'Open ideas appear as dropdown seeds in the Composer and Reply Master — an empty inbox means nothing is waiting to be written.'
+                : 'Pick another state above. An idea moves to consumed when a drafter uses it, and discarded is always reversible.'
+            }
+          />
+        ) : (
+          <ul className="voice-tweet-list">
+            {ideas.map((idea) => (
+              <li key={idea.id} className="voice-tweet">
+                <div className="voice-tweet-head">
+                  <span className={ideaChip(idea.status)}>{idea.status}</span>
+                  <span className="voice-tweet-time">{relativeTime(idea.createdAt)}</span>
+                </div>
+                <div className="voice-tweet-text">{idea.text}</div>
+                <ChannelTagPicker
+                  settings={settings}
+                  tags={idea.tags}
+                  onSave={(tags) => saveTags(idea, tags)}
+                  suggestFrom={idea.text}
+                />
+                <div className="voice-tweet-metrics">
+                  {idea.sourceUrl && (
+                    <a href={idea.sourceUrl} target="_blank" rel="noreferrer">
+                      source →
+                    </a>
+                  )}
+                  {idea.status === 'consumed' && idea.consumedByTable && (
+                    <span className="muted">
+                      seeded {CONSUMER_LABEL[idea.consumedByTable] ?? idea.consumedByTable}
+                    </span>
+                  )}
+                </div>
+                <div className="row">
+                  {idea.status !== 'open' && (
+                    <button
+                      type="button"
+                      onClick={() => void patchStatus(idea, 'open')}
+                      disabled={busyId === idea.id}
+                    >
+                      Reopen
+                    </button>
+                  )}
+                  {idea.status === 'open' && (
+                    <button
+                      type="button"
+                      onClick={() => void patchStatus(idea, 'discarded')}
+                      disabled={busyId === idea.id}
+                    >
+                      Discard
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => void onDelete(idea)}
+                    disabled={busyId === idea.id}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
             ))}
-          </select>
-        </label>
-        <div className="status-line">{ideas.length} shown</div>
-      </div>
-
-      {loading && ideas.length === 0 ? (
-        <p className="muted">Loading…</p>
-      ) : ideas.length === 0 ? (
-        <p className="muted">
-          {filter === 'open'
-            ? 'No open ideas. Ideas you add here appear as dropdown seeds in the Composer and Reply Master.'
-            : 'Nothing here.'}
-        </p>
-      ) : (
-        <ul className="voice-tweet-list">
-          {ideas.map((idea) => (
-            <li key={idea.id} className="voice-tweet">
-              <div className="voice-tweet-head">
-                <span className={`badge ${badgeClassFor(idea.status)}`}>{idea.status}</span>
-                <span className="voice-tweet-time">{relativeTime(idea.createdAt)}</span>
-              </div>
-              <div className="voice-tweet-text">{idea.text}</div>
-              <ChannelTagPicker
-                settings={settings}
-                tags={idea.tags}
-                onSave={(tags) => saveTags(idea, tags)}
-                suggestFrom={idea.text}
-              />
-              <div className="voice-tweet-metrics">
-                {idea.sourceUrl && (
-                  <a href={idea.sourceUrl} target="_blank" rel="noreferrer">
-                    source →
-                  </a>
-                )}
-                {idea.status === 'consumed' && idea.consumedByTable && (
-                  <span className="muted">
-                    seeded {CONSUMER_LABEL[idea.consumedByTable] ?? idea.consumedByTable}
-                  </span>
-                )}
-              </div>
-              <div className="row">
-                {idea.status !== 'open' && (
-                  <button
-                    type="button"
-                    onClick={() => void patchStatus(idea, 'open')}
-                    disabled={busyId === idea.id}
-                  >
-                    Reopen
-                  </button>
-                )}
-                {idea.status === 'open' && (
-                  <button
-                    type="button"
-                    onClick={() => void patchStatus(idea, 'discarded')}
-                    disabled={busyId === idea.id}
-                  >
-                    Discard
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={() => void onDelete(idea)}
-                  disabled={busyId === idea.id}
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+          </ul>
+        )}
+      </Section>
     </div>
   );
-}
-
-function badgeClassFor(status: IdeaStatus): string {
-  switch (status) {
-    case 'open':
-      return 'badge-pending';
-    case 'consumed':
-      return 'badge-posted';
-    case 'discarded':
-      return 'badge-cancelled';
-  }
 }
 
 function relativeTime(iso: string): string {

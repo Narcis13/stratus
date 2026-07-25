@@ -840,10 +840,6 @@ button.danger:hover:not(:disabled) {
   background: var(--strat-accent-fill);
   color: var(--status-pending);
 }
-.badge-tracked {
-  background: color-mix(in srgb, var(--strat-status-posted) 18%, transparent);
-  color: var(--status-posted);
-}
 .badge-paused {
   background: color-mix(in srgb, var(--strat-status-draft) 20%, transparent);
   color: var(--status-draft);
@@ -2059,11 +2055,33 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
 }
 
-.people-stage-filter {
-  flex-wrap: wrap;
-}
-
-.stage-chip {
+/* ------------------------------------------- chip taxonomy (UI.14) ------ */
+/* ONE chip shape, five tones, many vocabularies.
+ *
+ * `.chip` is the shape. A vocabulary — CRM stage, idea lifecycle, swipe-file
+ * author state, following-ledger status, DM status — maps its values onto a
+ * TONE in `sidepanel/chips.ts`; it does not mint another class carrying its own
+ * padding and radius. That is how the near-identical families this block
+ * absorbed (`.stage-chip`, `.people-angle-chip`, `.dm-status`) came about.
+ *
+ * `.stage-chip` and `.people-angle-chip` survive as ALIASES of the shape rather
+ * than being renamed: five files outside this pass render `.stage-chip`
+ * (Radar, Fans, Conversations, …) and plan Tasks 14/15 are parallel-ok, so a
+ * rename here would reach into the other lane's files. New code writes `.chip`.
+ *
+ * What deliberately stays OUT of this family: the scheduled-post status ramp
+ * (`.badge-*` — a pipeline state, uppercase and denser), the reply-band
+ * verdicts (`.radar-band-*` — a classifier output the on-page badge mirrors in
+ * its own `--stratus-*` palette, D137c), and the goal pacing verdict (see the
+ * GR.8 note below). Different vocabularies with different alphabets; collapsing
+ * them would mislead the next reader.
+ *
+ * Both themes come free: every value below is an alias token that the
+ * `:root[data-theme='light']` block re-points (UI.9). No literal belongs here.
+ */
+.chip,
+.stage-chip,
+.people-angle-chip {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 10px;
@@ -2074,23 +2092,59 @@ button.danger:hover:not(:disabled) {
   text-transform: lowercase;
 }
 
+.chip-ok,
 .stage-ally {
   color: var(--ok);
   border-color: var(--ok);
 }
 
+.chip-accent,
 .stage-mutual {
   color: var(--accent);
   border-color: var(--accent);
 }
 
+.chip-warn,
 .stage-responded {
   color: var(--warn);
   border-color: var(--warn);
 }
 
+.chip-strong,
 .stage-engaged {
   color: var(--text);
+}
+
+/* The quiet tone IS the base — named so a lookup can return it, and so the two
+   quietest stages stop resolving to "no class at all". */
+.chip-muted,
+.stage-noticed,
+.stage-stranger {
+  color: var(--muted);
+}
+
+/* A chip that acts: the stage picker. Overrides the global `button` box (6px
+   12px / 12px / radius 6) with the chip's, keeps its cursor. */
+button.chip {
+  line-height: 1.5;
+  font-weight: 500;
+}
+
+button.chip:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button.chip[aria-pressed="true"] {
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  font-weight: 600;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 6px;
 }
 
 .people-list {
@@ -2186,13 +2240,10 @@ button.danger:hover:not(:disabled) {
   margin-bottom: 6px;
 }
 
+/* geometry + tone come from the chip family above — this only opts out of its
+   lowercasing, because an angle label is already the writer's own wording */
 .people-angle-chip {
-  padding: 1px 8px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  font-size: 11px;
-  color: var(--muted);
+  text-transform: none;
 }
 
 .people-timeline {
@@ -3017,16 +3068,10 @@ button.danger:hover:not(:disabled) {
   gap: 6px;
 }
 
-.dm-status {
+/* the DM status label is a `.chip` with a tone (UI.14) — this only keeps it
+   from being squeezed by the text beside it */
+.dm-prior-row .chip {
   flex-shrink: 0;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-}
-
-.dm-status-sent {
-  color: var(--ok);
 }
 
 .dm-prior-text {
@@ -3274,8 +3319,12 @@ button.danger:hover:not(:disabled) {
 }
 
 /* SubTabs — segmented pill control */
+/* UI.14: wraps. Every consumer through UI.13 had 2–4 tabs, so the row always
+   fit; People's stage filter is seven (All + six stages) and would have run off
+   a ~400px panel. Wrapping is a no-op for the short rows. */
 .ui-subtabs {
   display: inline-flex;
+  flex-wrap: wrap;
   gap: var(--strat-space-1);
   padding: var(--strat-space-1);
   background: var(--strat-bg);

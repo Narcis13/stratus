@@ -68,6 +68,16 @@ export interface ServerConfig {
    *  neglected. The same key the follow-up queue and the weekly digest use: the
    *  Today roster tint must not disagree with the queue that nags about it. */
   neglectedTargetDays: number;
+  /** x.display.dossierListLen — rows each capped dossier list shows (replies,
+   *  their mentions, their saved tweets). The timeline below stays uncapped:
+   *  the dossier's whole job is "what's my history with this person?" (UI.14). */
+  dossierListLen: number;
+  /** x.display.channelPostsShown — own posts a channel room lists under its
+   *  mapped pillar. The median line above is over every measured post. */
+  channelPostsShown: number;
+  /** x.display.voiceListLimit — saved tweets one Voice query fetches. $0 local
+   *  SQL, so this is a scroll budget, not a spend one. */
+  voiceListLimit: number;
 }
 
 export const SERVER_DEFAULTS: ServerConfig = {
@@ -83,6 +93,9 @@ export const SERVER_DEFAULTS: ServerConfig = {
   radarDraftCap: 20,
   batchReplyCap: 25,
   neglectedTargetDays: 7,
+  dossierListLen: 5,
+  channelPostsShown: 8,
+  voiceListLimit: 100,
 };
 
 /** The batch size a "Draft replies" click may actually ask for: the display cap,
@@ -157,5 +170,12 @@ export function readServerConfig(raw: unknown): ServerConfig {
       'x.followups.neglectedTargetDays',
       SERVER_DEFAULTS.neglectedTargetDays,
     ),
+    dossierListLen: readNumber(blob, 'x.display.dossierListLen', SERVER_DEFAULTS.dossierListLen),
+    channelPostsShown: readNumber(
+      blob,
+      'x.display.channelPostsShown',
+      SERVER_DEFAULTS.channelPostsShown,
+    ),
+    voiceListLimit: readNumber(blob, 'x.display.voiceListLimit', SERVER_DEFAULTS.voiceListLimit),
   };
 }

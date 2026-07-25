@@ -897,6 +897,42 @@ const DISPLAY: SettingDef[] = [
     max: 50,
     scope: 'mirrored',
   },
+  {
+    key: 'x.display.dossierListLen',
+    group: 'display',
+    label: 'Dossier list rows',
+    description:
+      'How many rows each capped dossier list shows — my replies to them, their mentions of me, their saved tweets. The full history is always in the timeline below; this only sizes the summaries.',
+    type: 'number',
+    default: 5,
+    min: 3,
+    max: 25,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.display.channelPostsShown',
+    group: 'display',
+    label: 'Channel post rows',
+    description:
+      'How many of my own posts a channel room lists under its mapped pillar. The median line above it is computed over every measured post, not just these.',
+    type: 'number',
+    default: 8,
+    min: 3,
+    max: 30,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.display.voiceListLimit',
+    group: 'display',
+    label: 'Voice list size',
+    description:
+      'How many saved tweets one Voice query fetches. Reads are $0 local SQL, so raising this costs nothing but scroll — the swipe file is DOM-scraped, never read from the X API.',
+    type: 'number',
+    default: 100,
+    min: 20,
+    max: 500,
+    scope: 'mirrored',
+  },
 ];
 
 export const SETTINGS_REGISTRY: SettingDef[] = [

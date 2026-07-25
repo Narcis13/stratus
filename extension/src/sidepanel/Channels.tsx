@@ -6,6 +6,7 @@
 
 import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
 import { invalidateChannelsCache } from './ChannelTags.tsx';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type Channel,
@@ -14,12 +15,20 @@ import {
   type ContentPillar,
   api,
 } from './api.ts';
+import { stageChip } from './chips.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
+import { type SettingsEditor, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
 
 interface Props {
   settings: Settings;
   onOpenPerson: (handle: string) => void;
 }
+
+/** The room's own presentation cap — the only knob this tab tunes. */
+const CHANNEL_SETTING_KEYS = ['x.display.channelPostsShown'];
 
 export function ChannelsPanel({ settings, onOpenPerson }: Props): JSX.Element {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -29,6 +38,8 @@ export function ChannelsPanel({ settings, onOpenPerson }: Props): JSX.Element {
   const [roomLoading, setRoomLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<'new' | Channel | null>(null);
+  // ONE editor for the tab (D135d), handed down to the room's gear.
+  const editor = useSettingsEditor(settings);
 
   const loadChannels = useCallback(async () => {
     setLoading(true);
@@ -134,16 +145,25 @@ export function ChannelsPanel({ settings, onOpenPerson }: Props): JSX.Element {
               onCancel={() => setEditing(null)}
             />
           ) : !selected ? (
-            <p className="muted">
-              {loading
-                ? 'Loading…'
-                : 'No channels yet. Create one — a channel is just tags plus this view.'}
-            </p>
+            loading ? (
+              <p className="muted">Loading…</p>
+            ) : (
+              <EmptyState
+                line="No channels yet."
+                hint="A channel is just a tag plus this saved view — make one for a topic you keep coming back to, then tag people, saved tweets and ideas into it."
+                action={
+                  <button type="button" onClick={() => setEditing('new')}>
+                    Create a channel
+                  </button>
+                }
+              />
+            )
           ) : aggregate ? (
             <Room
               aggregate={aggregate}
               onOpenPerson={onOpenPerson}
               onEdit={() => setEditing(aggregate.channel)}
+              editor={editor}
             />
           ) : (
             <p className="muted">{roomLoading ? 'Loading…' : 'Nothing here.'}</p>
@@ -160,18 +180,21 @@ function Room({
   aggregate,
   onOpenPerson,
   onEdit,
+  editor,
 }: {
   aggregate: ChannelAggregate;
   onOpenPerson: (handle: string) => void;
   onEdit: () => void;
+  editor: SettingsEditor;
 }): JSX.Element {
   const { channel, people, voiceTweets, ideas, radarDrafts, posts } = aggregate;
+  const postsShown = useServerSettings().channelPostsShown;
   return (
     <>
       <div className="channel-room-head">
         <strong>{channel.label}</strong>
-        {channel.pillar && <span className="badge badge-auto">pillar: {channel.pillar}</span>}
-        {!channel.active && <span className="badge badge-paused">inactive</span>}
+        {channel.pillar && <span className="chip chip-accent">pillar: {channel.pillar}</span>}
+        {!channel.active && <span className="chip chip-muted">inactive</span>}
         <button type="button" onClick={onEdit}>
           Edit
         </button>
@@ -180,10 +203,12 @@ function Room({
         <div className="muted channel-keywords">suggests on: {channel.keywords.join(', ')}</div>
       )}
 
-      <section className="brief-section">
-        <h3>People ({people.length})</h3>
+      <Section title={`People (${people.length})`}>
         {people.length === 0 ? (
-          <p className="muted">Nobody tagged yet — tag people from their dossier.</p>
+          <EmptyState
+            line="Nobody tagged into this channel yet."
+            hint="Open someone's dossier and add the tag there — the same picker tags saved tweets and ideas."
+          />
         ) : (
           <ul className="people-list">
             {people.map((p) => (
@@ -197,19 +222,26 @@ function Room({
                     {p.displayName ?? `@${p.handle}`}{' '}
                     <span className="people-handle">@{p.handle}</span>
                   </span>
-                  <span className={`stage-chip stage-${p.stage}`}>{p.stage}</span>
+                  <span className={stageChip(p.stage)}>{p.stage}</span>
                 </button>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Section>
 
       {posts && (
-        <section className="brief-section">
-          <h3>
-            My posts in #{channel.pillar} ({posts.count}, {posts.measured} measured)
-          </h3>
+        <Section
+          title={`My posts in #${channel.pillar} (${posts.count}, ${posts.measured} measured)`}
+          actions={
+            <SettingsGear
+              editor={editor}
+              keys={CHANNEL_SETTING_KEYS}
+              label="Configure how many posts a channel room lists"
+              note="Sizes this list only. The median line above is computed over every measured post in the pillar, however few are drawn here."
+            />
+          }
+        >
           {posts.measured > 0 && (
             <div className="status-line">
               median {fmtNum(posts.medianViews)} views · {fmtNum(posts.medianProfileVisits)} profile
@@ -217,10 +249,13 @@ function Room({
             </div>
           )}
           {posts.items.length === 0 ? (
-            <p className="muted">No posted tweets carry this pillar yet.</p>
+            <EmptyState
+              line="No posted tweets carry this pillar yet."
+              hint={`Tag a draft with the #${channel.pillar} pillar in the Composer and it will show up here once it publishes and gets measured.`}
+            />
           ) : (
             <ul className="brief-tweets">
-              {posts.items.slice(0, 8).map((it) => (
+              {posts.items.slice(0, postsShown).map((it) => (
                 <li key={it.scheduledPostId} className="brief-tweet">
                   <div className="brief-tweet-text">{it.text}</div>
                   <div className="brief-tweet-metrics">
@@ -248,15 +283,20 @@ function Room({
               ))}
             </ul>
           )}
-        </section>
+          {posts.items.length > postsShown && (
+            <div className="status-line">
+              +{posts.items.length - postsShown} more — raise the row cap with ⚙ above.
+            </div>
+          )}
+        </Section>
       )}
 
-      <section className="brief-section">
-        <h3>Swipe file ({voiceTweets.length})</h3>
+      <Section title={`Swipe file (${voiceTweets.length})`}>
         {voiceTweets.length === 0 ? (
-          <p className="muted">
-            No saved tweets tagged — tag them in the Voice tab or at save time.
-          </p>
+          <EmptyState
+            line="No saved tweets tagged into this channel."
+            hint="Tag them in the Voice tab, or pick the channel on the Save-to-stratus pill while you are on x.com."
+          />
         ) : (
           <ul className="brief-tweets">
             {voiceTweets.map((t) => (
@@ -281,12 +321,14 @@ function Room({
             ))}
           </ul>
         )}
-      </section>
+      </Section>
 
-      <section className="brief-section">
-        <h3>Open ideas ({ideas.length})</h3>
+      <Section title={`Open ideas (${ideas.length})`}>
         {ideas.length === 0 ? (
-          <p className="muted">No open ideas tagged — tag them in the Ideas tab.</p>
+          <EmptyState
+            line="No open ideas tagged into this channel."
+            hint="Tag them in the Ideas tab — a channel with ideas in it is the fastest place to start a draft."
+          />
         ) : (
           <ul className="brief-tweets">
             {ideas.map((i) => (
@@ -296,11 +338,10 @@ function Room({
             ))}
           </ul>
         )}
-      </section>
+      </Section>
 
       {radarDrafts.length > 0 && (
-        <section className="brief-section">
-          <h3>Radar drafts ({radarDrafts.length})</h3>
+        <Section title={`Radar drafts (${radarDrafts.length})`}>
           <ul className="brief-tweets">
             {radarDrafts.map((d) => (
               <li key={`${d.tweetId}`} className="brief-tweet">
@@ -324,7 +365,7 @@ function Room({
               </li>
             ))}
           </ul>
-        </section>
+        </Section>
       )}
     </>
   );

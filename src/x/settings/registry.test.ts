@@ -352,6 +352,9 @@ describe('registry adapter + grouping', () => {
       'x.display.doNextSnoozeH',
       'x.display.fansAmberTopN',
       'x.display.radarDraftCap',
+      'x.display.dossierListLen',
+      'x.display.channelPostsShown',
+      'x.display.voiceListLimit',
     ]);
     // The server's own refresh cap is the real limit and stays server-side —
     // the panel budget degrading to its baked value must never widen it.
@@ -404,6 +407,9 @@ describe('registry adapter + grouping', () => {
       'x.display.doNextSnoozeH',
       'x.display.fansAmberTopN',
       'x.display.radarDraftCap',
+      'x.display.dossierListLen',
+      'x.display.channelPostsShown',
+      'x.display.voiceListLimit',
     ]);
 
     const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
@@ -443,6 +449,33 @@ describe('registry adapter + grouping', () => {
     expect(settingsRegistry.validate('x.display.radarDraftCap', 50)).toBeNull();
     expect(settingsRegistry.validate('x.display.radarDraftCap', 51)).toBe('out_of_range');
     expect(byKey.get('x.display.radarDraftCap')?.max).toBe(byKey.get('x.ai.batchReplyCap')?.max);
+  });
+
+  // UI.14: the People/Channels/Voice list caps. Same shape as UI.12's — the only
+  // consumer is the side panel, so `mirrored` is the whole point, and every one
+  // of them binds the next render.
+  test('UI.14 display knobs are panel-read, mirrored, and bounded', () => {
+    const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
+    for (const k of [
+      'x.display.dossierListLen',
+      'x.display.channelPostsShown',
+      'x.display.voiceListLimit',
+    ]) {
+      expect([k, byKey.get(k)?.scope]).toEqual([k, 'mirrored']);
+      expect([k, byKey.get(k)?.appliesOn]).toEqual([k, undefined]);
+    }
+
+    expect(settingsRegistry.validate('x.display.dossierListLen', 3)).toBeNull();
+    expect(settingsRegistry.validate('x.display.dossierListLen', 2)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.display.dossierListLen', 25)).toBeNull();
+    expect(settingsRegistry.validate('x.display.dossierListLen', 26)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.display.channelPostsShown', 30)).toBeNull();
+    expect(settingsRegistry.validate('x.display.channelPostsShown', 31)).toBe('out_of_range');
+    // The Voice library is DOM-scraped, so a big page is $0 — the ceiling is
+    // about scroll and render, which is why it is the loosest cap in the group.
+    expect(settingsRegistry.validate('x.display.voiceListLimit', 500)).toBeNull();
+    expect(settingsRegistry.validate('x.display.voiceListLimit', 501)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.display.voiceListLimit', 19)).toBe('out_of_range');
   });
 
   test('validation honors UI.3 ranges (fractional outperform ratio + bounds)', () => {
