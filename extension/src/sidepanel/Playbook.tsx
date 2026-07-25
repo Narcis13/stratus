@@ -34,8 +34,13 @@ const GATE_NOTE =
   'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. Band thresholds are NOT here — those move by hand at ≥100 measured replies (Settings → Tuning → band).';
 
 // Long enough that the editor's own debounced PATCH has landed before we re-read
-// (see the reload effect for why one re-read, not a poll).
+// (see the reload effect for why a bounded retry, not a poll).
 const GATE_RELOAD_MS = PATCH_DEBOUNCE_MS + 300;
+// The PATCH only STARTS at the debounce mark, so a slow round-trip can lose the
+// race with the first re-read and hand back the old gate. Retry (with a growing
+// delay) instead of trusting one shot — but bounded, so a genuine disagreement
+// can never become an endless $0-but-noisy poll.
+const GATE_RELOAD_MAX_ATTEMPTS = 3;
 
 export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element {
   const [data, setData] = useState<Playbook | null>(null);
@@ -65,27 +70,33 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
   // server is unreachable — in which case the page simply keeps the gate the
   // response was built with.
   const gearGate = gateFromEditor(editor.groups);
-  const reloadedForGate = useRef<number | null>(null);
+  const gateReload = useRef<{ gate: number; attempts: number } | null>(null);
 
   // Moving the gate only changes this page after the SERVER re-gates it: every
   // `sufficient` flag in the response was computed with `minN`. The editor's
-  // value goes optimistic instantly and its PATCH lands one debounce later, so
-  // wait past that and re-read ONCE per distinct value — `data.minN` coming back
-  // is the confirmation. The ref is what keeps a value the server refuses (the
-  // registry bounds are the money guard) from turning a disagreement into a
+  // value goes optimistic instantly and its PATCH only STARTS one debounce
+  // later, so a re-read can overtake a slow PATCH and come back with the old
+  // gate — `data.minN` matching the gear is the only real confirmation. Retry
+  // up to GATE_RELOAD_MAX_ATTEMPTS per distinct value, delay growing per
+  // attempt. The cap is what keeps a value the server refuses (the registry
+  // bounds are the money guard) from turning a disagreement into an endless
   // poll: the editor re-reads on refusal, which snaps the gear back and settles
   // this the other way. `GET /x/playbook` is $0 and writes nothing.
   useEffect(() => {
     if (gearGate === null || data === null) return;
     if (gearGate === data.minN) {
-      reloadedForGate.current = null;
+      gateReload.current = null;
       return;
     }
-    if (reloadedForGate.current === gearGate) return;
-    const t = setTimeout(() => {
-      reloadedForGate.current = gearGate;
-      void load();
-    }, GATE_RELOAD_MS);
+    const attempts = gateReload.current?.gate === gearGate ? gateReload.current.attempts : 0;
+    if (attempts >= GATE_RELOAD_MAX_ATTEMPTS) return;
+    const t = setTimeout(
+      () => {
+        gateReload.current = { gate: gearGate, attempts: attempts + 1 };
+        void load();
+      },
+      GATE_RELOAD_MS * (attempts + 1),
+    );
     return () => clearTimeout(t);
   }, [gearGate, data, load]);
 

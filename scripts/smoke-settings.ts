@@ -244,8 +244,12 @@ console.log('3. consumer — x.gates.minCellN → GET /x/playbook (server-scoped
 interface PlaybookResponse {
   minN: number;
 }
+// Baseline is whatever the operator's store resolves to, not the registry
+// default — a live override must not fail the smoke before it writes anything.
+const minCellBaseline = Number(resolveSetting('x.gates.minCellN').value);
 const pbDefault = await getJson<PlaybookResponse & Record<string, unknown>>('/x/playbook');
-if (pbDefault.minN !== 20) fail(`default playbook gate expected 20, got ${pbDefault.minN}`);
+if (pbDefault.minN !== minCellBaseline)
+  fail(`baseline playbook gate expected ${minCellBaseline}, got ${pbDefault.minN}`);
 
 await patch({ 'x.gates.minCellN': 5 });
 const pbOpen = await getJson<PlaybookResponse & Record<string, unknown>>('/x/playbook');
@@ -342,6 +346,12 @@ ok(
   `POST /settings/reset dropped ${cleared.length} override(s); all ${wrote.length} keys read default`,
 );
 
+// A group reset deletes EVERY override in the group, including ones this
+// script never wrote — snapshot the whole group first so restore() can put
+// an operator's untouched override (e.g. x.gates.bestTimeMinN) back.
+const gatesGroup = catalog.groups.find((g) => g.id === 'gates');
+if (!gatesGroup) fail('gates group missing from the catalog');
+remember(gatesGroup.settings.map((s) => s.key));
 const resetGroup = await send('/x/settings/reset', 'POST', { group: 'gates' });
 if (resetGroup.status !== 200) fail(`group reset → ${resetGroup.status}`);
 ok('group reset accepted');

@@ -62,9 +62,6 @@ const FANS_DEFAULT_DAYS = 30;
 const FANS_MAX_DAYS = 365;
 const FANS_DEFAULT_LIMIT = 20;
 const FANS_MAX_LIMIT = 100;
-// Same bar the dailyMetrics winner re-read uses (§8.4) — a post only counts as
-// a re-up candidate if a snapshot measured it clearing this view count.
-const REUP_MIN_VIEWS = Number(process.env.WINNER_REREAD_MIN_VIEWS ?? '500');
 const TWEET_ID_RE = /^\d+$/;
 
 export const followups = new Hono();
@@ -86,6 +83,9 @@ followups.get('/people/followups', async (c) => {
   const momentumWeeklyPct = getSetting<number>('x.followups.momentumWeeklyPct');
   const reupMinAgeDays = getSetting<number>('x.followups.reupMinAgeDays');
   const reupMaxAgeDays = getSetting<number>('x.followups.reupMaxAgeDays');
+  // Same bar the dailyMetrics winner re-read uses (§8.4) — a post only counts
+  // as a re-up candidate if a snapshot measured it clearing this view count.
+  const reupMinViews = getSetting<number>('x.workers.winnerRereadMinViews');
 
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
@@ -241,7 +241,7 @@ followups.get('/people/followups', async (c) => {
   // 14–60d old that haven't been quote-tweeted yet. Not a person item — pick
   // the single best and ranked just above momentum at the queue tail.
   const reup = pickReupCandidate(
-    await loadReupCandidates(now, reupMinAgeDays, reupMaxAgeDays),
+    await loadReupCandidates(now, reupMinAgeDays, reupMaxAgeDays, reupMinViews),
     snoozes,
     now,
   );
@@ -274,6 +274,7 @@ async function loadReupCandidates(
   now: Date,
   minAgeDays: number,
   maxAgeDays: number,
+  minViews: number,
 ): Promise<ReupCandidate[]> {
   const oldest = new Date(now.getTime() - maxAgeDays * DAY_MS);
   const newest = new Date(now.getTime() - minAgeDays * DAY_MS);
@@ -297,7 +298,7 @@ async function loadReupCandidates(
     )
     .groupBy(postsPublished.tweetId)
     .having(
-      sql`max(CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER)) >= ${REUP_MIN_VIEWS}`,
+      sql`max(CAST(json_extract(${metricsSnapshots.publicMetrics}, '$.impression_count') AS INTEGER)) >= ${minViews}`,
     );
   if (winners.length === 0) return [];
 

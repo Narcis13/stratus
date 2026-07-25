@@ -125,10 +125,16 @@ function NumberArrayInput({
   }, [entry.value]);
 
   const commit = () => {
+    // Blank segments are dropped BEFORE Number(): `Number('') === 0`, so an
+    // emptied field (or a stray leading comma) would otherwise silently save a
+    // valid-looking midnight anchor. Non-numeric segments stay as NaN — they
+    // serialize to null and the server's 400 reverts the field visibly, which
+    // beats silently dropping a typo'd hour.
     const parsed = text
       .split(',')
-      .map((p) => Number(p.trim()))
-      .filter((n) => Number.isFinite(n));
+      .map((p) => p.trim())
+      .filter((p) => p !== '')
+      .map(Number);
     onChange(parsed);
   };
 

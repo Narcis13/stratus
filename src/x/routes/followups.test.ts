@@ -442,6 +442,56 @@ describe('followups routes', () => {
     }
   });
 
+  // The re-up view bar is the SAME knob the dailyMetrics winner re-read uses
+  // (x.workers.winnerRereadMinViews), read per request — not a boot-time env
+  // capture. The 250k main fixture can't be excluded (fixture views exceed the
+  // knob's 100k ceiling), so isolate a low-view winner via the age-window knobs
+  // and flip it out with the views knob alone.
+  test('x.workers.winnerRereadMinViews gates re-up candidates per read', async () => {
+    const LOW_ID = '95000000000000031';
+    await db
+      .insert(postsPublished)
+      .values({
+        tweetId: LOW_ID,
+        text: 'my modest winner',
+        postedAt: new Date(Date.now() - 70 * DAY_MS),
+        isReply: false,
+        source: 'test',
+      })
+      .onConflictDoNothing();
+    await db
+      .insert(metricsSnapshots)
+      .values({
+        tweetId: LOW_ID,
+        publicMetrics: { impression_count: 800 },
+        snapshotAt: new Date(Date.now() - 69 * DAY_MS),
+      })
+      .onConflictDoNothing();
+    try {
+      // Age window holds only the 800-view post; at the default 500 bar it wins.
+      setSettings({ 'x.followups.reupMinAgeDays': 65, 'x.followups.reupMaxAgeDays': 80 });
+      let { body } = await getJson<FollowupsBody>('/x/people/followups');
+      const lowItem = (b: FollowupsBody) =>
+        b.items.find((i) => i.kind === 'reup_candidate' && i.tweetId === LOW_ID);
+      expect(lowItem(body)).toBeDefined();
+
+      // Raise the bar past its views: same window, same request, no candidate.
+      setSettings({ 'x.workers.winnerRereadMinViews': 5000 });
+      ({ body } = await getJson<FollowupsBody>('/x/people/followups'));
+      expect(lowItem(body)).toBeUndefined();
+    } finally {
+      resetSettings({
+        keys: [
+          'x.followups.reupMinAgeDays',
+          'x.followups.reupMaxAgeDays',
+          'x.workers.winnerRereadMinViews',
+        ],
+      });
+      await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, LOW_ID));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, LOW_ID));
+    }
+  });
+
   test('cleanup', async () => {
     // Keep the shared in-memory DB tidy for other suites.
     await db.delete(mentions).where(eq(mentions.tweetId, THEIR_REPLY_ID));
