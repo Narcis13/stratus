@@ -30,7 +30,7 @@ S1 replaces that with a microscope you can point at any table. It is deliberatel
 
 ```
                     ┌─────────────────────────────────────────┐
-   GET /explorer ──▶│  public/explorer.html (vanilla JS, dark) │
+   GET /explorer ──▶│  public/explorer.html (vanilla JS, themed)│
    (no bearer)      │  token in localStorage → Bearer header   │
                     └───────────────┬─────────────────────────┘
                                     │ fetch (Authorization: Bearer …)
@@ -176,9 +176,11 @@ Mounted at the **root path** by `mountX` (`app.route('/', explorer)`), so it sit
 
 ## The Explorer UI — `public/explorer.html`
 
-One self-contained file (~510 lines), dark GitHub-style theme, vanilla JS, no build step. Kept out of the extension build entirely because a 320px side panel is the wrong home for a data grid — a full browser tab against the same Hono server is the right one.
+One self-contained file, vanilla JS, no build step. Kept out of the extension build entirely because a 320px side panel is the wrong home for a data grid — a full browser tab against the same Hono server is the right one.
 
 **Auth.** On first load it prompts for the bearer token, stores it in `localStorage`, and stamps `Authorization: Bearer …` on every request. A 401 re-prompts.
+
+**Theme (UI.16).** The palette is the same Stratus Design System block the side panel uses (`--strat-*`), written once with `light-dark()` so it follows your OS by default. The header's **◐ system / ☾ dark / ☀ light** button cycles and pins a choice under `explorer:theme` in `localStorage` — the same shared-key story as the token, so the [Writer](./writer.md) picks up whichever theme you chose here.
 
 **Two tabs:**
 

@@ -5,13 +5,44 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>stratus writer</title>
 <style>
+  /* UI.16 — Stratus DS palette, same values as the side panel's `--strat-*`
+     block (extension/src/sidepanel/styles.css). Both arms live in one place:
+     `color-scheme: light dark` makes light-dark(<light>, <dark>) follow the OS
+     preference, and the theme button below overrides it by stamping
+     `data-theme` on <html> (persisted under `explorer:theme` — shared with
+     /explorer, exactly like `stratus_explorer_token`).
+     Both public pages are self-contained with no build step, so this block is
+     duplicated in explorer.html on purpose; edit the two together. */
   :root {
-    --bg: #0d1117; --panel: #161b22; --panel2: #10151c; --border: #30363d;
-    --text: #c9d1d9; --dim: #8b949e; --accent: #58a6ff; --accent-dim: #1f6feb;
-    --danger: #f85149; --ok: #3fb950; --warn: #d29922;
+    color-scheme: light dark;
+    --strat-bg: light-dark(#f5f7fa, #0e1014);
+    --strat-bg-elev: light-dark(#ffffff, #161a21);
+    --strat-bg-hover: light-dark(#eceff4, #1d222b);
+    --strat-border: light-dark(#d9dfe9, #262c36);
+    --strat-text: light-dark(#18212f, #e8ebf0);
+    --strat-muted: light-dark(#5f6b80, #8b95a7);
+    --strat-accent: light-dark(#2f6ce0, #4f8cff);
+    --strat-accent-hover: light-dark(#1f5ccc, #6ba0ff);
+    --strat-danger: light-dark(#c23a54, #e0556d);
+    --strat-warn: light-dark(#9a6a10, #ffb454);
+    --strat-ok: light-dark(#1f9d66, #5ad19a);
+    --strat-pillar: light-dark(#6d4fd0, #9b86ff);
+    --strat-accent-fill: light-dark(rgba(47,108,224,.12), rgba(79,140,255,.18));
+    --strat-danger-fill: light-dark(rgba(194,58,84,.10), rgba(224,85,109,.12));
+    --strat-scrim: light-dark(rgba(15,23,42,.4), rgba(0,0,0,.55));
+    --strat-shadow-modal: 0 12px 32px light-dark(rgba(15,23,42,.18), rgba(0,0,0,.5));
+
+    /* Short aliases the rules below resolve through (the styles.css pattern). */
+    --bg: var(--strat-bg); --panel: var(--strat-bg-elev); --panel2: var(--strat-bg);
+    --bg-hover: var(--strat-bg-hover); --border: var(--strat-border);
+    --text: var(--strat-text); --dim: var(--strat-muted);
+    --accent: var(--strat-accent); --accent-dim: var(--strat-accent);
+    --danger: var(--strat-danger); --ok: var(--strat-ok); --warn: var(--strat-warn);
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
+  :root[data-theme='dark'] { color-scheme: dark; }
+  :root[data-theme='light'] { color-scheme: light; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
@@ -27,6 +58,7 @@
   button:hover { border-color: var(--accent); }
   button:disabled { opacity: .5; cursor: default; border-color: var(--border); }
   button.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #fff; }
+  button.primary:hover:not(:disabled) { background: var(--strat-accent-hover); border-color: var(--strat-accent-hover); }
   button.danger { color: var(--danger); }
   button.danger:hover { border-color: var(--danger); }
   input, textarea, select {
@@ -39,7 +71,7 @@
     display: flex; align-items: center; gap: 14px; padding: 8px 14px;
     border-bottom: 1px solid var(--border); background: var(--panel); flex: 0 0 auto;
   }
-  header .brand { font-weight: 700; color: #fff; letter-spacing: .5px; }
+  header .brand { font-weight: 700; color: var(--text); letter-spacing: .5px; }
   header .spacer { flex: 1; }
   header .tokstate { color: var(--dim); font-size: 11px; }
 
@@ -58,17 +90,19 @@
   .rail .filters button.active { border-color: var(--accent); color: var(--accent); }
   .rail .art {
     padding: 8px 12px; cursor: pointer; border-left: 2px solid transparent;
-    border-bottom: 1px solid var(--panel);
+    border-bottom: 1px solid var(--border);
   }
-  .rail .art:hover { background: var(--panel); }
-  .rail .art.active { background: var(--panel); border-left-color: var(--accent); }
+  .rail .art:hover { background: var(--bg-hover); }
+  .rail .art.active { background: var(--strat-accent-fill); border-left-color: var(--accent); }
   .rail .art .t { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rail .art.active .t { color: var(--accent); }
   .rail .art .meta { color: var(--dim); font-size: 11px; margin-top: 3px; display: flex; gap: 8px; align-items: center; }
+  /* Content pillars carry the panel's pillar purple (--strat-pillar). */
+  .rail .art .meta .pill { color: var(--strat-pillar); }
   .badge { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); text-transform: uppercase; letter-spacing: .5px; }
   .badge.draft { color: var(--dim); }
-  .badge.published { color: var(--ok); border-color: rgba(63,185,80,.4); }
-  .badge.discarded { color: var(--danger); border-color: rgba(248,81,73,.4); }
+  .badge.published { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .badge.discarded { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
 
   main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   .empty { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--dim); }
@@ -93,7 +127,7 @@
   .assistbar {
     display: flex; align-items: center; gap: 8px; padding: 8px 14px;
     border-bottom: 1px solid var(--border); flex-wrap: wrap; flex: 0 0 auto;
-    background: var(--panel2);
+    background: var(--panel);
   }
   #idea { flex: 1; min-width: 180px; font-family: var(--sans); }
   .assistbar .hint { color: var(--dim); font-size: 11px; flex-basis: 100%; }
@@ -112,10 +146,10 @@
   #body:focus { border: none; }
   .preview {
     flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px; border-left: 1px solid var(--border);
-    font-family: var(--sans); line-height: 1.65; background: var(--panel2);
+    font-family: var(--sans); line-height: 1.65; background: var(--panel);
   }
   .preview.hidden { display: none; }
-  .preview h1, .preview h2, .preview h3, .preview h4 { color: #fff; line-height: 1.3; }
+  .preview h1, .preview h2, .preview h3, .preview h4 { color: var(--text); line-height: 1.3; }
   .preview h1 { font-size: 24px; margin: 0 0 12px; }
   .preview h2 { font-size: 19px; margin: 22px 0 10px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
   .preview h3 { font-size: 16px; margin: 18px 0 8px; }
@@ -123,22 +157,34 @@
   .preview ul, .preview ol { margin: 0 0 12px; padding-left: 22px; }
   .preview li { margin: 2px 0; }
   .preview blockquote { margin: 0 0 12px; padding: 4px 14px; border-left: 3px solid var(--border); color: var(--dim); }
-  .preview code { background: var(--panel); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12px; color: #7ee787; }
+  .preview code { background: var(--bg-hover); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 12px; color: var(--ok); }
   .preview a { color: var(--accent); }
 
   .overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none;
+    position: fixed; inset: 0; background: var(--strat-scrim); display: none;
     align-items: center; justify-content: center; z-index: 50;
   }
   .overlay.show { display: flex; }
-  .overlay .box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; width: 420px; max-width: 92vw; }
-  .overlay .box h2 { margin: 0 0 6px; font-size: 15px; color: #fff; }
+  .overlay .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 20px; width: 420px; max-width: 92vw; box-shadow: var(--strat-shadow-modal);
+  }
+  .overlay .box h2 { margin: 0 0 6px; font-size: 15px; color: var(--text); }
   .overlay .box p { color: var(--dim); font-size: 12px; margin: 0 0 12px; }
   .overlay .box input { width: 100%; margin-bottom: 12px; }
   .banner { padding: 6px 14px; font-size: 12px; display: none; }
   .banner.show { display: block; }
-  .banner.error { background: rgba(248,81,73,.15); color: var(--danger); }
+  .banner.error { background: var(--strat-danger-fill); color: var(--danger); }
 </style>
+<script>
+  // Theme boot — runs before first paint so a stored preference never flashes
+  // the other theme. 'system' (or no row) leaves <html> unstamped, which is
+  // what makes `color-scheme: light dark` follow the OS.
+  (function () {
+    var t = localStorage.getItem('explorer:theme');
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
 </head>
 <body>
   <header>
@@ -146,6 +192,7 @@
     <span class="spacer"></span>
     <a href="/explorer" title="data explorer">explorer ↗</a>
     <span class="tokstate" id="tokstate"></span>
+    <button id="btn-theme">◐ system</button>
     <button id="btn-token">Change token</button>
   </header>
 
@@ -248,6 +295,29 @@ const state = {
   previewOn: true,
 };
 const $ = (id) => document.getElementById(id);
+
+// ---- theme ---------------------------------------------------------------
+// system → dark → light → system. 'system' unstamps <html> so the tokens'
+// light-dark() follows the OS. The key is shared with /explorer, like the token.
+const THEME_KEY = 'explorer:theme';
+const THEME_CYCLE = ['system', 'dark', 'light'];
+const THEME_LABEL = { system: '◐ system', dark: '☾ dark', light: '☀ light' };
+function applyTheme(t) {
+  if (t === 'system') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', t);
+  $('btn-theme').textContent = THEME_LABEL[t];
+  $('btn-theme').title = 'Theme: ' + t + ' — click to cycle';
+}
+function currentTheme() {
+  const t = localStorage.getItem(THEME_KEY);
+  return THEME_CYCLE.includes(t) ? t : 'system';
+}
+$('btn-theme').onclick = () => {
+  const next = THEME_CYCLE[(THEME_CYCLE.indexOf(currentTheme()) + 1) % THEME_CYCLE.length];
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+};
+applyTheme(currentTheme());
 
 // ---- token / fetch -------------------------------------------------------
 function setTokState() { $('tokstate').textContent = state.token ? 'token set' : 'no token'; }
@@ -353,7 +423,7 @@ function renderList() {
       '<div class="t"></div>' +
       '<div class="meta"><span class="badge ' + a.status + '">' + a.status + '</span>' +
       '<span>' + (a.bodyChars || 0) + ' chars</span>' +
-      (a.pillar ? '<span>' + esc(a.pillar) + '</span>' : '') + '</div>';
+      (a.pillar ? '<span class="pill">' + esc(a.pillar) + '</span>' : '') + '</div>';
     row.querySelector('.t').textContent = title;
     row.onclick = () => openArticle(a.id);
     el.appendChild(row);

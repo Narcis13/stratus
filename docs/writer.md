@@ -11,6 +11,7 @@ Because X has no API for publishing articles (and stratus can't attach media thr
 - Open **`/writer`** in a browser tab. It's a self-contained page (no extension required).
 - The first time, it asks for your stratus **bearer token** — the same token you use everywhere else. The Writer **shares its saved token with the [Data Explorer](./s1-data-explorer.md)** (`/explorer`): sign in on either page and the other is already authenticated. The token lives in that browser's local storage; if it's ever rejected (e.g. you rotated it), the page re-prompts.
 - Every data request the page makes still carries that token — the page shell is public, but nothing about your articles is readable without it.
+- The header's **◐ system / ☾ dark / ☀ light** button cycles the theme (UI.16). Like the token, the choice is **shared with the Explorer** (stored as `explorer:theme`), and both pages use the same Stratus Design System palette as the side panel. Left on *system* they follow your OS.
 
 ---
 

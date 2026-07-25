@@ -41,7 +41,7 @@ Rendered by the pure, bun-tested `extension/src/shared/glance.ts` (`buildPersonC
 | **`↩ n`** | they have **`n` unanswered mentions** in your inbox | you owe them a reply (amber) |
 | **`Nd`** | a target/ally you haven't replied to in **≥7 days** (`NEGLECT_DAYS`) | a neglected relationship (strict `<`, mirrors the C5 followups cutoff; exactly 7d is *not* neglected) |
 
-An unknown author shows **nothing**. Chips are theme-neutral (rgba, work in light + dark).
+An unknown author shows **nothing**. Chips are theme-neutral (rgba, work in light + dark) — since UI.16 every injected overlay reads its color from the single `OVERLAY_TOKENS` block at the top of `content.ts` (`--stratus-<tone>` / `-line` / `-fill`), deliberately *not* the side panel's `--strat-*` tokens: the panel follows your Appearance setting, an overlay has to sit on whichever theme **X** is wearing.
 
 ### `GET /x/people/glance`
 

@@ -148,11 +148,53 @@ interface ScrapeResult {
   url: string;
 }
 
+// UI.16 — the ONE palette every injected overlay reads. These are deliberately
+// NOT the panel's `--strat-*` tokens: overlays sit on X's own timeline (white /
+// dim / black, the user's choice) so they must be theme-neutral, which is what
+// the `rgb()` + low-alpha-fill pairs buy. Values are X's companion palette (the
+// DS `--x-*` block: blue #1d9bf0, muted #71767b, red #f4212e) plus the band
+// signal colors the side panel mirrors in `--strat-band-*`.
+//
+// Alpha ramp, uniform across tones: `-line` = the 1px outline, `-fill` = the
+// tinted background, `-hairline` = a structural divider. A future chip family
+// (augmented-x-ui, notifications) adds a tone here and references it — never a
+// fresh literal, or the two families drift apart one hex at a time.
+const OVERLAY_TOKENS = `
+    :root {
+      --stratus-font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+
+      --stratus-muted: rgb(113, 118, 123);
+      --stratus-muted-line: rgba(113, 118, 123, 0.4);
+      --stratus-muted-fill: rgba(113, 118, 123, 0.12);
+      --stratus-muted-hairline: rgba(113, 118, 123, 0.3);
+
+      --stratus-blue: rgb(29, 155, 240);
+      --stratus-blue-line: rgba(29, 155, 240, 0.5);
+      --stratus-blue-fill: rgba(29, 155, 240, 0.12);
+
+      --stratus-hot: rgb(0, 186, 124);
+      --stratus-hot-line: rgba(0, 186, 124, 0.5);
+      --stratus-hot-fill: rgba(0, 186, 124, 0.12);
+
+      --stratus-warm: rgb(255, 179, 0);
+      --stratus-warm-text: rgb(214, 150, 0);
+      --stratus-warm-line: rgba(255, 179, 0, 0.5);
+      --stratus-warm-fill: rgba(255, 179, 0, 0.12);
+
+      --stratus-danger: rgb(244, 33, 46);
+      --stratus-danger-fill: rgba(244, 33, 46, 0.12);
+
+      --stratus-pillar: rgb(170, 100, 220);
+      --stratus-pillar-hover: rgb(192, 132, 232);
+      --stratus-pillar-line: rgba(170, 100, 220, 0.5);
+      --stratus-pillar-fill: rgba(170, 100, 220, 0.12);
+    }`;
+
 function injectStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  style.textContent = `
+  style.textContent = `${OVERLAY_TOKENS}
     .${BUTTON_CLASS}, .${AUTHOR_BTN_CLASS} {
       all: unset;
       display: inline-flex;
@@ -160,36 +202,36 @@ function injectStyles(): void {
       justify-content: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 12px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 4px 10px;
       border-radius: 9999px;
-      color: rgb(113, 118, 123);
-      border: 1px solid rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
       background: transparent;
       margin-left: 6px;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
     .${AUTHOR_BTN_CLASS} { font-size: 13px; padding: 6px 14px; }
     .${BUTTON_CLASS}:hover, .${AUTHOR_BTN_CLASS}:hover {
-      color: rgb(29, 155, 240);
-      border-color: rgb(29, 155, 240);
-      background: rgba(29, 155, 240, 0.1);
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
     }
     .${BUTTON_CLASS}[data-state="saving"], .${AUTHOR_BTN_CLASS}[data-state="saving"] {
-      color: rgb(113, 118, 123);
-      border-color: rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border-color: var(--stratus-muted-line);
       cursor: progress;
     }
     .${BUTTON_CLASS}[data-state="saved"], .${AUTHOR_BTN_CLASS}[data-state="saved"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${BUTTON_CLASS}[data-state="failed"], .${AUTHOR_BTN_CLASS}[data-state="failed"] {
-      color: rgb(244, 33, 46);
-      border-color: rgb(244, 33, 46);
-      background: rgba(244, 33, 46, 0.12);
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
     }
     .${RADAR_ADD_CLASS} {
       all: unset;
@@ -200,23 +242,23 @@ function injectStyles(): void {
       cursor: pointer;
       width: 22px;
       height: 22px;
-      font: 600 14px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 14px/1 var(--stratus-font);
       border-radius: 9999px;
-      color: rgb(113, 118, 123);
-      border: 1px solid rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
       background: transparent;
       margin-left: 6px;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
     .${RADAR_ADD_CLASS}:hover {
-      color: rgb(29, 155, 240);
-      border-color: rgb(29, 155, 240);
-      background: rgba(29, 155, 240, 0.1);
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
     }
     .${RADAR_ADD_CLASS}[data-state="added"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${REPLY_BTN_CLASS} {
       all: unset;
@@ -225,38 +267,38 @@ function injectStyles(): void {
       justify-content: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 12px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 4px 10px;
       border-radius: 9999px;
-      color: rgb(170, 100, 220);
-      border: 1px solid rgba(170, 100, 220, 0.5);
+      color: var(--stratus-pillar);
+      border: 1px solid var(--stratus-pillar-line);
       background: transparent;
       margin-left: 6px;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
     .${REPLY_BTN_CLASS}:hover {
-      color: rgb(192, 132, 232);
-      border-color: rgb(192, 132, 232);
-      background: rgba(170, 100, 220, 0.12);
+      color: var(--stratus-pillar-hover);
+      border-color: var(--stratus-pillar-hover);
+      background: var(--stratus-pillar-fill);
     }
     .${REPLY_BTN_CLASS}[data-state="working"] {
-      color: rgb(113, 118, 123);
-      border-color: rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border-color: var(--stratus-muted-line);
       cursor: progress;
     }
     .${REPLY_BTN_CLASS}[data-state="done"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${REPLY_BTN_CLASS}[data-state="failed"] {
-      color: rgb(244, 33, 46);
-      border-color: rgb(244, 33, 46);
-      background: rgba(244, 33, 46, 0.12);
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
     }
-    article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 rgb(0, 186, 124); }
-    article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 rgb(255, 179, 0); }
+    article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 var(--stratus-hot); }
+    article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 var(--stratus-warm); }
     article[data-testid="tweet"][data-stratus-band="skip"] { opacity: 0.45; }
     .${PERSON_CHIPS_CLASS} {
       display: inline-flex;
@@ -273,19 +315,19 @@ function injectStyles(): void {
       align-items: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 11px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 2px 7px;
       border-radius: 9999px;
       white-space: nowrap;
       border: 1px solid transparent;
     }
-    .${PERSON_CHIP_CLASS}[data-tone="ally"]      { color: rgb(0, 186, 124);  border-color: rgba(0, 186, 124, 0.5);  background: rgba(0, 186, 124, 0.10); }
-    .${PERSON_CHIP_CLASS}[data-tone="mutual"]    { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
-    .${PERSON_CHIP_CLASS}[data-tone="responded"] { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
-    .${PERSON_CHIP_CLASS}[data-tone="engaged"]   { color: rgb(113, 118, 123); border-color: rgba(113, 118, 123, 0.5); background: rgba(113, 118, 123, 0.10); }
-    .${PERSON_CHIP_CLASS}[data-tone="target"]    { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
-    .${PERSON_CHIP_CLASS}[data-tone="warn"]      { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${PERSON_CHIP_CLASS}[data-tone="ally"]      { color: var(--stratus-hot);       border-color: var(--stratus-hot-line);   background: var(--stratus-hot-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="mutual"]    { color: var(--stratus-blue);      border-color: var(--stratus-blue-line);  background: var(--stratus-blue-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="responded"] { color: var(--stratus-warm-text); border-color: var(--stratus-warm-line);  background: var(--stratus-warm-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="engaged"]   { color: var(--stratus-muted);     border-color: var(--stratus-muted-line); background: var(--stratus-muted-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="target"]    { color: var(--stratus-blue);      border-color: var(--stratus-blue-line);  background: var(--stratus-blue-fill); }
+    .${PERSON_CHIP_CLASS}[data-tone="warn"]      { color: var(--stratus-warm-text); border-color: var(--stratus-warm-line);  background: var(--stratus-warm-fill); }
     .${PERSON_CHIP_CLASS}:hover { filter: brightness(1.15); }
     /* Notifications surface (C10). Muted gray reads on both X themes, same as
        every other injected control here. */
@@ -295,8 +337,8 @@ function injectStyles(): void {
       flex-wrap: wrap;
       gap: 6px;
       margin-top: 4px;
-      font: 400 12px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      color: rgb(113, 118, 123);
+      font: 400 12px/1.3 var(--stratus-font);
+      color: var(--stratus-muted);
     }
     .stratus-notif-ctx-quote { font-style: italic; }
     .stratus-notif-answered {
@@ -305,9 +347,9 @@ function injectStyles(): void {
       padding: 1px 6px;
       border-radius: 9999px;
       font-weight: 600;
-      color: rgb(0, 186, 124);
-      border: 1px solid rgba(0, 186, 124, 0.5);
-      background: rgba(0, 186, 124, 0.10);
+      color: var(--stratus-hot);
+      border: 1px solid var(--stratus-hot-line);
+      background: var(--stratus-hot-fill);
     }
     .${NOTIF_TIERS_CLASS} {
       display: flex;
@@ -322,16 +364,16 @@ function injectStyles(): void {
       align-items: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 11px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 2px 7px;
       border-radius: 9999px;
       white-space: nowrap;
       border: 1px solid transparent;
     }
-    .${NOTIF_TIER_CLASS}[data-tone="ally"]   { color: rgb(0, 186, 124);  border-color: rgba(0, 186, 124, 0.5);  background: rgba(0, 186, 124, 0.10); }
-    .${NOTIF_TIER_CLASS}[data-tone="mutual"] { color: rgb(29, 155, 240); border-color: rgba(29, 155, 240, 0.5); background: rgba(29, 155, 240, 0.10); }
-    .${NOTIF_TIER_CLASS}[data-tone="target"] { color: rgb(214, 150, 0);  border-color: rgba(255, 179, 0, 0.55); background: rgba(255, 179, 0, 0.12); }
+    .${NOTIF_TIER_CLASS}[data-tone="ally"]   { color: var(--stratus-hot);       border-color: var(--stratus-hot-line);  background: var(--stratus-hot-fill); }
+    .${NOTIF_TIER_CLASS}[data-tone="mutual"] { color: var(--stratus-blue);      border-color: var(--stratus-blue-line); background: var(--stratus-blue-fill); }
+    .${NOTIF_TIER_CLASS}[data-tone="target"] { color: var(--stratus-warm-text); border-color: var(--stratus-warm-line); background: var(--stratus-warm-fill); }
     .${NOTIF_TIER_CLASS}:hover { filter: brightness(1.15); }
     .${NOTIF_SYNC_CLASS} {
       all: unset;
@@ -339,32 +381,32 @@ function injectStyles(): void {
       align-items: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 12px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 4px 10px;
       border-radius: 9999px;
       margin-left: 10px;
       white-space: nowrap;
-      color: rgb(113, 118, 123);
-      border: 1px solid rgba(113, 118, 123, 0.4);
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
       background: transparent;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
     .${NOTIF_SYNC_CLASS}:hover {
-      color: rgb(29, 155, 240);
-      border-color: rgb(29, 155, 240);
-      background: rgba(29, 155, 240, 0.1);
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
     }
     .${NOTIF_SYNC_CLASS}[data-state="working"] { cursor: progress; }
     .${NOTIF_SYNC_CLASS}[data-state="done"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${NOTIF_SYNC_CLASS}[data-state="failed"] {
-      color: rgb(244, 33, 46);
-      border-color: rgb(244, 33, 46);
-      background: rgba(244, 33, 46, 0.12);
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
     }
     .${CHAN_WRAP_CLASS} { display: inline-flex; gap: 4px; margin-left: 4px; align-items: center; }
     .${CHAN_CHIP_CLASS} {
@@ -373,19 +415,19 @@ function injectStyles(): void {
       align-items: center;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 11px/1 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 600 11px/1 var(--stratus-font);
       letter-spacing: 0.02em;
       padding: 3px 8px;
       border-radius: 9999px;
-      color: rgb(29, 155, 240);
-      border: 1px dashed rgba(29, 155, 240, 0.5);
+      color: var(--stratus-blue);
+      border: 1px dashed var(--stratus-blue-line);
       background: transparent;
       white-space: nowrap;
     }
-    .${CHAN_CHIP_CLASS}:hover { background: rgba(29, 155, 240, 0.1); }
+    .${CHAN_CHIP_CLASS}:hover { background: var(--stratus-blue-fill); }
     .${CHAN_CHIP_CLASS}[data-state="tagged"] {
-      color: rgb(0, 186, 124);
-      border: 1px solid rgb(0, 186, 124);
+      color: var(--stratus-hot);
+      border: 1px solid var(--stratus-hot);
       cursor: default;
     }
     /* The purple sparkle circle is injected by the retired standalone "Reply
@@ -397,8 +439,8 @@ function injectStyles(): void {
       box-sizing: border-box;
       width: 100%;
       padding: 12px 16px;
-      border-top: 1px solid rgba(113, 118, 123, 0.25);
-      font: 400 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      border-top: 1px solid var(--stratus-muted-hairline);
+      font: 400 13px/1.4 var(--stratus-font);
       color: inherit;
     }
     .stratus-ctx-header {
@@ -414,17 +456,17 @@ function injectStyles(): void {
       min-width: 0;
       cursor: pointer;
     }
-    .stratus-ctx-since { color: rgb(113, 118, 123); font-size: 12px; }
+    .stratus-ctx-since { color: var(--stratus-muted); font-size: 12px; }
     .stratus-ctx-toggle {
       all: unset;
       cursor: pointer;
-      color: rgb(113, 118, 123);
+      color: var(--stratus-muted);
       font-size: 13px;
       line-height: 1;
       padding: 2px 6px;
       border-radius: 6px;
     }
-    .stratus-ctx-toggle:hover { background: rgba(113, 118, 123, 0.12); }
+    .stratus-ctx-toggle:hover { background: var(--stratus-muted-fill); }
     .${CONTEXT_PANEL_CLASS}[data-collapsed="true"] .stratus-ctx-body { display: none; }
     .stratus-ctx-body {
       display: flex;
@@ -432,43 +474,43 @@ function injectStyles(): void {
       gap: 8px;
       margin-top: 8px;
     }
-    .stratus-ctx-meta { color: rgb(113, 118, 123); font-size: 12px; }
+    .stratus-ctx-meta { color: var(--stratus-muted); font-size: 12px; }
     .stratus-ctx-tags { display: flex; flex-wrap: wrap; gap: 4px; }
     .stratus-ctx-tag {
       font-size: 11px;
       padding: 1px 7px;
       border-radius: 9999px;
-      color: rgb(113, 118, 123);
-      border: 1px solid rgba(113, 118, 123, 0.35);
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-hairline);
     }
     .stratus-ctx-banner {
       font-size: 12px;
       padding: 4px 8px;
       border-radius: 6px;
-      color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.1);
+      color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .stratus-ctx-row { display: flex; flex-direction: column; gap: 3px; }
     .stratus-ctx-label {
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.04em;
-      color: rgb(113, 118, 123);
+      color: var(--stratus-muted);
     }
     .stratus-ctx-val { font-size: 13px; }
     .stratus-ctx-list { display: flex; flex-direction: column; gap: 4px; }
     .stratus-ctx-loop { font-size: 12px; }
     .stratus-ctx-outcome { display: flex; flex-direction: column; gap: 1px; }
     .stratus-ctx-outcome-text { font-size: 12px; }
-    .stratus-ctx-outcome-meta { font-size: 11px; color: rgb(113, 118, 123); }
+    .stratus-ctx-outcome-meta { font-size: 11px; color: var(--stratus-muted); }
     .stratus-ctx-notes {
       font-size: 12px;
-      color: rgb(113, 118, 123);
+      color: var(--stratus-muted);
       white-space: pre-wrap;
-      border-left: 2px solid rgba(113, 118, 123, 0.35);
+      border-left: 2px solid var(--stratus-muted-hairline);
       padding-left: 8px;
     }
-    .stratus-ctx-empty { font-size: 12px; color: rgb(113, 118, 123); }
+    .stratus-ctx-empty { font-size: 12px; color: var(--stratus-muted); }
     .${VARIANT_CHIPS_CLASS} {
       display: inline-flex;
       flex-direction: column;
@@ -486,19 +528,19 @@ function injectStyles(): void {
       box-sizing: border-box;
       cursor: pointer;
       max-width: 100%;
-      font: 400 12px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      font: 400 12px/1.2 var(--stratus-font);
       padding: 3px 9px;
       border-radius: 9999px;
-      color: rgb(170, 100, 220);
-      border: 1px solid rgba(170, 100, 220, 0.5);
+      color: var(--stratus-pillar);
+      border: 1px solid var(--stratus-pillar-line);
       background: transparent;
       transition: color 120ms, border-color 120ms, background 120ms;
     }
-    .${VARIANT_CHIP_CLASS}:hover { background: rgba(170, 100, 220, 0.12); }
+    .${VARIANT_CHIP_CLASS}:hover { background: var(--stratus-pillar-fill); }
     .${VARIANT_CHIP_CLASS}[data-active="1"] {
-      color: rgb(0, 186, 124);
-      border-color: rgb(0, 186, 124);
-      background: rgba(0, 186, 124, 0.12);
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
     }
     .${VARIANT_ANGLE_CLASS} {
       flex: 0 0 auto;
@@ -513,9 +555,9 @@ function injectStyles(): void {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      color: rgb(113, 118, 123);
+      color: var(--stratus-muted);
     }
-    .${VARIANT_HINT_CLASS} { font-size: 11px; color: rgb(113, 118, 123); }
+    .${VARIANT_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); }
     .${VARIANT_HINT_CLASS}:empty { display: none; }
   `;
   document.head.appendChild(style);
