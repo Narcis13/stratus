@@ -78,6 +78,9 @@ export interface ServerConfig {
   /** x.display.voiceListLimit — saved tweets one Voice query fetches. $0 local
    *  SQL, so this is a scroll budget, not a spend one. */
   voiceListLimit: number;
+  /** x.display.repliesListLimit — reply drafts the Replies tab loads into its
+   *  History list. Local rows, so also a scroll budget (UI.15). */
+  repliesListLimit: number;
 }
 
 export const SERVER_DEFAULTS: ServerConfig = {
@@ -96,6 +99,7 @@ export const SERVER_DEFAULTS: ServerConfig = {
   dossierListLen: 5,
   channelPostsShown: 8,
   voiceListLimit: 100,
+  repliesListLimit: 100,
 };
 
 /** The batch size a "Draft replies" click may actually ask for: the display cap,
@@ -177,5 +181,10 @@ export function readServerConfig(raw: unknown): ServerConfig {
       SERVER_DEFAULTS.channelPostsShown,
     ),
     voiceListLimit: readNumber(blob, 'x.display.voiceListLimit', SERVER_DEFAULTS.voiceListLimit),
+    repliesListLimit: readNumber(
+      blob,
+      'x.display.repliesListLimit',
+      SERVER_DEFAULTS.repliesListLimit,
+    ),
   };
 }

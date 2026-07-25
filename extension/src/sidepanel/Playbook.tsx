@@ -1,11 +1,14 @@
 // The Playbook tab (CIRCLES-PLAN C4): the measured feedback loop as a page.
 // Every stat renders with its n; below the min-sample gate a cell says
-// "insufficient data (n=7)" instead of pretending. The guidance section shows
-// exactly what the drafter/reply prompts inject right now (or that they stay
-// silent). One $0 GET; the only spend is the one-time own-winner template
-// extraction button (~$0.005/post, bounded ≤20/call).
+// "insufficient data (n=7/20)" instead of pretending — and since UI.15 that
+// second number is the gate itself, editable from the ⚙ in this tab's header
+// (`x.gates.minCellN`, the same key the drafting guidance and the MCP tools
+// read). The guidance section shows exactly what the drafter/reply prompts
+// inject right now (or that they stay silent). One $0 GET; the only spend is the
+// one-time own-winner template extraction button (~$0.005/post, bounded ≤20).
 
-import { type JSX, useCallback, useEffect, useState } from 'react';
+import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type Playbook,
@@ -16,7 +19,23 @@ import {
   type PlaybookRosterCoverage,
   api,
 } from './api.ts';
+import { entriesForKeys } from './settingsClient.ts';
+import { PATCH_DEBOUNCE_MS, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
+import { Section } from './ui/Section.tsx';
+
+// The one knob this tab owns. `server`-scoped on purpose: it re-gates the whole
+// response, and the same number decides whether the measured guidance lines are
+// allowed to speak — so it can never be a panel-local lookalike.
+const PLAYBOOK_SETTING_KEYS = ['x.gates.minCellN'];
+
+const GATE_NOTE =
+  'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. Band thresholds are NOT here — those move by hand at ≥100 measured replies (Settings → Tuning → band).';
+
+// Long enough that the editor's own debounced PATCH has landed before we re-read
+// (see the reload effect for why one re-read, not a poll).
+const GATE_RELOAD_MS = PATCH_DEBOUNCE_MS + 300;
 
 export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element {
   const [data, setData] = useState<Playbook | null>(null);
@@ -24,6 +43,7 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [extractMsg, setExtractMsg] = useState<string | null>(null);
+  const editor = useSettingsEditor(settings);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +60,34 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The gate the ⚙ currently shows. `null` until the registry loads, or if the
+  // server is unreachable — in which case the page simply keeps the gate the
+  // response was built with.
+  const gearGate = gateFromEditor(editor.groups);
+  const reloadedForGate = useRef<number | null>(null);
+
+  // Moving the gate only changes this page after the SERVER re-gates it: every
+  // `sufficient` flag in the response was computed with `minN`. The editor's
+  // value goes optimistic instantly and its PATCH lands one debounce later, so
+  // wait past that and re-read ONCE per distinct value — `data.minN` coming back
+  // is the confirmation. The ref is what keeps a value the server refuses (the
+  // registry bounds are the money guard) from turning a disagreement into a
+  // poll: the editor re-reads on refusal, which snaps the gear back and settles
+  // this the other way. `GET /x/playbook` is $0 and writes nothing.
+  useEffect(() => {
+    if (gearGate === null || data === null) return;
+    if (gearGate === data.minN) {
+      reloadedForGate.current = null;
+      return;
+    }
+    if (reloadedForGate.current === gearGate) return;
+    const t = setTimeout(() => {
+      reloadedForGate.current = gearGate;
+      void load();
+    }, GATE_RELOAD_MS);
+    return () => clearTimeout(t);
+  }, [gearGate, data, load]);
 
   const extractWinners = async () => {
     setExtracting(true);
@@ -70,6 +118,12 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
         <h2>Your measured playbook</h2>
         <div className="row">
           {data && <span className="status-line">gate: n≥{data.minN} per cell</span>}
+          <SettingsGear
+            editor={editor}
+            keys={PLAYBOOK_SETTING_KEYS}
+            label="Configure the per-cell sample gate"
+            note={GATE_NOTE}
+          />
           <button type="button" onClick={() => void load()} disabled={loading}>
             {loading ? '…' : 'Refresh'}
           </button>
@@ -81,26 +135,26 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
 
       {data && (
         <>
-          <section className="brief-section">
-            <h3>What the prompts inject right now</h3>
+          <Section title="What the prompts inject right now">
             <div className="pb-guidance">
               <div>
                 <span className="pb-guidance-label">replies</span>
                 {data.guidance.reply ?? (
-                  <span className="muted">silent — no angle cell clears the gate yet</span>
+                  <span className="pb-gated">silent — no angle cell clears n≥{data.minN} yet</span>
                 )}
               </div>
               <div>
                 <span className="pb-guidance-label">posts</span>
                 {data.guidance.post ?? (
-                  <span className="muted">silent — no structure cell clears the gate yet</span>
+                  <span className="pb-gated">
+                    silent — no structure cell clears n≥{data.minN} yet
+                  </span>
                 )}
               </div>
             </div>
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Reply angles ({data.angleEffectiveness.totalMeasured} measured)</h3>
+          <Section title={`Reply angles (${data.angleEffectiveness.totalMeasured} measured)`}>
             <AngleTable cells={data.angleEffectiveness.overall} minN={data.minN} />
             {data.angleEffectiveness.byAuthorSize.map((b) => (
               <details key={b.bucket} className="pb-bucket">
@@ -110,12 +164,14 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 <AngleTable cells={b.cells} minN={data.minN} />
               </details>
             ))}
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Band calibration ({data.bandCalibration.totalMeasured} measured)</h3>
+          <Section title={`Band calibration (${data.bandCalibration.totalMeasured} measured)`}>
             {data.bandCalibration.totalMeasured === 0 ? (
-              <div className="muted">No measured replies yet.</div>
+              <EmptyState
+                line="No measured replies yet."
+                hint="Mark a reply posted with its tweet link and the 03:00 UTC pass measures it — then this table can grade the hot/warm labels."
+              />
             ) : (
               <>
                 <table className="pb-table">
@@ -150,19 +206,23 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                   {fmtN(data.bandCalibration.passed.medianViews)})
                 </div>
                 <div className="status-line">
-                  bait {cellSummary(baitAsCell(data.bandCalibration.bait.bait), data.minN)} ·
-                  non-bait {cellSummary(baitAsCell(data.bandCalibration.bait.nonBait), data.minN)}
+                  bait{' '}
+                  <ResultCell cell={baitAsCell(data.bandCalibration.bait.bait)} minN={data.minN} />{' '}
+                  · non-bait{' '}
+                  <ResultCell
+                    cell={baitAsCell(data.bandCalibration.bait.nonBait)}
+                    minN={data.minN}
+                  />
                 </div>
                 <div className="muted pb-note">
                   BAND thresholds move only by hand at ≥100 measured — this table is the evidence,
-                  not the trigger.
+                  not the trigger. (The ⚙ above moves the sample gate, never a threshold.)
                 </div>
               </>
             )}
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Batch vs single drafts</h3>
+          <Section title="Batch vs single drafts">
             <table className="pb-table">
               <thead>
                 <tr>
@@ -173,15 +233,21 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               <tbody>
                 <tr>
                   <td>Reply Master (single)</td>
-                  <td>{cellSummary(data.batchVsSingle.single, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.batchVsSingle.single} minN={data.minN} />
+                  </td>
                 </tr>
                 <tr>
                   <td>Radar (batch)</td>
-                  <td>{cellSummary(data.batchVsSingle.radar, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.batchVsSingle.radar} minN={data.minN} />
+                  </td>
                 </tr>
                 <tr>
                   <td>Canned (reply lists)</td>
-                  <td>{cellSummary(data.batchVsSingle.canned, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.batchVsSingle.canned} minN={data.minN} />
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -191,19 +257,22 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               the draft, never twice. {data.batchVsSingle.unattributed} published replies
               unattributed (hand-written or pre-tooling).
             </div>
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Relationship lift (C3 block on vs off)</h3>
+          <Section title="Relationship lift (C3 block on vs off)">
             <table className="pb-table">
               <tbody>
                 <tr>
                   <td>with relationship block</td>
-                  <td>{cellSummary(data.relationshipLift.withRelationship, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.relationshipLift.withRelationship} minN={data.minN} />
+                  </td>
                 </tr>
                 <tr>
                   <td>cold</td>
-                  <td>{cellSummary(data.relationshipLift.withoutRelationship, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.relationshipLift.withoutRelationship} minN={data.minN} />
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -214,19 +283,22 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                   ` · ${data.relationshipLift.profileVisitsLift}x profile clicks`}
               </div>
             )}
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Personal context ({data.meEffectiveness.totalMeasured} measured)</h3>
+          <Section title={`Personal context (${data.meEffectiveness.totalMeasured} measured)`}>
             <table className="pb-table">
               <tbody>
                 <tr>
                   <td>with me-brief</td>
-                  <td>{cellSummary(data.meEffectiveness.withMe, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.meEffectiveness.withMe} minN={data.minN} />
+                  </td>
                 </tr>
                 <tr>
                   <td>cold</td>
-                  <td>{cellSummary(data.meEffectiveness.withoutMe, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.meEffectiveness.withoutMe} minN={data.minN} />
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -242,24 +314,29 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 brief makes replies land better.
               </div>
             )}
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Media vs text-only ({data.mediaEffectiveness.totalMeasured} measured)</h3>
+          <Section title={`Media vs text-only (${data.mediaEffectiveness.totalMeasured} measured)`}>
             <table className="pb-table">
               <tbody>
                 <tr>
                   <td>with media</td>
-                  <td>{cellSummary(data.mediaEffectiveness.media, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.mediaEffectiveness.media} minN={data.minN} />
+                  </td>
                 </tr>
                 <tr>
                   <td>text-only</td>
-                  <td>{cellSummary(data.mediaEffectiveness.textOnly, data.minN)}</td>
+                  <td>
+                    <ResultCell cell={data.mediaEffectiveness.textOnly} minN={data.minN} />
+                  </td>
                 </tr>
                 {data.mediaEffectiveness.unknown.posted > 0 && (
                   <tr className="pb-thin">
                     <td>unknown (pre-baseline)</td>
-                    <td>{cellSummary(data.mediaEffectiveness.unknown, data.minN)}</td>
+                    <td>
+                      <ResultCell cell={data.mediaEffectiveness.unknown} minN={data.minN} />
+                    </td>
                   </tr>
                 )}
               </tbody>
@@ -276,14 +353,16 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 studio's images will be judged against.
               </div>
             )}
-          </section>
+          </Section>
 
           <IdeaEffectivenessSection idea={data.ideaEffectiveness} minN={data.minN} />
 
-          <section className="brief-section">
-            <h3>Reply latency ({data.latencyEffectiveness.totalMeasured} measured)</h3>
+          <Section title={`Reply latency (${data.latencyEffectiveness.totalMeasured} measured)`}>
             {data.latencyEffectiveness.cells.length === 0 ? (
-              <div className="muted">No posted replies yet.</div>
+              <EmptyState
+                line="No posted replies yet."
+                hint="This is the number that justifies (or retires) every push to reply fast — it needs both a <15m and a 1h+ cohort."
+              />
             ) : (
               <table className="pb-table">
                 <thead>
@@ -298,7 +377,9 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                     <tr key={c.bucket} className={c.bucket === 'unknown' ? 'pb-thin' : ''}>
                       <td>{c.bucket}</td>
                       <td>{c.posted}</td>
-                      <td>{cellSummary(c, data.minN)}</td>
+                      <td>
+                        <ResultCell cell={c} minN={data.minN} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -316,12 +397,16 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 would justify (or retire) the Radar/Launch-Room push to reply fast.
               </div>
             )}
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>Model effectiveness ({data.modelEffectiveness.totalMeasured} measured)</h3>
+          <Section
+            title={`Model effectiveness (${data.modelEffectiveness.totalMeasured} measured)`}
+          >
             {data.modelEffectiveness.cells.length === 0 ? (
-              <div className="muted">No posted replies yet.</div>
+              <EmptyState
+                line="No posted replies yet."
+                hint="Switch provider in Settings → AI and keep drafting — each model gets its own row once it has measured replies."
+              />
             ) : (
               <table className="pb-table">
                 <thead>
@@ -336,7 +421,9 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                     <tr key={c.model}>
                       <td>{c.model}</td>
                       <td>{c.posted}</td>
-                      <td>{cellSummary(c, data.minN)}</td>
+                      <td>
+                        <ResultCell cell={c} minN={data.minN} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -346,17 +433,16 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               which model drafts the replies that land — the judge of the OpenRouter experiment. A
               bucket stays silent until it reaches n≥{data.minN}.
             </div>
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>
-              Timeline funnel ({data.timelineFunnel.totalReplied}/{data.timelineFunnel.totalSeen}{' '}
-              replied)
-            </h3>
+          <Section
+            title={`Timeline funnel (${data.timelineFunnel.totalReplied}/${data.timelineFunnel.totalSeen} replied)`}
+          >
             {data.timelineFunnel.cells.length === 0 ? (
-              <div className="muted">
-                Nothing captured yet — passive harvest fills this while you scroll x.com/home.
-              </div>
+              <EmptyState
+                line="Nothing captured yet — passive harvest fills this while you scroll x.com/home."
+                hint="Check the passive-capture toggle in Settings, then browse normally: this needs days of scrolling, not minutes."
+              />
             ) : (
               <table className="pb-table">
                 <thead>
@@ -377,7 +463,13 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                       <td>{c.seen}</td>
                       <td>{c.replied}</td>
                       <td>
-                        {c.rate === null ? `insufficient data (n=${c.seen})` : fmtPct(c.rate)}
+                        {c.rate === null ? (
+                          <span className="pb-gated">
+                            insufficient data (n={c.seen}/{data.minN})
+                          </span>
+                        ) : (
+                          fmtPct(c.rate)
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -389,14 +481,16 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               banded at first sighting, 30-day window. A cell stays silent until n≥{data.minN} seen;
               "unknown" means the tweet's time never rendered, not a verdict.
             </div>
-          </section>
+          </Section>
 
           <RosterCoverageSection rc={data.rosterCoverage} minN={data.minN} />
 
-          <section className="brief-section">
-            <h3>Pillar × register ({data.pillarRegister.totalMeasured} measured)</h3>
+          <Section title={`Pillar × register (${data.pillarRegister.totalMeasured} measured)`}>
             {data.pillarRegister.cells.length === 0 ? (
-              <div className="muted">No published drafter posts yet.</div>
+              <EmptyState
+                line="No published drafter posts yet."
+                hint="Only posts drafted in stratus carry a pillar and a register — hand-written ones can't fill this table."
+              />
             ) : (
               <table className="pb-table">
                 <thead>
@@ -411,22 +505,25 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                     <tr key={`${c.pillar}|${c.register}`}>
                       <td>{c.pillar ?? '—'}</td>
                       <td>{c.register ?? '—'}</td>
-                      <td>{cellSummary(c, data.minN)}</td>
+                      <td>
+                        <ResultCell cell={c} minN={data.minN} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             )}
-          </section>
+          </Section>
 
-          <section className="brief-section">
-            <h3>My winning structures ({data.structures.totalMeasured} measured)</h3>
-            <div className="row">
+          <Section
+            title={`My winning structures (${data.structures.totalMeasured} measured)`}
+            actions={
               <button type="button" onClick={() => void extractWinners()} disabled={extracting}>
                 {extracting ? 'Extracting…' : 'Extract winner templates'}
               </button>
-              <span className="status-line">≤20 top posts, ~$0.005 each, one-time</span>
-            </div>
+            }
+          >
+            <div className="status-line">≤20 top posts, ~$0.005 each, one-time</div>
             {extractMsg && <div className="status-line">{extractMsg}</div>}
             {data.structures.hooks.length > 0 && (
               <StructureTable title="hooks" cells={data.structures.hooks} minN={data.minN} />
@@ -435,13 +532,25 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               <StructureTable title="devices" cells={data.structures.devices} minN={data.minN} />
             )}
             {data.structures.hooks.length === 0 && (
-              <div className="muted">No templates extracted from my posts yet.</div>
+              <EmptyState
+                line="No templates extracted from my posts yet."
+                hint="Extract winner templates above — it is what lets the measured 'posts' guidance line start steering your drafts."
+              />
             )}
-          </section>
+          </Section>
         </>
       )}
     </div>
   );
+}
+
+/** The gate the ⚙ is currently showing, or `null` while the registry is loading
+ *  (or the server is down — in which case the page keeps whatever gate the
+ *  response was built with, which is exactly right). */
+function gateFromEditor(groups: ReturnType<typeof useSettingsEditor>['groups']): number | null {
+  if (groups === null) return null;
+  const v = entriesForKeys(groups, PLAYBOOK_SETTING_KEYS)[0]?.value;
+  return typeof v === 'number' ? v : null;
 }
 
 // §S0.8 — does the Idea Inbox pay? Seeded (a captured idea seeded this draft)
@@ -467,12 +576,14 @@ function IdeaEffectivenessSection({
   minN: number;
 }): JSX.Element {
   return (
-    <section className="brief-section">
-      <h3>
-        Idea Inbox payoff ({idea.totalSeeded} seeded / {idea.totalMeasured} measured)
-      </h3>
+    <Section
+      title={`Idea Inbox payoff (${idea.totalSeeded} seeded / ${idea.totalMeasured} measured)`}
+    >
       {idea.totalMeasured === 0 ? (
-        <div className="muted">No measured published drafts yet.</div>
+        <EmptyState
+          line="No measured published drafts yet."
+          hint="Seed a draft from the Ideas tab and mark it posted — this is the table that can tell you the Idea Inbox is not paying."
+        />
       ) : (
         <>
           <table className="pb-table">
@@ -486,14 +597,22 @@ function IdeaEffectivenessSection({
             <tbody>
               <tr>
                 <td>all (pooled)</td>
-                <td>{cellSummary(idea.seeded, minN)}</td>
-                <td>{cellSummary(idea.unseeded, minN)}</td>
+                <td>
+                  <ResultCell cell={idea.seeded} minN={minN} />
+                </td>
+                <td>
+                  <ResultCell cell={idea.unseeded} minN={minN} />
+                </td>
               </tr>
               {IDEA_SURFACES.map((s) => (
                 <tr key={s.key} className="pb-thin">
                   <td>{s.label}</td>
-                  <td>{cellSummary(idea[s.key].seeded, minN)}</td>
-                  <td>{cellSummary(idea[s.key].unseeded, minN)}</td>
+                  <td>
+                    <ResultCell cell={idea[s.key].seeded} minN={minN} />
+                  </td>
+                  <td>
+                    <ResultCell cell={idea[s.key].unseeded} minN={minN} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -512,7 +631,7 @@ function IdeaEffectivenessSection({
           )}
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -534,10 +653,12 @@ function RosterCoverageSection({
   minN: number;
 }): JSX.Element {
   return (
-    <section className="brief-section">
-      <h3>Roster coverage — last 7 days ({rc.total} replies)</h3>
+    <Section title={`Roster coverage — last 7 days (${rc.total} replies)`}>
       {rc.total === 0 ? (
-        <div className="muted">No posted replies in the last 7 days.</div>
+        <EmptyState
+          line="No posted replies in the last 7 days."
+          hint="The doctrine is 70% of replies aimed at accounts 2–10x your size; this is the only place that checks whether you did it."
+        />
       ) : (
         <>
           <table className="pb-table">
@@ -580,7 +701,7 @@ function RosterCoverageSection({
           )}
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -591,7 +712,14 @@ function AngleTable({
   cells: PlaybookAngleCell[];
   minN: number;
 }): JSX.Element {
-  if (cells.length === 0) return <div className="muted">No posted replies yet.</div>;
+  if (cells.length === 0) {
+    return (
+      <EmptyState
+        line="No posted replies yet."
+        hint="Every AI-drafted reply carries its angle, so this fills itself once you start marking replies posted."
+      />
+    );
+  }
   return (
     <table className="pb-table">
       <thead>
@@ -606,7 +734,9 @@ function AngleTable({
           <tr key={String(c.angle)}>
             <td>{c.angle ?? 'unknown'}</td>
             <td>{c.posted}</td>
-            <td>{cellSummary(c, minN)}</td>
+            <td>
+              <ResultCell cell={c} minN={minN} />
+            </td>
           </tr>
         ))}
       </tbody>
@@ -637,7 +767,9 @@ function StructureTable({
           <tr key={c.key}>
             <td>{c.key}</td>
             <td>{c.posted}</td>
-            <td>{cellSummary(c, minN)}</td>
+            <td>
+              <ResultCell cell={c} minN={minN} />
+            </td>
           </tr>
         ))}
       </tbody>
@@ -645,13 +777,25 @@ function StructureTable({
   );
 }
 
-// The plan's contract: below the gate a cell says so instead of quoting a
-// median built on nothing.
-function cellSummary(c: PlaybookCell, _minN: number): string {
-  if (!c.sufficient) return `insufficient data (n=${c.n})`;
-  const parts = [`med ${fmtN(c.medianViews)} views`];
-  if (c.medianProfileVisits !== null) parts.push(`${c.medianProfileVisits} clicks`);
-  return `${parts.join(' · ')} (n=${c.n})`;
+/** One result cell. The plan's contract: below the gate it says so instead of
+ *  quoting a median built on nothing.
+ *
+ *  UI.15 made it say so against the gate — `n=7/20`, not a bare `n=7`. The
+ *  second number was ignored here for four phases (the param was literally
+ *  `_minN`), which was survivable while 20 was baked; now that the ⚙ in this
+ *  tab's header moves it, a cell that only said "insufficient" would be silent
+ *  about the very number the user is watching themselves change. */
+function ResultCell({ cell, minN }: { cell: PlaybookCell; minN: number }): JSX.Element {
+  if (!cell.sufficient) {
+    return (
+      <span className="pb-gated">
+        insufficient data (n={cell.n}/{minN})
+      </span>
+    );
+  }
+  const parts = [`med ${fmtN(cell.medianViews)} views`];
+  if (cell.medianProfileVisits !== null) parts.push(`${cell.medianProfileVisits} clicks`);
+  return <>{`${parts.join(' · ')} (n=${cell.n})`}</>;
 }
 
 function baitAsCell(b: {

@@ -25,25 +25,31 @@ You'll usually open this tab to:
 
 Almost every number in this tab is protected by a **gate**. A cell only shows you a real figure once **at least 20 measured items** stand behind it. Until then it reads:
 
-> insufficient data (n=7)
+> insufficient data (n=7/20)
 
-where `n` is how many measured tweets that cell currently has.
+where the first number is how many measured tweets that cell currently has and the second is the gate it has to clear. So a gated cell tells you not just that it's holding its tongue but *how far off* it is — `n=18/20` is two tweets away, `n=2/20` is weeks away. (The gate itself is adjustable — see below — which is exactly why the cell names it rather than assuming you remember it.)
 
 **Why the gate exists.** Small samples lie. If you'd replied to only three tweets with a "contrarian" angle and one happened to go viral, the raw average would scream "contrarian is amazing!" — and you'd be chasing a coincidence. Twenty is the point where a median stops swinging wildly on a single lucky or unlucky tweet. The gate is stratus choosing *"I don't know yet"* over a confident lie. This is deliberate and it is everywhere — treat a gated cell as an honest "not enough evidence", not as a bug.
 
-**How gated cells look.** A blocked cell simply says `insufficient data (n=…)`. In a few tables the whole row is also dimmed (a lighter, "thin" style) when it's a bucket that's expected to stay sparse — for example the `unknown`/pre-baseline rows.
+**How gated cells look.** A blocked cell says `insufficient data (n=…/…)` in the muted grey the tab uses for "no answer yet", so a half-answered table reads at a glance — the cells with numbers stand out from the ones still counting. In a few tables the whole row is also dimmed (a lighter, "thin" style) when it's a bucket that's expected to stay sparse — for example the `unknown`/pre-baseline rows.
 
 **The gate on comparisons (lift).** Several sections compare two groups and give you a "lift" — a multiplier like `2.1x views`. A lift only appears when **both** sides of the comparison have independently cleared the gate. If your "with media" posts pass n≥20 but your "text-only" ones don't (or vice-versa), the lift line stays silent. One side clearing the gate is never enough to declare a winner.
 
-### The gate size (minN) and the "gate" label
+### The gate size (minN), the "gate" label, and the ⚙
 
 At the top of the tab, next to the **Refresh** button, you'll see the current gate spelled out, e.g.:
 
 > gate: n≥20 per cell
 
-That **20** is the default and the number this tab uses. It's the same threshold used to decide whether the AI-draft guidance lines (below) are allowed to speak.
+That **20** is the shipped default. It's the same threshold used to decide whether the AI-draft guidance lines (below) are allowed to speak.
 
-> The extension always loads the Playbook at the standard n≥20 gate — there is no button in this tab to loosen it. (The underlying API can be asked for a different threshold for one-off exploration, but the tab itself doesn't expose that control, and the auto-applied AI guidance always uses the strict default regardless.)
+Next to it is a small **⚙**. Open it and you can move the gate (5–100) — and unlike a one-off query parameter, **the change persists**: it's the stored `x.gates.minCellN` setting, the same one you'd find in **[Settings → Tuning](./settings-tab.md#tuning--the-registry-with-a-face)** under *gates*. So it re-gates this page *and* the guidance the drafters inject, everywhere, until you change it back.
+
+**What happens when you move it.** The page re-reads itself a moment after you let go (every `sufficient` verdict is computed server-side, so the numbers have to come back from the server rather than being re-judged in the browser). Lower it to 10 and cells that were holding their tongue start answering; raise it to 40 and confident cells go quiet again. The `gate: n≥…` label and every `n=…/…` cell move together.
+
+**Lower it deliberately, not casually.** The registry description says it plainly: **below 20 is exploration, not evidence.** Dropping the gate to 5 doesn't give you better information, it gives you the same thin data with the safety off — and because the same number gates the AI guidance, a loosened gate means your reply drafts start being steered by a finding built on five tweets. The honest use is temporary: drop it to peek at where a trend might be heading, then put it back with the reset dot.
+
+> The ⚙ moves the **sample gate** only. It never touches the **band thresholds** (hot/warm/skip) — those move by hand, and only at ≥100 measured replies. The gear's own note says so.
 
 ### The Refresh button
 
@@ -301,8 +307,8 @@ Read **Reply latency**. If the **early-reply lift** line shows a strong multipli
 ## States you'll see
 
 - **Loading.** A muted `Loading…` (and `…` on the Refresh button) while the page fetches. It's one quick, free request.
-- **Brand new / mostly empty.** Right after you start using stratus, almost every section will say `insufficient data (n=…)`, `No measured replies yet`, `No published drafter posts yet`, or similar, and the guidance lines will be **silent**. This is normal — the page has nothing to lie about yet. It fills in as the daily metrics pass measures more of your tweets over the coming weeks.
-- **Gated cells.** Individual cells reading `insufficient data (n=7)` inside otherwise-populated tables. That cell needs more measured tweets; the rest of the table is fine.
+- **Brand new / mostly empty.** Right after you start using stratus, almost every section will say `insufficient data (n=…/…)`, `No measured replies yet`, `No published drafter posts yet`, or similar, and the guidance lines will be **silent**. This is normal — the page has nothing to lie about yet. Each empty section now carries a second, quieter line telling you what would fill it ("Mark a reply posted with its tweet link and the 03:00 UTC pass measures it", "Only posts drafted in stratus carry a pillar and a register") — so an empty Playbook reads as a to-do list rather than a broken page. It fills in as the daily metrics pass measures more of your tweets over the coming weeks.
+- **Gated cells.** Individual cells reading `insufficient data (n=7/20)` inside otherwise-populated tables. That cell needs more measured tweets; the rest of the table is fine.
 - **Lift lines silent.** Comparison sections (media, latency, relationship, personal context, idea) will show their two cells but no multiplier until *both* sides clear the gate.
 - **Error.** If the fetch fails you'll see a red error line; hit **Refresh** to retry.
 - **AI not configured.** If you press **Extract winner templates** and the server has no AI key, you get a plain message and no charge.
@@ -316,4 +322,4 @@ Read **Reply latency**. If the **early-reply lift** line shows a strong multipli
 - **Extraction is safe to repeat.** It skips posts already distilled, so clicking it again months later only picks up new winners — you never pay twice for the same post.
 - **The guidance applies itself.** You don't flip a switch. The moment a finding clears the gate it starts steering your AI drafts; until then your drafts run clean. What you see in "What the prompts inject right now" is exactly what's live.
 - **Medians, not averages.** Every result cell uses medians so one viral outlier can't fake a trend — which is also why the numbers feel conservative. That's the point.
-- **"Insufficient data" is a feature.** Whenever you're tempted to be annoyed that a cell won't give you a number, remember the alternative is a confident number that's wrong. The gate is the tab keeping its promise not to mislead you.
+- **"Insufficient data" is a feature.** Whenever you're tempted to be annoyed that a cell won't give you a number, remember the alternative is a confident number that's wrong. The gate is the tab keeping its promise not to mislead you — and the `n=7/20` form tells you exactly how much patience is left to spend. The ⚙ can lower the bar, but it can't create evidence.

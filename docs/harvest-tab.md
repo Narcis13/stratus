@@ -37,20 +37,20 @@ The **Re-detect** button (top-right) re-checks the active tab if you switch tabs
 
 ## The controls
 
-Work down the panel top to bottom.
+Work down the panel top to bottom. The detection line and the **Handle** box sit at the top as the panel's head; everything below them is grouped under two headings — **What to collect** (mode, date range, row cap, view floor) and **How to run it** (pace, and the two output switches). Every one of the mutually-exclusive choices is the same row-of-pills control used elsewhere in the panel, and the whole form goes inert while a harvest is running.
 
 ### Handle
 The X username to harvest, without the `@` (though you can type it — it's stripped). It's **pre-filled** from whatever profile the extension detected, but you can overwrite it with any handle. A handle must be 1–15 characters, letters, numbers, or underscores. Until you enter a valid one, the harvest button stays disabled and reads **"Enter a handle"**.
 
 ### Harvest (mode)
-Three buttons — pick what to collect:
+Three pills — pick what to collect:
 
 - **Posts** — the account's own original posts (its main profile timeline). Reposts (retweets) and other people's tweets are skipped; you get only tweets *authored by that account*.
 - **Replies** — the account's replies to other people (the "Posts & replies" / `/with_replies` view). Each reply is paired with the tweet it was replying to, so you capture both sides.
 - **Following** — not tweets at all: the list of accounts **you** follow, and whether each one follows you back. This feeds the People tab's unfollow queue; see **[Following mode](#following-mode--one-scrape-both-directions)** below.
 
 ### Date range (scope)
-How far back to collect. Four buttons:
+How far back to collect. Four pills:
 
 - **All** — the whole timeline, scrolling down until it reaches the bottom (or your Max rows cap). Use this the first time you study an account.
 - **Today** — only tweets from *today* (your local calendar day). The scroll stops automatically once it has scrolled past midnight.
@@ -58,7 +58,7 @@ How far back to collect. Four buttons:
 - **Since last** — *incremental catch-up.* Collects only tweets **newer than the last time you finished harvesting this same handle in this same mode.** The very first time you use "Since last" on an account there's nothing to compare against, so it behaves exactly like **All** and does a full scrape; every run after that just picks up the new tweets since the previous finish. This is the efficient way to keep a running record without re-scraping everything each time. (Read the important caveat under **Tips** below — the "silent-skip trap".)
 
 ### Pace
-How human-like the scrolling looks — **slow**, **human** (the default), or **fast**. Slower paces scroll more gently, pause longer between screens, and wait longer for X to load more tweets; faster paces move quicker. "Human" is a good balance. Slow down if a big harvest seems to be missing tweets (giving X more time to load), or speed up for small, quick pulls.
+How human-like the scrolling looks — three pills: **slow**, **human** (the default), or **fast**. Slower paces scroll more gently, pause longer between screens, and wait longer for X to load more tweets; faster paces move quicker. "Human" is a good balance. Slow down if a big harvest seems to be missing tweets (giving X more time to load), or speed up for small, quick pulls.
 
 ### Max rows
 An optional hard cap on how many tweets to collect. Leave it blank (it shows **∞**) for no limit. Set a number if you only want, say, the latest 50 tweets, or to keep a big account's harvest short. The scroll stops as soon as it reaches that many rows.

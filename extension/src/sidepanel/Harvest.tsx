@@ -20,10 +20,12 @@ import {
   startHarvest,
 } from './harvestClient.ts';
 import type { Settings } from './storage.ts';
+import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
 
-const MODES: { id: HarvestMode; label: string }[] = [
+const MODES: SubTab<HarvestMode>[] = [
   { id: 'posts', label: 'Posts' },
   { id: 'replies', label: 'Replies' },
   { id: 'following', label: 'Following' },
@@ -36,7 +38,7 @@ const MODE_NOUN: Record<HarvestMode, string> = {
   following: 'accounts',
 };
 
-const SCOPES: { id: HarvestScope; label: string }[] = [
+const SCOPES: SubTab<HarvestScope>[] = [
   { id: 'all', label: 'All' },
   { id: 'today', label: 'Today' },
   { id: 'yesterday', label: 'Yesterday' },
@@ -46,7 +48,14 @@ const SCOPES: { id: HarvestScope; label: string }[] = [
   { id: 'since-last', label: 'Since last' },
 ];
 
-const PACES: HarvestPace[] = ['slow', 'human', 'fast'];
+// UI.15: three mutually-exclusive short values were a `<select>` while the two
+// rows above them were hand-rolled button groups — the same control, spelled
+// three ways on one screen. All three are the SubTabs primitive now.
+const PACES: SubTab<HarvestPace>[] = [
+  { id: 'slow', label: 'slow' },
+  { id: 'human', label: 'human' },
+  { id: 'fast', label: 'fast' },
+];
 
 interface Progress {
   rows: number;
@@ -314,104 +323,66 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         />
       </label>
 
-      <div className="seg-group">
-        <span>Harvest</span>
-        <div className="seg-row">
-          {MODES.map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              className={mode === m.id ? 'primary' : ''}
-              disabled={running}
-              onClick={() => setMode(m.id)}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <Section title="What to collect">
+        <SubTabs tabs={MODES} active={mode} onSelect={setMode} disabled={running} />
 
-      {!following && (
-        <div className="seg-group">
-          <span>Date range</span>
-          <div className="seg-row">
-            {SCOPES.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                className={scope === s.id ? 'primary' : ''}
-                disabled={running}
-                onClick={() => setScope(s.id)}
-              >
-                {s.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="row harvest-tuning">
-        <label className="field">
-          <span>Pace</span>
-          <select
-            value={pace}
-            disabled={running}
-            onChange={(e) => setPace(e.target.value as HarvestPace)}
-          >
-            {PACES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Max rows</span>
-          <input
-            type="number"
-            min={1}
-            placeholder="∞"
-            value={maxStr}
-            disabled={running}
-            onChange={(e) => setMaxStr(e.target.value)}
-          />
-        </label>
-        {/* A list page carries no metrics — a view floor would silently drop
-            everyone. */}
         {!following && (
+          <SubTabs tabs={SCOPES} active={scope} onSelect={setScope} disabled={running} />
+        )}
+
+        <div className="row harvest-tuning">
           <label className="field">
-            <span>Min views</span>
+            <span>Max rows</span>
             <input
               type="number"
               min={1}
-              placeholder="any"
-              value={minViewsStr}
+              placeholder="∞"
+              value={maxStr}
               disabled={running}
-              onChange={(e) => setMinViewsStr(e.target.value)}
+              onChange={(e) => setMaxStr(e.target.value)}
             />
           </label>
-        )}
-      </div>
+          {/* A list page carries no metrics — a view floor would silently drop
+              everyone. */}
+          {!following && (
+            <label className="field">
+              <span>Min views</span>
+              <input
+                type="number"
+                min={1}
+                placeholder="any"
+                value={minViewsStr}
+                disabled={running}
+                onChange={(e) => setMinViewsStr(e.target.value)}
+              />
+            </label>
+          )}
+        </div>
+      </Section>
 
-      <label className="row harvest-toggle">
-        <input
-          type="checkbox"
-          checked={downloadCsv}
-          disabled={running}
-          onChange={(e) => setDownloadCsv(e.target.checked)}
-        />
-        <span>Download CSV</span>
-      </label>
+      <Section title="How to run it">
+        <SubTabs tabs={PACES} active={pace} onSelect={setPace} disabled={running} />
 
-      <label className="row harvest-toggle">
-        <input
-          type="checkbox"
-          checked={sendToStratus}
-          disabled={running}
-          onChange={(e) => toggleSendToStratus(e.target.checked)}
-        />
-        <span>Send to stratus</span>
-      </label>
+        <label className="row harvest-toggle">
+          <input
+            type="checkbox"
+            checked={downloadCsv}
+            disabled={running}
+            onChange={(e) => setDownloadCsv(e.target.checked)}
+          />
+          <span>Download CSV</span>
+        </label>
+
+        <label className="row harvest-toggle">
+          <input
+            type="checkbox"
+            checked={sendToStratus}
+            disabled={running}
+            onChange={(e) => toggleSendToStratus(e.target.checked)}
+          />
+          <span>Send to stratus</span>
+        </label>
+      </Section>
 
       {noOutput && (
         <div className="warn">

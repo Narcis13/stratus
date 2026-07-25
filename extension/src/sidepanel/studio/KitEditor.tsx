@@ -12,6 +12,7 @@ import {
   parseBrandKitsFile,
   serializeBrandKits,
 } from '../../studio/brandKit.ts';
+import { Section } from '../ui/Section.tsx';
 
 // <input type="color"> only speaks #rrggbb.
 function toColorInput(hex: string): string {
@@ -92,117 +93,126 @@ export function KitEditor({
   };
 
   return (
-    <section className="studio-kit">
-      <div className="studio-kit-row">
-        <label className="field">
-          <span>Preset</span>
-          <select value={bundle.active} onChange={(e) => onSelectPreset(e.target.value)}>
-            {names.map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          onClick={() => onDelete(bundle.active)}
-          disabled={!canDeletePreset(bundle, bundle.active)}
-          title="Delete the active preset (the last preset can't be deleted)"
-        >
-          Delete preset
-        </button>
-      </div>
-      <div className="studio-kit-row">
-        <input
-          type="text"
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="New preset name"
-        />
-        <button type="button" onClick={saveAs} disabled={newName.trim() === ''}>
-          Save as
-        </button>
-        <button
-          type="button"
-          onClick={rename}
-          disabled={newName.trim() === '' || newName.trim() === bundle.active}
-        >
-          Rename
-        </button>
-      </div>
+    <div className="studio-kit">
+      <Section title="Presets">
+        <div className="studio-kit-row">
+          <label className="field">
+            <span>Preset</span>
+            <select value={bundle.active} onChange={(e) => onSelectPreset(e.target.value)}>
+              {names.map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => onDelete(bundle.active)}
+            disabled={!canDeletePreset(bundle, bundle.active)}
+            title="Delete the active preset (the last preset can't be deleted)"
+          >
+            Delete preset
+          </button>
+        </div>
+        <div className="studio-kit-row">
+          <input
+            type="text"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            placeholder="New preset name"
+          />
+          <button type="button" onClick={saveAs} disabled={newName.trim() === ''}>
+            Save as
+          </button>
+          <button
+            type="button"
+            onClick={rename}
+            disabled={newName.trim() === '' || newName.trim() === bundle.active}
+          >
+            Rename
+          </button>
+        </div>
+        {/* Export/import/reset act on the whole BUNDLE, so they belong with the
+            presets rather than beside the colors they happen to carry. */}
+        <div className="row studio-kit-actions">
+          <button type="button" onClick={exportKit}>
+            Export JSON
+          </button>
+          <label className="studio-import">
+            Import
+            <input type="file" accept="application/json" onChange={(e) => void importKit(e)} />
+          </label>
+          <button type="button" onClick={onResetActive}>
+            Reset preset
+          </button>
+        </div>
+      </Section>
 
-      <div className="studio-kit-row">
-        <label className="studio-color">
-          <span>Background</span>
+      <Section title="Brand">
+        <div className="studio-kit-row">
+          <label className="studio-color">
+            <span>Background</span>
+            <input
+              type="color"
+              value={toColorInput(kit.bg)}
+              onChange={(e) => onPatch({ bg: e.target.value })}
+            />
+          </label>
+          <label className="studio-color">
+            <span>Accent</span>
+            <input
+              type="color"
+              value={toColorInput(kit.accent)}
+              onChange={(e) => onPatch({ accent: e.target.value })}
+            />
+          </label>
+        </div>
+        <label className="field">
+          <span>Handle (no @)</span>
           <input
-            type="color"
-            value={toColorInput(kit.bg)}
-            onChange={(e) => onPatch({ bg: e.target.value })}
+            type="text"
+            value={kit.handle}
+            onChange={(e) => onPatch({ handle: e.target.value.replace(/^@+/, '') })}
+            placeholder="yourhandle"
           />
         </label>
-        <label className="studio-color">
-          <span>Accent</span>
+        <div className="studio-kit-row">
+          <label className="row studio-check">
+            <input
+              type="checkbox"
+              checked={kit.watermark}
+              onChange={(e) => onPatch({ watermark: e.target.checked })}
+            />
+            <span>Watermark</span>
+          </label>
           <input
-            type="color"
-            value={toColorInput(kit.accent)}
-            onChange={(e) => onPatch({ accent: e.target.value })}
+            type="text"
+            value={kit.watermarkText}
+            onChange={(e) => onPatch({ watermarkText: e.target.value })}
+            disabled={!kit.watermark}
           />
-        </label>
-      </div>
-      <label className="field">
-        <span>Handle (no @)</span>
-        <input
-          type="text"
-          value={kit.handle}
-          onChange={(e) => onPatch({ handle: e.target.value.replace(/^@+/, '') })}
-          placeholder="yourhandle"
-        />
-      </label>
-      <div className="studio-kit-row">
+        </div>
         <label className="row studio-check">
           <input
             type="checkbox"
-            checked={kit.watermark}
-            onChange={(e) => onPatch({ watermark: e.target.checked })}
+            checked={kit.mascot}
+            onChange={(e) => onPatch({ mascot: e.target.checked })}
           />
-          <span>Watermark</span>
+          <span>Cloud mascot</span>
         </label>
-        <input
-          type="text"
-          value={kit.watermarkText}
-          onChange={(e) => onPatch({ watermarkText: e.target.value })}
-          disabled={!kit.watermark}
-        />
-      </div>
-      <label className="row studio-check">
-        <input
-          type="checkbox"
-          checked={kit.mascot}
-          onChange={(e) => onPatch({ mascot: e.target.checked })}
-        />
-        <span>Cloud mascot</span>
-      </label>
-      <label className="field">
-        <span>AI background style suffix (the brand — keep "no text")</span>
-        <textarea
-          value={kit.imageStyleSuffix}
-          onChange={(e) => onPatch({ imageStyleSuffix: e.target.value })}
-          rows={2}
-        />
-      </label>
-      <div className="row studio-kit-actions">
-        <button type="button" onClick={exportKit}>
-          Export JSON
-        </button>
-        <label className="studio-import">
-          Import
-          <input type="file" accept="application/json" onChange={(e) => void importKit(e)} />
+      </Section>
+
+      <Section title="AI background style">
+        <label className="field">
+          <span>The fixed suffix every generated background carries — keep "no text"</span>
+          <textarea
+            value={kit.imageStyleSuffix}
+            onChange={(e) => onPatch({ imageStyleSuffix: e.target.value })}
+            rows={2}
+          />
         </label>
-        <button type="button" onClick={onResetActive}>
-          Reset preset
-        </button>
-      </div>
-    </section>
+      </Section>
+    </div>
   );
 }

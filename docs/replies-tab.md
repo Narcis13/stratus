@@ -122,7 +122,7 @@ Every generate returns **three distinct replies** — one per angle — and each
 | **contrarian** | Pushes back — offers the opposite or a sharper counter-view. |
 | **debate** | Opens a genuine back-and-forth — a pointed question or challenge. |
 
-The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian`. **Click a chip to load that variant into the editor.** The active one is highlighted. This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call — see the Radar section of the Today tab.)
+The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian` — the same chip shape the rest of the panel uses for stages and statuses, with the picked one filled in. **Click a chip to load that variant into the editor.** This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call — see the Radar section of the Today tab.)
 
 ### Editing the reply
 
@@ -161,7 +161,7 @@ Reply Master drafts; **you post.** stratus never sends a reply to X automaticall
 ### Other actions
 
 - **Discard** — deletes the draft row entirely (with a confirm). Use it for drafts you'll never post.
-- **Statuses** move in one direction: *generated → copied → posted*, with *discarded* as a terminal state. A posted reply can only be re-opened by discarding it (to drop it from your history).
+- **Statuses** move in one direction: *generated → copied → posted*, with *discarded* as a terminal state. A posted reply can only be re-opened by discarding it (to drop it from your history). The status chip is colour-coded by who's waiting: **generated** is accent (yours to act on), **copied** ambers (it's on your clipboard, waiting for the paste), **posted** goes green (the loop closed), **discarded** goes quiet.
 
 ### How measured outcomes appear
 
@@ -177,7 +177,9 @@ All of this is **$0** — it's read from data stratus already collects on its da
 
 ### The History list
 
-Under the editor, **History** lists your past drafts, newest first, grouped by day (**Today**, **Yesterday**, then dates). A **Status** filter (All / Generated / Copied / Posted / Discarded) narrows the view, and a summary line counts them (`… gen · … copied · … posted · … discarded`). Each row shows the author, status, an *edited* badge if you changed it, the source tweet, your reply, and the model/cost. Click any row to reopen it in the editor.
+Under the editor, **History** lists your past drafts, newest first, grouped by day (**Today**, **Yesterday**, then dates). A **status filter** — a row of pills, `All / Generated / Copied / Posted / Discarded` — narrows the view, and a summary line counts them (`… gen · … copied · … posted · … discarded`). Each row shows the author, its status chip, an *edited* chip if you changed it, the source tweet, your reply, and the model/cost. Click any row to reopen it in the editor.
+
+**How many it loads (the ⚙).** The section header carries a small **⚙** holding one knob: **Reply history size**, how many drafts one load fetches (default **100**, range 20–500). Reply drafts are rows in your own local database, so raising it costs **$0** — the only cost is scroll, and the day groups collapse anything you're not looking at anyway. Worth knowing which of the two controls you actually want: the **filter** narrows what's *already loaded*, the **⚙** sizes the load itself. If a status filter comes back empty it says so explicitly (*"No posted drafts in the last 100 loaded"*) rather than implying you've never posted one — that's the hint to raise the ⚙, not to distrust the filter. Like every gear in stratus it edits the same stored setting you'd find in **[Settings → Tuning](./settings-tab.md)**, with the same auto-save and reset dot.
 
 ---
 

@@ -736,23 +736,6 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-.seg-group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.seg-group > span {
-  font-size: 12px;
-  color: var(--muted);
-}
-.seg-row {
-  display: flex;
-  gap: 4px;
-}
-.seg-row button {
-  flex: 1;
-}
-
 .harvest-tuning {
   align-items: flex-end;
 }
@@ -1452,12 +1435,11 @@ button.danger:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
-.reply-variant {
-  font-size: 12px;
-  padding: 2px 10px;
-  border-radius: 999px;
-}
-
+/* UI.15: the geometry moved up into the `.chip` shape (this row was a third
+   copy of it). Only the FILLED active state is variant-specific — a variant
+   picker is a choice, not a status, so it reads stronger than the chip family's
+   `aria-pressed` tint. Rendered by Replies AND Conversations: same class, same
+   look, no rename. */
 .reply-variant.active {
   background: var(--accent);
   border-color: var(--accent);
@@ -2064,10 +2046,11 @@ button.danger:hover:not(:disabled) {
  * padding and radius. That is how the near-identical families this block
  * absorbed (`.stage-chip`, `.people-angle-chip`, `.dm-status`) came about.
  *
- * `.stage-chip` and `.people-angle-chip` survive as ALIASES of the shape rather
- * than being renamed: five files outside this pass render `.stage-chip`
- * (Radar, Fans, Conversations, …) and plan Tasks 14/15 are parallel-ok, so a
- * rename here would reach into the other lane's files. New code writes `.chip`.
+ * `.stage-chip`, `.people-angle-chip` and `.reply-variant` survive as ALIASES of
+ * the shape rather than being renamed: each is rendered by files outside the
+ * pass that unified it — `.stage-chip` by five (Radar, Fans, Conversations, …)
+ * and `.reply-variant` by Conversations as well as Replies — so a rename would
+ * reach into another lane's files. New code writes `.chip`.
  *
  * What deliberately stays OUT of this family: the scheduled-post status ramp
  * (`.badge-*` — a pipeline state, uppercase and denser), the reply-band
@@ -2081,7 +2064,8 @@ button.danger:hover:not(:disabled) {
  */
 .chip,
 .stage-chip,
-.people-angle-chip {
+.people-angle-chip,
+.reply-variant {
   display: inline-block;
   padding: 1px 8px;
   border-radius: 10px;
@@ -2355,6 +2339,11 @@ button.chip[aria-pressed="true"] {
 }
 .pb-note {
   font-size: 11px;
+}
+/* UI.15: a cell below the gate. Same quieting as `tr.pb-thin` but per CELL —
+   a populated table can have one gated cell in an otherwise answered row. */
+.pb-gated {
+  color: var(--muted);
 }
 
 /* ------------------------------------------- followups + fans (C5) */

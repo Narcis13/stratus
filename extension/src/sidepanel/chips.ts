@@ -12,7 +12,13 @@
 // masterplan lane, so the tone stays where it already is and this module only
 // supplies the shared base class.
 
-import type { DmStatus, FollowingStatus, IdeaStatus, PersonStage } from './api.ts';
+import type {
+  DmStatus,
+  FollowingStatus,
+  IdeaStatus,
+  PersonStage,
+  ReplyDraftStatus,
+} from './api.ts';
 
 /** The five tones `.chip-*` implements. `muted` is the base's own color. */
 export type ChipTone = 'ok' | 'accent' | 'warn' | 'strong' | 'muted';
@@ -60,6 +66,25 @@ export function dmChip(status: DmStatus): string {
     case 'draft':
       return chip('strong');
     case 'sent':
+      return chip('ok');
+    case 'discarded':
+      return chip('muted');
+  }
+}
+
+/** Reply-draft lifecycle (UI.15). Same judgement as the vocabularies above:
+ *  `posted` is the loop closed, `discarded` is dead, and the two live states
+ *  split on who is waiting — `generated` is yours to act on (the accent this
+ *  panel uses for exactly that), `copied` is on your clipboard waiting for the
+ *  paste, so it warns like a queued follow. Before UI.15 this borrowed the
+ *  scheduled-post `.badge-*` pipeline ramp, which is a different alphabet. */
+export function replyDraftChip(status: ReplyDraftStatus): string {
+  switch (status) {
+    case 'generated':
+      return chip('accent');
+    case 'copied':
+      return chip('warn');
+    case 'posted':
       return chip('ok');
     case 'discarded':
       return chip('muted');

@@ -933,6 +933,18 @@ const DISPLAY: SettingDef[] = [
     max: 500,
     scope: 'mirrored',
   },
+  {
+    key: 'x.display.repliesListLimit',
+    group: 'display',
+    label: 'Reply history size',
+    description:
+      'How many reply drafts the Replies tab loads into its History list. Local rows, so this is a scroll budget, not a spend one — the day groups collapse anything you are not looking at.',
+    type: 'number',
+    default: 100,
+    min: 20,
+    max: 500,
+    scope: 'mirrored',
+  },
 ];
 
 export const SETTINGS_REGISTRY: SettingDef[] = [

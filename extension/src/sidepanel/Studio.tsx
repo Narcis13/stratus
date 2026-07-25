@@ -66,6 +66,8 @@ import {
   supportsAiBackground,
   templateMeta,
 } from './studio/registry.ts';
+import { Section } from './ui/Section.tsx';
+import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -103,7 +105,7 @@ function seedImagePrompt(pillarLabel: string | null, styleSuffix: string): strin
 // are mutually exclusive; `bgMode` is the single source of truth (patternKind
 // derives from it).
 type BgMode = 'gradient' | PatternKind | 'ai';
-const BG_MODES: Array<{ id: BgMode; label: string }> = [
+const BG_MODES: SubTab<BgMode>[] = [
   { id: 'gradient', label: 'Gradient' },
   { id: 'dots', label: 'Dots' },
   { id: 'grid', label: 'Grid' },
@@ -693,21 +695,26 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
         />
       )}
 
-      <div className="studio-templates">
-        {TEMPLATES.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            className={`studio-template${template === t.id ? ' studio-template-active' : ''}`}
-            onClick={() => setTemplate(t.id)}
-          >
-            <span>{t.label}</span>
-            <span className="muted">
-              {t.size.w}×{t.size.h}
-            </span>
-          </button>
-        ))}
-      </div>
+      {/* The gallery keeps `.studio-template` rather than becoming SubTabs: each
+          pill carries two lines (label + pixel size), which a segmented pill
+          cannot. The flat background row below it can, and does. */}
+      <Section title="Template">
+        <div className="studio-templates">
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={`studio-template${template === t.id ? ' studio-template-active' : ''}`}
+              onClick={() => setTemplate(t.id)}
+            >
+              <span>{t.label}</span>
+              <span className="muted">
+                {t.size.w}×{t.size.h}
+              </span>
+            </button>
+          ))}
+        </div>
+      </Section>
 
       {template === 'quote' && <QuoteFields value={quoteText} onChange={setQuoteText} />}
 
@@ -810,30 +817,22 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
       )}
 
       {supportsAiBackground(template) && (
-        <div className="studio-bg-modes">
-          <span className="muted">Background</span>
-          <div className="studio-templates">
-            {BG_MODES.map((m) => (
+        <Section
+          title="Background"
+          actions={
+            bgMode === 'blobs' ? (
               <button
-                key={m.id}
                 type="button"
-                className={`studio-template${bgMode === m.id ? ' studio-template-active' : ''}`}
-                onClick={() => chooseBgMode(m.id)}
+                onClick={() => setPatternSeed((s) => s + 1)}
+                title="Reroll the blob placement"
               >
-                <span>{m.label}</span>
+                Reroll
               </button>
-            ))}
-          </div>
-          {bgMode === 'blobs' && (
-            <button
-              type="button"
-              onClick={() => setPatternSeed((s) => s + 1)}
-              title="Reroll the blob placement"
-            >
-              Reroll
-            </button>
-          )}
-        </div>
+            ) : null
+          }
+        >
+          <SubTabs tabs={BG_MODES} active={bgMode} onSelect={chooseBgMode} />
+        </Section>
       )}
 
       {supportsAiBackground(template) && bgMode === 'ai' && (

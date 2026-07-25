@@ -20,6 +20,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
         'x.display.dossierListLen': 12,
         'x.display.channelPostsShown': 20,
         'x.display.voiceListLimit': 250,
+        'x.display.repliesListLimit': 300,
       }),
     ).toEqual({
       anchors3: [8, 14, 19],
@@ -37,6 +38,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       dossierListLen: 12,
       channelPostsShown: 20,
       voiceListLimit: 250,
+      repliesListLimit: 300,
     });
   });
 
@@ -109,6 +111,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'neglectedTargetDays',
       'panelRefreshCap',
       'radarDraftCap',
+      'repliesListLimit',
       'voiceListLimit',
     ]);
   });

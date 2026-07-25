@@ -189,8 +189,8 @@ Because the engine is deterministic, the preview *is* the artifact. Adding a tem
 
 - **Copy PNG** — `navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])`. Pastes straight into X's composer.
 - **Download** — saves `stratus-<template>-<w>×<h>.png`.
-- **Background control** — for bg-capable templates, an inline segmented control `gradient · dots · grid · diagonal · plus · blobs · ai`. `bgMode` is the single source of truth; `patternKind` derives from it.
-- **Kit editor + presets** — colors, handle, watermark, mascot toggle, the S4 style suffix; preset switcher (save-as / rename / delete) + Export/Import/Reset JSON.
+- **Background control** — for bg-capable templates, a `Background` section holding the `SubTabs` pill row `gradient · dots · grid · diagonal · plus · blobs · ai` (seven pills — the row wraps), with the blobs-only **Reroll** button in the section's actions slot. `bgMode` is the single source of truth; `patternKind` derives from it. **UI.15:** the template gallery keeps its own `.studio-template` pills rather than joining the primitive — each carries two lines (label + pixel size), which a segmented pill cannot.
+- **Kit editor + presets** — three `Section`s (UI.15): **Presets** (switcher, save-as / rename / delete, and Export/Import/Reset JSON — those act on the whole *bundle*, so they belong with the presets rather than beside the colors), **Brand** (colors, handle, watermark, mascot toggle), **AI background style** (the S4 style suffix). The colour **swatch inputs stay native** `<input type="color">` — kit colors are user data, not theme tokens.
 - **Live-data cards** — stat (`/x/brief` + digest `factsOnly`, so no Grok narration), milestone (`/x/metrics/account`, override beats auto), chart (account series + best-times, lazily loaded).
 
 ### Seeding — how a draft becomes a card

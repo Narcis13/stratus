@@ -355,6 +355,7 @@ describe('registry adapter + grouping', () => {
       'x.display.dossierListLen',
       'x.display.channelPostsShown',
       'x.display.voiceListLimit',
+      'x.display.repliesListLimit',
     ]);
     // The server's own refresh cap is the real limit and stays server-side —
     // the panel budget degrading to its baked value must never widen it.
@@ -410,6 +411,7 @@ describe('registry adapter + grouping', () => {
       'x.display.dossierListLen',
       'x.display.channelPostsShown',
       'x.display.voiceListLimit',
+      'x.display.repliesListLimit',
     ]);
 
     const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
