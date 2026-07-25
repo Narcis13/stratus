@@ -230,10 +230,10 @@ If a placeholder can't be filled (no display name on that row, say), stratus **d
 
 The subtab shows a rail of your lists (each with `n items · m on`) and, for the selected list:
 
-- **Items** — add several at once by pasting one per line; edit any item inline; toggle one **off** to keep it in the list but out of the rotation; delete it. Each row shows its own history: `never used`, or `used 4× · last yesterday`.
+- **Items** — add several at once by pasting one per line; edit any item inline; toggle one **off** to keep it in the list but out of the rotation; **Copy** it verbatim; delete it. Each row shows its own history: `never used`, or `used 4× · last yesterday`. Items are stored **exactly as written** — vars and the humanizer are applied when a line is *picked*, never to what's on file here.
 - **Settings** — rename, describe, reorder, and an **active** switch. An inactive list stays fully usable by id but is no longer *offered* in the quick pickers — the way to park a seasonal list without deleting it.
 - **Humanizer** — see below.
-- **Test render** — renders a sample pick with fake vars so you can see what comes out. It's a **preview**: nothing is marked used, and your rotation is untouched.
+- **Test render** — renders a sample pick with fake vars so you can see what comes out, and **Sample ×5** renders five in a row with a "3 of 5 came out jittered" tally. Both are **previews**: nothing is marked used, and your rotation is untouched. Use ×5 whenever the humanizer looks like it isn't doing anything — one sample proves nothing when every jitter is a coin flip.
 - **Generate with AI** — see below.
 - **Delete** — removes the list and its items. The *use history* survives on purpose, so past replies keep their attribution in the Playbook.
 
@@ -249,7 +249,11 @@ That combination matters: always cycling in strict order would itself be a detec
 
 ### The humanizer
 
-Before handing the text back, stratus applies small, independent jitters so consecutive uses don't look stamped out:
+**It runs at pick time, not at save time.** The items in your list are never rewritten — reading the list will always show exactly what you (or the AI generator) wrote. The jitter happens on the way out, once per use, which is the only way two people who get "the same" canned reply don't receive the same string.
+
+Each jitter is an independent coin flip, so on the defaults roughly **half** of picks come out visibly changed and the rest come out clean. That's deliberate — a reply that's *always* roughed up is its own tell. The panel prints the current odds under the Humanizer heading, and every pick reports what fired (`jitter: prefix, typo:swap`, or `no jitter this time`).
+
+The jitters:
 
 | Jitter | Default chance |
 |---|---|
@@ -261,7 +265,9 @@ Before handing the text back, stratus applies small, independent jitters so cons
 
 Two guarantees: the result is **never longer than 280 characters** (a prefix that would overflow is skipped, never truncated mid-word), and a typo **never lands inside a name, a handle, or a URL** — a typo'd `@mention` breaks the mention, and a misspelled name reads as disrespect. Both are worse than sounding slightly robotic.
 
-Each list keeps its own humanizer. By default it uses the engine's numbers (the panel shows a `defaults` badge). Click **Customize for this list** and you get the pools as one-per-line textareas and the five chances as sliders — a "thanks" list can run calm while a "banter" list jitters harder. **Reset to defaults** puts it back.
+Each list keeps its own humanizer. By default it uses the engine's numbers (the panel shows a `defaults` badge). Click **Customize for this list** and you get the pools as one-per-line textareas and the five chances as sliders — a "thanks" list can run calm while a "banter" list jitters harder. **Save humanizer** lights up only when something actually changed and confirms with `Saved ✓`; **Reset to defaults** puts it back.
+
+One thing worth setting deliberately: the default prefix/suffix pools are **English** ("honestly," "ngl," "well said"). If your list is in another language, replace both pools when you customize it, or turn those two chances down to 0 and let the casing/period/typo jitters carry it.
 
 ### Generating a list with AI
 
@@ -269,14 +275,19 @@ Each list keeps its own humanizer. By default it uses the engine's numbers (the 
 
 The wording of that generator prompt is editable like all the others, in **Settings → Prompts** (the `reply-list` entry).
 
-### Using a list (the `canned ▾` button)
+### Using a list (the `🗂 Canned` button)
 
 Lists are managed here but **used elsewhere** — wherever stratus already knows who you're replying to:
 
-- Every **early-replier row in the Launch Room** (Today tab).
-- Every **open loop in Conversations** (Today tab).
+- **On x.com itself**, on the action row of any tweet you've opened (its own status page), next to `🪄 Reply Master`. This is the main one.
+- Every **early-replier row in the Launch Room** (Today tab) — as `canned ▾`.
+- Every **open loop in Conversations** (Today tab) — same button.
 
-Click **canned ▾**, pick a list, and in one click stratus picks the item, fills the name/handle, humanizes it, **copies it to your clipboard**, and logs the use. Paste it into X. If the clipboard is refused for any reason the finished text stays on screen so you can copy it by hand — the item is already spent, so it's never silently lost.
+Click it, pick a list, and in one click stratus picks the item, fills the name/handle from whoever wrote the tweet, humanizes it, and logs the use. On x.com it then **types the result straight into the reply box** (character by character, the way the Cmd+B paste works) and shows you the finished text plus which jitters fired. In the side panel — and on x.com when no reply box is open — it lands on your **clipboard** instead.
+
+If both typing and the clipboard fail, the finished text stays on screen so you can copy it by hand: the item is already spent server-side, so it's never silently lost.
+
+Posting itself stays manual everywhere. The button fills the composer; you hit **Reply**.
 
 ### How canned replies get measured
 

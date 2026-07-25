@@ -19,6 +19,9 @@
 // dedupe button injection per action-row element via a WeakSet.
 //
 // "Reply Master" (Grok-drafted replies) is a separate feature and untouched.
+// "🗂 Canned" (RL.9) is a third: the reply-list picker on a focused tweet's
+// action row — one click spends a pick server-side and types it into the reply
+// composer. See the section near the variant chips.
 
 import { suggestChannels } from './channelSuggest.ts';
 import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
@@ -77,11 +80,13 @@ import type {
   AuthorProfile,
   PostContext,
   ReplyDraft,
+  ReplyListSummary,
   ReplyVariant,
   ScrapeBody,
   ScrapedAuthor,
   ScrapedTweet,
   TopComment,
+  UseReplyResponse,
 } from './shared/types.ts';
 import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
 
@@ -99,6 +104,16 @@ const VARIANT_CHIP_CLASS = 'stratus-variant-chip';
 const VARIANT_ANGLE_CLASS = 'stratus-variant-angle';
 const VARIANT_PREVIEW_CLASS = 'stratus-variant-preview';
 const VARIANT_HINT_CLASS = 'stratus-variant-hint';
+// On-page canned-reply picker (RL.9) — the reply-list end of the feature, on
+// the tweet's own action row.
+const CANNED_WRAP_CLASS = 'stratus-canned';
+const CANNED_BTN_CLASS = 'stratus-canned-btn';
+const CANNED_POP_CLASS = 'stratus-canned-pop';
+const CANNED_ITEM_CLASS = 'stratus-canned-item';
+const CANNED_NAME_CLASS = 'stratus-canned-name';
+const CANNED_META_CLASS = 'stratus-canned-meta';
+const CANNED_TEXT_CLASS = 'stratus-canned-text';
+const CANNED_HINT_CLASS = 'stratus-canned-hint';
 const RADAR_ADD_CLASS = 'stratus-radar-add-btn';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
@@ -110,6 +125,10 @@ const REPLY_IDEA_KEY = 'replyMaster:idea';
 const REPLY_IDEA_ID_KEY = 'replyMaster:ideaId';
 const REPLY_TOP_COMMENTS_MAX = 10;
 const REPLY_BTN_LABEL = '🪄 Reply Master';
+const CANNED_BTN_LABEL = '🗂 Canned ▾';
+// One GET serves a browsing session's worth of opens; short enough that a list
+// created in the panel shows up without a page reload.
+const CANNED_CACHE_TTL_MS = 60_000;
 const SAVE_BTN_LABEL = 'Save to stratus';
 const AUTHOR_BTN_LABEL = 'Save author to stratus';
 // How long to wait for X's hover card to render after we synthesise a hover.
@@ -559,6 +578,93 @@ function injectStyles(): void {
     }
     .${VARIANT_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); }
     .${VARIANT_HINT_CLASS}:empty { display: none; }
+    .${CANNED_WRAP_CLASS} {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      vertical-align: middle;
+    }
+    .${CANNED_BTN_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 12px/1 var(--stratus-font);
+      letter-spacing: 0.02em;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      color: var(--stratus-blue);
+      border: 1px solid var(--stratus-blue-line);
+      background: transparent;
+      margin-left: 6px;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${CANNED_BTN_CLASS}:hover,
+    .${CANNED_BTN_CLASS}[aria-expanded="true"] { background: var(--stratus-blue-fill); }
+    .${CANNED_BTN_CLASS}[data-state="working"] {
+      color: var(--stratus-muted);
+      border-color: var(--stratus-muted-line);
+      cursor: progress;
+    }
+    .${CANNED_BTN_CLASS}[data-state="done"] {
+      color: var(--stratus-hot);
+      border-color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
+    }
+    .${CANNED_BTN_CLASS}[data-state="failed"] {
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
+    }
+    .${CANNED_POP_CLASS} {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: 9999;
+      min-width: 240px;
+      max-width: 340px;
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px;
+      border-radius: 12px;
+      border: 1px solid var(--stratus-muted-line);
+      /* Overwritten inline with the page's own computed colors (X ships three
+         themes and exposes no stable surface variable); these are the fallback. */
+      background: Canvas;
+      color: CanvasText;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      font: 400 13px/1.3 var(--stratus-font);
+    }
+    .${CANNED_ITEM_CLASS} {
+      all: unset;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 10px;
+      box-sizing: border-box;
+      cursor: pointer;
+      padding: 6px 8px;
+      border-radius: 8px;
+      color: inherit;
+      transition: background 120ms;
+    }
+    .${CANNED_ITEM_CLASS}:hover { background: var(--stratus-blue-fill); }
+    .${CANNED_ITEM_CLASS}[aria-disabled="true"] { cursor: not-allowed; opacity: 0.5; }
+    .${CANNED_NAME_CLASS} { font-weight: 600; }
+    .${CANNED_META_CLASS} { font-size: 11px; color: var(--stratus-muted); white-space: nowrap; }
+    .${CANNED_TEXT_CLASS} {
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--stratus-muted-hairline);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .${CANNED_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); padding: 0 2px; }
+    .${CANNED_HINT_CLASS}:empty { display: none; }
   `;
   document.head.appendChild(style);
 }
@@ -1450,6 +1556,327 @@ async function onVariantChipClick(
   } catch (err) {
     console.warn('[stratus] variant paste report failed', err);
   }
+}
+
+// ------------------------------------------ on-page canned replies (RL.9)
+//
+// The reply-list feature's one-click end, on x.com itself: a "Canned" button on
+// the focused tweet's action row opens the lists defined in the side panel, and
+// one click on a list types a pick straight into the reply composer.
+//
+// Deliberately dumb, exactly like the panel's QuickReplyPicker (RL.6 Decision
+// 1): the page NEVER picks. One click is one `POST /use`, and the server owns
+// the anti-repeat shuffle, the {name}/{first_name}/{handle} fill and the
+// humanizer jitter, then hands back finished text. Picking here — or sending
+// `preview: true` to dodge "spending" an item — would fork the anti-repeat state
+// the DB is the only copy of, and the same line would come back twice.
+//
+// Posting stays manual (§7.28): the click fills the composer, the human hits
+// Reply.
+
+const cannedHandled = new WeakSet<Element>();
+let cannedCache: { lists: ReplyListSummary[]; at: number } | null = null;
+let cannedInflight: Promise<ReplyListSummary[]> | null = null;
+// The one open popover, so a second button (or a click anywhere else) closes it.
+let openCannedPop: HTMLElement | null = null;
+let cannedOutsideBound = false;
+
+/** Mirrors the route's `USERNAME_RE` — a malformed handle is a hard 400, and
+ *  audit metadata is never worth losing the whole use over. */
+const CANNED_USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
+/** The route's `MAX_VAR_LEN`; a longer display name 400s `invalid_vars`. */
+const CANNED_MAX_VAR_LEN = 120;
+
+const CANNED_ERR: Record<string, string> = {
+  no_enabled_items: 'Nothing switched on in that list.',
+  not_found: 'That list is gone — reopen the Lists subtab.',
+  unconfigured: 'Set the API URL and token in the side panel first.',
+};
+
+async function getCannedLists(): Promise<ReplyListSummary[]> {
+  if (cannedCache && Date.now() - cannedCache.at < CANNED_CACHE_TTL_MS) return cannedCache.lists;
+  if (!cannedInflight) {
+    const request: ApiRequest = { type: 'stratus/api', method: 'GET', path: '/x/reply-lists' };
+    cannedInflight = chrome.runtime
+      .sendMessage(request)
+      .then((res: ApiResponse<ReplyListSummary[]> | undefined) => {
+        if (!res?.ok || !Array.isArray(res.data))
+          throw new Error(res && !res.ok ? res.code : 'no_response');
+        cannedCache = { lists: res.data, at: Date.now() };
+        return res.data;
+      })
+      .finally(() => {
+        cannedInflight = null;
+      });
+  }
+  return cannedInflight;
+}
+
+function closeCannedPop(): void {
+  if (!openCannedPop) return;
+  openCannedPop.remove();
+  openCannedPop = null;
+  for (const b of document.querySelectorAll<HTMLElement>(`.${CANNED_BTN_CLASS}`)) {
+    b.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function bindCannedOutsideClose(): void {
+  if (cannedOutsideBound) return;
+  cannedOutsideBound = true;
+  document.addEventListener(
+    'mousedown',
+    (ev) => {
+      if (!openCannedPop) return;
+      const target = ev.target as Node | null;
+      if (target && openCannedPop.parentElement?.contains(target)) return;
+      closeCannedPop();
+    },
+    true,
+  );
+}
+
+interface CannedTarget {
+  tweetId: string;
+  handle: string;
+  name: string | null;
+}
+
+/** Who we're replying to, for the template vars and the use log. */
+function cannedTargetFrom(article: Element, focusedTweetId: string): CannedTarget | null {
+  const permalink = findPermalink(article);
+  if (!permalink || permalink.tweetId !== focusedTweetId) return null;
+  const userNameEl = article.querySelector('[data-testid="User-Name"]');
+  const displayName =
+    userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
+  return { tweetId: permalink.tweetId, handle: permalink.username, name: displayName };
+}
+
+/** X ships three themes (white / dim / lights-out) and exposes no stable surface
+ *  token, so an opaque popover has to read the page's own computed colors. A
+ *  transparent body means the theme hasn't painted yet — leave the CSS system
+ *  colors in place rather than baking in a wrong one. */
+function applyPageSurface(el: HTMLElement): void {
+  const style = getComputedStyle(document.body);
+  const bg = style.backgroundColor;
+  if (bg && bg !== 'transparent' && !bg.startsWith('rgba(0, 0, 0, 0)')) el.style.background = bg;
+  if (style.color) el.style.color = style.color;
+}
+
+function cannedRow(label: string, className = CANNED_HINT_CLASS): HTMLElement {
+  const el = document.createElement('div');
+  el.className = className;
+  el.textContent = label;
+  return el;
+}
+
+/** The list menu — rebuilt whenever the pop returns to its picking state. */
+function renderCannedMenu(pop: HTMLElement, btn: HTMLButtonElement, target: CannedTarget): void {
+  pop.replaceChildren(cannedRow('Loading lists…'));
+  void getCannedLists().then(
+    (lists) => {
+      if (!pop.isConnected) return;
+      // `active` is presentation state (D79e): an inactive list stays usable by
+      // id, it just isn't offered here.
+      const offered = lists.filter((l) => l.active);
+      if (offered.length === 0) {
+        pop.replaceChildren(cannedRow('No active reply lists — make one in the panel.'));
+        return;
+      }
+      const frag = document.createDocumentFragment();
+      for (const list of offered) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = CANNED_ITEM_CLASS;
+        item.title = list.description ?? list.name;
+        const name = document.createElement('span');
+        name.className = CANNED_NAME_CLASS;
+        name.textContent = list.name;
+        const meta = document.createElement('span');
+        meta.className = CANNED_META_CLASS;
+        meta.textContent = `${list.enabledCount} on`;
+        item.append(name, meta);
+        if (list.enabledCount === 0) {
+          item.setAttribute('aria-disabled', 'true');
+          item.title = 'Nothing switched on in this list';
+        } else {
+          item.addEventListener('click', (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            void onCannedPick(pop, btn, list, target);
+          });
+        }
+        frag.appendChild(item);
+      }
+      pop.replaceChildren(frag);
+    },
+    (err: unknown) => {
+      if (!pop.isConnected) return;
+      const code = err instanceof Error ? err.message : 'fetch_failed';
+      pop.replaceChildren(cannedRow(CANNED_ERR[code] ?? `Couldn't load lists (${code})`));
+    },
+  );
+}
+
+// One click = one spent item. The pop stays open showing exactly what went in
+// the composer, because the item is already spent: if the typing failed, the
+// text has to remain readable/copyable or the pick is simply lost.
+async function onCannedPick(
+  pop: HTMLElement,
+  btn: HTMLButtonElement,
+  list: ReplyListSummary,
+  target: CannedTarget,
+): Promise<void> {
+  if (btn.dataset.state === 'working') return;
+  btn.dataset.state = 'working';
+  pop.replaceChildren(cannedRow(`Picking from ${list.name}…`));
+
+  const name = target.name?.slice(0, CANNED_MAX_VAR_LEN);
+  const handle = target.handle.replace(/^@/, '');
+  const auditHandle = handle.toLowerCase();
+
+  const request: ApiRequest = {
+    type: 'stratus/api',
+    method: 'POST',
+    path: `/x/reply-lists/${encodeURIComponent(list.id)}/use`,
+    body: {
+      vars: {
+        ...(name ? { name } : {}),
+        ...(handle.length <= CANNED_MAX_VAR_LEN ? { handle } : {}),
+      },
+      targetTweetId: target.tweetId,
+      ...(CANNED_USERNAME_RE.test(auditHandle) ? { targetHandle: auditHandle } : {}),
+    },
+  };
+
+  let res: ApiResponse<UseReplyResponse> | undefined;
+  try {
+    res = (await chrome.runtime.sendMessage(request)) as ApiResponse<UseReplyResponse> | undefined;
+  } catch (err) {
+    console.warn('[stratus] canned use failed', err);
+  }
+
+  if (!res || !res.ok) {
+    const code = res && !res.ok ? res.code : 'no_response';
+    btn.dataset.state = 'failed';
+    setTimeout(() => {
+      if (btn.isConnected) delete btn.dataset.state;
+    }, STATUS_PERSIST_MS);
+    if (pop.isConnected) {
+      pop.replaceChildren(cannedRow(CANNED_ERR[code] ?? `Pick failed (${code})`));
+      pop.appendChild(cannedPickAnotherButton(pop, btn, target));
+    }
+    return;
+  }
+
+  const used = res.data;
+
+  // The item is spent server-side from here on — every remaining failure is
+  // cosmetic, and the text stays on screen so nothing is lost.
+  let hint: string;
+  const editor = findReplyEditor();
+  if (editor) {
+    clearReplyEditor(editor);
+    const typed = await typeTextInto(editor, used.text);
+    hint = typed > 0 ? 'Typed into the reply box ✓' : 'Typing was interrupted — copy it by hand';
+  } else {
+    let copied = true;
+    try {
+      await navigator.clipboard.writeText(used.text);
+    } catch {
+      copied = false;
+    }
+    hint = copied ? 'Copied — open the reply box and paste' : 'Copy this by hand';
+  }
+
+  btn.dataset.state = 'done';
+  setTimeout(() => {
+    if (btn.isConnected) delete btn.dataset.state;
+  }, STATUS_PERSIST_MS);
+
+  if (!pop.isConnected) return;
+  const text = document.createElement('div');
+  text.className = CANNED_TEXT_CLASS;
+  text.textContent = used.text;
+  // What the humanizer actually did to this pick — the jitter is per-use and
+  // probabilistic, so without this line "it did nothing" and "it fired" look
+  // identical from the outside.
+  const jitter =
+    used.applied.length > 0 ? `jitter: ${used.applied.join(', ')}` : 'no jitter this time';
+  const missing =
+    used.missingVars.length > 0 ? ` · no ${used.missingVars.join(', ')} for this target` : '';
+  pop.replaceChildren(
+    cannedRow(hint),
+    text,
+    cannedRow(`${list.name} · ${jitter}${missing}`),
+    cannedPickAnotherButton(pop, btn, target),
+  );
+}
+
+function cannedPickAnotherButton(
+  pop: HTMLElement,
+  btn: HTMLButtonElement,
+  target: CannedTarget,
+): HTMLButtonElement {
+  const again = document.createElement('button');
+  again.type = 'button';
+  again.className = CANNED_ITEM_CLASS;
+  const label = document.createElement('span');
+  label.className = CANNED_NAME_CLASS;
+  label.textContent = '← Pick another';
+  again.appendChild(label);
+  again.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    renderCannedMenu(pop, btn, target);
+  });
+  return again;
+}
+
+function attachCannedButton(article: Element, focusedTweetId: string): void {
+  const reply = article.querySelector('[data-testid="reply"]');
+  if (!reply) return;
+  const actionRow = reply.closest('div[role="group"]');
+  if (!actionRow || cannedHandled.has(actionRow)) return;
+
+  const target = cannedTargetFrom(article, focusedTweetId);
+  if (!target) return;
+
+  bindCannedOutsideClose();
+
+  const wrap = document.createElement('span');
+  wrap.className = CANNED_WRAP_CLASS;
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = CANNED_BTN_CLASS;
+  btn.textContent = CANNED_BTN_LABEL;
+  btn.title = 'Premade replies — one click spends a pick and types it in';
+  btn.setAttribute('aria-expanded', 'false');
+  btn.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (openCannedPop?.parentElement === wrap) {
+      closeCannedPop();
+      return;
+    }
+    closeCannedPop();
+    const pop = document.createElement('div');
+    pop.className = CANNED_POP_CLASS;
+    applyPageSurface(pop);
+    // X's action row is a link-and-hover minefield; the pop is ours alone.
+    pop.addEventListener('click', (e) => e.stopPropagation());
+    wrap.appendChild(pop);
+    openCannedPop = pop;
+    btn.setAttribute('aria-expanded', 'true');
+    // Re-read the target: the article element outlives a virtualised re-render,
+    // but the display name can arrive after the button was injected.
+    renderCannedMenu(pop, btn, cannedTargetFrom(article, focusedTweetId) ?? target);
+  });
+
+  wrap.appendChild(btn);
+  actionRow.appendChild(wrap);
+  cannedHandled.add(actionRow);
 }
 
 // --------------------------------------------------------- reply-target band
@@ -2862,7 +3289,10 @@ function scan(root: ParentNode): void {
     attachRadarAddButton(article);
     applyBand(article);
     applyPersonChips(article, glance);
-    if (focusedId) attachReplyMasterButton(article, focusedId);
+    if (focusedId) {
+      attachReplyMasterButton(article, focusedId);
+      attachCannedButton(article, focusedId);
+    }
     if (onNotifications) applyNotifParentContext(article);
   }
   syncContextPanel(focusedId);

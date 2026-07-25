@@ -151,7 +151,8 @@ export function ReplyListsPanel({ settings }: Props): JSX.Element {
       <div className="row rl-head">
         <p className="muted">
           Premade replies for the moments the machinery already surfaces. Picked with an anti-repeat
-          shuffle, vars filled from the target, lightly humanized — then copied for a manual paste.
+          shuffle, vars filled from the target, lightly humanized — then typed into the reply box by
+          the <strong>🗂 Canned</strong> button on a tweet, or copied here for a manual paste.
         </p>
         <button type="button" onClick={() => void loadLists()} disabled={loading}>
           {loading ? 'Loading…' : 'Refresh'}
@@ -533,6 +534,13 @@ function ItemsEditor({
         </span>
       </div>
 
+      <p className="muted">
+        Stored verbatim. Vars and the humanizer's jitter are applied when a line is picked — on a
+        tweet's <strong>🗂 Canned</strong> button, from a Launch Room / Conversations row, or in Test
+        render below. The pick then excludes the recently-used half of the list, so the same line
+        can't come back twice in a row.
+      </p>
+
       {items.length === 0 ? (
         <p className="muted">
           No items yet. Add a few below — <code>{'{name}'}</code>, <code>{'{first_name}'}</code> and{' '}
@@ -597,6 +605,7 @@ function ItemRow({
 }): JSX.Element {
   const [text, setText] = useState(item.text);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -622,7 +631,10 @@ function ItemRow({
       <textarea
         rows={2}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => {
+          setText(e.target.value);
+          setCopied(false);
+        }}
         className="rl-item-text"
       />
       <div className="rl-item-foot">
@@ -649,6 +661,18 @@ function ItemRow({
               Save
             </button>
           )}
+          <button
+            type="button"
+            title="Copy this line verbatim — no vars filled, no jitter, nothing marked used"
+            onClick={() => {
+              void navigator.clipboard
+                .writeText(text)
+                .then(() => setCopied(true))
+                .catch(() => setCopied(false));
+            }}
+          >
+            {copied ? 'Copied ✓' : 'Copy'}
+          </button>
           <button
             type="button"
             disabled={busy}
@@ -709,19 +733,41 @@ function HumanizerEditor({
   const [suffixes, setSuffixes] = useState((stored?.suffixes ?? []).join('\n'));
   const [chances, setChances] = useState<Record<string, number>>(() => chanceMap(stored));
   const [busy, setBusy] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Keyed on the stored config's VALUE, not the row's identity: `list` is a
+  // fresh object after any unrelated PATCH (rename, Deactivate), and an identity
+  // dep would silently throw away half-typed prefixes.
+  const storedKey = JSON.stringify(stored);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: storedKey IS the serialized `stored`.
   useEffect(() => {
     setPrefixes((stored?.prefixes ?? []).join('\n'));
     setSuffixes((stored?.suffixes ?? []).join('\n'));
     setChances(chanceMap(stored));
-  }, [stored]);
+  }, [storedKey]);
+
+  const form: HumanizerConfig = {
+    prefixes: splitLines(prefixes),
+    suffixes: splitLines(suffixes),
+    prefixChance: chances.prefixChance ?? 0,
+    suffixChance: chances.suffixChance ?? 0,
+    lowercaseChance: chances.lowercaseChance ?? 0,
+    dropPeriodChance: chances.dropPeriodChance ?? 0,
+    typoChance: chances.typoChance ?? 0,
+  };
+  // The server stores the config already normalized, so comparing against a
+  // form built in the same field order is exact — no false "unsaved" badge.
+  const dirty =
+    stored !== null && JSON.stringify(form) !== JSON.stringify(normalizedStored(stored));
 
   const run = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true);
     setErr(null);
+    setSaved(false);
     try {
       await fn();
+      setSaved(true);
     } catch (e) {
       setErr(errMsg(e, 'Update failed'));
     } finally {
@@ -742,6 +788,7 @@ function HumanizerEditor({
         <p className="muted">
           Using the engine defaults — an occasional neutral prefix or suffix, a lowercase start, a
           dropped final period, and a rare deliberate typo (never inside a name, handle or link).
+          Applied when a line is picked, not to the stored items.
         </p>
         {err && <div className="error">{err}</div>}
         <div className="pillar-card-actions">
@@ -761,12 +808,25 @@ function HumanizerEditor({
     );
   }
 
+  const chanceOf = (key: keyof HumanizerConfig): number => {
+    const v = chances[key];
+    return typeof v === 'number' ? v : 0;
+  };
+
   return (
     <div className="pillar-card">
       <div className="pillar-card-head">
         <strong>Humanizer</strong>
         <span className="badge badge-pending">custom</span>
+        {dirty && <span className="badge badge-auto">unsaved</span>}
       </div>
+
+      <p className="muted">
+        These knobs jitter a reply <em>when you pick one</em> — they never rewrite the stored items,
+        so the list below always reads exactly as you wrote it. Roughly{' '}
+        {Math.round(jitterOdds(form) * 100)}% of picks come out changed. "Test render" below shows
+        what actually fires.
+      </p>
 
       <label className="field">
         <span>
@@ -785,14 +845,14 @@ function HumanizerEditor({
         {CHANCE_FIELDS.map((f) => (
           <label className="field rl-chance" key={f.key}>
             <span>
-              {f.label} <strong>{Math.round((chances[f.key] ?? 0) * 100)}%</strong>
+              {f.label} <strong>{Math.round(chanceOf(f.key) * 100)}%</strong>
             </span>
             <input
               type="range"
               min={0}
               max={100}
               step={5}
-              value={Math.round((chances[f.key] ?? 0) * 100)}
+              value={Math.round(chanceOf(f.key) * 100)}
               onChange={(e) =>
                 setChances((prev) => ({ ...prev, [f.key]: Number(e.target.value) / 100 }))
               }
@@ -802,31 +862,21 @@ function HumanizerEditor({
       </div>
 
       {err && <div className="error">{err}</div>}
+      {saved && !dirty && !err && <div className="status-line">Saved ✓</div>}
 
       <div className="pillar-card-actions">
         <button
           type="button"
           className="primary"
-          disabled={busy}
+          disabled={busy || !dirty}
+          title={dirty ? undefined : 'Nothing changed since the last save'}
           onClick={() =>
             void run(async () => {
-              onSaved(
-                await api.replyLists.patch(settings, list.id, {
-                  humanizer: {
-                    prefixes: splitLines(prefixes),
-                    suffixes: splitLines(suffixes),
-                    prefixChance: chances.prefixChance ?? 0,
-                    suffixChance: chances.suffixChance ?? 0,
-                    lowercaseChance: chances.lowercaseChance ?? 0,
-                    dropPeriodChance: chances.dropPeriodChance ?? 0,
-                    typoChance: chances.typoChance ?? 0,
-                  },
-                }),
-              );
+              onSaved(await api.replyLists.patch(settings, list.id, { humanizer: form }));
             })
           }
         >
-          {busy ? '…' : 'Save humanizer'}
+          {busy ? '…' : dirty ? 'Save humanizer' : 'Saved'}
         </button>
         <button
           type="button"
@@ -843,6 +893,36 @@ function HumanizerEditor({
       </div>
     </div>
   );
+}
+
+/** The stored config re-emitted in the form's field order, so a JSON compare of
+ *  the two is a real value compare (key order is the only thing that could make
+ *  an identical config read as dirty). */
+function normalizedStored(cfg: HumanizerConfig): HumanizerConfig {
+  return {
+    prefixes: cfg.prefixes,
+    suffixes: cfg.suffixes,
+    prefixChance: cfg.prefixChance,
+    suffixChance: cfg.suffixChance,
+    lowercaseChance: cfg.lowercaseChance,
+    dropPeriodChance: cfg.dropPeriodChance,
+    typoChance: cfg.typoChance,
+  };
+}
+
+/** P(at least one jitter fires) — the five rolls are independent (engine
+ *  §humanize). An upper bound, not a promise: lowercase can't fire on a
+ *  lowercase opener and drop-period can't fire on text that ends in "!". It
+ *  exists so "the humanizer does nothing" is answerable with a number. */
+function jitterOdds(cfg: HumanizerConfig): number {
+  const rolls = [
+    cfg.prefixes.length > 0 ? cfg.prefixChance : 0,
+    cfg.suffixes.length > 0 ? cfg.suffixChance : 0,
+    cfg.lowercaseChance,
+    cfg.dropPeriodChance,
+    cfg.typoChance,
+  ];
+  return 1 - rolls.reduce((acc, p) => acc * (1 - Math.min(1, Math.max(0, p))), 1);
 }
 
 function chanceMap(cfg: HumanizerConfig | null): Record<string, number> {
@@ -866,28 +946,34 @@ function splitLines(raw: string): string[] {
 function TestRender({ settings, listId }: { settings: Settings; listId: string }): JSX.Element {
   const [name, setName] = useState('Ana Pop');
   const [handle, setHandle] = useState('anapop');
-  const [result, setResult] = useState<UseReplyResponse | null>(null);
+  const [results, setResults] = useState<UseReplyResponse[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const run = async (): Promise<void> => {
+  const run = async (n: number): Promise<void> => {
     setBusy(true);
     setErr(null);
     try {
+      const out: UseReplyResponse[] = [];
       // preview:true — renders a sample without touching the anti-repeat state,
-      // so testing never burns a fresh item on nobody.
-      setResult(
-        await api.replyLists.use(settings, listId, {
-          vars: {
-            ...(name.trim() ? { name: name.trim() } : {}),
-            ...(handle.trim() ? { handle: handle.trim() } : {}),
-          },
-          preview: true,
-        }),
-      );
+      // so testing never burns a fresh item on nobody. Sequential on purpose:
+      // the pick reads lastUsedAt, and parallel previews would all see the same
+      // snapshot and over-represent whatever the shuffle likes today.
+      for (let i = 0; i < n; i++) {
+        out.push(
+          await api.replyLists.use(settings, listId, {
+            vars: {
+              ...(name.trim() ? { name: name.trim() } : {}),
+              ...(handle.trim() ? { handle: handle.trim() } : {}),
+            },
+            preview: true,
+          }),
+        );
+      }
+      setResults(out);
     } catch (e) {
       setErr(errMsg(e, 'Test render failed'));
-      setResult(null);
+      setResults([]);
     } finally {
       setBusy(false);
     }
@@ -912,19 +998,34 @@ function TestRender({ settings, listId }: { settings: Settings; listId: string }
 
       {err && <div className="error">{err}</div>}
 
-      {result && (
-        <div className="rl-preview">
-          <div className="rl-preview-text">{result.text}</div>
+      {results.map((r, i) => (
+        // Samples are positional and never reordered — index keys are fine.
+        <div className="rl-preview" key={`${i}-${r.itemId}`}>
+          <div className="rl-preview-text">{r.text}</div>
           <div className="status-line">
-            {result.applied.length > 0 ? `jitter: ${result.applied.join(', ')}` : 'no jitter fired'}
-            {result.missingVars.length > 0 && <> · missing: {result.missingVars.join(', ')}</>}
+            {r.applied.length > 0 ? `jitter: ${r.applied.join(', ')}` : 'no jitter fired'}
+            {r.missingVars.length > 0 && <> · missing: {r.missingVars.join(', ')}</>}
           </div>
+        </div>
+      ))}
+
+      {results.length > 1 && (
+        <div className="status-line">
+          {results.filter((r) => r.applied.length > 0).length} of {results.length} came out jittered
         </div>
       )}
 
       <div className="pillar-card-actions">
-        <button type="button" onClick={() => void run()} disabled={busy}>
+        <button type="button" onClick={() => void run(1)} disabled={busy}>
           {busy ? '…' : 'Test render'}
+        </button>
+        <button
+          type="button"
+          title="Five previews in a row — the jitter is per-pick and probabilistic, one sample proves nothing"
+          onClick={() => void run(5)}
+          disabled={busy}
+        >
+          {busy ? '…' : 'Sample ×5'}
         </button>
       </div>
     </div>
