@@ -8,7 +8,7 @@ The **Harvest** tab bulk-collects tweets straight off an X (Twitter) profile pag
 
 Two tabs in this extension save tweets, and they're for different jobs:
 
-- **Voice tab** — saves *one tweet at a time*. You open a single tweet you admire, click "Save to stratus", and it's stashed in your swipe file for style study. Precise, deliberate, one-by-one.
+- **Voice tab** — saves *one tweet at a time*. You open a single tweet you admire, click "Save to stratus" (the cloud icon in the action row), and it's stashed in your swipe file for style study. Precise, deliberate, one-by-one.
 - **Harvest tab** (this one) — saves *many tweets at once* by scrolling an entire profile. Instead of picking individual tweets, you point it at a person's timeline and it sweeps everything it can reach, with all the engagement numbers attached.
 
 Use Harvest when you want the *whole picture* of an account: every recent post with its likes/views/replies, so you can study what works, or every one of *your own* replies so stratus can measure how they performed. Use the Voice tab when you just want to keep one specific tweet.

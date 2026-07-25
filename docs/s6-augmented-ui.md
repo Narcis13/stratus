@@ -103,9 +103,33 @@ If Chrome refuses to open the panel from the message hop, the click degrades gra
 
 ---
 
+## The action cluster (UI.18)
+
+Every stratus control on a tweet's action row lives in **one cluster** appended to that row, hairline-separated from X's own icons. Before this, four separately-injected labelled pills ("Save to stratus", "Reply Master", "🗂 Canned ▾", "⊕") competed with X's icons for a flex line with no slack — they wrapped onto a second row and collided with the "View quotes" affordance.
+
+| Order | Button | Icon | Where it appears |
+|---|---|---|---|
+| 1 | Save to stratus | cloud with an up-arrow | every tweet |
+| 2 | Add to Radar | plus in a circle | every tweet |
+| 3 | Reply Master | purple sparkle | focused tweet only |
+| 4 | Canned | list lines + caret | focused tweet only |
+
+Rules of the cluster:
+
+- **Icon-only at rest, 30px hit target.** The name is the tooltip and the accessible name; nothing is painted next to the icon.
+- **It expands only while it has something to report.** `data-state` ≠ `idle` reveals the label span, so "Saving…", "Saved + author", "Dead post — click to force" or "Failed: no_permalink" is still readable — then it collapses back to the icon after ~2.5 s.
+- **Colour is the state channel:** muted at rest (blue on hover) for save/radar, purple for Reply Master, blue for Canned; green for done, red for failed, muted for in-flight.
+- **Fixed left-to-right order** via CSS `order`, so it doesn't depend on which scan pass injected which button.
+
+### The Canned popover
+
+The popover is **portalled to `<body>` and positioned in viewport coordinates**, not anchored inside the action row — anchored there it was clipped by X's own overflow and buried under "View quotes", which is what made the list unreadable. It opens below the button, **flips above** when there isn't at least 180px of room, clamps into the viewport on both axes, and caps its own height to the space available (the list scrolls inside). It follows the anchor on scroll/resize, closes on outside click, on <kbd>Esc</kbd>, on its own ✕, and closes itself if a virtualised re-render takes its button away.
+
+---
+
 ## The legacy button kill rule
 
-On tweet pages, stratus injects a defensive CSS rule `#reply-master-btn { display: none !important; }`. This hides a **floating purple sparkle circle** left over from a *retired standalone* "Reply Master" extension (`~/newme/clipx/reply-master/extension`), which some setups still have loaded unpacked. The kill rule only hides its button — **the real fix is uninstalling that extension in `chrome://extensions`** (which also stops its other scripts). stratus's own `🪄 Reply Master` pill in the action row is unaffected.
+On tweet pages, stratus injects a defensive CSS rule `#reply-master-btn { display: none !important; }`. This hides a **floating purple sparkle circle** left over from a *retired standalone* "Reply Master" extension (`~/newme/clipx/reply-master/extension`), which some setups still have loaded unpacked. The kill rule only hides its button — **the real fix is uninstalling that extension in `chrome://extensions`** (which also stops its other scripts). stratus's own purple-sparkle Reply Master button in the action row is unaffected.
 
 ---
 

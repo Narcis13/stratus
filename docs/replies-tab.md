@@ -23,9 +23,9 @@ Everything Reply Master does also feeds the rest of stratus. Every reply you mar
 
 A draft always starts from a **target tweet** — the tweet you want to reply to. There are two main ways a target gets in front of Reply Master.
 
-### 1. The 🪄 Reply Master button on x.com (the main path)
+### 1. The Reply Master button on x.com (the main path)
 
-When you're browsing X with the extension installed, open any tweet's own page (its "status page" — the view you get by clicking a tweet so it's the focused one). stratus adds a small **🪄 Reply Master** button to that tweet's action row (next to reply / repost / like).
+When you're browsing X with the extension installed, open any tweet's own page (its "status page" — the view you get by clicking a tweet so it's the focused one). stratus adds a small **sparkle** button to that tweet's action row, in the stratus cluster that sits after X's own icons (reply / repost / like / bookmark / share). The buttons are icon-only — hover one to see its name, and it widens to spell out its status while it's working.
 
 Click it and stratus will:
 
@@ -38,16 +38,16 @@ The button shows its progress right on the page: `Drafting…` while it works, t
 
 > The button only appears on a tweet's *own* status page, on the focused tweet — not on every tweet in a scrolling timeline. If you don't see it, click into the tweet first.
 
-When you open the Replies tab and no draft is loaded yet, it reminds you of exactly this: *"Open a tweet on x.com and click 🪄 Reply Master to start a draft. The generated text is copied to your clipboard automatically."*
+When you open the Replies tab and no draft is loaded yet, it reminds you of exactly this: *"Open a tweet on x.com and click the sparkle (Reply Master) button to start a draft. The generated text is copied to your clipboard automatically."*
 
 ### 2. From a Radar, Conversations, or Inbox opportunity
 
 Other tabs in stratus surface tweets that already deserve a reply, and each has its own one-click draft button that uses the **same Grok reply engine**:
 
-- **Radar** — a live queue of hot/warm tweets stratus spotted while you browsed (plus any tweet you manually pinned with the ⊕ button). Its "Draft replies" action writes the three-variant set for the whole queue at once; opening a queued tweet copies the reply and, on the tweet page, shows the three angle chips right beside the reply box — clicking one types that variant in and **marks the draft posted** (so it becomes a measured `reply_drafts` row, exactly like a 🪄 draft).
+- **Radar** — a live queue of hot/warm tweets stratus spotted while you browsed (plus any tweet you manually pinned with the plus-in-a-circle button). Its "Draft replies" action writes the three-variant set for the whole queue at once; opening a queued tweet copies the reply and, on the tweet page, shows the three angle chips right beside the reply box — clicking one types that variant in and **marks the draft posted** (so it becomes a measured `reply_drafts` row, exactly like a Reply Master draft).
 - **Conversations / Inbox** — threads where someone mentioned or replied to *you* and you owe them an answer. Each open loop has a one-click Grok draft button; you Copy, paste on X, and mark it done.
 
-These surfaces draft *in place* (right there in their own tab) rather than loading the Replies-tab editor. The Replies tab itself is fed by the 🪄 button and is where you go to **edit, re-generate, and review the full history** of your drafts. Think of the 🪄 button as "start a fresh draft from the tweet I'm looking at," and the other tabs as "work through a ready-made list of opportunities."
+These surfaces draft *in place* (right there in their own tab) rather than loading the Replies-tab editor. The Replies tab itself is fed by the Reply Master button and is where you go to **edit, re-generate, and review the full history** of your drafts. Think of that button as "start a fresh draft from the tweet I'm looking at," and the other tabs as "work through a ready-made list of opportunities."
 
 > **A note on replies to mentions:** when the tweet is someone replying to *you*, the band gate is skipped automatically (a mention is always worth answering, and its metrics are usually zeros anyway). Reply Master also feeds Grok your original post as context — labeled "the tweet below is a reply to it" — so the draft understands the thread.
 
@@ -79,7 +79,7 @@ From those, the tweet lands in a band:
 
 ### Why a "skip" is refused
 
-When the tweet scores **skip** or **(none)**, Reply Master **refuses to draft** — no Grok call, no cost, no reply slot spent on a dead post. On the page, the 🪄 button turns into **`Dead post — click to force`**. This is deliberate: your time and daily reply budget are finite, and a reply that lands under a buried or tiny tweet is effort thrown away.
+When the tweet scores **skip** or **(none)**, Reply Master **refuses to draft** — no Grok call, no cost, no reply slot spent on a dead post. On the page, the sparkle button turns red and spells out **`Dead post — click to force`**. This is deliberate: your time and daily reply budget are finite, and a reply that lands under a buried or tiny tweet is effort thrown away.
 
 ### Forcing it anyway (the override)
 
@@ -152,7 +152,7 @@ Reply Master drafts; **you post.** stratus never sends a reply to X automaticall
 
 ### The three-step hand-off
 
-1. **Copy** — click the **Copy** button. The current reply text goes to your clipboard and the draft's status bumps from *generated* to *copied*. (If you drafted from the 🪄 button on the page, the reply was already copied for you.)
+1. **Copy** — click the **Copy** button. The current reply text goes to your clipboard and the draft's status bumps from *generated* to *copied*. (If you drafted from the sparkle button on the page, the reply was already copied for you.)
 2. **Paste on X** — open the tweet on X, paste into the reply box, and post it as you normally would.
 3. **Mark posted** — come back to the panel and click **Mark posted**. A small field opens asking for the **posted tweet URL or id (optional)** — paste the link to your posted reply (`https://x.com/…/status/1234…`) or its numeric id. Click **Confirm posted**. The draft flips to *posted* and the editor closes so you're ready for the next one.
 
@@ -275,11 +275,11 @@ One thing worth setting deliberately: the default prefix/suffix pools are **Engl
 
 The wording of that generator prompt is editable like all the others, in **Settings → Prompts** (the `reply-list` entry).
 
-### Using a list (the `🗂 Canned` button)
+### Using a list (the **Canned** button)
 
 Lists are managed here but **used elsewhere** — wherever stratus already knows who you're replying to:
 
-- **On x.com itself**, on the action row of any tweet you've opened (its own status page), next to `🪄 Reply Master`. This is the main one.
+- **On x.com itself**, on the action row of any tweet you've opened (its own status page), as the last button in the stratus cluster — a list icon with a small caret. This is the main one.
 - Every **early-replier row in the Launch Room** (Today tab) — as `canned ▾`.
 - Every **open loop in Conversations** (Today tab) — same button.
 
@@ -326,7 +326,7 @@ Two honest caveats: the bucket stays at zero until that daily pass runs (a canne
 ### Steer a reply with an idea
 
 1. In the Replies tab, type your angle into the **Idea steer** box — Romanian or English, whatever's natural. (Or pick one from the **Seed from Idea Inbox** dropdown.)
-2. Draft the reply the usual way (🪄 button on the page, or **Regenerate** if a draft's already open). The steer shapes this one draft.
+2. Draft the reply the usual way (sparkle button on the page, or **Regenerate** if a draft's already open). The steer shapes this one draft.
 3. The steer clears itself afterward, so your next reply starts clean. If you seeded from the Idea Inbox, that idea is now marked used and linked to the draft.
 
 ---
@@ -348,5 +348,5 @@ Two honest caveats: the bucket stays at zero until that daily pass runs (a canne
 - **Idea steers are one-shot.** They aim a single draft, then vanish. Re-type to reuse.
 - **Canned replies are free.** A `canned ▾` pick costs nothing (no AI at use time) — keep one list of warm acknowledgments and spend your Grok budget on the replies that actually need thinking.
 - **Mark posted, and paste the link.** Outcomes only appear for replies you mark posted — and the *rich* numbers (views, profile visits) only appear once you've given stratus the posted tweet's URL or id. This one small habit is what powers your whole reply feedback loop.
-- **The 🪄 button lives on the tweet's own page.** If you can't find it, click into the tweet so it's focused.
+- **The Reply Master button lives on the tweet's own page.** If you can't find it, click into the tweet so it's focused — it's the purple sparkle in the stratus cluster at the end of the action row.
 - **Known people get better drafts automatically.** The more you use stratus (replying, saving tweets, logging notes in the People tab), the more your relationship history sharpens future replies to those same people — at no extra effort.

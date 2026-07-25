@@ -205,7 +205,7 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
 
       {!activeDraft && (
         <EmptyState
-          line="Open a tweet on x.com and click 🪄 Reply Master to start a draft."
+          line="Open a tweet on x.com and click the sparkle (Reply Master) button to start a draft."
           hint="The generated text is copied to your clipboard automatically — the button lives on the tweet's own status page."
         />
       )}
@@ -296,7 +296,7 @@ export function RepliesPanel({ settings, onOpenPerson }: Props): JSX.Element {
               }
               hint={
                 statusFilter === ''
-                  ? 'Every 🪄 draft, Radar batch and Conversations draft lands here — copy, paste on X, then Mark posted to make it measurable.'
+                  ? 'Every Reply Master draft, Radar batch and Conversations draft lands here — copy, paste on X, then Mark posted to make it measurable.'
                   : 'Switch the filter back to All to see the rest.'
               }
             />

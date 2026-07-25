@@ -93,6 +93,18 @@ import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
+// UI.18 — every stratus control on a tweet's action row lives in ONE cluster
+// appended to that row, not as four independently-appended pills. X's action row
+// is a flex line with no slack: four labelled pills wrapped it onto a second line
+// and collided with the "View quotes" affordance. Members are icon-only at rest
+// (`.stratus-act`, 30px hit target, X's own icon language) and expand to show
+// their status label only while they have something to report.
+const ACTIONS_CLASS = 'stratus-actions';
+const ACT_CLASS = 'stratus-act';
+const ACT_LABEL_CLASS = 'stratus-act-lbl';
+const ACT_CARET_CLASS = 'stratus-act-caret';
+// Fixed left-to-right order regardless of which scan pass injected which button.
+const ACT_ORDER = { save: 1, radar: 2, reply: 3, canned: 4 } as const;
 const CHAN_CHIP_CLASS = 'stratus-chan-chip';
 const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const PERSON_CHIPS_CLASS = 'stratus-person-chips';
@@ -106,7 +118,6 @@ const VARIANT_PREVIEW_CLASS = 'stratus-variant-preview';
 const VARIANT_HINT_CLASS = 'stratus-variant-hint';
 // On-page canned-reply picker (RL.9) — the reply-list end of the feature, on
 // the tweet's own action row.
-const CANNED_WRAP_CLASS = 'stratus-canned';
 const CANNED_BTN_CLASS = 'stratus-canned-btn';
 const CANNED_POP_CLASS = 'stratus-canned-pop';
 const CANNED_ITEM_CLASS = 'stratus-canned-item';
@@ -114,6 +125,10 @@ const CANNED_NAME_CLASS = 'stratus-canned-name';
 const CANNED_META_CLASS = 'stratus-canned-meta';
 const CANNED_TEXT_CLASS = 'stratus-canned-text';
 const CANNED_HINT_CLASS = 'stratus-canned-hint';
+const CANNED_HEAD_CLASS = 'stratus-canned-head';
+const CANNED_TITLE_CLASS = 'stratus-canned-title';
+const CANNED_CLOSE_CLASS = 'stratus-canned-close';
+const CANNED_BODY_CLASS = 'stratus-canned-body';
 const RADAR_ADD_CLASS = 'stratus-radar-add-btn';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
@@ -124,12 +139,15 @@ const REPLY_IDEA_KEY = 'replyMaster:idea';
 // as `ideaId` so the server consumes the stored idea (status flip + backlink).
 const REPLY_IDEA_ID_KEY = 'replyMaster:ideaId';
 const REPLY_TOP_COMMENTS_MAX = 10;
-const REPLY_BTN_LABEL = '🪄 Reply Master';
-const CANNED_BTN_LABEL = '🗂 Canned ▾';
+// Idle labels are the accessible name / tooltip now, not painted text — the
+// buttons only render them when a status has to be read (UI.18).
+const REPLY_BTN_LABEL = 'Reply Master';
+const CANNED_BTN_LABEL = 'Canned';
 // One GET serves a browsing session's worth of opens; short enough that a list
 // created in the panel shows up without a page reload.
 const CANNED_CACHE_TTL_MS = 60_000;
 const SAVE_BTN_LABEL = 'Save to stratus';
+const RADAR_BTN_LABEL = 'Add to Radar';
 const AUTHOR_BTN_LABEL = 'Save author to stratus';
 // How long to wait for X's hover card to render after we synthesise a hover.
 const HOVER_CARD_TIMEOUT_MS = 1500;
@@ -209,109 +227,215 @@ const OVERLAY_TOKENS = `
       --stratus-pillar-fill: rgba(170, 100, 220, 0.12);
     }`;
 
+// ------------------------------------------------------- action-row icons (UI.18)
+//
+// 24×24 stroke glyphs drawn in X's own icon language (currentColor, round caps),
+// built through createElementNS rather than innerHTML: x.com enforces Trusted
+// Types, and an isolated world is not a licence to reach for an HTML sink.
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/** Upload-to-cloud — "save to stratus", the app's own namesake glyph. */
+const ICON_SAVE = [
+  'M20.4 18.4A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3.5 16.3',
+  'M16 16l-4-4-4 4',
+  'M12 12v9',
+];
+/** Sparkle — a generated draft, the same signal the panel uses for AI actions. */
+const ICON_WAND = ['M12 3.2l1.7 4.6 4.6 1.7-4.6 1.7L12 15.8l-1.7-4.6L5.7 9.5l4.6-1.7z'];
+const ICON_WAND_SPARK = ['M18.4 14.6l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'];
+/** Stacked lines — a list of premade replies. */
+const ICON_LIST = ['M4.5 7.5h13', 'M4.5 12h13', 'M4.5 16.5h8'];
+const ICON_PLUS_CIRCLE = ['M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z', 'M12 8v8', 'M8 12h8'];
+const ICON_CLOSE = ['M6 6l12 12', 'M18 6L6 18'];
+
+function svgIcon(paths: string[], opts: { size?: number; filled?: boolean } = {}): SVGSVGElement {
+  const size = opts.size ?? 17;
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  svg.setAttribute('fill', opts.filled ? 'currentColor' : 'none');
+  if (!opts.filled) {
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.8');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+  }
+  for (const d of paths) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  }
+  return svg;
+}
+
+/** The one action cluster per action row — created on first use, shared by all
+ *  four controls so they stay one visually-grouped unit in a fixed order. */
+function actionCluster(actionRow: Element): HTMLElement {
+  const existing = actionRow.querySelector<HTMLElement>(`:scope > .${ACTIONS_CLASS}`);
+  if (existing) return existing;
+  const wrap = document.createElement('div');
+  wrap.className = ACTIONS_CLASS;
+  actionRow.appendChild(wrap);
+  return wrap;
+}
+
+interface ActButtonSpec {
+  icons: SVGSVGElement[];
+  tone: 'muted' | 'blue' | 'pillar';
+  order: number;
+  title: string;
+  label: string;
+  extraClass?: string;
+  caret?: boolean;
+}
+
+/** Icon at rest, icon + status label while reporting. The label element always
+ *  exists so `setActLabel` never has to rebuild the face (and blow away the
+ *  icon, which is what plain `textContent =` did before UI.18). */
+function makeActButton(spec: ActButtonSpec): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = spec.extraClass ? `${ACT_CLASS} ${spec.extraClass}` : ACT_CLASS;
+  btn.dataset.tone = spec.tone;
+  btn.dataset.state = 'idle';
+  btn.style.order = String(spec.order);
+  btn.title = spec.title;
+  btn.append(...spec.icons);
+  if (spec.caret) {
+    const caret = document.createElement('span');
+    caret.className = ACT_CARET_CLASS;
+    caret.setAttribute('aria-hidden', 'true');
+    caret.textContent = '▾';
+    btn.appendChild(caret);
+  }
+  const label = document.createElement('span');
+  label.className = ACT_LABEL_CLASS;
+  btn.appendChild(label);
+  setActLabel(btn, spec.label);
+  return btn;
+}
+
+/** Writes the status line without touching the icon; the accessible name tracks
+ *  it so a screen reader hears the same thing sighted users read. */
+function setActLabel(btn: HTMLButtonElement, label: string): void {
+  const el = btn.querySelector<HTMLElement>(`.${ACT_LABEL_CLASS}`);
+  // Buttons outside the cluster (the profile-page "save author" pill) are plain
+  // labelled pills with no icon to protect, so they take the text directly.
+  if (el) el.textContent = label;
+  else btn.textContent = label;
+  btn.setAttribute('aria-label', label);
+}
+
 function injectStyles(): void {
   if (document.getElementById(STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `${OVERLAY_TOKENS}
-    .${BUTTON_CLASS}, .${AUTHOR_BTN_CLASS} {
+    /* UI.18 — the action cluster. One flex island at the end of X's action row,
+       hairline-separated from X's native icons so it reads as "another app's
+       controls" instead of four stray pills competing with them. */
+    .${ACTIONS_CLASS} {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      flex: 0 0 auto;
+      margin-left: 8px;
+      padding-left: 8px;
+      border-left: 1px solid var(--stratus-muted-hairline);
+      vertical-align: middle;
+    }
+    .${ACT_CLASS} {
       all: unset;
       display: inline-flex;
       align-items: center;
       justify-content: center;
+      gap: 5px;
       box-sizing: border-box;
       cursor: pointer;
-      font: 600 12px/1 var(--stratus-font);
-      letter-spacing: 0.02em;
-      padding: 4px 10px;
+      min-width: 30px;
+      height: 30px;
+      padding: 0 6px;
       border-radius: 9999px;
-      color: var(--stratus-muted);
-      border: 1px solid var(--stratus-muted-line);
+      border: 1px solid transparent;
       background: transparent;
-      margin-left: 6px;
-      transition: color 120ms, border-color 120ms, background 120ms;
+      font: 600 12px/1 var(--stratus-font);
+      letter-spacing: 0.01em;
+      color: var(--stratus-muted);
+      transition: color 120ms, background 120ms, border-color 120ms;
     }
-    .${AUTHOR_BTN_CLASS} { font-size: 13px; padding: 6px 14px; }
-    .${BUTTON_CLASS}:hover, .${AUTHOR_BTN_CLASS}:hover {
+    .${ACT_CLASS} svg { display: block; flex: 0 0 auto; }
+    .${ACT_CARET_CLASS} { font-size: 9px; line-height: 1; opacity: 0.75; }
+    /* Compact at rest; the button widens only while it has a status to report,
+       which is what keeps four controls inside one un-wrapped row. */
+    .${ACT_LABEL_CLASS} { display: none; white-space: nowrap; }
+    .${ACT_CLASS}[data-state]:not([data-state="idle"]) .${ACT_LABEL_CLASS} { display: inline; }
+    .${ACT_CLASS}[data-tone="blue"]   { color: var(--stratus-blue); }
+    .${ACT_CLASS}[data-tone="pillar"] { color: var(--stratus-pillar); }
+    .${ACT_CLASS}[data-tone="muted"]:hover,
+    .${ACT_CLASS}[data-tone="blue"]:hover,
+    .${ACT_CLASS}[data-tone="blue"][aria-expanded="true"] {
       color: var(--stratus-blue);
-      border-color: var(--stratus-blue);
       background: var(--stratus-blue-fill);
     }
-    .${BUTTON_CLASS}[data-state="saving"], .${AUTHOR_BTN_CLASS}[data-state="saving"] {
-      color: var(--stratus-muted);
-      border-color: var(--stratus-muted-line);
-      cursor: progress;
-    }
-    .${BUTTON_CLASS}[data-state="saved"], .${AUTHOR_BTN_CLASS}[data-state="saved"] {
-      color: var(--stratus-hot);
-      border-color: var(--stratus-hot);
-      background: var(--stratus-hot-fill);
-    }
-    .${BUTTON_CLASS}[data-state="failed"], .${AUTHOR_BTN_CLASS}[data-state="failed"] {
-      color: var(--stratus-danger);
-      border-color: var(--stratus-danger);
-      background: var(--stratus-danger-fill);
-    }
-    .${RADAR_ADD_CLASS} {
-      all: unset;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-      cursor: pointer;
-      width: 22px;
-      height: 22px;
-      font: 600 14px/1 var(--stratus-font);
-      border-radius: 9999px;
-      color: var(--stratus-muted);
-      border: 1px solid var(--stratus-muted-line);
-      background: transparent;
-      margin-left: 6px;
-      transition: color 120ms, border-color 120ms, background 120ms;
-    }
-    .${RADAR_ADD_CLASS}:hover {
-      color: var(--stratus-blue);
-      border-color: var(--stratus-blue);
-      background: var(--stratus-blue-fill);
-    }
-    .${RADAR_ADD_CLASS}[data-state="added"] {
-      color: var(--stratus-hot);
-      border-color: var(--stratus-hot);
-      background: var(--stratus-hot-fill);
-    }
-    .${REPLY_BTN_CLASS} {
-      all: unset;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-      cursor: pointer;
-      font: 600 12px/1 var(--stratus-font);
-      letter-spacing: 0.02em;
-      padding: 4px 10px;
-      border-radius: 9999px;
-      color: var(--stratus-pillar);
-      border: 1px solid var(--stratus-pillar-line);
-      background: transparent;
-      margin-left: 6px;
-      transition: color 120ms, border-color 120ms, background 120ms;
-    }
-    .${REPLY_BTN_CLASS}:hover {
+    .${ACT_CLASS}[data-tone="pillar"]:hover {
       color: var(--stratus-pillar-hover);
-      border-color: var(--stratus-pillar-hover);
       background: var(--stratus-pillar-fill);
     }
-    .${REPLY_BTN_CLASS}[data-state="working"] {
+    .${ACT_CLASS}:focus-visible { border-color: currentColor; }
+    .${ACT_CLASS}[data-state="saving"],
+    .${ACT_CLASS}[data-state="working"] {
+      color: var(--stratus-muted);
+      background: var(--stratus-muted-fill);
+      cursor: progress;
+    }
+    .${ACT_CLASS}[data-state="saved"],
+    .${ACT_CLASS}[data-state="added"],
+    .${ACT_CLASS}[data-state="done"] {
+      color: var(--stratus-hot);
+      background: var(--stratus-hot-fill);
+    }
+    .${ACT_CLASS}[data-state="failed"] {
+      color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
+    }
+    /* Profile-page "save author" keeps its labelled-pill shape — it sits in a
+       header with room to spare, not in the action row's flex crush. */
+    .${AUTHOR_BTN_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      cursor: pointer;
+      font: 600 13px/1 var(--stratus-font);
+      letter-spacing: 0.02em;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
+      background: transparent;
+      margin-left: 6px;
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${AUTHOR_BTN_CLASS}:hover {
+      color: var(--stratus-blue);
+      border-color: var(--stratus-blue);
+      background: var(--stratus-blue-fill);
+    }
+    .${AUTHOR_BTN_CLASS}[data-state="saving"] {
       color: var(--stratus-muted);
       border-color: var(--stratus-muted-line);
       cursor: progress;
     }
-    .${REPLY_BTN_CLASS}[data-state="done"] {
+    .${AUTHOR_BTN_CLASS}[data-state="saved"] {
       color: var(--stratus-hot);
       border-color: var(--stratus-hot);
       background: var(--stratus-hot-fill);
     }
-    .${REPLY_BTN_CLASS}[data-state="failed"] {
+    .${AUTHOR_BTN_CLASS}[data-state="failed"] {
       color: var(--stratus-danger);
       border-color: var(--stratus-danger);
       background: var(--stratus-danger-fill);
@@ -578,92 +702,108 @@ function injectStyles(): void {
     }
     .${VARIANT_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); }
     .${VARIANT_HINT_CLASS}:empty { display: none; }
-    .${CANNED_WRAP_CLASS} {
-      position: relative;
-      display: inline-flex;
-      align-items: center;
-      vertical-align: middle;
-    }
-    .${CANNED_BTN_CLASS} {
-      all: unset;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      box-sizing: border-box;
-      cursor: pointer;
-      font: 600 12px/1 var(--stratus-font);
-      letter-spacing: 0.02em;
-      padding: 4px 10px;
-      border-radius: 9999px;
-      color: var(--stratus-blue);
-      border: 1px solid var(--stratus-blue-line);
-      background: transparent;
-      margin-left: 6px;
-      transition: color 120ms, border-color 120ms, background 120ms;
-    }
-    .${CANNED_BTN_CLASS}:hover,
-    .${CANNED_BTN_CLASS}[aria-expanded="true"] { background: var(--stratus-blue-fill); }
-    .${CANNED_BTN_CLASS}[data-state="working"] {
-      color: var(--stratus-muted);
-      border-color: var(--stratus-muted-line);
-      cursor: progress;
-    }
-    .${CANNED_BTN_CLASS}[data-state="done"] {
-      color: var(--stratus-hot);
-      border-color: var(--stratus-hot);
-      background: var(--stratus-hot-fill);
-    }
-    .${CANNED_BTN_CLASS}[data-state="failed"] {
-      color: var(--stratus-danger);
-      border-color: var(--stratus-danger);
-      background: var(--stratus-danger-fill);
-    }
+    /* The popover is portalled to <body> and positioned in viewport coordinates
+       (UI.18): anchored absolutely inside the action row it was clipped by X's
+       own overflow and buried under the "View quotes" affordance. Fixed +
+       flip-up + viewport clamp means it is always fully on screen. */
     .${CANNED_POP_CLASS} {
-      position: absolute;
-      top: calc(100% + 6px);
+      position: fixed;
+      top: 0;
       left: 0;
-      z-index: 9999;
-      min-width: 240px;
-      max-width: 340px;
+      z-index: 2147483000;
+      width: max-content;
+      min-width: 260px;
+      max-width: 360px;
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
-      gap: 4px;
-      padding: 8px;
-      border-radius: 12px;
+      padding: 6px;
+      border-radius: 14px;
       border: 1px solid var(--stratus-muted-line);
       /* Overwritten inline with the page's own computed colors (X ships three
          themes and exposes no stable surface variable); these are the fallback. */
       background: Canvas;
       color: CanvasText;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-      font: 400 13px/1.3 var(--stratus-font);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.2);
+      font: 400 13px/1.35 var(--stratus-font);
+      overflow: hidden;
+    }
+    .${CANNED_HEAD_CLASS} {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 4px 4px 8px 8px;
+      border-bottom: 1px solid var(--stratus-muted-hairline);
+      margin-bottom: 6px;
+      flex: 0 0 auto;
+    }
+    .${CANNED_TITLE_CLASS} {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--stratus-muted);
+    }
+    .${CANNED_CLOSE_CLASS} {
+      all: unset;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      width: 24px;
+      height: 24px;
+      border-radius: 9999px;
+      color: var(--stratus-muted);
+      transition: color 120ms, background 120ms;
+    }
+    .${CANNED_CLOSE_CLASS}:hover { color: var(--stratus-danger); background: var(--stratus-danger-fill); }
+    .${CANNED_BODY_CLASS} {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding: 0 2px 2px;
     }
     .${CANNED_ITEM_CLASS} {
       all: unset;
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
-      gap: 10px;
+      gap: 12px;
       box-sizing: border-box;
       cursor: pointer;
-      padding: 6px 8px;
-      border-radius: 8px;
+      padding: 8px 10px;
+      border-radius: 9px;
       color: inherit;
-      transition: background 120ms;
+      transition: background 120ms, color 120ms;
     }
-    .${CANNED_ITEM_CLASS}:hover { background: var(--stratus-blue-fill); }
-    .${CANNED_ITEM_CLASS}[aria-disabled="true"] { cursor: not-allowed; opacity: 0.5; }
-    .${CANNED_NAME_CLASS} { font-weight: 600; }
-    .${CANNED_META_CLASS} { font-size: 11px; color: var(--stratus-muted); white-space: nowrap; }
-    .${CANNED_TEXT_CLASS} {
-      padding: 6px 8px;
-      border-radius: 8px;
+    .${CANNED_ITEM_CLASS}:hover { background: var(--stratus-blue-fill); color: var(--stratus-blue); }
+    .${CANNED_ITEM_CLASS}[aria-disabled="true"] { cursor: not-allowed; opacity: 0.45; }
+    .${CANNED_ITEM_CLASS}[aria-disabled="true"]:hover { background: transparent; color: inherit; }
+    .${CANNED_NAME_CLASS} { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .${CANNED_META_CLASS} {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--stratus-muted);
+      white-space: nowrap;
+      padding: 2px 7px;
+      border-radius: 9999px;
       border: 1px solid var(--stratus-muted-hairline);
+    }
+    .${CANNED_TEXT_CLASS} {
+      margin: 4px 0;
+      padding: 8px 10px;
+      border-radius: 9px;
+      border: 1px solid var(--stratus-muted-hairline);
+      background: var(--stratus-muted-fill);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
-    .${CANNED_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); padding: 0 2px; }
+    .${CANNED_HINT_CLASS} { font-size: 11px; color: var(--stratus-muted); padding: 2px 4px; }
     .${CANNED_HINT_CLASS}:empty { display: none; }
   `;
   document.head.appendChild(style);
@@ -924,6 +1064,10 @@ async function offerChannelChips(btn: HTMLButtonElement, tweet: ScrapedTweet): P
   btn.parentElement?.querySelector(`.${CHAN_WRAP_CLASS}`)?.remove();
   const wrap = document.createElement('span');
   wrap.className = CHAN_WRAP_CLASS;
+  // The cluster orders its children explicitly (UI.18) — without a matching
+  // order the chips would flex to the front of the row instead of sitting
+  // beside the save button they belong to.
+  wrap.style.order = String(ACT_ORDER.save);
   for (const slug of suggested) {
     const chip = document.createElement('button');
     chip.type = 'button';
@@ -972,7 +1116,7 @@ function setState(
   label: string,
 ): void {
   btn.dataset.state = state;
-  btn.textContent = label;
+  setActLabel(btn, label);
 }
 
 function scheduleReset(btn: HTMLButtonElement, label: string): void {
@@ -1047,10 +1191,14 @@ function attachButton(article: Element): void {
 
   if (!findPermalink(article)) return;
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = BUTTON_CLASS;
-  btn.title = 'Save this tweet to the stratus voice library';
+  const btn = makeActButton({
+    icons: [svgIcon(ICON_SAVE)],
+    tone: 'muted',
+    order: ACT_ORDER.save,
+    title: 'Save this tweet to the stratus voice library',
+    label: SAVE_BTN_LABEL,
+    extraClass: BUTTON_CLASS,
+  });
   setState(btn, 'idle', SAVE_BTN_LABEL);
   btn.addEventListener('click', (ev) => {
     ev.preventDefault();
@@ -1058,7 +1206,7 @@ function attachButton(article: Element): void {
     void onSaveClick(btn);
   });
 
-  actionRow.appendChild(btn);
+  actionCluster(actionRow).appendChild(btn);
   handled.add(actionRow);
 }
 
@@ -1266,7 +1414,7 @@ function setReplyState(
   label: string,
 ): void {
   btn.dataset.state = state;
-  btn.textContent = label;
+  setActLabel(btn, label);
 }
 
 function scheduleReplyReset(btn: HTMLButtonElement, ms = STATUS_PERSIST_MS): void {
@@ -1412,10 +1560,14 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
   const permalink = findPermalink(article);
   if (!permalink || permalink.tweetId !== focusedTweetId) return;
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = REPLY_BTN_CLASS;
-  btn.title = 'Generate a Grok-assisted reply, copy to clipboard';
+  const btn = makeActButton({
+    icons: [svgIcon([...ICON_WAND, ...ICON_WAND_SPARK], { filled: true })],
+    tone: 'pillar',
+    order: ACT_ORDER.reply,
+    title: 'Reply Master — generate a Grok-assisted reply',
+    label: REPLY_BTN_LABEL,
+    extraClass: REPLY_BTN_CLASS,
+  });
   setReplyState(btn, 'idle', REPLY_BTN_LABEL);
   btn.addEventListener('click', (ev) => {
     ev.preventDefault();
@@ -1423,7 +1575,7 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
     void onReplyMasterClick(btn);
   });
 
-  actionRow.appendChild(btn);
+  actionCluster(actionRow).appendChild(btn);
   replyMasterHandled.add(actionRow);
 }
 
@@ -1578,8 +1730,16 @@ const cannedHandled = new WeakSet<Element>();
 let cannedCache: { lists: ReplyListSummary[]; at: number } | null = null;
 let cannedInflight: Promise<ReplyListSummary[]> | null = null;
 // The one open popover, so a second button (or a click anywhere else) closes it.
+// It is portalled to <body>, so the button it belongs to is tracked separately —
+// there is no parent chain to walk back up any more.
 let openCannedPop: HTMLElement | null = null;
+let openCannedBtn: HTMLButtonElement | null = null;
 let cannedOutsideBound = false;
+/** Breathing room between the button and the popover, and popover-to-viewport. */
+const CANNED_POP_GAP = 8;
+const CANNED_POP_MARGIN = 10;
+/** Below this the popover isn't worth showing downward — flip it above instead. */
+const CANNED_POP_MIN_H = 180;
 
 /** Mirrors the route's `USERNAME_RE` — a malformed handle is a hard 400, and
  *  audit metadata is never worth losing the whole use over. */
@@ -1616,9 +1776,38 @@ function closeCannedPop(): void {
   if (!openCannedPop) return;
   openCannedPop.remove();
   openCannedPop = null;
+  openCannedBtn = null;
   for (const b of document.querySelectorAll<HTMLElement>(`.${CANNED_BTN_CLASS}`)) {
     b.setAttribute('aria-expanded', 'false');
   }
+}
+
+/** Places the popover in viewport coordinates: below the button when it fits,
+ *  flipped above when it doesn't, always clamped inside the viewport and capped
+ *  to the space actually available (the body scrolls past that). */
+function placeCannedPop(): void {
+  const pop = openCannedPop;
+  const btn = openCannedBtn;
+  if (!pop || !btn) return;
+  // A virtualised re-render can take the anchor out from under us mid-scroll.
+  if (!btn.isConnected) {
+    closeCannedPop();
+    return;
+  }
+  const r = btn.getBoundingClientRect();
+  const below = window.innerHeight - r.bottom - CANNED_POP_GAP - CANNED_POP_MARGIN;
+  const above = r.top - CANNED_POP_GAP - CANNED_POP_MARGIN;
+  const flip = below < CANNED_POP_MIN_H && above > below;
+  pop.style.maxHeight = `${Math.max(CANNED_POP_MIN_H, flip ? above : below)}px`;
+
+  const h = pop.offsetHeight;
+  const w = pop.offsetWidth;
+  const top = flip
+    ? r.top - CANNED_POP_GAP - h
+    : Math.min(r.bottom + CANNED_POP_GAP, window.innerHeight - CANNED_POP_MARGIN - h);
+  const maxLeft = Math.max(CANNED_POP_MARGIN, window.innerWidth - CANNED_POP_MARGIN - w);
+  pop.style.top = `${Math.max(CANNED_POP_MARGIN, top)}px`;
+  pop.style.left = `${Math.min(Math.max(CANNED_POP_MARGIN, r.left), maxLeft)}px`;
 }
 
 function bindCannedOutsideClose(): void {
@@ -1629,11 +1818,22 @@ function bindCannedOutsideClose(): void {
     (ev) => {
       if (!openCannedPop) return;
       const target = ev.target as Node | null;
-      if (target && openCannedPop.parentElement?.contains(target)) return;
+      if (target && (openCannedPop.contains(target) || openCannedBtn?.contains(target))) return;
       closeCannedPop();
     },
     true,
   );
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && openCannedPop) {
+      closeCannedPop();
+      openCannedBtn?.focus();
+    }
+  });
+  // Fixed positioning means the popover no longer rides along with the page —
+  // it has to be re-placed on every viewport change while it is open.
+  const follow = () => placeCannedPop();
+  window.addEventListener('scroll', follow, { capture: true, passive: true });
+  window.addEventListener('resize', follow, { passive: true });
 }
 
 interface CannedTarget {
@@ -1670,9 +1870,53 @@ function cannedRow(label: string, className = CANNED_HINT_CLASS): HTMLElement {
   return el;
 }
 
+/** The popover shell: a titled card with its own close affordance. Only the
+ *  body is ever re-rendered, so the header survives every state change. */
+function createCannedPop(): HTMLElement {
+  const pop = document.createElement('div');
+  pop.className = CANNED_POP_CLASS;
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', 'Canned replies');
+  applyPageSurface(pop);
+
+  const head = document.createElement('div');
+  head.className = CANNED_HEAD_CLASS;
+  const title = document.createElement('span');
+  title.className = CANNED_TITLE_CLASS;
+  title.textContent = 'Canned replies';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = CANNED_CLOSE_CLASS;
+  close.setAttribute('aria-label', 'Close');
+  close.title = 'Close';
+  close.appendChild(svgIcon(ICON_CLOSE, { size: 14 }));
+  close.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    closeCannedPop();
+  });
+  head.append(title, close);
+
+  const body = document.createElement('div');
+  body.className = CANNED_BODY_CLASS;
+  pop.append(head, body);
+  // X's action row is a link-and-hover minefield; the pop is ours alone.
+  pop.addEventListener('click', (e) => e.stopPropagation());
+  return pop;
+}
+
+/** Swap the popover's contents and re-measure — every state it moves through
+ *  (menu → picking → the used text) is a different height. */
+function setCannedBody(pop: HTMLElement, ...nodes: Node[]): void {
+  const body = pop.querySelector<HTMLElement>(`.${CANNED_BODY_CLASS}`);
+  if (!body) return;
+  body.replaceChildren(...nodes);
+  if (pop === openCannedPop) placeCannedPop();
+}
+
 /** The list menu — rebuilt whenever the pop returns to its picking state. */
 function renderCannedMenu(pop: HTMLElement, btn: HTMLButtonElement, target: CannedTarget): void {
-  pop.replaceChildren(cannedRow('Loading lists…'));
+  setCannedBody(pop, cannedRow('Loading lists…'));
   void getCannedLists().then(
     (lists) => {
       if (!pop.isConnected) return;
@@ -1680,7 +1924,7 @@ function renderCannedMenu(pop: HTMLElement, btn: HTMLButtonElement, target: Cann
       // id, it just isn't offered here.
       const offered = lists.filter((l) => l.active);
       if (offered.length === 0) {
-        pop.replaceChildren(cannedRow('No active reply lists — make one in the panel.'));
+        setCannedBody(pop, cannedRow('No active reply lists — make one in the panel.'));
         return;
       }
       const frag = document.createDocumentFragment();
@@ -1708,14 +1952,29 @@ function renderCannedMenu(pop: HTMLElement, btn: HTMLButtonElement, target: Cann
         }
         frag.appendChild(item);
       }
-      pop.replaceChildren(frag);
+      setCannedBody(pop, frag);
     },
     (err: unknown) => {
       if (!pop.isConnected) return;
       const code = err instanceof Error ? err.message : 'fetch_failed';
-      pop.replaceChildren(cannedRow(CANNED_ERR[code] ?? `Couldn't load lists (${code})`));
+      setCannedBody(pop, cannedRow(CANNED_ERR[code] ?? `Couldn't load lists (${code})`));
     },
   );
+}
+
+function setCannedState(
+  btn: HTMLButtonElement,
+  state: 'idle' | 'working' | 'done' | 'failed',
+  label: string,
+): void {
+  btn.dataset.state = state;
+  setActLabel(btn, label);
+}
+
+function resetCannedState(btn: HTMLButtonElement): void {
+  setTimeout(() => {
+    if (btn.isConnected) setCannedState(btn, 'idle', CANNED_BTN_LABEL);
+  }, STATUS_PERSIST_MS);
 }
 
 // One click = one spent item. The pop stays open showing exactly what went in
@@ -1728,8 +1987,8 @@ async function onCannedPick(
   target: CannedTarget,
 ): Promise<void> {
   if (btn.dataset.state === 'working') return;
-  btn.dataset.state = 'working';
-  pop.replaceChildren(cannedRow(`Picking from ${list.name}…`));
+  setCannedState(btn, 'working', 'Picking…');
+  setCannedBody(pop, cannedRow(`Picking from ${list.name}…`));
 
   const name = target.name?.slice(0, CANNED_MAX_VAR_LEN);
   const handle = target.handle.replace(/^@/, '');
@@ -1758,13 +2017,14 @@ async function onCannedPick(
 
   if (!res || !res.ok) {
     const code = res && !res.ok ? res.code : 'no_response';
-    btn.dataset.state = 'failed';
-    setTimeout(() => {
-      if (btn.isConnected) delete btn.dataset.state;
-    }, STATUS_PERSIST_MS);
+    setCannedState(btn, 'failed', 'Pick failed');
+    resetCannedState(btn);
     if (pop.isConnected) {
-      pop.replaceChildren(cannedRow(CANNED_ERR[code] ?? `Pick failed (${code})`));
-      pop.appendChild(cannedPickAnotherButton(pop, btn, target));
+      setCannedBody(
+        pop,
+        cannedRow(CANNED_ERR[code] ?? `Pick failed (${code})`),
+        cannedPickAnotherButton(pop, btn, target),
+      );
     }
     return;
   }
@@ -1789,10 +2049,8 @@ async function onCannedPick(
     hint = copied ? 'Copied — open the reply box and paste' : 'Copy this by hand';
   }
 
-  btn.dataset.state = 'done';
-  setTimeout(() => {
-    if (btn.isConnected) delete btn.dataset.state;
-  }, STATUS_PERSIST_MS);
+  setCannedState(btn, 'done', 'Picked ✓');
+  resetCannedState(btn);
 
   if (!pop.isConnected) return;
   const text = document.createElement('div');
@@ -1805,7 +2063,8 @@ async function onCannedPick(
     used.applied.length > 0 ? `jitter: ${used.applied.join(', ')}` : 'no jitter this time';
   const missing =
     used.missingVars.length > 0 ? ` · no ${used.missingVars.join(', ')} for this target` : '';
-  pop.replaceChildren(
+  setCannedBody(
+    pop,
     cannedRow(hint),
     text,
     cannedRow(`${list.name} · ${jitter}${missing}`),
@@ -1844,38 +2103,37 @@ function attachCannedButton(article: Element, focusedTweetId: string): void {
 
   bindCannedOutsideClose();
 
-  const wrap = document.createElement('span');
-  wrap.className = CANNED_WRAP_CLASS;
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = CANNED_BTN_CLASS;
-  btn.textContent = CANNED_BTN_LABEL;
-  btn.title = 'Premade replies — one click spends a pick and types it in';
+  const btn = makeActButton({
+    icons: [svgIcon(ICON_LIST)],
+    tone: 'blue',
+    order: ACT_ORDER.canned,
+    title: 'Canned replies — one click spends a pick and types it in',
+    label: CANNED_BTN_LABEL,
+    extraClass: CANNED_BTN_CLASS,
+    caret: true,
+  });
+  btn.setAttribute('aria-haspopup', 'dialog');
   btn.setAttribute('aria-expanded', 'false');
   btn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
-    if (openCannedPop?.parentElement === wrap) {
+    if (openCannedBtn === btn) {
       closeCannedPop();
       return;
     }
     closeCannedPop();
-    const pop = document.createElement('div');
-    pop.className = CANNED_POP_CLASS;
-    applyPageSurface(pop);
-    // X's action row is a link-and-hover minefield; the pop is ours alone.
-    pop.addEventListener('click', (e) => e.stopPropagation());
-    wrap.appendChild(pop);
+    const pop = createCannedPop();
+    document.body.appendChild(pop);
     openCannedPop = pop;
+    openCannedBtn = btn;
     btn.setAttribute('aria-expanded', 'true');
+    placeCannedPop();
     // Re-read the target: the article element outlives a virtualised re-render,
     // but the display name can arrive after the button was injected.
     renderCannedMenu(pop, btn, cannedTargetFrom(article, focusedTweetId) ?? target);
   });
 
-  wrap.appendChild(btn);
-  actionRow.appendChild(wrap);
+  actionCluster(actionRow).appendChild(btn);
   cannedHandled.add(actionRow);
 }
 
@@ -2457,18 +2715,22 @@ function attachRadarAddButton(article: Element): void {
   if (!actionRow || radarAddHandled.has(actionRow)) return;
   if (!findPermalink(article)) return;
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = RADAR_ADD_CLASS;
-  btn.title = 'Add this tweet to the stratus Radar queue';
-  btn.textContent = '⊕';
+  const btn = makeActButton({
+    icons: [svgIcon(ICON_PLUS_CIRCLE)],
+    tone: 'muted',
+    order: ACT_ORDER.radar,
+    title: 'Add this tweet to the stratus Radar queue',
+    label: RADAR_BTN_LABEL,
+    extraClass: RADAR_ADD_CLASS,
+  });
+  btn.dataset.state = 'idle';
   btn.addEventListener('click', (ev) => {
     ev.preventDefault();
     ev.stopPropagation();
     onRadarAddClick(btn);
   });
 
-  actionRow.appendChild(btn);
+  actionCluster(actionRow).appendChild(btn);
   radarAddHandled.add(actionRow);
 }
 
@@ -2496,12 +2758,14 @@ function onRadarAddClick(btn: HTMLButtonElement): void {
     lastSeenAt: now,
   };
 
-  // Flip to ✓ optimistically; the background is the single buffer writer (§7.24).
-  btn.textContent = '✓';
+  // Flip to the green "added" face optimistically; the background is the single
+  // buffer writer (§7.24).
   btn.dataset.state = 'added';
+  setActLabel(btn, 'Added to Radar');
   window.setTimeout(() => {
-    btn.textContent = '⊕';
-    delete btn.dataset.state;
+    if (!btn.isConnected) return;
+    btn.dataset.state = 'idle';
+    setActLabel(btn, RADAR_BTN_LABEL);
   }, 1500);
 
   const msg: RadarReport = { type: 'stratus/radar-report', sightings: [sighting] };

@@ -151,7 +151,7 @@ Matching is **word-boundary aware**: the keyword `ai` matches "AI agents" but *n
 
 ### Inline suggested chips when you "Save to stratus" on X
 
-When you're browsing X and click **Save to stratus** on a tweet (the button stratus injects into the tweet's action row), then after the save succeeds stratus offers up to **3** keyword-suggested channel chips right next to the button — labeled like **+ #ai-agents**. Clicking one tags the just-saved tweet into that channel:
+When you're browsing X and click **Save to stratus** on a tweet (the cloud icon stratus injects into the tweet's action row), then after the save succeeds stratus offers up to **3** keyword-suggested channel chips right next to the button — labeled like **+ #ai-agents**. Clicking one tags the just-saved tweet into that channel:
 
 - The tag is **additive** (it merges server-side), so clicking several chips quickly can't clobber each other.
 - On success the chip turns into **✓ #ai-agents**; on failure it shows **! #ai-agents** and lets you retry.

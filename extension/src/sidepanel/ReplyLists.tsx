@@ -152,7 +152,7 @@ export function ReplyListsPanel({ settings }: Props): JSX.Element {
         <p className="muted">
           Premade replies for the moments the machinery already surfaces. Picked with an anti-repeat
           shuffle, vars filled from the target, lightly humanized — then typed into the reply box by
-          the <strong>🗂 Canned</strong> button on a tweet, or copied here for a manual paste.
+          the <strong>Canned</strong> button on a tweet, or copied here for a manual paste.
         </p>
         <button type="button" onClick={() => void loadLists()} disabled={loading}>
           {loading ? 'Loading…' : 'Refresh'}
@@ -536,7 +536,7 @@ function ItemsEditor({
 
       <p className="muted">
         Stored verbatim. Vars and the humanizer's jitter are applied when a line is picked — on a
-        tweet's <strong>🗂 Canned</strong> button, from a Launch Room / Conversations row, or in Test
+        tweet's <strong>Canned</strong> button, from a Launch Room / Conversations row, or in Test
         render below. The pick then excludes the recently-used half of the list, so the same line
         can't come back twice in a row.
       </p>
