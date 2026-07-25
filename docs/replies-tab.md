@@ -283,7 +283,7 @@ Lists are managed here but **used elsewhere** — wherever stratus already knows
 - Every **early-replier row in the Launch Room** (Today tab) — as `canned ▾`.
 - Every **open loop in Conversations** (Today tab) — same button.
 
-Click it, pick a list, and in one click stratus picks the item, fills the name/handle from whoever wrote the tweet, humanizes it, and logs the use. On x.com it then **types the result straight into the reply box** (character by character, the way the Cmd+B paste works) and shows you the finished text plus which jitters fired. In the side panel — and on x.com when no reply box is open — it lands on your **clipboard** instead.
+Click it, pick a list, and in one click stratus picks the item, fills the name/handle from whoever wrote the tweet, humanizes it, and logs the use. The text always lands on your **clipboard**, and on x.com stratus also drops it **straight into the reply box** in one operation, then shows you the finished text plus which jitters fired. If X's composer refuses the fill, the box is left empty and the popover says to press ⌘V — the pick is never lost and never mangled.
 
 If both typing and the clipboard fail, the finished text stays on screen so you can copy it by hand: the item is already spent server-side, so it's never silently lost.
 

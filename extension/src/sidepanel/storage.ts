@@ -7,8 +7,9 @@ const KEY_API_URL = 'apiUrl';
 const KEY_BEARER = 'bearer';
 // §8.6 opt-in: when on, reply drafting steers toward the active content pillars.
 const KEY_APPLY_PILLARS_REPLIES = 'applyPillarsToReplies';
-// When on, a Reply Master draft is "typed" char-by-char into the focused reply
-// box (content script reads this key directly). Default off → copy-to-clipboard.
+// When on, a Reply Master draft is also filled into the focused reply box
+// (content script reads this key directly). Default off → copy-to-clipboard only.
+// The draft is written to the clipboard either way (UI.19).
 const KEY_AUTOTYPE_REPLY = 'autoTypeReplyDraft';
 // C6 passive hover capture — default ON (opt-out): absent key means enabled,
 // only an explicit `false` disables. The content script reads this key directly.

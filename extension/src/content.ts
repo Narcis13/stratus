@@ -1534,15 +1534,13 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   // into the reply box like manual keystrokes. Clipboard copy above stays as the
   // fallback, so an absent/unfound composer still leaves the draft pasteable.
   if (await autoTypeReplyEnabled()) {
-    const editor = findReplyEditor();
-    if (editor) {
-      setReplyState(btn, 'working', 'Typing…');
-      const typed = await typeTextInto(editor, replyText);
-      setReplyState(btn, 'done', typed > 0 ? 'Typed ✓' : 'Open the reply box first');
-      scheduleReplyReset(btn);
-      return;
-    }
-    setReplyState(btn, 'done', copied ? 'Copied ✓ (no reply box)' : 'Drafted (copy manually)');
+    setReplyState(btn, 'working', 'Filling…');
+    const mode = await deliverToReplyBox(replyText);
+    setReplyState(
+      btn,
+      'done',
+      mode === 'inserted' ? 'Typed ✓' : mode === 'copied' ? 'Copied — press ⌘V' : 'Copy manually',
+    );
     scheduleReplyReset(btn);
     return;
   }
@@ -1663,12 +1661,14 @@ function injectVariantChips(actionRow: Element, tweetId: string, variants: Reply
   actionRow.appendChild(strip);
 }
 
-// Clear X's Draft.js reply composer before typing a variant in — selectAll +
-// delete only when it's non-empty (don't fight an empty editor's selection).
+// Empty X's reply composer before filling it — select-all + delete only when
+// it's non-empty (don't fight an empty editor's selection). The selection is
+// built with a Range rather than `execCommand('selectAll')`, which reaches for
+// the document when the editor hasn't taken focus yet.
 function clearReplyEditor(editor: HTMLElement): void {
   editor.focus();
-  if ((editor.textContent ?? '').trim() === '') return;
-  document.execCommand('selectAll');
+  if (editorText(editor).trim() === '') return;
+  selectAllIn(editor);
   document.execCommand('delete');
 }
 
@@ -1684,21 +1684,8 @@ async function onVariantChipClick(
   btn.dataset.active = '1';
   const hint = strip.querySelector<HTMLElement>(`.${VARIANT_HINT_CLASS}`);
 
-  const editor = findReplyEditor();
-  if (editor) {
-    clearReplyEditor(editor);
-    await typeTextInto(editor, text);
-    if (hint) hint.textContent = '';
-  } else {
-    let copied = true;
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      copied = false;
-    }
-    if (hint)
-      hint.textContent = copied ? 'Copied — open the reply box' : 'Open the reply box first';
-  }
+  const mode = await deliverToReplyBox(text);
+  if (hint) hint.textContent = mode === 'inserted' ? '' : DELIVER_HINT[mode];
 
   // Confirm-if-needed + flip to posted happens in the background (single
   // Authorization owner). Best-effort — the text is already in the composer.
@@ -2033,21 +2020,7 @@ async function onCannedPick(
 
   // The item is spent server-side from here on — every remaining failure is
   // cosmetic, and the text stays on screen so nothing is lost.
-  let hint: string;
-  const editor = findReplyEditor();
-  if (editor) {
-    clearReplyEditor(editor);
-    const typed = await typeTextInto(editor, used.text);
-    hint = typed > 0 ? 'Typed into the reply box ✓' : 'Typing was interrupted — copy it by hand';
-  } else {
-    let copied = true;
-    try {
-      await navigator.clipboard.writeText(used.text);
-    } catch {
-      copied = false;
-    }
-    hint = copied ? 'Copied — open the reply box and paste' : 'Copy this by hand';
-  }
+  const hint = DELIVER_HINT[await deliverToReplyBox(used.text)];
 
   setCannedState(btn, 'done', 'Picked ✓');
   resetCannedState(btn);
@@ -3597,19 +3570,38 @@ function start(): void {
   observer.observe(document.body, { childList: true, subtree: true });
 }
 
-// --------------------------------------------------- type-from-clipboard
+// --------------------------------------------------- fill-from-clipboard
 //
-// Cmd+B, while a composer / reply box is focused, "types" the clipboard text
-// in character by character, so a Grok-drafted reply lands like manual
-// keystrokes instead of an instant paste. X's composer is a Draft.js
-// contenteditable: setting textContent/value directly is ignored by its
-// internal model, so each char goes in via execCommand('insertText'), which
-// is exactly the path Draft listens on (its handleBeforeInput). Escape aborts
-// an in-flight run; moving focus away stops it too.
+// Cmd+B fills the focused composer with the clipboard text. It used to "type"
+// it in one `execCommand('insertText')` per character (18ms apart) so a draft
+// landed like manual keystrokes — that is DEAD, and this is why: X's composer
+// now applies its own model update on `beforeinput` **and** lets the browser
+// apply the native one, so every synthetic keystroke went in twice and the
+// duplication snowballed ("good one, maybe…" came out as several hundred
+// characters of "gogogogd…"). Per-character insertion into an editor that
+// re-renders from its own model underneath you is unwinnable.
+//
+// So: one replace-all attempt, VERIFIED against the editor's own text, with the
+// clipboard as the fallback that always works —
+//   1. `clipboard.writeText` unconditionally, so ⌘V is available no matter what
+//   2. a synthetic `paste` ClipboardEvent — one operation, and the path a
+//      Draft.js/Lexical-style editor handles itself
+//   3. one whole-string `execCommand('insertText')`
+//   4. leave the composer EMPTY and say "press ⌘V" — a mangled composer is a
+//      worse outcome than an empty one, since the text is on the clipboard.
+// Every surface that fills the reply box goes through `deliverToReplyBox`.
 
-const TYPE_CHAR_DELAY_MS = 18;
+/** Long enough for the editor to re-render from its model before we verify. */
+const EDITOR_SETTLE_MS = 60;
 let typingInFlight = false;
-let cancelTyping = false;
+
+type DeliverMode = 'inserted' | 'copied' | 'failed';
+
+const DELIVER_HINT: Record<DeliverMode, string> = {
+  inserted: 'Typed into the reply box ✓',
+  copied: 'Copied — press ⌘V in the reply box',
+  failed: 'Copy this by hand',
+};
 
 function focusedEditable(): HTMLElement | null {
   const el = document.activeElement as HTMLElement | null;
@@ -3619,64 +3611,81 @@ function focusedEditable(): HTMLElement | null {
   return null;
 }
 
-function insertChar(target: HTMLElement, ch: string): void {
-  if (target.isContentEditable) {
-    // Draft.js consumes insertText/insertParagraph through beforeinput.
-    const ok =
-      ch === '\n'
-        ? document.execCommand('insertParagraph')
-        : document.execCommand('insertText', false, ch);
-    if (!ok) {
-      target.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          cancelable: true,
-          inputType: ch === '\n' ? 'insertLineBreak' : 'insertText',
-          data: ch === '\n' ? null : ch,
-        }),
-      );
-    }
-    return;
-  }
-  // Native input/textarea: write through React's value setter so onChange fires.
-  const el = target as HTMLInputElement | HTMLTextAreaElement;
-  const start = el.selectionStart ?? el.value.length;
-  const end = el.selectionEnd ?? el.value.length;
-  const next = el.value.slice(0, start) + ch + el.value.slice(end);
-  const proto =
-    el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-  if (setter) setter.call(el, next);
-  else el.value = next;
-  const caret = start + ch.length;
-  el.selectionStart = el.selectionEnd = caret;
-  el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
+function editorText(target: HTMLElement): string {
+  if (target.isContentEditable) return target.textContent ?? '';
+  return (target as HTMLTextAreaElement).value ?? '';
 }
 
-// Core loop, shared by the Cmd+B shortcut and Reply Master auto-type. Types
-// `text` into `target` one char at a time; aborts if Escape was pressed or the
-// user moved focus elsewhere mid-run. Returns the count actually typed.
-async function typeTextInto(target: HTMLElement, text: string): Promise<number> {
-  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-  if (!normalised) return 0;
+/** Compare what we asked for against what the editor really holds: nbsp for
+ *  space, one newline flavour, ends trimmed. Anything else is a failed fill. */
+function sameEditorText(a: string, b: string): boolean {
+  const norm = (s: string) =>
+    s
+      .replace(/\u00a0/g, ' ')
+      .replace(/\r\n?/g, '\n')
+      .trim();
+  return norm(a) === norm(b);
+}
 
-  typingInFlight = true;
-  cancelTyping = false;
+function selectAllIn(target: HTMLElement): void {
   target.focus();
-  let n = 0;
+  if (!target.isContentEditable) {
+    (target as HTMLTextAreaElement).select();
+    return;
+  }
+  const sel = window.getSelection();
+  if (!sel) return;
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+function pasteInto(target: HTMLElement, text: string): void {
+  target.focus();
+  const data = new DataTransfer();
+  data.setData('text/plain', text);
+  target.dispatchEvent(
+    new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }),
+  );
+}
+
+/** Replace the editor's whole contents with `text`, verifying each strategy and
+ *  clearing up after itself when none of them took. */
+async function fillEditor(target: HTMLElement, text: string): Promise<boolean> {
+  if (typingInFlight) return false;
+  typingInFlight = true;
   try {
-    for (const ch of Array.from(normalised)) {
-      if (cancelTyping) break;
-      // Focus moved away (user clicked elsewhere) — stop typing into nothing.
-      if (focusedEditable() !== target) break;
-      insertChar(target, ch);
-      n += 1;
-      await sleep(TYPE_CHAR_DELAY_MS);
+    for (const via of ['paste', 'insertText'] as const) {
+      clearReplyEditor(target);
+      if (via === 'paste') pasteInto(target, text);
+      else {
+        target.focus();
+        document.execCommand('insertText', false, text);
+      }
+      await sleep(EDITOR_SETTLE_MS);
+      if (sameEditorText(editorText(target), text)) return true;
     }
+    clearReplyEditor(target);
+    return false;
   } finally {
     typingInFlight = false;
   }
-  return n;
+}
+
+/** The ONE way anything fills X's reply box. Always leaves the text on the
+ *  clipboard first, so a failed fill still ends in a one-keystroke paste. */
+async function deliverToReplyBox(text: string): Promise<DeliverMode> {
+  let copied = true;
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (err) {
+    copied = false;
+    console.warn('[stratus] clipboard write failed', err);
+  }
+  const editor = findReplyEditor();
+  if (editor && (await fillEditor(editor, text))) return 'inserted';
+  return copied ? 'copied' : 'failed';
 }
 
 async function typeClipboardIntoFocused(): Promise<void> {
@@ -3691,7 +3700,9 @@ async function typeClipboardIntoFocused(): Promise<void> {
     console.warn('[stratus] clipboard read failed', err);
     return;
   }
-  await typeTextInto(target, text);
+  // Already on the clipboard by definition — a failed fill costs nothing here,
+  // the user just presses ⌘V themselves.
+  if (text) await fillEditor(target, text);
 }
 
 // X's reply composer is a Draft.js contenteditable tagged tweetTextarea_0 (the
@@ -3717,10 +3728,8 @@ async function autoTypeReplyEnabled(): Promise<boolean> {
 }
 
 function onTypeShortcut(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && typingInFlight) {
-    cancelTyping = true;
-    return;
-  }
+  // Escape used to abort a multi-second character stream; a fill is a single
+  // operation now, so there is nothing left to interrupt.
   // Cmd+B (Mac) — modifier-exact so we don't swallow unrelated combos.
   const isCmdB =
     e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'b' || e.key === 'B');

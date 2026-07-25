@@ -28,7 +28,7 @@ Step by step:
 5. **Click Save.** The **Save** button stays disabled until both fields have something in them. When you click it, the button briefly reads **Saving…**, then a green **Saved** appears next to it.
 6. **The other tabs unlock.** As soon as both fields are saved and non-empty, every other tab (Today, People, Calendar, Composer, and so on) becomes clickable. You're connected.
 
-> **Tip:** The four toggle switches lower down (pillars, auto-type, passive capture, passive harvest) save **the instant you click them** — they don't wait for the Save button. So do the Appearance dropdowns. The **Save** button exists only to commit the API URL and bearer token together.
+> **Tip:** The four toggle switches lower down (pillars, auto-fill, passive capture, passive harvest) save **the instant you click them** — they don't wait for the Save button. So do the Appearance dropdowns. The **Save** button exists only to commit the API URL and bearer token together.
 
 ---
 
@@ -71,10 +71,11 @@ Four checkboxes sit between the connection fields and the harvest section. Each 
 - **When to turn it on:** if you want your replies to consistently reinforce your core topics. Leave it off if you'd rather each reply just react naturally to whatever it's answering.
 - **Note:** the content pillars themselves are owned and edited under the **Niche** card (below) — they belong to your active niche, not to a global list.
 
-### Auto-type Reply Master drafts into the reply box (default off)
+### Auto-fill Reply Master drafts into the reply box (default off)
 
-- **What it does:** when the AI drafts a reply for you, this controls how the draft reaches the X reply box. **Off** (the default) copies the draft to your clipboard so you paste it yourself. **On** makes the extension "type" the draft character by character straight into the focused reply box on X.
-- **When to turn it on:** if you'd rather skip the paste step. Leave it off if you prefer to review-and-paste, or if auto-typing interferes with how you work.
+- **What it does:** when the AI drafts a reply for you, this controls how the draft reaches the X reply box. **Off** (the default) copies the draft to your clipboard so you paste it yourself. **On** also drops it straight into the focused reply box on X, in one operation.
+- **When to turn it on:** if you'd rather skip the paste step. Leave it off if you prefer to review-and-paste.
+- **The draft is always on your clipboard either way.** X's composer occasionally refuses a programmatic fill (it re-renders from its own internal model). When that happens stratus leaves the reply box **empty** rather than half-filled and tells you to press ⌘V — never a mangled composer you have to clean out by hand.
 
 ### Passive contact capture from hover cards (default on)
 

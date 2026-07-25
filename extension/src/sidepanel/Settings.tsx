@@ -235,7 +235,7 @@ export function SettingsPanel(): JSX.Element {
                     void patchSettings({ autoTypeReplyDraft: v });
                   }}
                 />
-                <span>Auto-type Reply Master drafts into the reply box (default off)</span>
+                <span>Auto-fill Reply Master drafts into the reply box (default off)</span>
               </label>
 
               <label className="row voice-toggle">
