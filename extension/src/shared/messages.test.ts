@@ -20,10 +20,22 @@ describe('isRadarConfirm', () => {
     expect(isRadarConfirm(msg)).toBe(true);
   });
 
-  test('rejects the wrong type, a missing/non-string tweetId, and junk', () => {
+  // RD.2 — the picked angle rides along so the confirm can record it as the
+  // human edit. Optional: a caller that doesn't pick sends no text at all.
+  test('accepts the optional picked-angle text', () => {
+    const msg: RadarConfirm = {
+      type: 'stratus/radar-confirm',
+      tweetId: '123',
+      text: 'the contrarian variant',
+    };
+    expect(isRadarConfirm(msg)).toBe(true);
+  });
+
+  test('rejects the wrong type, a missing/non-string tweetId, a non-string text, and junk', () => {
     expect(isRadarConfirm({ type: 'stratus/radar-click', tweetId: '1' })).toBe(false);
     expect(isRadarConfirm({ type: 'stratus/radar-confirm' })).toBe(false);
     expect(isRadarConfirm({ type: 'stratus/radar-confirm', tweetId: 1 })).toBe(false);
+    expect(isRadarConfirm({ type: 'stratus/radar-confirm', tweetId: '1', text: 7 })).toBe(false);
     expect(isRadarConfirm(null)).toBe(false);
     expect(isRadarConfirm('stratus/radar-confirm')).toBe(false);
   });

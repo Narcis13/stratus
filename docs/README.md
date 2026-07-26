@@ -37,7 +37,8 @@ The tab rail is grouped into five sections — **Operate**, **Author**, **Librar
 
 | Tab | What it's for |
 |---|---|
-| **[Today](./today-tab.md)** | Your home screen — "what do I do right now": launch room, quests, goals, follow-up queue, conversations, radar, targets, fans, follower trend, account health, today's plan, spend, and the Sunday digest. |
+| **[Today](./today-tab.md)** | Your home screen — "what do I do right now": launch room, quests, goals, follow-up queue, conversations, targets, fans, follower trend, account health, today's plan, spend, and the Sunday digest. |
+| **[Radar](./radar-tab.md)** | Your reply queue — hot/warm tweets caught live while you browse X ($0), ranked; one Grok call drafts three angles for the whole queue, and clicking the angle you want copies it and opens the tweet. |
 | **[People](./people-tab.md)** | Your CRM — one profile ("dossier") per person you've encountered, with an auto-advancing relationship stage, notes, past exchanges, AI icebreakers and grounded DM drafts. Also holds the **Following** subtab for roster hygiene. |
 | **[Me](./me-tab.md)** | Your living personal context — facts, events, emotions and notes with freshness windows, plus the goals you're chasing. Everything here is injected into the drafting prompts, and a **"What the AI sees"** preview shows the exact block. |
 | **[Channels](./channels-tab.md)** | Topics as places — group people, saved tweets, ideas, and your own post performance by subject on one screen. |
@@ -100,7 +101,7 @@ stratus also decorates the pages you're already reading. These aren't tabs — t
 
 ## A few terms you'll meet
 
-- **Band (hot / warm / skip)** — stratus scores a tweet by how much reach it's getting (views, replies, age, velocity) to decide whether replying to it is worth your time and money. See **[Replies](./replies-tab.md)**.
+- **Band (hot / warm / skip)** — stratus scores a tweet by how much reach it's getting (views, replies, age, velocity) to decide whether replying to it is worth your time and money. See **[Replies](./replies-tab.md)** and **[Radar](./radar-tab.md)**.
 - **Relationship stage** — stranger → noticed → engaged → responded → mutual → ally, auto-advancing as you interact. See **[People](./people-tab.md)**.
 - **Content pillar** — one of your (editable) core themes; your original posts are organized around them. See **[Voice](./voice-tab.md)** and **[Composer](./composer-tab.md)**.
 - **In-band target** — an account roughly 2–10× your follower size; the people most worth replying to. See **[Today](./today-tab.md)**.

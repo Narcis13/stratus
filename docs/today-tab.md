@@ -1,6 +1,6 @@
 # Today Tab
 
-The **Today** tab is stratus's home screen — the "what do I do right now?" dashboard. It opens by default when you open the side panel, and it stacks everything that needs your attention into one scrollable view: a live post you just published, the replies you owe, hot tweets worth jumping on, people who noticed you, your follower trend, your daily to-do list, and a running tally of what you've spent. You don't have to click into other tabs to know what today looks like — Today answers that on its own.
+The **Today** tab is stratus's home screen — the "what do I do right now?" dashboard. It opens by default when you open the side panel, and it stacks everything that needs your attention into one scrollable view: a live post you just published, the replies you owe, people who noticed you, your follower trend, your daily to-do list, and a running tally of what you've spent. You don't have to click into other tabs to know what today looks like — Today answers that on its own. (Hot tweets worth jumping on live one tab down, in **[Radar](./radar-tab.md)** — it's live-updating and long-dwell, so it got its own room.)
 
 Nothing on this tab posts, replies, or DMs for you. Every action that touches X ends with you copying text and pasting it into X yourself (or opening a tweet in a new tab). stratus drafts, ranks, and reminds; you stay the one who actually speaks.
 
@@ -12,6 +12,7 @@ stratus is a personal growth-and-CRM tool for X (Twitter). It schedules your pos
 
 The other tabs are where you *do* focused work:
 
+- **Radar** — the reply queue: hot/warm tweets caught while you browsed, batch-drafted three ways.
 - **Composer / Calendar** — write and schedule posts.
 - **Voice** — save other people's tweets for style reference; manage your content "pillars."
 - **People** — the CRM: one page ("dossier") per person you've ever interacted with.
@@ -24,7 +25,7 @@ A few pieces of vocabulary used throughout this tab (explained again in context 
 
 | Term | Meaning |
 |---|---|
-| **Band** | A verdict the extension computes for each tweet as you scroll X: **hot** ("reply now"), **warm** ("worth watching"), or **skip** ("thread's too deep, you'd be buried"). Based on the tweet's views, reply count, age, how fast it's gaining views, and whether it's "reply-bait." |
+| **Band** | A verdict the extension computes for each tweet as you scroll X: **hot** ("reply now"), **warm** ("worth watching"), or **skip** ("thread's too deep, you'd be buried"). Based on the tweet's views, reply count, age, how fast it's gaining views, and whether it's "reply-bait." Banded tweets queue up in **[Radar](./radar-tab.md)**. |
 | **Profile visits** (a.k.a. profile clicks) | When someone taps your name or avatar from one of your tweets to look at your profile. This is the leading sign of a potential new follower — it's the metric stratus watches most. |
 | **Open loop** | A conversation where *the last word is theirs* and you haven't answered — you "owe" a reply. |
 | **Chain** | An open loop where the person replied to *one of your replies*. This is the high-value moment (internally called "the 75x moment") — someone re-engaging with you directly. |
@@ -47,7 +48,7 @@ Refresh does **not** re-fetch every section. Several sections load their own dat
 
 - **Do Next**, **Targets**, and **Top Fans** each load once when the tab opens. To force them to reload, switch to another tab and back.
 - **Conversations (Inbox)** has its own **Refresh** button (which also pulls new mentions from X — see below).
-- **Radar** and **Launch Room** are live — they update themselves from browser session storage as you browse X, with no button needed.
+- **Launch Room** is live — it updates itself from browser session storage as you browse X, with no button needed (so does the **[Radar](./radar-tab.md)** tab next door).
 - **Sunday Digest** loads automatically on Sundays and has its own button the rest of the week.
 
 If loading the Brief fails, a red error line appears just under the header; the rest of the tab still works.
@@ -198,38 +199,7 @@ When a thread is an open loop, expanding it reveals the reply workflow:
 
 Empty state: *"No conversations yet. Refresh pulls new mentions (~$0.001 each)."*
 
-### 7. Radar
-
-**When it appears:** always present, fed live from your browsing session. **This is $0 and free-flowing.** As you scroll X, the extension quietly scores each tweet's **band** (hot/warm/skip). Every **hot** or **warm** tweet you scroll past gets added to the Radar queue here, so a good reply opportunity doesn't evaporate the moment it leaves your screen. You can also **pin any tweet regardless of band** with the round **⊕ "add to Radar"** button that sits on every tweet's action row on x.com — "I want to reply to this one, period." A pinned tweet gets a **`manual`** band chip and ranks at the very top of the queue. (The queue lives in browser session memory and clears when you close the browser — though drafted replies are saved on the server and rehydrate after a restart.)
-
-Rows are ranked by: **manually pinned** first, then **who the author is** (an ally/mutual/target outranks a stranger), then band (hot before warm), then how fast the tweet is gaining views, then recency.
-
-**Header actions:**
-
-- **Draft replies (N)** — makes **one** Grok call that drafts a reply — three angle variants (extends / contrarian / debate) — for every un-drafted tweet in the queue (**20 at a time by default**). The cost of that single call is shown afterward. Each tweet then shows its ready reply (the first variant), and drafts survive a browser restart with all three variants intact.
-- **Clear** — dismisses everything currently shown (so it won't come back).
-- **⚙** — the batch size. Two numbers live in there: the radar's own draft cap, and the batch cap the *server* enforces. The click sends the lower of the two, so raising one past the other can't buy you a refused click. What lands on the radar at all is the **Reply band** group in Settings → Tuning — the same twelve thresholds the on-page badge uses, which is why the badge can never promise a draft the server then refuses.
-
-**Two tabs:**
-
-- **Queue** — the not-yet-worked opportunities, split into **Reply ready** (already has a drafted reply) and **New** (no reply yet).
-- **Clicked** — tweets whose drafted reply you've already copied (they move here so the queue stays the fresh set).
-
-**Each Radar row shows:**
-
-- A **band chip** — `hot`, `warm`, or `manual` (a tweet you pinned with ⊕).
-- The **author** (a link to their dossier).
-- A **tier chip** if the author is on your roster: `ally`, `mutual`, or `target` (also a dossier link) — this is *why* they outrank a louder stranger.
-- **reply ready** if a reply's been drafted.
-- **✕** to dismiss the row (done, or not worth it — dismissed tweets never re-enter the queue).
-- The **tweet text** as a link. If a reply has been drafted, **clicking the link copies that reply to your clipboard** (and opens the tweet in a new tab) — so you land on X with your reply ready to paste. On the tweet page, the three angle chips also appear beside the reply box: clicking one types that variant in and marks the draft **posted** (it becomes a measured `reply_drafts` row). The row then moves to the "Clicked" tab.
-- A **"why" line**, e.g. `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict (views, replies, age, views-per-minute, and whether it's reply-bait). The age keeps ticking while it sits in the queue.
-- The **drafted reply text** (once drafted), with a hint that opening the tweet copies it.
-- A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.
-
-Empty state: *"Browse X — hot/warm tweets you scroll past queue up here."*
-
-### 8. Targets
+### 7. Targets
 
 **When it appears:** loads independently when the tab opens. This is your **roster of in-band accounts** — saved authors whose follower count is 2–10× yours, the sweet spot for replies that get noticed and reciprocated. The heading shows the count and the exact follower band (e.g. *"1.2k–6.0k followers"*).
 
@@ -244,7 +214,7 @@ The header **⚙** edits that window — and it's the *same* number the **Do Nex
 
 Empty states: *"No account snapshot yet."* (stratus sizes the band off your own follower count, which the first 03:00 UTC pass records), or *"No saved authors in the 2–10x band."* with a hint to save authors from their profile page.
 
-### 9. Top Fans
+### 8. Top Fans
 
 **When it appears:** loads independently when the tab opens. These are **people who already notice you** — ranked by how many times they've mentioned or replied to you over a trailing window.
 
@@ -255,14 +225,14 @@ Empty states: *"No account snapshot yet."* (stratus sizes the band off your own 
 
 Empty state: *"No inbound in the last 30 days."*
 
-### 10. Followers KPI and conversion line
+### 9. Followers KPI and conversion line
 
 **When it appears:** whenever the Brief loaded. From the Brief.
 
 - A big **follower number**, with a **+N / 7d** delta (green up, red down) and a small **sparkline** of your recent follower trend.
 - Below it, a **conversion line** (when there's enough data): e.g. *"1.2k profile visits → +34 followers · 2.8% 7d · 3.1% 28d."* This answers "is my profile converting the attention it gets?" — of the people who visited your profile, what fraction turned into follows, over the last 7 days (and 28 days when available). It only shows once you've had at least 20 profile visits in the window.
 
-### 11. Pinned post watch
+### 10. Pinned post watch
 
 **When it appears:** **only when there's a nudge to make** — otherwise completely absent. Your pinned tweet is the first thing profile visitors see, so stratus watches it. Two possible nudges (either or both):
 
@@ -271,7 +241,7 @@ Empty state: *"No inbound in the last 30 days."*
 
 Pinning is manual in the X app — these are reminders, not actions.
 
-### 12. Account health
+### 11. Account health
 
 **When it appears:** **only when something actually fired** — on a normal day this section does not exist. That silence is the feature: an always-visible "all clear" panel trains you to stop reading it.
 
@@ -291,21 +261,21 @@ Every threshold is an **opening guess**, and each rule reports at most one row �
 
 One thing it deliberately doesn't do: thread tails don't count as a posting burst. They're published as self-replies, so a six-tweet thread stays one post as far as this card is concerned.
 
-### 13. Today's plan
+### 12. Today's plan
 
 **When it appears:** whenever the Brief loaded. From the Brief. Two parts:
 
 - **Scheduled posts today** — each with its time, a status badge (`pending`, `manual`, `posted`, etc.), and the post text. A `manual` badge (with a paste-hint on hover) marks a post you publish by hand rather than through the API. If nothing's scheduled: *"Nothing scheduled today."*
 - **Open slots (gaps)** — the recommended posting times ("anchors") for today that you *haven't* filled, ranked highest-value first. Each shows the hour and, when there's enough history, the average views-per-day that time slot has earned (`2.1k avg views/day · n=6`), or *"no data (n=…)"* when the sample's too small to advise. If every slot is filled you'll see *"All N slots filled."*
 
-### 14. Replies quota
+### 13. Replies quota
 
 **When it appears:** whenever the Brief loaded. From the Brief. Tracks the reply side of the 70/30 doctrine.
 
 - A **progress bar** and label like **7 / 10–20 today** — replies you've posted today against the daily target range. The bar turns green once you hit the minimum.
 - A **week line**: *"Week: 42 replies · 12 posts — 78% replies (target 70%)."* This is where you see whether your reply-to-post mix matches the 70/30 doctrine over the week.
 
-### 15. Yesterday
+### 14. Yesterday
 
 **When it appears:** whenever the Brief loaded. From the Brief. Yesterday's published output with measured numbers:
 
@@ -313,17 +283,17 @@ One thing it deliberately doesn't do: thread tails don't count as a posting burs
 - If a tweet hasn't been measured yet, it shows *"awaiting 03:00 UTC snapshot"* — stratus reads each tweet's metrics once, in a daily 3 AM UTC pass.
 - If you published nothing: *"Nothing published yesterday."*
 
-### 16. Profile-click leaders (7d)
+### 15. Profile-click leaders (7d)
 
 **When it appears:** only when there's at least one leader — otherwise absent. Your tweets from the last 7 days that earned the most **profile visits** (the follow-driving metric). Each shows the text, profile-visit count, views, and whether it's a post or reply.
 
 For **posts** (not replies) there's a **quote re-up** button: it drafts three fresh quote-tweet takes on that proven winner via Grok (roughly **$0.006**), landing them as draft rows in your Calendar. Nothing posts until you schedule one. A status line confirms *"3 quote drafts in the calendar ($0.0063)."*
 
-### 17. Spend today (UTC)
+### 16. Spend today (UTC)
 
 **When it appears:** whenever the Brief loaded. From the Brief. Today's API spend, split by source: *"X $0.0120 · Grok $0.0043 · total $0.0163."* Note this section is anchored to the **UTC billing day** (unlike the rest of the tab, which uses your local day), so it lines up with X's billing.
 
-### 18. Sunday Digest ("This week")
+### 17. Sunday Digest ("This week")
 
 **When it appears:** always present at the bottom. On **Sundays** it loads automatically; any other day it waits behind a **"Read the week's digest"** button.
 
@@ -339,13 +309,12 @@ This is the coach's weekly note. It makes one Grok call (roughly **$0.01**) to n
 
 ## Tuning Today from Today (the ⚙ gears)
 
-Five section headers carry a **⚙**. Each one opens a small card of exactly the knobs that shape that section — the same knobs, stored in the same place, as **Settings → Tuning**. Editing one here and looking at it there shows the identical value; there is no separate "Today config."
+Four section headers carry a **⚙**. Each one opens a small card of exactly the knobs that shape that section — the same knobs, stored in the same place, as **Settings → Tuning**. Editing one here and looking at it there shows the identical value; there is no separate "Today config."
 
 | Gear | What it holds | Notes |
 |---|---|---|
 | **Today's quests** | Originals per day · neglected targets per day · neglected-after (days) · launch attend window (min) | The *reply* quest is absent on purpose — your niche's reply band (or an active commitment) owns that number. |
 | **Do next** | Rows to show · snooze length (h) | Which follow-ups qualify is the **Follow-ups** group in Settings → Tuning. |
-| **Radar** | Radar draft cap · AI batch reply cap | A click sends the **lower** of the two. What reaches the radar at all is the **Reply band** group. |
 | **Targets** | Neglected target after (days) | The same key the Do-next queue and the Sunday digest read. The 2–10× band is niche-owned. |
 | **Top fans** | Fan amber rank · fan unacknowledged after (days) | Moves the nudge only, never the ranking. |
 
@@ -366,7 +335,7 @@ Five section headers carry a **⚙**. Each one opens a small card of exactly the
 1. Open the panel — you land on **Today**.
 2. Start with **Do Next**: clear any **chain** rows first (someone re-engaged you — reply fast via the ↗ link), then **DM** and neglected **target/ally** rows. Snooze (zz) anything you can't get to.
 3. Drop to **Conversations** and click **Refresh** to pull any new mentions (costs ~$0.001 each; you get 4/day). Work the open loops top-down: expand a thread → **Draft reply** → pick a variant → **Copy** → paste into X → **Done**.
-4. Check **Radar** for hot/warm tweets you scrolled past. Hit **Draft replies** to batch-draft them in one Grok call, then click each tweet (which copies its reply) and paste on X.
+4. Switch to the **[Radar](./radar-tab.md)** tab for hot/warm tweets you scrolled past. Hit **Draft replies** to batch-draft them in one Grok call, then click the angle you want on each row (which copies it and opens the tweet) and paste on X.
 5. Glance at **Targets** and **Top Fans** for amber lines — neglected people who deserve a reply.
 6. Check the **Replies quota** bar to see how close you are to today's target.
 
@@ -380,10 +349,7 @@ Five section headers carry a **⚙**. Each one opens a small card of exactly the
 
 ### Act on a Radar opportunity
 
-1. While browsing X normally, hot/warm tweets accumulate in **Radar** automatically ($0).
-2. In the **Radar** section, click **Draft replies (N)** — one Grok call drafts a reply for each queued tweet.
-3. Each row now says **reply ready**. Click the tweet text: this copies the reply to your clipboard *and* opens the tweet in a new tab. The row moves to **Clicked**.
-4. On X, paste and send. If a tweet isn't worth it, hit **✕** to dismiss it (it won't come back).
+That loop lives on its own tab now — see **[Radar → Workflow](./radar-tab.md#workflow-work-the-radar)**. In short: hot/warm tweets pile up while you browse ($0), **Draft replies (N)** writes three angles for each in one Grok call, and clicking the angle you want copies it and opens the tweet.
 
 ### The 30 minutes after a post goes live (Launch Room)
 
@@ -407,19 +373,19 @@ Five section headers carry a **⚙**. Each one opens a small card of exactly the
 ## Tips and good to know
 
 - **Posting and DMs are always manual.** Every "Draft" / "Copy" flow ends with you pasting into X yourself. stratus never publishes, replies, or messages on your behalf. This is deliberate — the words stay yours.
-- **Which clicks cost real money.** Most of the tab is free ($0): reading the Brief, Do Next, Conversations list, Radar rendering, Targets, Top Fans, the digest *facts*, and every **canned ▾** pick (premade replies use no AI at all). The buttons that spend are:
+- **Which clicks cost real money.** Most of the tab is free ($0): reading the Brief, Do Next, Conversations list, Targets, Top Fans, the digest *facts*, and every **canned ▾** pick (premade replies use no AI at all). The buttons that spend are:
 
   | Action | Where | Rough cost |
   |---|---|---|
   | Refresh / pull mentions | Conversations, Launch Room "Pull from X" | ~$0.001 per mention |
   | Draft a reply (single) | Conversations, Launch Room | ~$0.002–$0.004 (Grok) |
-  | Draft replies (batch) | Radar | one Grok call, shown after |
+  | Draft replies (batch) | the **[Radar](./radar-tab.md)** tab | one Grok call, shown after |
   | Opener / icebreaker | Do Next | ~$0.005 (Grok) |
   | Quote re-up draft | Do Next "reup", Profile-click leaders | ~$0.006 (Grok) |
   | Digest "Rewrite" | Sunday Digest | ~$0.01 (Grok) |
 
   The **Spend today** section is your running meter for exactly this.
-- **Refresh only reloads the Brief.** To reload Do Next, Targets, or Top Fans, switch tabs and come back. Conversations and the Digest have their own buttons; Radar and Launch Room are live.
+- **Refresh only reloads the Brief.** To reload Do Next, Targets, or Top Fans, switch tabs and come back. Conversations and the Digest have their own buttons; the Launch Room is live.
 - **Mention refreshes are rate-limited** to 4/day on your side (6/day on the server). Spend them when it counts.
 - **The daily 03:00 UTC snapshot** is why yesterday's tweets sometimes read *"awaiting 03:00 UTC snapshot"* — stratus measures each tweet's numbers once a day rather than polling constantly (to keep costs near zero).
 - **Time zones:** everything on Today uses your local day *except* the Spend section, which uses the UTC billing day to match X's billing.

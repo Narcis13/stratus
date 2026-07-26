@@ -371,7 +371,7 @@ async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
 // returned draft id onto the sighting so the on-page paste flow (RU.7) can PATCH
 // that row to `posted`. Best-effort (§7.8): a failed confirm logs a warn and the
 // click UX proceeds (the reply was already copied to the clipboard).
-async function confirmDraft(tweetId: string): Promise<void> {
+async function confirmDraft(tweetId: string, text?: string): Promise<void> {
   const res = await handleApiRequest({
     type: 'stratus/api',
     method: 'POST',
@@ -381,9 +381,25 @@ async function confirmDraft(tweetId: string): Promise<void> {
     if (res.code !== 'unconfigured') console.warn('[stratus] radar confirm failed', res.code);
     return;
   }
-  const draftId = (res.data as { id?: string } | undefined)?.id;
+  const row = res.data as { id?: string; replyText?: string } | undefined;
+  const draftId = row?.id;
   if (typeof draftId !== 'string') return;
   await enqueueRadar(() => stampDraftId(tweetId, draftId));
+  // RD.2: the panel now picks an angle before copying, so the text on the
+  // clipboard may not be the primary — record it the way the on-page chip does
+  // (replyTextEdited only; the posted flip stays with the paste report). No
+  // status change, so this can't trip the transition guard.
+  if (text !== undefined && text !== row?.replyText) {
+    const patch = await handleApiRequest({
+      type: 'stratus/api',
+      method: 'PATCH',
+      path: `/x/replies/${draftId}`,
+      body: { replyTextEdited: text },
+    });
+    if (!patch.ok && patch.code !== 'unconfigured') {
+      console.warn('[stratus] radar confirm angle edit failed', patch.code);
+    }
+  }
 }
 
 // Stamp the confirmed reply_drafts id onto its sighting. Single writer, same as
@@ -921,7 +937,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (isRadarConfirm(msg)) {
-    void confirmDraft(msg.tweetId).then(
+    void confirmDraft(msg.tweetId, msg.text).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
     );

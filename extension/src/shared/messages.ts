@@ -118,12 +118,21 @@ export function isRadarClick(msg: unknown): msg is RadarClick {
 export interface RadarConfirm {
   type: 'stratus/radar-confirm';
   tweetId: string;
+  /** The angle the human took in the card's tab strip (RD.2). Recorded as
+   *  `replyTextEdited` when it differs from the primary — same semantics as the
+   *  on-page chip's paste report, so "what went out" isn't always variants[0].
+   *  Absent on callers that don't pick (nothing is then edited). */
+  text?: string;
 }
 
 export function isRadarConfirm(msg: unknown): msg is RadarConfirm {
   if (typeof msg !== 'object' || msg === null) return false;
   const m = msg as Record<string, unknown>;
-  return m.type === 'stratus/radar-confirm' && typeof m.tweetId === 'string';
+  return (
+    m.type === 'stratus/radar-confirm' &&
+    typeof m.tweetId === 'string' &&
+    (m.text === undefined || typeof m.text === 'string')
+  );
 }
 
 // Content script → background (RU.7): fetch a tweet's radar variants to render

@@ -1188,14 +1188,29 @@ button.danger:hover:not(:disabled) {
   letter-spacing: 0.04em;
   color: var(--strat-band-hot);
 }
-/* RU.4 — "N angles" hint next to "reply ready"; the full picker lives on the
-   tweet page (Task 7), so the panel stays light. */
-.radar-angles {
+/* RD.2 — the RU.4 angle picker, in the card: one tab per variant above the
+   reply body. Smaller than the Queue/Clicked tabs (.radar-tab) — these are
+   inside a row, not the section header. */
+.radar-angle-tabs {
+  display: flex;
+  gap: 4px;
+  margin-top: 4px;
+}
+.radar-angle-tab {
   font-size: 9px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
   color: var(--muted);
+}
+.radar-angle-tab.active {
+  color: var(--strat-band-hot);
+  border-color: color-mix(in srgb, var(--strat-band-hot) 55%, transparent);
+  background: color-mix(in srgb, var(--strat-band-hot) 10%, transparent);
 }
 
 /* S0.3 roster tier chip — reuses .stage-chip / .stage-ally / .stage-mutual,
@@ -1220,6 +1235,17 @@ button.danger:hover:not(:disabled) {
   border-radius: 4px;
   padding: 6px 8px;
   margin-top: 2px;
+}
+/* RD.2 — the picked angle IS the action: clicking it copies and opens the
+   tweet, so the reply body is an anchor, not a passive block. */
+.radar-reply-pick {
+  display: block;
+  text-decoration: none;
+  cursor: pointer;
+}
+.radar-reply-pick:hover {
+  border-left-color: var(--strat-band-hot);
+  background: color-mix(in srgb, var(--strat-band-hot) 14%, transparent);
 }
 .radar-reply-hint {
   display: block;

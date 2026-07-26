@@ -1581,9 +1581,15 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
 //
 // When a radar-drafted tweet's status page is open, inject a strip of angle
 // chips (extends / contrarian / debate) next to its action row. Clicking a chip
-// types that variant into the reply box (clipboard fallback) and marks the
-// draft posted — the radar reply becomes a measured reply_drafts row. Posting
-// stays manual (§7.28): the chip only fills the composer; the human hits Reply.
+// copies that variant and marks the draft posted — the radar reply becomes a
+// measured reply_drafts row. Posting stays manual (§7.28): the chip only puts
+// the text on the clipboard; the human pastes it and hits Reply.
+//
+// RD.3: the chip deliberately does NOT fill X's composer. Even the verified
+// single-shot fill (`deliverToReplyBox`) lands wrong often enough on this
+// surface — a half-filled Draft.js editor is worse than a clean ⌘V, and the
+// text is on the clipboard either way. The Reply Master button and the canned
+// picker still fill, since a failed fill there falls back the same way.
 
 // tweetId → variants (null = fetched, none). Fetched once per tweetId (a drafted
 // tweet's variants don't change within a session; a page reload clears this).
@@ -1684,11 +1690,10 @@ async function onVariantChipClick(
   btn.dataset.active = '1';
   const hint = strip.querySelector<HTMLElement>(`.${VARIANT_HINT_CLASS}`);
 
-  const mode = await deliverToReplyBox(text);
-  if (hint) hint.textContent = mode === 'inserted' ? '' : DELIVER_HINT[mode];
+  if (hint) hint.textContent = DELIVER_HINT[await copyForPaste(text)];
 
   // Confirm-if-needed + flip to posted happens in the background (single
-  // Authorization owner). Best-effort — the text is already in the composer.
+  // Authorization owner). Best-effort — the text is already on the clipboard.
   const msg: RadarVariantPasted = { type: 'stratus/radar-variant-pasted', tweetId, text };
   try {
     await chrome.runtime.sendMessage(msg);
@@ -3670,6 +3675,19 @@ async function fillEditor(target: HTMLElement, text: string): Promise<boolean> {
     return false;
   } finally {
     typingInFlight = false;
+  }
+}
+
+/** Clipboard only (RD.3) — the delivery the radar variant chips use. Same first
+ *  step as `deliverToReplyBox`, minus the fill: on that surface the fill was the
+ *  unreliable part, and a mangled composer costs more than a ⌘V. */
+async function copyForPaste(text: string): Promise<DeliverMode> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return 'copied';
+  } catch (err) {
+    console.warn('[stratus] clipboard write failed', err);
+    return 'failed';
   }
 }
 

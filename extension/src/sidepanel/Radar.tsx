@@ -3,10 +3,15 @@
 // worked queue — band, then views-per-minute, then recency. Each row shows the
 // "why" (views · replies · age · bait) so judgment stays with the human.
 //
+// Its own Operate tab (RD.1) — it used to be the sixth section of Today, but
+// it's the surface with the longest dwell time in the daily loop and the only
+// live-updating one, so it stopped renting space in a page that reloads a brief.
+//
 // "Draft replies" makes ONE Grok call (POST /x/replies/generate-batch) for the
-// queued tweets and attaches a reply to each through the background (the
-// buffer's single writer). A drafted row is marked, shows its reply, and
-// opening the tweet copies that reply to the clipboard — paste, done.
+// queued tweets and attaches all three angle variants to each through the
+// background (the buffer's single writer). A drafted row shows those angles as
+// tabs *in the card* (RD.2): clicking the one you want copies it, moves the row
+// to Clicked, and opens the tweet — paste, done.
 
 import { type JSX, useEffect, useState } from 'react';
 import { formatCount } from '../replyBand.ts';
@@ -30,7 +35,7 @@ import { ChannelTagPicker } from './ChannelTags.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
-import type { SettingsEditor } from './settingsEditor.ts';
+import { type SettingsEditor, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
 import { EmptyState } from './ui/EmptyState.tsx';
 import { Section } from './ui/Section.tsx';
@@ -104,8 +109,11 @@ function markClicked(tweetId: string): void {
 // Promote this row's radar draft into a real reply_drafts row (RU.6) — the
 // background POSTs the confirm endpoint and stamps the returned draft id onto
 // the sighting for the on-page paste flow (RU.7). Best-effort, like markClicked.
-function confirmDraft(tweetId: string): void {
-  const msg: RadarConfirm = { type: 'stratus/radar-confirm', tweetId };
+// `text` is the angle the human actually took (RD.2): the background records it
+// as the human edit when it isn't the primary, so "what went out" isn't always
+// variants[0] just because the picker moved into the card.
+function confirmDraft(tweetId: string, text: string): void {
+  const msg: RadarConfirm = { type: 'stratus/radar-confirm', tweetId, text };
   void (async () => {
     try {
       await chrome.runtime.sendMessage(msg);
@@ -113,6 +121,24 @@ function confirmDraft(tweetId: string): void {
       console.warn('[stratus] radar confirm failed', err);
     }
   })();
+}
+
+/** RD.1 — the Operate tab shell. The Section below carries the heading and the
+ *  header actions, so there's no second panel title to keep in sync; the tab
+ *  owns the settings editor Today used to hand down. */
+export function RadarPanel({
+  settings,
+  onOpenPerson,
+}: {
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
+  const editor = useSettingsEditor(settings);
+  return (
+    <div className="panel">
+      <RadarSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
+    </div>
+  );
 }
 
 export function RadarSection({
@@ -266,7 +292,7 @@ export function RadarSection({
       ) : clicked.length === 0 ? (
         <EmptyState
           line="Replies you copy land here — most recent first."
-          hint="Opening a drafted tweet copies its reply and moves the row across."
+          hint="Clicking the angle you want copies it, opens the tweet, and moves the row across."
         />
       ) : (
         <ul className="radar-list">
@@ -316,16 +342,21 @@ function RadarRow({
   // which only exists once a reply was drafted — so the picker shows then.
   // Session-local mirror; the persisted copy is what the aggregate reads.
   const [tags, setTags] = useState<string[]>([]);
+  // RD.2: the angle picker moved from the tweet page into the card. Index into
+  // `angles`, clamped on read — a re-sight can't shrink the set (mergeSightings
+  // keeps variants), but a rehydrated row can arrive with fewer.
+  const [angleIdx, setAngleIdx] = useState(0);
+  const angles = rowAngles(s);
+  const picked = angles[angleIdx] ?? angles[0];
 
-  // Opening a drafted tweet copies its reply (user gesture → clipboard allowed)
-  // and moves the row to the Clicked view; the anchor's default still opens the
-  // tweet in a new tab.
-  const onOpen = (): void => {
-    if (!s.reply) return;
+  // Taking an angle: copy it (a click is a user gesture → clipboard allowed),
+  // move the row to Clicked, and promote the draft with the text that will
+  // actually be pasted. The anchor's default still opens the tweet in a new tab.
+  const onPick = (text: string): void => {
     markClicked(s.tweetId);
-    confirmDraft(s.tweetId);
+    confirmDraft(s.tweetId, text);
     void navigator.clipboard
-      .writeText(s.reply)
+      .writeText(text)
       .then(() => {
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1500);
@@ -358,11 +389,6 @@ function RadarRow({
           </button>
         )}
         {s.reply && <span className="radar-ready">reply ready</span>}
-        {s.variants && s.variants.length > 1 && (
-          <span className="radar-angles" title="Angle variants ready on the tweet page">
-            {s.variants.length} angles
-          </span>
-        )}
         <button
           type="button"
           className="radar-dismiss"
@@ -372,15 +398,39 @@ function RadarRow({
           ✕
         </button>
       </div>
-      <a className="radar-text" href={s.url} target="_blank" rel="noreferrer" onClick={onOpen}>
+      <a className="radar-text" href={s.url} target="_blank" rel="noreferrer">
         {s.text || s.url}
       </a>
       <div className="radar-why">{whyLine(s)}</div>
-      {s.reply && (
-        <div className="radar-reply" title="Opening the tweet copies this to your clipboard">
-          {s.reply}
-          <span className="radar-reply-hint">{copied ? 'copied ✓' : 'open → copies'}</span>
+      {angles.length > 1 && (
+        <div className="radar-angle-tabs">
+          {angles.map((v, i) => (
+            <button
+              key={`${i}:${v.angle ?? ''}`}
+              type="button"
+              className={`radar-angle-tab${i === angleIdx ? ' active' : ''}`}
+              title={v.text}
+              onClick={() => setAngleIdx(i)}
+            >
+              {v.angle ?? `variant ${i + 1}`}
+            </button>
+          ))}
         </div>
+      )}
+      {picked && (
+        <a
+          className="radar-reply radar-reply-pick"
+          href={s.url}
+          target="_blank"
+          rel="noreferrer"
+          title="Copy this angle and open the tweet"
+          onClick={() => onPick(picked.text)}
+        >
+          {picked.text}
+          <span className="radar-reply-hint">
+            {copied ? 'copied ✓' : 'click → copies + opens the tweet'}
+          </span>
+        </a>
       )}
       {s.reply && (
         <ChannelTagPicker
@@ -395,6 +445,16 @@ function RadarRow({
       )}
     </li>
   );
+}
+
+// The angles offered as tabs on a drafted row (RD.2). The full RU.4 set when
+// the batch stored it; a pre-variant / CLI row keeps its single primary with no
+// angle label (one entry never renders a tab strip anyway).
+function rowAngles(s: RadarSighting): { angle: string | null; text: string }[] {
+  if (s.variants && s.variants.length > 0) {
+    return s.variants.map((v) => ({ angle: v.angle, text: v.text }));
+  }
+  return s.reply ? [{ angle: null, text: s.reply }] : [];
 }
 
 // S0.3 chip tooltip — why this author outranks a louder rando.

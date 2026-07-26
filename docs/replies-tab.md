@@ -44,7 +44,7 @@ When you open the Replies tab and no draft is loaded yet, it reminds you of exac
 
 Other tabs in stratus surface tweets that already deserve a reply, and each has its own one-click draft button that uses the **same Grok reply engine**:
 
-- **Radar** — a live queue of hot/warm tweets stratus spotted while you browsed (plus any tweet you manually pinned with the plus-in-a-circle button). Its "Draft replies" action writes the three-variant set for the whole queue at once; opening a queued tweet copies the reply and, on the tweet page, shows the three angle chips right beside the reply box — clicking one types that variant in and **marks the draft posted** (so it becomes a measured `reply_drafts` row, exactly like a Reply Master draft).
+- **[Radar](./radar-tab.md)** (its own tab, under Operate) — a live queue of hot/warm tweets stratus spotted while you browsed (plus any tweet you manually pinned with the plus-in-a-circle button). Its "Draft replies" action writes the three-variant set for the whole queue at once, and each row shows those angles as tabs: clicking the one you want copies it and opens the tweet. The same three angles also appear as chips on the tweet's own action row on x.com — clicking a chip copies that variant (it does *not* type into X's reply box) and **marks the draft posted**, so it becomes a measured `reply_drafts` row exactly like a Reply Master draft.
 - **Conversations / Inbox** — threads where someone mentioned or replied to *you* and you owe them an answer. Each open loop has a one-click Grok draft button; you Copy, paste on X, and mark it done.
 
 These surfaces draft *in place* (right there in their own tab) rather than loading the Replies-tab editor. The Replies tab itself is fed by the Reply Master button and is where you go to **edit, re-generate, and review the full history** of your drafts. Think of that button as "start a fresh draft from the tweet I'm looking at," and the other tabs as "work through a ready-made list of opportunities."
@@ -122,7 +122,7 @@ Every generate returns **three distinct replies** — one per angle — and each
 | **contrarian** | Pushes back — offers the opposite or a sharper counter-view. |
 | **debate** | Opens a genuine back-and-forth — a pointed question or challenge. |
 
-The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian` — the same chip shape the rest of the panel uses for stages and statuses, with the picked one filled in. **Click a chip to load that variant into the editor.** This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call — see the Radar section of the Today tab.)
+The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian` — the same chip shape the rest of the panel uses for stages and statuses, with the picked one filled in. **Click a chip to load that variant into the editor.** This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call, shown as angle tabs on each row — see the **[Radar tab](./radar-tab.md)**.)
 
 ### Editing the reply
 
@@ -309,9 +309,9 @@ Two honest caveats: the bucket stays at zero until that daily pass runs (a canne
 
 ### Work a Radar opportunity into a posted reply
 
-1. Open the **Radar** section (Today tab). It's a ranked queue of hot/warm tweets stratus caught while you browsed.
-2. Either use Radar's **Draft replies** to draft the whole queue, or open a tweet and let its reply come to your clipboard.
-3. Open the tweet on X, paste, post.
+1. Open the **[Radar](./radar-tab.md)** tab (Operate, right under Today). It's a ranked queue of hot/warm tweets stratus caught while you browsed.
+2. Use Radar's **Draft replies** to draft the whole queue, then click the angle you want on a row — it's copied and the tweet opens.
+3. On X, paste, post.
 4. Mark it done. The reply is now tracked, and the person moves along in your People CRM.
 
 ### Reply to a mention (someone replied to you)

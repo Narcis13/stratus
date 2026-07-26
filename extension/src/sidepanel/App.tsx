@@ -8,6 +8,7 @@ import { IdeasPanel } from './Ideas.tsx';
 import { MePanel } from './Me.tsx';
 import { PeoplePanel } from './People.tsx';
 import { PlaybookPanel } from './Playbook.tsx';
+import { RadarPanel } from './Radar.tsx';
 import { RepliesPanel } from './Replies.tsx';
 import { SettingsPanel } from './Settings.tsx';
 import { StudioPanel, type StudioSeed } from './Studio.tsx';
@@ -18,6 +19,7 @@ import { EmptyState } from './ui/EmptyState.tsx';
 
 type Tab =
   | 'today'
+  | 'radar'
   | 'me'
   | 'people'
   | 'channels'
@@ -39,6 +41,9 @@ const TAB_GROUPS: { label: string; tabs: { id: Tab; label: string }[] }[] = [
     label: 'Operate',
     tabs: [
       { id: 'today', label: 'Today' },
+      // RD.1 — the reply queue is its own tab: it updates live off the session
+      // buffer while you browse, unlike everything else in Today.
+      { id: 'radar', label: 'Radar' },
       { id: 'people', label: 'People' },
       { id: 'me', label: 'Me' },
       { id: 'channels', label: 'Channels' },
@@ -189,6 +194,8 @@ export function App(): JSX.Element {
             onOpenPerson={openPerson}
             onMakeVisual={(text) => openStudio({ text })}
           />
+        ) : activeTab === 'radar' ? (
+          <RadarPanel settings={settings} onOpenPerson={openPerson} />
         ) : activeTab === 'people' ? (
           <PeoplePanel
             settings={settings}

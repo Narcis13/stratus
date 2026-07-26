@@ -1,8 +1,8 @@
 // The Today tab (OVERHAUL-PLAN §6.4): the growth-coach surface. One GET
 // /x/brief render — follower trend, today's slots + gaps, reply quota,
 // yesterday's numbers, and spend, so opening the panel answers "what do I
-// do next" without clicking around. Plus the Radar (§7.2): the session's
-// hot/warm reply opportunities, fed by the content script, $0.
+// do next" without clicking around. The Radar (§7.2) used to sit in here; it
+// moved to its own Operate tab in RD.1 (`Radar.tsx`).
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
 import { ConversationsSection } from './Conversations.tsx';
@@ -11,7 +11,6 @@ import { DoNextSection } from './DoNext.tsx';
 import { FansSection } from './Fans.tsx';
 import { LaunchRoomSection } from './LaunchRoom.tsx';
 import { ManualPostCardSection } from './ManualPostCard.tsx';
-import { RadarSection } from './Radar.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import { TargetsSection } from './Targets.tsx';
 import {
@@ -107,9 +106,6 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
       {/* Threaded inbox (C2) — conversations with open loops and chains first.
           Supersedes the flat §7.5 mention list. */}
       <ConversationsSection settings={settings} onOpenPerson={onOpenPerson} />
-
-      {/* Session-local (chrome.storage.session), independent of the brief fetch. */}
-      <RadarSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
 
       {/* The 2–10x reply-target roster (§7.4) — its own $0 fetch. */}
       <TargetsSection settings={settings} onOpenPerson={onOpenPerson} editor={editor} />
