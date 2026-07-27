@@ -7,6 +7,7 @@
 // Pure on purpose: no DB, no clock. routes/playbook.ts loads the rows and
 // calls these; fixtures drive the tests.
 
+import { JUDGE_VERDICT_ORDER, type JudgeVerdictLabel, deriveApproved } from '../shared/judge.ts';
 import { type CoachBand, scoreDraft } from '../shared/postCoach.ts';
 import { POST_FORMATS, type PostFormat, classifyFormat } from '../shared/postFormat.ts';
 import {
@@ -1140,6 +1141,111 @@ export function buildCoachScoreEffectiveness(
     fixSpread: fixGated ? ratio(cleanCell.medianViews, flaggedCell.medianViews) : null,
     fixProfileVisitsSpread: fixGated
       ? ratio(cleanCell.medianProfileVisits, flaggedCell.medianProfileVisits)
+      : null,
+  };
+}
+
+// ------------------------------- 15. does the LLM judge predict anything? (JD.7)
+
+/** One own original with the band the judge gave the EXACT text that shipped.
+ *  `verdictBand: null` = never judged, or judged and then edited — the link is a
+ *  read-time text hash (JD decision 6), so a post whose typo was fixed after
+ *  judging correctly reads as unjudged rather than carrying a verdict about
+ *  different words. The loader owns the hashing; this file stays clock- and
+ *  crypto-free. */
+export interface JudgeRow {
+  verdictBand: JudgeVerdictLabel | null;
+  outcome: MeasuredOutcome | null;
+}
+
+export interface JudgeBandCell extends OutcomeCell {
+  band: JudgeVerdictLabel;
+}
+
+export interface JudgeEffectiveness {
+  /** All four bands, worst→best (`JUDGE_VERDICT_ORDER`) — they partition the
+   *  JUDGED rows only, which is why `unjudged` is a sibling and not a fifth. */
+  cells: JudgeBandCell[];
+  /** Never judged, or edited after judging. Its own bucket (§7.11): folding it
+   *  into a band would put a number on "we don't know", and on this cell it is
+   *  expected to be the biggest row for months (the tool is on-demand). */
+  unjudged: OutcomeCell;
+  /** The same judged rows split two ways instead of four — `deriveApproved` is
+   *  the only other reading the verdict supports, and a 2-way split clears the
+   *  gate at half the sample. Ships BESIDE the band table for the reason SC.5's
+   *  clean/flagged does: on a small corpus the 4-way axis is too sparse to say
+   *  anything, and this one might not be. */
+  approved: OutcomeCell;
+  rejected: OutcomeCell;
+  totalPosted: number;
+  totalMeasured: number;
+  /** Highest ÷ lowest GATED band, and which two those were — null unless two
+   *  distinct bands clear the gate. Naming the pair is what keeps the number
+   *  honest: it is rarely post_now-vs-do_not_post. */
+  spread: number | null;
+  profileVisitsSpread: number | null;
+  spreadBands: { high: JudgeVerdictLabel; low: JudgeVerdictLabel } | null;
+  /** approved ÷ rejected, only when BOTH sides clear the gate. */
+  approvedSpread: number | null;
+  approvedProfileVisitsSpread: number | null;
+}
+
+/** The falsification cell for the paid judge, shipped in the same phase as the
+ *  tool (JD design, non-optional): do the posts it liked actually reach further?
+ *  x-builder — where the rubric comes from — cannot ask this, because its verdict
+ *  is never persisted. Ours is, keyed to the exact text.
+ *
+ *  Expect "insufficient data" for a long time: two gated bands is ~40 judged AND
+ *  measured originals. That is the honest alternative to shipping an unvalidated
+ *  number as advice, and nothing anywhere sorts or gates on the score (decision
+ *  4) regardless of what this cell eventually says. */
+export function buildJudgeEffectiveness(
+  rows: JudgeRow[],
+  minN = DEFAULT_MIN_CELL_N,
+): JudgeEffectiveness {
+  const byBand = new Map<JudgeVerdictLabel, Array<MeasuredOutcome | null>>();
+  const unjudged: Array<MeasuredOutcome | null> = [];
+  const approved: Array<MeasuredOutcome | null> = [];
+  const rejected: Array<MeasuredOutcome | null> = [];
+  for (const r of rows) {
+    if (r.verdictBand === null) {
+      unjudged.push(r.outcome);
+      continue;
+    }
+    const list = byBand.get(r.verdictBand) ?? [];
+    list.push(r.outcome);
+    byBand.set(r.verdictBand, list);
+    (deriveApproved(r.verdictBand) ? approved : rejected).push(r.outcome);
+  }
+  const cells = JUDGE_VERDICT_ORDER.map((band) => ({
+    band,
+    ...cellOf(byBand.get(band) ?? [], minN),
+  }));
+  const gated = cells.filter((c) => c.sufficient);
+  const low = gated[0];
+  const high = gated[gated.length - 1];
+  const pair =
+    low !== undefined && high !== undefined && low.band !== high.band ? { low, high } : null;
+  const approvedCell = cellOf(approved, minN);
+  const rejectedCell = cellOf(rejected, minN);
+  const approvedGated = approvedCell.sufficient && rejectedCell.sufficient;
+  return {
+    cells,
+    unjudged: cellOf(unjudged, minN),
+    approved: approvedCell,
+    rejected: rejectedCell,
+    totalPosted: rows.length,
+    totalMeasured: rows.filter((r) => r.outcome !== null).length,
+    spread: pair ? ratio(pair.high.medianViews, pair.low.medianViews) : null,
+    profileVisitsSpread: pair
+      ? ratio(pair.high.medianProfileVisits, pair.low.medianProfileVisits)
+      : null,
+    spreadBands: pair ? { high: pair.high.band, low: pair.low.band } : null,
+    approvedSpread: approvedGated
+      ? ratio(approvedCell.medianViews, rejectedCell.medianViews)
+      : null,
+    approvedProfileVisitsSpread: approvedGated
+      ? ratio(approvedCell.medianProfileVisits, rejectedCell.medianProfileVisits)
       : null,
   };
 }

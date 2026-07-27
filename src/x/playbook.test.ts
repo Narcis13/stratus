@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   type AngleRow,
   type IdeaRow,
+  type JudgeRow,
   type LatencyRow,
   type MeasuredOutcome,
   type ModelRow,
@@ -19,6 +20,7 @@ import {
   buildCoachScoreEffectiveness,
   buildFormatEffectiveness,
   buildIdeaEffectiveness,
+  buildJudgeEffectiveness,
   buildLatencyEffectiveness,
   buildMeEffectiveness,
   buildMediaEffectiveness,
@@ -564,6 +566,103 @@ describe('buildCoachScoreEffectiveness (SC.5)', () => {
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+describe('buildJudgeEffectiveness (JD.7)', () => {
+  const rows: JudgeRow[] = [
+    { verdictBand: 'post_now', outcome: out(1000, 20) },
+    { verdictBand: 'post_now', outcome: out(600, 12) },
+    { verdictBand: 'post_now', outcome: null }, // judged, never measured
+    { verdictBand: 'slight_rework', outcome: out(300, 6) },
+    { verdictBand: 'major_rework', outcome: out(200, 4) },
+    { verdictBand: 'major_rework', outcome: out(100, 2) },
+    { verdictBand: null, outcome: out(50, 1) }, // never judged
+    { verdictBand: null, outcome: out(70, 3) }, // judged then edited — same bucket
+  ];
+
+  test('all four bands always render, worst→best, empty bands included', () => {
+    const r = buildJudgeEffectiveness(rows, 2);
+    expect(r.cells.map((c) => c.band)).toEqual([
+      'do_not_post',
+      'major_rework',
+      'slight_rework',
+      'post_now',
+    ]);
+    expect(r.cells.find((c) => c.band === 'do_not_post')).toMatchObject({ posted: 0, n: 0 });
+    expect(r.cells.find((c) => c.band === 'post_now')).toMatchObject({
+      posted: 3,
+      n: 2,
+      medianViews: 800,
+    });
+  });
+
+  test('unjudged is its own bucket and never folds into a band (§7.11)', () => {
+    const r = buildJudgeEffectiveness(rows, 2);
+    expect(r.unjudged).toMatchObject({ posted: 2, n: 2, medianViews: 60 });
+    // The bands partition the JUDGED rows only — unjudged is the sibling.
+    expect(r.cells.reduce((s, c) => s + c.posted, 0)).toBe(6);
+    expect(r.cells.reduce((s, c) => s + c.posted, 0) + r.unjudged.posted).toBe(rows.length);
+    expect(r.cells.reduce((s, c) => s + c.n, 0) + r.unjudged.n).toBe(r.totalMeasured);
+    expect(r.totalPosted).toBe(8);
+    expect(r.totalMeasured).toBe(7);
+  });
+
+  test('approved/rejected is the SAME judged rows keyed by deriveApproved', () => {
+    const r = buildJudgeEffectiveness(rows, 2);
+    // post_now + slight_rework = approved; major_rework + do_not_post = not.
+    expect(r.approved).toMatchObject({ posted: 4, n: 3, medianViews: 600 });
+    expect(r.rejected).toMatchObject({ posted: 2, n: 2, medianViews: 150 });
+    expect(r.approved.posted + r.rejected.posted).toBe(6);
+    expect(r.approved.n + r.rejected.n).toBe(r.totalMeasured - r.unjudged.n);
+    expect(r.approvedSpread).toBe(round(600 / 150));
+    expect(r.approvedProfileVisitsSpread).toBe(round(12 / 3));
+  });
+
+  test('spread names the two gated bands it actually compared', () => {
+    const r = buildJudgeEffectiveness(rows, 2);
+    expect(r.spreadBands).toEqual({ high: 'post_now', low: 'major_rework' });
+    expect(r.spread).toBe(round(800 / 150));
+    expect(r.profileVisitsSpread).toBe(round(16 / 3));
+  });
+
+  test('no spread unless TWO distinct bands clear the gate', () => {
+    const r = buildJudgeEffectiveness(rows, 3);
+    expect(r.spread).toBeNull();
+    expect(r.profileVisitsSpread).toBeNull();
+    expect(r.spreadBands).toBeNull();
+    // approved clears n≥3 but rejected doesn't — both-sides discipline holds.
+    expect(r.approved.sufficient).toBe(true);
+    expect(r.rejected.sufficient).toBe(false);
+    expect(r.approvedSpread).toBeNull();
+  });
+
+  test('a single gated band is not a spread against itself', () => {
+    const r = buildJudgeEffectiveness(
+      [
+        { verdictBand: 'post_now', outcome: out(1000, 20) },
+        { verdictBand: 'post_now', outcome: out(600, 12) },
+      ],
+      2,
+    );
+    expect(r.cells.filter((c) => c.sufficient).map((c) => c.band)).toEqual(['post_now']);
+    expect(r.spread).toBeNull();
+    expect(r.approvedSpread).toBeNull();
+  });
+
+  test('an all-unjudged corpus says nothing rather than zero', () => {
+    const r = buildJudgeEffectiveness(
+      [
+        { verdictBand: null, outcome: out(100, 2) },
+        { verdictBand: null, outcome: null },
+      ],
+      1,
+    );
+    expect(r.cells.every((c) => c.posted === 0 && !c.sufficient)).toBe(true);
+    expect(r.unjudged).toMatchObject({ posted: 2, n: 1 });
+    expect(r.spread).toBeNull();
+    expect(r.approvedSpread).toBeNull();
+    expect(r.totalMeasured).toBe(1);
+  });
+});
 
 describe('buildIdeaEffectiveness', () => {
   const rows: IdeaRow[] = [

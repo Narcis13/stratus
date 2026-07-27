@@ -232,6 +232,27 @@ Below the table, one of two things appears:
 
 Expect that second sentence for a long time, and possibly forever. Two things about a healthy account make it likely: the score is designed to catch own-goals rather than to predict reach, and once you're writing well nearly everything you post lands in **top tier** — which leaves nothing to compare it against. That's not a broken table. It's the table doing its job: the coach is a floor that stops you shipping an obvious mistake, and this section is what would tell you if it ever became more than that.
 
+### Does the judge predict anything?
+
+**Question it answers:** *The Composer has a **Run judge** button that pays a model ~$0.003 to grade a draft on thirteen dimensions. Is that verdict worth anything?*
+
+The sibling of the section above, and the same idea applied to the paid opinion instead of the free one: it takes your published originals and buckets them by the verdict the judge gave **that exact text**. It shipped in the same phase as the judge itself — adopting somebody else's rubric without ever checking whether it predicts anything is how a number becomes advice by accident.
+
+The table has three kinds of row:
+
+- **The four verdict bands** — *do not post* / *major rework* / *slight rework* / *post it*, in that order. These partition the **judged** posts only.
+- **Approved vs rejected** (the two thin rows) — the same judged posts split in two instead of four. Nothing is lost and the gate arrives at roughly half the sample, which on a section that needs the judge to have been *used* matters a lot.
+- **Never judged (or edited after)** — its own row, never folded into a band.
+
+That last row deserves explaining, because it will be the biggest one for a long time and it is not a bug. The link between a verdict and a published post is a **hash of the text**, computed fresh every time this page loads. Nothing is stored on the post, there is no backfill, and a post you judged and then edited — even one word — reads as *never judged*, because the verdict genuinely described different words. Whitespace is the one exception: a stray double space is not an edit. Two consequences worth knowing:
+
+- **The cell undercounts on purpose.** If this row dwarfs the bands, it means you're editing after judging, and the *workflow* is what needs changing, not the join.
+- **Apply all fixes preserves the link**, because it re-judges the text it hands back.
+
+Below the table, the same honest-in-both-directions pair the coach section has: a **verdict spread** line naming the two gated bands it compared (`post it` vs `major rework`, say) and saying plainly whether the judge picks winners or doesn't, and an **approved vs rejected** line. Until two cells clear the gate you get `no measurable spread at n=… — the judge is a second opinion, not a forecast.`
+
+Expect that sentence for months. Two gated bands means roughly forty judged *and* measured originals, and the judge only runs when you click it. That wait is the point: the alternative is quoting a thirteen-dimension score as if somebody had checked it. And whatever this section eventually says, **nothing anywhere sorts, gates, or blocks on the judge's score** — a low verdict has never stopped a post from being scheduled and never will.
+
 ### Idea Inbox payoff
 
 **Question it answers:** *Do the drafts I built from a captured idea beat the ones I wrote off-the-cuff?*

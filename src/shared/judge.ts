@@ -145,6 +145,24 @@ export const JUDGE_VERDICT_LABEL: Record<JudgeVerdictLabel, string> = {
   do_not_post: 'do not post',
 };
 
+/** The four bands WORST→BEST — the order a table of them renders in, and the
+ *  order a spread reads "highest gated ÷ lowest gated" off (JD.7's Playbook
+ *  cell, the `COACH_BAND_ORDER` convention). One ordered list beside the label
+ *  map, so a consumer never hand-types a twin that drifts from the union. */
+export const JUDGE_VERDICT_ORDER: readonly JudgeVerdictLabel[] = [
+  'do_not_post',
+  'major_rework',
+  'slight_rework',
+  'post_now',
+];
+
+/** Narrows a string that came back out of storage. A `draft_judgments.verdict`
+ *  is a plain TEXT column, so the Playbook's join has to ask rather than assume;
+ *  anything unrecognized reads as unknown (§7.11) and never as a band. */
+export function isJudgeVerdictLabel(value: string): value is JudgeVerdictLabel {
+  return (JUDGE_VERDICT_ORDER as readonly string[]).includes(value);
+}
+
 export const JUDGE_DISCLAIMER =
   "One model's opinion, not a gate — nothing here blocks scheduling; the fixes are the useful part.";
 

@@ -1,7 +1,7 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
-import type { JudgeVerdict } from '../judge.ts';
+import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
@@ -1778,6 +1778,10 @@ export interface PlaybookCoachScoreCell extends PlaybookCell {
   band: CoachBand;
 }
 
+export interface PlaybookJudgeBandCell extends PlaybookCell {
+  band: JudgeVerdictLabel;
+}
+
 /** SC.7 — `GET /x/coach/lexicon`. The two term lists `scoreDraft` takes as its
  *  `lexicon` option (a superset of `CoachLexicon`: `niche` is provenance only),
  *  derived server-side from the active niche + channels + pillars. */
@@ -1973,6 +1977,24 @@ export interface Playbook {
     spreadBands: { high: CoachBand; low: CoachBand } | null;
     fixSpread: number | null;
     fixProfileVisitsSpread: number | null;
+  };
+  // Does the LLM judge predict anything (JD.7)? The same own originals bucketed
+  // by the verdict band the judge gave that EXACT text — the link is a read-time
+  // hash, so a post edited after judging reads as `unjudged` (its own bucket,
+  // never folded into a band). `approved`/`rejected` is the same judged rows
+  // split two ways, which clears the gate at half the sample.
+  judgeEffectiveness: {
+    cells: PlaybookJudgeBandCell[];
+    unjudged: PlaybookCell;
+    approved: PlaybookCell;
+    rejected: PlaybookCell;
+    totalPosted: number;
+    totalMeasured: number;
+    spread: number | null;
+    profileVisitsSpread: number | null;
+    spreadBands: { high: JudgeVerdictLabel; low: JudgeVerdictLabel } | null;
+    approvedSpread: number | null;
+    approvedProfileVisitsSpread: number | null;
   };
   // Reply-latency × outcome (§S0.5): grades the doctrine's "reply early" bet.
   // `early` = replied <15m, `late` = replied ≥1h; lift only when both clear the

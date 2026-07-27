@@ -5,11 +5,13 @@ import {
   JUDGE_HIGHER_IS_WORSE,
   JUDGE_SUB_DIMENSIONS,
   JUDGE_VERDICT_LABEL,
+  JUDGE_VERDICT_ORDER,
   type JudgeAnnotation,
   type JudgeScores,
   type JudgeVerdictLabel,
   deriveApproved,
   deriveVerdictBand,
+  isJudgeVerdictLabel,
   locateAnnotations,
 } from './judge.ts';
 
@@ -61,6 +63,24 @@ describe('JUDGE_DIMENSIONS', () => {
       expect(JUDGE_DIMENSION_LABEL[dimension]?.length ?? 0).toBeGreaterThan(0);
     }
     expect(Object.keys(JUDGE_VERDICT_LABEL).sort()).toEqual([...VERDICTS].sort());
+  });
+
+  test('the ordered band list covers the union exactly, worst first', () => {
+    // Same list-plus-union drift check as JUDGE_DIMENSIONS above: TS proves
+    // every entry is a label, only a runtime compare proves no label is missing.
+    expect([...JUDGE_VERDICT_ORDER].sort()).toEqual([...VERDICTS].sort());
+    expect(JUDGE_VERDICT_ORDER[0]).toBe('do_not_post');
+    expect(JUDGE_VERDICT_ORDER[JUDGE_VERDICT_ORDER.length - 1]).toBe('post_now');
+    // Ascending by the cut points, so gated[0]..gated[n-1] is a real spread.
+    const overalls = [10, 50, 75, 95];
+    expect(overalls.map(deriveVerdictBand)).toEqual([...JUDGE_VERDICT_ORDER]);
+  });
+
+  test('isJudgeVerdictLabel accepts the four and nothing else', () => {
+    for (const band of JUDGE_VERDICT_ORDER) expect(isJudgeVerdictLabel(band)).toBe(true);
+    for (const junk of ['', 'POST_NOW', 'post now', 'approved', 'ship']) {
+      expect(isJudgeVerdictLabel(junk)).toBe(false);
+    }
   });
 
   test('only the two penalty axes are higher-is-worse', () => {

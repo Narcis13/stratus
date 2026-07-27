@@ -8,6 +8,7 @@
 // one-time own-winner template extraction button (~$0.005/post, bounded ≤20).
 
 import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import { JUDGE_VERDICT_LABEL } from '../judge.ts';
 import { COACH_BAND_LABEL } from '../postCoach.ts';
 import { FORMAT_LABELS } from '../postFormat.ts';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -371,6 +372,8 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
           <FormatEffectivenessSection fe={data.formatEffectiveness} minN={data.minN} />
 
           <CoachScoreSection cs={data.coachScoreEffectiveness} minN={data.minN} />
+
+          <JudgeEffectivenessSection je={data.judgeEffectiveness} minN={data.minN} />
 
           <IdeaEffectivenessSection idea={data.ideaEffectiveness} minN={data.minN} />
 
@@ -782,6 +785,102 @@ function CoachScoreSection({
             <div className="muted pb-note">
               the fix-row comparison stays silent until both sides clear n≥{minN} — it is the "did
               the advice help" question the band alone can't answer.
+            </div>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// JD.7 — the paid judge grading itself, the sibling of the section above and
+// shipped in the same phase as the tool. Two splits for the same reason: four
+// bands are sparse on a corpus where the judge is on-demand, `approved` vs
+// `rejected` is the same rows at half the sample. `unjudged` is its own row and
+// is expected to dwarf the rest — a big one means posts are being edited after
+// judging (the hash link is deliberately exact), not that the cell is broken.
+const JUDGE_APPROVAL_ROWS: Array<{ key: 'approved' | 'rejected'; label: string }> = [
+  { key: 'approved', label: 'judge approved (post it / slight)' },
+  { key: 'rejected', label: 'judge rejected (major / do not post)' },
+];
+
+function JudgeEffectivenessSection({
+  je,
+  minN,
+}: {
+  je: Playbook['judgeEffectiveness'];
+  minN: number;
+}): JSX.Element {
+  const judged = je.cells.reduce((sum, c) => sum + c.posted, 0);
+  return (
+    <Section title={`Does the judge predict anything? (${judged} judged of ${je.totalPosted})`}>
+      {je.totalPosted === 0 ? (
+        <EmptyState
+          line="No published originals yet."
+          hint="This is the section that can tell you the judge is worthless — it grades its verdicts against your own reach."
+        />
+      ) : (
+        <>
+          <table className="pb-table">
+            <thead>
+              <tr>
+                <th>verdict</th>
+                <th>posted</th>
+                <th>result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {je.cells.map((c) => (
+                <tr key={c.band}>
+                  <td>{JUDGE_VERDICT_LABEL[c.band]}</td>
+                  <td>{c.posted}</td>
+                  <td>
+                    <ResultCell cell={c} minN={minN} />
+                  </td>
+                </tr>
+              ))}
+              {JUDGE_APPROVAL_ROWS.map((r) => (
+                <tr key={r.key} className="pb-thin">
+                  <td>{r.label}</td>
+                  <td>{je[r.key].posted}</td>
+                  <td>
+                    <ResultCell cell={je[r.key]} minN={minN} />
+                  </td>
+                </tr>
+              ))}
+              <tr className="pb-thin">
+                <td>never judged (or edited after)</td>
+                <td>{je.unjudged.posted}</td>
+                <td>
+                  <ResultCell cell={je.unjudged} minN={minN} />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          {je.spread !== null && je.spreadBands !== null ? (
+            <div className="status-line">
+              verdict spread: {je.spread}x views ({JUDGE_VERDICT_LABEL[je.spreadBands.high]} vs{' '}
+              {JUDGE_VERDICT_LABEL[je.spreadBands.low]})
+              {je.profileVisitsSpread !== null && ` · ${je.profileVisitsSpread}x profile clicks`}
+              {je.spread >= 1 ? ' — the judge picks winners' : ' — the judge does not pick winners'}
+            </div>
+          ) : (
+            <div className="muted pb-note">
+              no measurable spread at n={je.totalMeasured} — the judge is a second opinion, not a
+              forecast. Two verdict bands have to clear n≥{minN} before this can compare them.
+            </div>
+          )}
+          {je.approvedSpread !== null ? (
+            <div className="status-line">
+              approved vs rejected: {je.approvedSpread}x views
+              {je.approvedSpread >= 1
+                ? ' — posts it approved reached further'
+                : ' — posts it rejected reached further'}
+            </div>
+          ) : (
+            <div className="muted pb-note">
+              the approved/rejected comparison stays silent until both sides clear n≥{minN} — it is
+              the same question at half the sample the four bands need.
             </div>
           )}
         </>

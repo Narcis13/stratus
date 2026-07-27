@@ -24,9 +24,11 @@ import {
   llmConfigured,
 } from '../../llm/index.ts';
 import { OpenRouterApiError } from '../../openrouter/index.ts';
+import { type JudgeVerdictLabel, isJudgeVerdictLabel } from '../../shared/judge.ts';
 import { BAND, type BandThresholds } from '../../shared/replyBand.ts';
 import {
   accountSnapshots,
+  draftJudgments,
   harvestRows,
   ideas,
   metricsSnapshots,
@@ -39,11 +41,13 @@ import {
   scheduledPosts,
   voiceAuthors,
 } from '../db/schema.ts';
+import { judgeTextHash } from '../judge/prompt.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import {
   type AngleRow,
   DEFAULT_MIN_CELL_N,
   type IdeaRow,
+  type JudgeRow,
   type LatencyRow,
   type MeasuredOutcome,
   type MediaRow,
@@ -60,6 +64,7 @@ import {
   buildCoachScoreEffectiveness,
   buildFormatEffectiveness,
   buildIdeaEffectiveness,
+  buildJudgeEffectiveness,
   buildLatencyEffectiveness,
   buildMeEffectiveness,
   buildMediaEffectiveness,
@@ -353,6 +358,36 @@ export async function loadOriginalPostRows(): Promise<Array<MediaRow & OriginalP
   }));
 }
 
+// ------------------------------------------- judged text → outcome (JD.7)
+
+/** The verdict↔post link, computed at READ time (JD decision 6): no
+ *  `judgment_id` column on `posts_published`, no backfill, and a re-judged post
+ *  reclassifies itself on the next request. Takes the originals the caller
+ *  already loaded rather than re-querying — the SC.5 rule for this table is one
+ *  load feeding every own-originals cell, so the media/format/coach/judge axes
+ *  cannot drift onto four different populations.
+ *
+ *  Newest judgment per hash wins: judging the same text twice means the second
+ *  reading is the one that described it last. `surface` is filtered to `post`
+ *  because that is the population — nothing writes `'reply'` in v1 (decision 2),
+ *  and when something does, a reply's verdict must not grade an original. */
+export async function loadJudgeRows(originals: OriginalPostRow[]): Promise<JudgeRow[]> {
+  const judgments = await db
+    .select({ textHash: draftJudgments.textHash, verdict: draftJudgments.verdict })
+    .from(draftJudgments)
+    .where(eq(draftJudgments.surface, 'post'))
+    .orderBy(desc(draftJudgments.judgedAt));
+  const bands = new Map<string, JudgeVerdictLabel>();
+  for (const j of judgments) {
+    if (bands.has(j.textHash) || !isJudgeVerdictLabel(j.verdict)) continue;
+    bands.set(j.textHash, j.verdict);
+  }
+  return originals.map((p) => ({
+    verdictBand: bands.get(judgeTextHash(p.text)) ?? null,
+    outcome: p.outcome,
+  }));
+}
+
 // -------------------------------------------------- idea → outcome (§S0.8)
 
 /** §S0.8 — did the Idea Inbox pay? The C6 consume-provenance
@@ -618,8 +653,10 @@ playbook.get('/playbook', async (c) => {
 
   const structures = buildStructureEffectiveness(await loadStructureRows(), minN);
   const origins = await loadOriginRows();
-  // One load, three cells — media / format / coach score all read own originals.
+  // One load, four cells — media / format / coach score / judge band all read
+  // own originals, so the axes can never drift onto different populations.
   const originals = await loadOriginalPostRows();
+  const judgeRows = await loadJudgeRows(originals);
 
   const angleEffectiveness = buildAngleEffectiveness(angleRows, minN);
   return c.json({
@@ -643,6 +680,7 @@ playbook.get('/playbook', async (c) => {
     mediaEffectiveness: buildMediaEffectiveness(originals, minN),
     formatEffectiveness: buildFormatEffectiveness(originals, minN),
     coachScoreEffectiveness: buildCoachScoreEffectiveness(originals, minN),
+    judgeEffectiveness: buildJudgeEffectiveness(judgeRows, minN),
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
