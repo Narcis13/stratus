@@ -222,6 +222,12 @@ Click **Generate 3 drafts (~$0.01)**. Each click makes one Grok call (roughly a 
 
 Each draft is shown as a card with its **register** badge, its **pillar** badge, a character count, and the full text. A line above the cards notes how many "winners" (your top past posts) were used as voice anchors and the exact cost.
 
+**Those anchors are capped at two machine-written posts.** The winners block is the drafter's answer to "what does this person sound like", picked by measured views — and left alone it eats itself: a post the drafter wrote, that you scheduled and that performed well, comes back as a *this is your voice* example on the next draft, with the numbers confirming the drift. So at most **two of the five** anchors may be posts stratus drafted; the rest of the slots go to things you wrote. Three things worth knowing about the rule:
+
+- It's **dilution, not exclusion**. A machine draft you edited before shipping is partly yours, and throwing it out would waste your best-performing text.
+- The cap is a cap, not a quota. If your whole measured history is drafter-written, the block gets **shorter** — it never pads back up to five machine posts.
+- Provenance comes from the **Calendar row** the post shipped from, so a post you wrote by hand and posted from the X app is always counted as yours.
+
 **Four formats it knows how to reach for.** Posts engineered to be *answered* outperform posts engineered to be *admired* — measured at roughly 2× the views on a comparable builder account — so the drafter carries four proven skeletons: **would-you-rather** (two concrete stakes, one forced pick), **poll-list** (a short question, then 3–4 dashed options), **confessional question** ("be honest — …?"), and **audience CTA** ("show me the thing you're working on"). Three things about how they're used, all deliberate:
 
 - **At most one of the three drafts** may use one — they're a rotation, not a house style, and you should still be getting two ordinary takes to choose from.
