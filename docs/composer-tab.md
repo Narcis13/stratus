@@ -38,6 +38,24 @@ Clicking **Split into thread** breaks your text into a clean chain of tweets at 
 
 Under the text box is an **Improve with AI** button. It takes whatever you've written and asks the AI for **three sharper versions** of it — typically a tightened cut, a re-hooked opening, and a restructured take. You can add an optional instruction ("make it punchier", "lead with the number") to steer the rewrite. Each version comes back as a card you can preview; clicking one **replaces the text in the box** with that version (nothing is saved to your Calendar — it just edits your draft in place, so you're free to keep editing or undo by rewriting). It's one AI call (~$0.003) and it runs on whichever provider you picked in **Settings → AI**.
 
+### The coach (live score and fix list)
+
+Below the warnings, a small boxed panel grades what you've typed. It updates as you type — about a sixth of a second after you stop — and it costs nothing: the scoring runs inside the extension, so there is no server call, no AI call, and nothing is saved anywhere.
+
+The first line is the score out of 100 with its band: **top tier** (85+), **ship it** (60+), **almost there** (45+), or **rework**. Below it come the things worth changing, worst first:
+
+- **Red rows are fixes** — an own-goal you'd regret. A URL in a standalone post (it bills $0.20 instead of $0.015 — move it to the first reply), a 15th line that hides the rest of your post behind X's "show more", two questions stacked in one post.
+- **Amber rows are nudges** — smaller stuff. An em-dash, a canned "thoughts?" closer, hedge words piling up, a flat opening line, no concrete number or name.
+- Everything that passed is folded into an **N passing** disclosure you can click open.
+
+The last line says it plainly:
+
+> Signals, not verdicts — 60+ reads ship-ready; the goal is the post, not the score.
+
+That is the whole contract. **A low score never blocks anything** — Save works the same at 20 as at 95, nothing is sorted or filtered by it, and no draft is ever refused. Treat it as a floor that catches own-goals, not a target to farm: writing quality and reach are only loosely related, and a post that scores 70 because it says something true is worth more than a 95 that says nothing.
+
+In thread mode the coach grades **segment 1** and says so — the head is the part a stranger is guaranteed to read, so it's the part that has to work. The panel is hidden while the box is empty and on a post that has already gone out.
+
 ### Scheduling controls
 
 The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.

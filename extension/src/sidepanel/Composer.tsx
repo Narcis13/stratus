@@ -1,4 +1,12 @@
-import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  COACH_BAND_LABEL,
+  COACH_DISCLAIMER,
+  type CoachBand,
+  type CoachCheck,
+  type CoachStatus,
+  scoreDraft,
+} from '../postCoach.ts';
 import { audienceScoreFor } from '../shared/activeTimes.ts';
 import type {
   AudienceCapture,
@@ -85,6 +93,44 @@ const CADENCE_NOTE =
   "These are the anchor hours, not the quota — how many originals a day you owe lives in Today's quests, and the reply band comes from your niche (Settings → General).";
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+// SC.3 — the live coach recomputes on the debounced draft. Purely a React-churn
+// guard: `scoreDraft` is a few regexes over ≤1120 chars, and it never touches
+// the network, so there is nothing here to rate-limit.
+const COACH_DEBOUNCE_MS = 150;
+
+// The three tones the coach speaks in, mapped once so the score pill and the
+// rows can't disagree. Band → tone is presentation only: NO surface sorts,
+// gates, blocks or refuses on the score (SC decision 4).
+const COACH_TONE: Record<CoachStatus, string> = {
+  fix: 'coach-tone-fix',
+  nudge: 'coach-tone-nudge',
+  pass: 'coach-tone-pass',
+};
+
+const COACH_BAND_TONE: Record<CoachBand, CoachStatus> = {
+  top: 'pass',
+  ship: 'pass',
+  almost: 'nudge',
+  rework: 'fix',
+};
+
+// One row per non-pass check. Filtered, never re-sorted — the engine emits its
+// checks in rule order (hygiene → craft → signal) and that order is the reading
+// order (SC.1).
+function CoachRows({ checks }: { checks: CoachCheck[] }): JSX.Element | null {
+  if (checks.length === 0) return null;
+  return (
+    <ul className="coach-rows">
+      {checks.map((c) => (
+        <li key={c.id} className={`coach-row ${COACH_TONE[c.status]}`}>
+          {c.label}
+          {c.why && <span className="muted"> {c.why}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 // The counter's className for `remaining` characters left of the 280 limit.
 function counterClass(remaining: number): string {
@@ -701,6 +747,23 @@ export function ComposerPanel({
   const threadCharTotal = threadSegments.reduce((n, s) => n + s.length, 0);
   const threadFilledCount = threadSegments.filter((s) => s.trim() !== '').length;
 
+  // SC.3 — what the coach grades. In either thread branch that is segment 1:
+  // the head is the only part a stranger is guaranteed to read, so it is the
+  // part that has to hook.
+  const coachDraft = isSinglePost ? text : (threadSegments[0] ?? '');
+  const [coachInput, setCoachInput] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setCoachInput(coachDraft), COACH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [coachDraft]);
+  // Local and free: no fetch, no server round-trip, nothing stored (SC decision
+  // 2 — score and format are recomputed from text everywhere, never stamped).
+  const coach = useMemo(() => scoreDraft(coachInput), [coachInput]);
+  const coachFixes = coach.checks.filter((c) => c.status === 'fix');
+  const coachNudges = coach.checks.filter((c) => c.status === 'nudge');
+  const coachPasses = coach.checks.filter((c) => c.status === 'pass');
+  const showCoach = !isLocked && coachInput.trim() !== '';
+
   return (
     <form className="panel" onSubmit={submit}>
       <div className="panel-header">
@@ -908,6 +971,33 @@ export function ComposerPanel({
               Move link to first reply ($0.030)
             </button>
           )}
+        </div>
+      )}
+
+      {/* SC.3 — the static coach. It sits with the other things said ABOUT the
+          text (over-limit, URL surcharge) rather than at the bottom of the tab,
+          because every row here is a thing you fix in the box directly above.
+          It is advisory end to end: the Save button never reads the score. */}
+      {showCoach && (
+        <div className="coach">
+          <div className="coach-head">
+            <span className={`coach-score ${COACH_TONE[COACH_BAND_TONE[coach.band]]}`}>
+              {coach.score}
+            </span>
+            <span className="muted">
+              /100 · {COACH_BAND_LABEL[coach.band]}
+              {!isSinglePost && ' · segment 1'}
+            </span>
+          </div>
+          <CoachRows checks={coachFixes} />
+          <CoachRows checks={coachNudges} />
+          {coachPasses.length > 0 && (
+            <details className="coach-passing">
+              <summary>{coachPasses.length} passing</summary>
+              <CoachRows checks={coachPasses} />
+            </details>
+          )}
+          <small className="muted">{COACH_DISCLAIMER}</small>
         </div>
       )}
 
