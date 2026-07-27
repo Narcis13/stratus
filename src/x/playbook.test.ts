@@ -561,6 +561,19 @@ describe('buildCoachScoreEffectiveness (SC.5)', () => {
     expect(r.totalPosted).toBe(6);
     expect(r.totalMeasured).toBe(5);
   });
+
+  test('the lexicon flows into the grading — the cell measures the band the Composer showed', () => {
+    // 83 `ship` on the empty default; the specific term flips `concrete_detail`
+    // and lands it at 85 `top` — the exact score the Composer graded with.
+    const text =
+      'Cut the macros first.\n\nMaybe it works, maybe not. It might be enough — it might not.';
+    const lexicon = { specificTerms: ['macros'], tribeTerms: [] };
+    const row = [{ text, outcome: out(100, 2) }];
+    const withoutLex = buildCoachScoreEffectiveness(row, 1);
+    const withLex = buildCoachScoreEffectiveness(row, 1, lexicon);
+    expect(withoutLex.cells.find((c) => c.band === 'ship')?.posted).toBe(1);
+    expect(withLex.cells.find((c) => c.band === 'top')?.posted).toBe(1);
+  });
 });
 
 function round(n: number): number {

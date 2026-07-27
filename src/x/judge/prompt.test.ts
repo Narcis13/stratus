@@ -376,6 +376,23 @@ describe('normalizeJudgeText / judgeTextHash', () => {
     expect(judgeTextHash('one')).not.toBe(judgeTextHash('two'));
     expect(judgeTextHash('one')).toMatch(/^[0-9a-f]{64}$/);
   });
+
+  test('the drafted spelling and the API-escaped published row hash identically (JD.7 join)', () => {
+    expect(judgeTextHash('ship fast & iterate')).toBe(judgeTextHash('ship fast &amp; iterate'));
+    expect(judgeTextHash('a < b > c "d"')).toBe(judgeTextHash('a &lt; b &gt; c &quot;d&quot;'));
+    expect(normalizeJudgeText('it&#39;s fine')).toBe("it's fine");
+  });
+
+  test('the decode is single-pass — `&amp;` last, so a double escape survives one level', () => {
+    // X escapes a user-typed literal `&lt;` to `&amp;lt;`; one decode returns
+    // the literal entity, never `<`.
+    expect(normalizeJudgeText('&amp;lt;')).toBe('&lt;');
+    // Accepted limitation, pinned: the DRAFT side runs the same decode, so a
+    // draft that literally spells an entity reads as its character and cannot
+    // rejoin its published row. Entities in drafts are pathological; the `&`
+    // ampersand (the common case, above) joins exactly.
+    expect(normalizeJudgeText('&lt;')).toBe('<');
+  });
 });
 
 describe('the judge registry key', () => {

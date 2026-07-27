@@ -94,6 +94,11 @@ describe('hygiene checks', () => {
     expect(status('Shipped the new build today.', 'weak_closer')).toBe('pass');
   });
 
+  test('weak_closer sees through trailing emoji/symbols', () => {
+    expect(status('Shipped the new build today. Thoughts? 🙂', 'weak_closer')).toBe('nudge');
+    expect(status('Shipped the new build today. Agree? ⤵️', 'weak_closer')).toBe('nudge');
+  });
+
   test('buzzwords fires on corporate speak', () => {
     expect(status('We need to leverage synergy here.', 'buzzwords')).toBe('nudge');
     expect(status('We need to use plain words here.', 'buzzwords')).toBe('pass');
@@ -150,6 +155,11 @@ describe('hygiene checks', () => {
   test('hedges fires when stacked past 2', () => {
     expect(status('Maybe this might work, perhaps, probably.', 'hedges')).toBe('nudge');
     expect(status('Maybe this works. We will see today.', 'hedges')).toBe('pass');
+  });
+
+  test('hedges counts adjacent hedges — the stacking it is named for', () => {
+    expect(status('maybe maybe maybe this is the one that works', 'hedges')).toBe('nudge');
+    expect(status('sort of kind of maybe a plan for the launch', 'hedges')).toBe('nudge');
   });
 });
 

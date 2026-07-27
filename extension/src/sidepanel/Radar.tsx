@@ -240,7 +240,7 @@ export function RadarSection({
             editor={editor}
             keys={RADAR_KEYS}
             label="Configure radar drafting"
-            note="One click, one Grok call — the batch is the lower of these two. What lands on the radar at all is the Reply band group in Settings → Tuning, the same twelve thresholds the on-page badge uses."
+            note="One click, one Grok call — the batch is the lower of these two. What lands on the radar by band is the Reply band group in Settings → Tuning (the same twelve thresholds the on-page badge uses); ⊕ pins and fresh posts by your circle get in regardless."
           />
         </>
       }

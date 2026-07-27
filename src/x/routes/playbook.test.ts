@@ -1036,6 +1036,12 @@ describe('loadJudgeRows + judgeEffectiveness (JD.7)', () => {
   const SPACED_TEXT = 'A draft stored  with one extra space inside it, judged once.';
   const EDITED_TEXT = 'This one was judged and then the typo was fixed, so it reads as unjudged.';
   const REPLY_TEXT = 'A verdict recorded against the reply surface never grades an original.';
+  // The API echoes `&` back HTML-escaped, so the published row spells it
+  // `&amp;` while the judged draft spelled it `&` — the decode inside
+  // normalizeJudgeText is what lets these two meet.
+  const ESCAPED = 'jd7_escaped';
+  const ESCAPED_TEXT = 'Ship fast &amp; iterate, then measure what actually moved.';
+  const ESCAPED_DRAFT = 'Ship fast & iterate, then measure what actually moved.';
   const judgmentIds: string[] = [];
   interface JudgeCounts {
     judged: number;
@@ -1089,6 +1095,7 @@ describe('loadJudgeRows + judgeEffectiveness (JD.7)', () => {
       { tweetId: SPACED, text: SPACED_TEXT, views: 400, clicks: 8 },
       { tweetId: EDITED, text: EDITED_TEXT, views: 200, clicks: 4 },
       { tweetId: REPLY_SURFACE, text: REPLY_TEXT, views: 100, clicks: 2 },
+      { tweetId: ESCAPED, text: ESCAPED_TEXT, views: 300, clicks: 6 },
     ]) {
       await db
         .insert(postsPublished)
@@ -1114,26 +1121,29 @@ describe('loadJudgeRows + judgeEffectiveness (JD.7)', () => {
     // The verdict describes the pre-edit wording, so it can never match.
     await seedJudgment(`${EDITED_TEXT} And a trailing sentence that was cut.`, 'do_not_post');
     await seedJudgment(REPLY_TEXT, 'post_now', { surface: 'reply' });
+    // Judged as drafted (`&`), published as escaped (`&amp;`).
+    await seedJudgment(ESCAPED_DRAFT, 'post_now');
   });
 
   afterAll(async () => {
     for (const id of judgmentIds) {
       await db.delete(draftJudgments).where(eq(draftJudgments.id, id));
     }
-    for (const id of [JUDGED, SPACED, EDITED, REPLY_SURFACE]) {
+    for (const id of [JUDGED, SPACED, EDITED, REPLY_SURFACE, ESCAPED]) {
       await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, id));
       await db.delete(postsPublished).where(eq(postsPublished.tweetId, id));
     }
   });
 
-  test('the hash join buckets exactly the two matching texts', async () => {
+  test('the hash join buckets exactly the three matching texts', async () => {
     const after = await judgeCounts();
-    // JUDGED + SPACED matched (whitespace-insensitive — a double space is not an
-    // edit); EDITED + REPLY_SURFACE did not, so they joined the unjudged bucket.
-    expect(after.judged).toBe(before.judged + 2);
-    expect(after.postNow).toBe(before.postNow + 2);
+    // JUDGED + SPACED matched (whitespace-insensitive — a double space is not
+    // an edit) and ESCAPED matched through the entity decode; EDITED +
+    // REPLY_SURFACE did not, so they joined the unjudged bucket.
+    expect(after.judged).toBe(before.judged + 3);
+    expect(after.postNow).toBe(before.postNow + 3);
     expect(after.unjudged).toBe(before.unjudged + 2);
-    expect(after.measured).toBe(before.measured + 4);
+    expect(after.measured).toBe(before.measured + 5);
   });
 
   test('a verdict stored against another surface never grades an original', async () => {
@@ -1144,15 +1154,15 @@ describe('loadJudgeRows + judgeEffectiveness (JD.7)', () => {
       .from(draftJudgments)
       .where(eq(draftJudgments.textHash, judgeTextHash(REPLY_TEXT)));
     expect(stored.length).toBe(1);
-    expect((await judgeCounts()).judged).toBe(before.judged + 2);
+    expect((await judgeCounts()).judged).toBe(before.judged + 3);
   });
 
   test('the newest judgment per hash wins', async () => {
     await seedJudgment(JUDGED_TEXT, 'do_not_post', { ageMin: 10 });
     const after = await judgeCounts();
     expect(after.doNotPost).toBe(before.doNotPost + 1);
-    expect(after.postNow).toBe(before.postNow + 1);
-    expect(after.judged).toBe(before.judged + 2);
+    expect(after.postNow).toBe(before.postNow + 2);
+    expect(after.judged).toBe(before.judged + 3);
   });
 
   test('GET /x/playbook ships the cell, partitioned and gated', async () => {

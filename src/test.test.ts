@@ -6,7 +6,13 @@ import { matchOrigin } from './middleware/cors.ts';
 import type { ActiveTimesGrid } from './shared/activeTimes.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
-import { metricsSnapshots, people, postsPublished } from './x/db/schema.ts';
+import {
+  metricsSnapshots,
+  people,
+  personEvents,
+  postsPublished,
+  replyDrafts,
+} from './x/db/schema.ts';
 import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
@@ -1498,6 +1504,74 @@ describe('replies band gate (§7.3)', () => {
       });
       expect('error' in out).toBe(false);
       expect(out).not.toHaveProperty('gateBypass');
+    });
+  });
+
+  // GT.3 fallout: the LaunchRoom seed comment replies to MY OWN post under the
+  // placeholder handle 'me'. The posted flip must not upsert that into the CRM —
+  // a phantom stage-`engaged` row would join the reciprocity set (the gate, the
+  // quest AND the glance map). "Own post" is a posts_published lookup, so a
+  // reply to anyone real still tracks normally.
+  describe('posted flip skips the CRM for replies to my own post', () => {
+    const OWN_TWEET = '890000000000000777';
+    const OTHER_TWEET = '890000000000000778';
+
+    const seedDraft = async (sourceTweetId: string, handle: string): Promise<string> => {
+      const [row] = await db
+        .insert(replyDrafts)
+        .values({
+          sourceTweetId,
+          sourceAuthorUsername: handle,
+          sourceText: 'gt3 seed source',
+          sourceUrl: `https://x.com/${handle}/status/${sourceTweetId}`,
+          contextSnapshot: {},
+          replyText: 'gt3 seed reply',
+          model: 'test',
+        })
+        .returning({ id: replyDrafts.id });
+      if (!row) throw new Error('seed insert failed');
+      return row.id;
+    };
+
+    const flip = (id: string) =>
+      replies.request(`/replies/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'posted' }),
+      });
+
+    afterAll(async () => {
+      await db
+        .delete(replyDrafts)
+        .where(inArray(replyDrafts.sourceTweetId, [OWN_TWEET, OTHER_TWEET]));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, OWN_TWEET));
+      await db.delete(personEvents).where(inArray(personEvents.handle, ['me', 'gt3realperson']));
+      await db.delete(people).where(inArray(people.handle, ['me', 'gt3realperson']));
+    });
+
+    test("the seed comment's placeholder 'me' never becomes a person", async () => {
+      // retired + long-posted so the daily *billed* metrics pass can't see it.
+      await db.insert(postsPublished).values({
+        tweetId: OWN_TWEET,
+        text: 'gt3 launched post',
+        postedAt: new Date(Date.now() - 400 * 24 * 3600_000),
+        isReply: false,
+        source: 'test',
+        retired: true,
+      });
+      const id = await seedDraft(OWN_TWEET, 'me');
+      expect((await flip(id)).status).toBe(200);
+      const rows = await db.select().from(people).where(eq(people.handle, 'me'));
+      expect(rows.length).toBe(0);
+      const events = await db.select().from(personEvents).where(eq(personEvents.handle, 'me'));
+      expect(events.length).toBe(0);
+    });
+
+    test('a reply to someone else still tracks the person', async () => {
+      const id = await seedDraft(OTHER_TWEET, 'gt3realperson');
+      expect((await flip(id)).status).toBe(200);
+      const rows = await db.select().from(people).where(eq(people.handle, 'gt3realperson'));
+      expect(rows.length).toBe(1);
     });
   });
 });

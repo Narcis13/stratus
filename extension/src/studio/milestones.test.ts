@@ -60,4 +60,13 @@ describe('latestCrossed', () => {
       expect(MILESTONES[i]).toBeGreaterThan(MILESTONES[i - 1] as number);
     }
   });
+
+  test('the ladder is pinned against twin drift (brief.ts holds the server copy)', () => {
+    // GT.4 duplicated this ladder into src/x/routes/brief.ts (the server can't
+    // import an extension module). Each side pins the shared literal, so
+    // editing either file alone reddens a test.
+    expect([...MILESTONES]).toEqual([
+      50, 100, 250, 500, 1000, 2500, 5000, 10_000, 25_000, 50_000, 100_000,
+    ]);
+  });
 });

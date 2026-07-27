@@ -296,7 +296,10 @@ const emDash: Rule = (f) =>
     : mk('em_dash', 'hygiene', 'pass', 'No em-dashes.');
 
 const weakCloser: Rule = (f) => {
-  const hit = WEAK_CLOSERS.find((c) => f.lower.endsWith(c));
+  // Trailing emoji/symbols must not hide the closer ("thoughts? 🙂") — the
+  // same strip postFormat's TRAIL_JUNK does before reading a final line.
+  const tail = f.lower.replace(/[^\p{L}\p{N}?!."')]+$/u, '');
+  const hit = WEAK_CLOSERS.find((c) => tail.endsWith(c));
   return hit
     ? mk(
         'weak_closer',
@@ -403,7 +406,9 @@ const wordCount: Rule = (f) =>
 const hedges: Rule = (f) => {
   let count = 0;
   for (const h of HEDGES) {
-    const matches = f.lower.match(new RegExp(`(^|[^a-z0-9])${escapeRe(h)}([^a-z0-9]|$)`, 'gi'));
+    // Zero-width trailing boundary: a consumed separator would hide the very
+    // stacking this rule is named for ("sort of maybe" counting as one).
+    const matches = f.lower.match(new RegExp(`(^|[^a-z0-9])${escapeRe(h)}(?=[^a-z0-9]|$)`, 'gi'));
     count += matches ? matches.length : 0;
   }
   return count > 2

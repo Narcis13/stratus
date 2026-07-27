@@ -109,6 +109,7 @@ stratus also decorates the pages you're already reading. These aren't tabs — t
 - **The n≥20 gate** — analytics only show a confident number once ~20 measured items back it. See **[Playbook](./playbook-tab.md)**.
 - **Coach score / post format** — the free, on-device read of your own draft (a 0–100 floor, a short fix list) and the structural label it hangs off. It spans four tabs, so it has its own write-up: **[The static coach](./sc-static-coach.md)**.
 - **Judge verdict** — the *paid* second opinion on one draft, on demand: thirteen dimensions, a band (post it / slight rework / major rework / do not post) and a list of anchored fixes, ~$0.003 a click. Nothing runs it automatically and nothing gates on it. See **[Composer → The judge](./composer-tab.md#the-judge-a-paid-second-opinion-on-demand)** and **[Playbook → Does the judge predict anything?](./playbook-tab.md#does-the-judge-predict-anything)**.
+- **The quality-and-growth layer** — how the coach, the judge and the growth tactics (the "your people" reply-gate exemption, the reciprocity quest, the `your circle` radar lane, launch seeding, milestone nudges) fit together, what each costs, and the Playbook cells that keep all of them honest: **[Coach, judge & growth tactics](./coach-judge-growth.md)**.
 
 ---
 

@@ -371,9 +371,11 @@ replies.post('/replies/generate', async (c) => {
 
 // --------------------------------------------------------- batch (Radar §7.2)
 //
-// One Grok call drafts a reply for a whole queue of hot/warm tweets the Radar
-// collected. Unlike /replies/generate this does NOT create reply_drafts rows or
-// run the band gate (the Radar already filtered to hot/warm): the replies live
+// One Grok call drafts a reply for a whole queue of tweets the Radar collected.
+// Unlike /replies/generate this does NOT create reply_drafts rows or run the
+// band gate — the queue is already a deliberate selection (hot/warm by the band
+// scan, plus ⊕ manual pins and GT.8 roster sightings, both human-curated lanes
+// the gate would have exempted anyway): the replies live
 // in the extension's session ring buffer, copied to the clipboard when the user
 // opens a tweet. Since CIRCLES-PLAN C0 each reply also lands in `radar_drafts`
 // so a browser restart no longer loses paid-for drafts (routes/radar.ts).
@@ -952,7 +954,28 @@ replies.patch('/replies/:id', async (c) => {
   // updatedAt is in effect paste time. Best-effort, never fails the PATCH.
   if (updates.status === 'posted') {
     const handle = normalizePersonHandle(existing.sourceAuthorUsername);
+    // A reply to MY OWN post tracks no person: the LaunchRoom seed comment
+    // (GT.3) arrives under the placeholder handle 'me', and upserting it would
+    // mint a phantom stage-`engaged` row that joins the reciprocity set — the
+    // band-gate exemption, the daily quest AND the glance map (GT.6–GT.8).
+    // "Own post" is structural, not a sentinel compare: the source tweet is a
+    // posts_published row, which a real @me account's tweets can never be.
+    // Best-effort in the §7.8 direction — a failed lookup keeps the old
+    // behaviour (track the person) rather than silently dropping CRM events.
+    let selfReply = false;
     if (handle) {
+      try {
+        const own = await db
+          .select({ tweetId: postsPublished.tweetId })
+          .from(postsPublished)
+          .where(eq(postsPublished.tweetId, existing.sourceTweetId))
+          .limit(1);
+        selfReply = own.length > 0;
+      } catch (err) {
+        console.error('people: own-post lookup failed (person still tracked):', err);
+      }
+    }
+    if (handle && !selfReply) {
       await upsertPerson(handle, {
         source: 'reply',
         fields: { displayName: existing.sourceAuthorDisplayName },

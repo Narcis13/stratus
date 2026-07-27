@@ -90,6 +90,7 @@ import {
   TEMPLATE_SCHEMA,
   parseExtractedTemplate,
 } from '../voice/extractPrompt.ts';
+import { loadActiveCoachLexicon } from './coach.ts';
 import { targetBand } from './voice.ts';
 
 // Full posted history — same ceiling as /replies/outcomes (the crosstab wants
@@ -657,6 +658,9 @@ playbook.get('/playbook', async (c) => {
   // own originals, so the axes can never drift onto different populations.
   const originals = await loadOriginalPostRows();
   const judgeRows = await loadJudgeRows(originals);
+  // The coach cell grades the number the Composer actually showed, so it must
+  // grade with the same active lexicon (never throws — degrades to the default).
+  const coachLexicon = await loadActiveCoachLexicon();
 
   const angleEffectiveness = buildAngleEffectiveness(angleRows, minN);
   return c.json({
@@ -679,7 +683,7 @@ playbook.get('/playbook', async (c) => {
     ),
     mediaEffectiveness: buildMediaEffectiveness(originals, minN),
     formatEffectiveness: buildFormatEffectiveness(originals, minN),
-    coachScoreEffectiveness: buildCoachScoreEffectiveness(originals, minN),
+    coachScoreEffectiveness: buildCoachScoreEffectiveness(originals, minN, coachLexicon),
     judgeEffectiveness: buildJudgeEffectiveness(judgeRows, minN),
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),

@@ -764,7 +764,7 @@ function CoachScoreSection({
               score spread: {cs.spread}x views ({COACH_BAND_LABEL[cs.spreadBands.high]} vs{' '}
               {COACH_BAND_LABEL[cs.spreadBands.low]})
               {cs.profileVisitsSpread !== null && ` · ${cs.profileVisitsSpread}x profile clicks`}
-              {cs.spread >= 1
+              {cs.spread > 1
                 ? ' — higher-scoring posts reach further'
                 : ' — higher-scoring posts do not reach further'}
             </div>
@@ -862,7 +862,7 @@ function JudgeEffectivenessSection({
               verdict spread: {je.spread}x views ({JUDGE_VERDICT_LABEL[je.spreadBands.high]} vs{' '}
               {JUDGE_VERDICT_LABEL[je.spreadBands.low]})
               {je.profileVisitsSpread !== null && ` · ${je.profileVisitsSpread}x profile clicks`}
-              {je.spread >= 1 ? ' — the judge picks winners' : ' — the judge does not pick winners'}
+              {je.spread > 1 ? ' — the judge picks winners' : ' — the judge does not pick winners'}
             </div>
           ) : (
             <div className="muted pb-note">

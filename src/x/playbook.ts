@@ -8,7 +8,7 @@
 // calls these; fixtures drive the tests.
 
 import { JUDGE_VERDICT_ORDER, type JudgeVerdictLabel, deriveApproved } from '../shared/judge.ts';
-import { type CoachBand, scoreDraft } from '../shared/postCoach.ts';
+import { type CoachBand, type CoachLexicon, scoreDraft } from '../shared/postCoach.ts';
 import { POST_FORMATS, type PostFormat, classifyFormat } from '../shared/postFormat.ts';
 import {
   BAND,
@@ -1100,16 +1100,24 @@ export interface CoachScoreEffectiveness {
  *  the format cell on purpose — if the answer is "no measurable spread", the
  *  coach stays a floor and the UI copy already says so (decision 4). Originals
  *  only, graded with the post rules (`isReply` defaults false) — a reply skips
- *  two checks and would be scored on a different denominator. */
+ *  two checks and would be scored on a different denominator.
+ *
+ *  `lexicon` must be the ACTIVE niche lexicon (the route passes
+ *  `loadActiveCoachLexicon()`), for the same reason the bands are not re-cut
+ *  here: the Composer grades with it, so grading without it measures a score
+ *  the user never saw — two rules (`concrete_detail`, `hook_opener`'s vocative
+ *  branch) move with it. Omitting it falls back to the empty default, which is
+ *  only right for a caller that never showed the user a score. */
 export function buildCoachScoreEffectiveness(
   rows: OriginalPostRow[],
   minN = DEFAULT_MIN_CELL_N,
+  lexicon?: CoachLexicon,
 ): CoachScoreEffectiveness {
   const byBand = new Map<CoachBand, Array<MeasuredOutcome | null>>();
   const clean: Array<MeasuredOutcome | null> = [];
   const flagged: Array<MeasuredOutcome | null> = [];
   for (const r of rows) {
-    const result = scoreDraft(r.text);
+    const result = lexicon ? scoreDraft(r.text, { lexicon }) : scoreDraft(r.text);
     const list = byBand.get(result.band) ?? [];
     list.push(r.outcome);
     byBand.set(result.band, list);

@@ -420,11 +420,29 @@ export function renderJudgeGrounding(g: JudgeGroundingInputs): string | null {
 
 // ------------------------------------------------------------------ hashing
 
-/** Collapse whitespace runs to single spaces and trim — the same reading as the
+/** Collapse whitespace runs to single spaces, trim, and decode the HTML
+ *  entities X escapes in stored post text — the same reading as the
  *  manual/harvest reconcile's text match. Two drafts that differ only in
- *  newlines are the same text to judge. */
+ *  newlines are the same text to judge.
+ *
+ *  The entity decode exists for the JD.7 read-time join: a draft is judged as
+ *  `ship fast & iterate` but `posts_published.text` carries the API's echo,
+ *  `ship fast &amp; iterate` (both the publisher and the backfill store it
+ *  escaped), so without it every post containing `&`, `<` or `>` reads
+ *  `unjudged` forever. Twin of `postFormat.ts::normalize`, same replacement
+ *  order — `&amp;` LAST, so a user-typed literal `&lt;` (escaped by X to
+ *  `&amp;lt;`) decodes back to `&lt;`, not to `<`. Curly-apostrophe folding is
+ *  deliberately NOT copied from the twin: the draft and the published row spell
+ *  apostrophes identically, and folding would loosen the reset-on-edit rule. */
 export function normalizeJudgeText(text: string): string {
-  return text.replace(/\s+/g, ' ').trim();
+  return text
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /** The read-time link between a verdict and the post it judged (§7.12 — no

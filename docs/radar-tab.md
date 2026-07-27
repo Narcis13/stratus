@@ -51,7 +51,7 @@ Three ways in, all free:
 
 - **Draft replies (N)** — makes **one** Grok call that drafts **three angle variants** (extends / contrarian / debate) for every un-drafted tweet in the queue (**20 at a time by default**). The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. This is the only button on the tab that spends money.
 - **Clear** — dismisses everything currently shown in the view you're looking at. Dismissed tweets never re-enter the queue, even though the page keeps re-sighting them while they're on screen.
-- **⚙** — the batch size. Two numbers live in there: the radar's own **draft cap**, and the **batch cap the server enforces**. A click sends the *lower* of the two, so raising one past the other can't buy you a refused click. What lands on the radar at all isn't here — it's the **Reply band** group in **Settings → Tuning**, the same thresholds the on-page border uses, which is why the border can never promise a draft the server then refuses.
+- **⚙** — the batch size. Two numbers live in there: the radar's own **draft cap**, and the **batch cap the server enforces**. A click sends the *lower* of the two, so raising one past the other can't buy you a refused click. What lands on the radar by band isn't here — it's the **Reply band** group in **Settings → Tuning**, the same thresholds the on-page border uses, which is why the border can never promise a draft the server then refuses. (⊕ pins and fresh posts by your circle get in regardless of those thresholds — see the three ways in, above.)
 
 ---
 
