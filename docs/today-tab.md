@@ -73,11 +73,13 @@ Several section headers carry a small **⚙** button. That's the inline settings
 - A **✕** button (top right) to close the room early.
 - The **text of the post** that just went live.
 - **Open on X — be present** — a link that opens your live tweet in a new tab so you can watch and reply to comments there.
-- A short **checklist**: "Reply to every early commenter (in X — paste, human words)" and, if this was a thread where the link lives in the first reply, "Pin your first reply — the link lives there."
+- A short **checklist**: "Seed the first comment yourself — extend the post, don't restate it" and "Reply to every early commenter (in X — paste, human words)". If this was a thread where the link lives in the first reply, the seed item is replaced by "Pin your first reply — the link lives there" (that first comment is already spoken for — it's the link).
+- **First comment** — a **Draft seed comment** button (hidden on link-in-first-reply threads). The first comment under your own post is yours to write, and the pattern that measures well is one that *extends* the post — the detail that didn't fit, a number, the counter-case — not a restatement.
 - **Early repliers** — a list of people who have already replied to your post. These are captured automatically **while you have the tweet open on X** — as you scroll the replies, stratus streams them into this list. If the list is empty it says *"Keep the tweet open on X — replies you scroll past appear here."*
 
 **What you can do:**
 
+- **Draft seed comment** (under "First comment") — one Grok call (~**$0.002–$0.004**) that writes your own first comment on the post, in your voice, told outright that the post is yours and to extend rather than restate it. You get the usual three angles as chips (**extends / contrarian / debate**) — click one to switch the text — then **Copy** and paste it under your post on X. (The draft is marked "copied" in the background and shows up in the Replies tab like any other, filed under `@me`.)
 - **Pull from X** button (next to "Early repliers") — makes one paid call to X to fetch repliers you may not have scrolled past yet. It costs roughly **$0.001–$0.005** and is limited to 6 pulls per day across the whole app. The button hints *"(best at 20m)"* if you press it too early — around 20 minutes in is when most early replies have landed. After a successful pull it shows how many new mentions came in and tells you to check the Conversations section below.
 - Per replier row:
   - Their **name/handle** is a link to their **dossier** in the People tab.
@@ -354,7 +356,7 @@ That loop lives on its own tab now — see **[Radar → Workflow](./radar-tab.md
 ### The 30 minutes after a post goes live (Launch Room)
 
 1. When a scheduled post publishes, you get a browser notification and the **Launch Room** appears at the top of Today with a 30-minute clock.
-2. Click **Open on X — be present** to watch your post's replies.
+2. Click **Open on X — be present** to watch your post's replies. Seed the first comment yourself — **Draft seed comment** → pick an angle → **Copy** → paste it under your post.
 3. As you scroll the replies on X, early repliers stream into the room automatically. Around the 20-minute mark, optionally click **Pull from X** (~$0.001–0.005) to catch anyone you missed.
 4. For each replier: **Draft reply** → **Copy** → paste on X. Reply to as many early commenters as you can — that's the whole point of the window.
 5. If your post was a thread with the link in the first reply, the checklist reminds you to pin that reply.
@@ -378,7 +380,7 @@ That loop lives on its own tab now — see **[Radar → Workflow](./radar-tab.md
   | Action | Where | Rough cost |
   |---|---|---|
   | Refresh / pull mentions | Conversations, Launch Room "Pull from X" | ~$0.001 per mention |
-  | Draft a reply (single) | Conversations, Launch Room | ~$0.002–$0.004 (Grok) |
+  | Draft a reply (single) | Conversations, Launch Room (per replier + **Draft seed comment**) | ~$0.002–$0.004 (Grok) |
   | Draft replies (batch) | the **[Radar](./radar-tab.md)** tab | one Grok call, shown after |
   | Opener / icebreaker | Do Next | ~$0.005 (Grok) |
   | Quote re-up draft | Do Next "reup", Profile-click leaders | ~$0.006 (Grok) |

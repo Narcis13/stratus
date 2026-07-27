@@ -2616,12 +2616,24 @@ button.chip[aria-pressed="true"] {
   color: var(--muted);
 }
 
+/* GT.3 seed comment — same head row as the repliers list, and it reuses
+   `.reply-variants`/`.launch-reply-draft` for the picked variant. */
+.launch-seed {
+  margin-top: 6px;
+}
+
+.launch-seed-head,
 .launch-repliers-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-top: 6px;
+}
+
+.launch-seed-head h4 {
+  margin: 0;
+  font-size: 12px;
 }
 
 .launch-repliers-head h4 {
