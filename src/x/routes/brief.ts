@@ -27,6 +27,7 @@ import {
 } from '../db/schema.ts';
 import { runMonitor, worstOf } from '../monitor.ts';
 import { loadDoctrine } from '../niche/store.ts';
+import { loadReciprocityHandles } from '../people/reciprocity.ts';
 import {
   allQuestsDone,
   completedMap,
@@ -787,7 +788,7 @@ brief.get('/brief', async (c) => {
   const originalsToday = todayPublished.filter((p) => !p.isReply);
   const replyPasteTimes = postedDraftRows.map((d) => d.updatedAt);
 
-  const [voiceRows, [answeredToday], [unansweredNow]] = await Promise.all([
+  const [voiceRows, [answeredToday], [unansweredNow], reciprocityHandles] = await Promise.all([
     db
       .select({ handle: voiceAuthors.handle, followersCount: voiceAuthors.followersCount })
       .from(voiceAuthors)
@@ -803,6 +804,12 @@ brief.get('/brief', async (c) => {
         ),
       ),
     db.select({ n: sql<string>`count(*)` }).from(mentions).where(eq(mentions.status, 'unanswered')),
+    // GT.7: "my people", loaded ONCE per brief — the single-handle checker would
+    // re-run the same three queries for every posted draft and could not tell us
+    // anything the set doesn't. Same set the band gate carves out (D157), asked
+    // as of the day's start: replying to a stranger promotes them to `engaged`,
+    // so the unqualified set would count today's first contacts as reciprocity.
+    loadReciprocityHandles({ asOf: todayStart }),
   ]);
 
   // Target roster = the same 2–10x band as /voice/targets; empty until the
@@ -852,6 +859,13 @@ brief.get('/brief', async (c) => {
   let targetsTouched = 0;
   for (const h of neglectedAtStart) if (repliedTodayHandles.has(h)) targetsTouched++;
 
+  // GT.7 — replies, not distinct handles: three replies to one ally is three
+  // acts of reciprocity. Counted off the same posted rows the quota reads, so
+  // the reciprocity quest can never exceed the replies quest.
+  const reciprocityRepliesToday = postedDraftRows.filter((d) =>
+    reciprocityHandles.has(d.sourceAuthorUsername.toLowerCase()),
+  ).length;
+
   // GR.8: a daily commitment is a promise I made to myself, so it outranks the
   // doctrine default — but only while it is ACTIVE. An absent or paused row
   // changes nothing, which is why the table ships with no seed.
@@ -878,6 +892,10 @@ brief.get('/brief', async (c) => {
         replyPasteTimes,
         launchAttendWindowMs,
       ),
+      reciprocityRepliesToday,
+      // Niche-owned like the reply band (D2): one owner per number.
+      reciprocityTarget: doctrine.reciprocityTargetMin,
+      knownPeopleCount: reciprocityHandles.size,
     },
     questOpts,
   );

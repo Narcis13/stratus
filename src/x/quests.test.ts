@@ -20,6 +20,9 @@ const BASE = {
   openLoopsNow: 0,
   launchesToday: 0,
   launchesAttended: 0,
+  reciprocityRepliesToday: 0,
+  reciprocityTarget: 5,
+  knownPeopleCount: 0,
 };
 
 function byKey(quests: ReturnType<typeof computeQuests>) {
@@ -97,6 +100,75 @@ describe('computeQuests', () => {
     expect(missed.get('launch')?.done).toBe(false);
     const hit = byKey(computeQuests({ ...BASE, launchesToday: 2, launchesAttended: 1 }));
     expect(hit.get('launch')?.done).toBe(true);
+  });
+
+  // GT.7 — the reciprocity quest. Its target is niche doctrine
+  // (reciprocityTargetMin), not an x.quests.* knob, so it arrives as an input.
+  test('reciprocity quest counts replies to my people against the doctrine target', () => {
+    const partial = byKey(
+      computeQuests({ ...BASE, knownPeopleCount: 13, reciprocityRepliesToday: 3 }),
+    );
+    const q = partial.get('reciprocity');
+    expect(q?.target).toBe(5);
+    expect(q?.n).toBe(3);
+    expect(q?.done).toBe(false);
+    expect(q?.label).toBe('5 replies to your people');
+    expect(q?.note).toBeNull();
+
+    const met = byKey(computeQuests({ ...BASE, knownPeopleCount: 13, reciprocityRepliesToday: 5 }));
+    expect(met.get('reciprocity')?.done).toBe(true);
+  });
+
+  test('an empty circle makes the reciprocity quest vacuously done with a note', () => {
+    // BASE has knownPeopleCount 0 — a fresh install has nobody to be
+    // reciprocal with, and the streak never punishes a missing opportunity.
+    const q = byKey(computeQuests(BASE)).get('reciprocity');
+    expect(q?.target).toBe(0);
+    expect(q?.done).toBe(true);
+    expect(q?.note).toContain('circle');
+    expect(q?.label).toBe('replies to your people');
+  });
+
+  test('a day of nothing but first contacts says so instead of reading as broken', () => {
+    const q = byKey(
+      computeQuests({
+        ...BASE,
+        knownPeopleCount: 13,
+        repliesPostedToday: 9,
+        reciprocityRepliesToday: 0,
+      }),
+    );
+    expect(q.get('reciprocity')?.n).toBe(0);
+    expect(q.get('reciprocity')?.done).toBe(false);
+    expect(q.get('reciprocity')?.note).toContain('new faces');
+    // …and it goes quiet as soon as one reply lands on someone I already knew.
+    const one = byKey(
+      computeQuests({
+        ...BASE,
+        knownPeopleCount: 13,
+        repliesPostedToday: 9,
+        reciprocityRepliesToday: 1,
+      }),
+    );
+    expect(one.get('reciprocity')?.note).toBeNull();
+  });
+
+  test('a reciprocity target of 1 reads in the singular', () => {
+    const q = byKey(computeQuests({ ...BASE, knownPeopleCount: 2, reciprocityTarget: 1 }));
+    expect(q.get('reciprocity')?.label).toBe('1 reply to your people');
+    expect(q.get('reciprocity')?.done).toBe(false);
+  });
+
+  test('the quest block is six quests and reciprocity is the sixth', () => {
+    const quests = computeQuests(BASE);
+    expect(quests.map((q) => q.key)).toEqual([
+      'replies',
+      'original',
+      'targets',
+      'loop',
+      'launch',
+      'reciprocity',
+    ]);
   });
 
   // UI.2: the configurable quest targets. opts default to the shipped constants, so

@@ -139,9 +139,10 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
 
 // UI.12 — the quest targets are the one set of numbers a user wants to change
 // the moment they disagree with the checklist, so they get a gear on the very
-// section that grades them. The reply quest is deliberately absent: it follows
-// the niche reply band (or an active commitment that outranks it), and a knob
-// here would be a second silent owner of that number.
+// section that grades them. Two quests are deliberately absent: `replies`
+// follows the niche reply band (or an active commitment that outranks it) and
+// `reciprocity` follows the niche doctrine's `reciprocityTargetMin` (GT.7) — a
+// knob here would be a second silent owner of a number the niche already owns.
 const QUEST_KEYS = [
   'x.quests.originalsTarget',
   'x.quests.neglectedTargetsCount',
@@ -175,7 +176,7 @@ function QuestsSection({
             editor={editor}
             keys={QUEST_KEYS}
             label="Configure the daily quest targets"
-            note="The reply quest isn't here — it follows your niche's reply band, or a daily commitment when one is active. Both live under Settings → General."
+            note="The reply and 'replies to your people' quests aren't here — they follow your niche's reply band and reciprocity target (or a daily commitment when one is active). Both live under Settings → General."
           />
         </>
       }

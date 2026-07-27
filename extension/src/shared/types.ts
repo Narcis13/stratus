@@ -1231,7 +1231,8 @@ export interface Brief {
 
 // -------------------------------------------------------------- quests (C9)
 
-export type QuestKey = 'replies' | 'original' | 'targets' | 'loop' | 'launch';
+// Mirrors QUEST_KEYS in src/x/quests.ts (GT.7 added `reciprocity`).
+export type QuestKey = 'replies' | 'original' | 'targets' | 'loop' | 'launch' | 'reciprocity';
 
 export interface Quest {
   key: QuestKey;

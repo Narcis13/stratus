@@ -87,6 +87,44 @@ describe('reciprocity membership (GT.6)', () => {
     }
   });
 
+  // GT.7 — the time qualifier. `engaged` means "I have replied to them", so
+  // without this the act being counted is what creates the membership.
+  test('{asOf} excludes a rung reached after the cutoff, keeps earlier and null stamps', async () => {
+    const cutoff = new Date('2026-07-27T00:00:00Z');
+    try {
+      await db.insert(people).values([
+        // Promoted by today's reply — not who today's reply was reciprocal to.
+        {
+          handle: 'gt6engaged',
+          stage: 'engaged',
+          stageUpdatedAt: new Date(cutoff.getTime() + 3_600_000),
+        },
+        // Already mine when the day started.
+        {
+          handle: 'gt6ally',
+          stage: 'ally',
+          stageUpdatedAt: new Date(cutoff.getTime() - 86_400_000),
+        },
+        // Never stamped by the stage machine ⇒ predates it ⇒ already mine.
+        { handle: 'gt6noticed', stage: 'engaged' },
+      ]);
+
+      const asOf = await loadReciprocityHandles({ asOf: cutoff });
+      expect(asOf.has('gt6engaged')).toBe(false);
+      expect(asOf.has('gt6ally')).toBe(true);
+      expect(asOf.has('gt6noticed')).toBe(true);
+
+      // Unscoped is what the band gate asks — "mine right now" — and still has
+      // all three. One rule, two instants (D158).
+      const now = await loadReciprocityHandles();
+      expect(now.has('gt6engaged')).toBe(true);
+      expect(now.has('gt6ally')).toBe(true);
+      expect(now.has('gt6noticed')).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test('handles are matched normalized (@ prefix, case)', async () => {
     try {
       await db.insert(people).values({ handle: 'gt6engaged', stage: 'engaged' });

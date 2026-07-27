@@ -116,12 +116,17 @@ This is your gentle daily checklist — designed to encourage, never to guilt. E
 | **2 neglected targets** | Reply to 2 in-band targets you've ignored for over a week | Scales down if you have fewer than 2 neglected targets. |
 | **1 open loop closed** | Answer 1 owed mention today | Counts as done automatically if your inbox is already clear. |
 | **Launch room attended** | Reply to a commenter within 30 min of one of today's posts | Marked "N/A" on days you didn't post. |
+| **5 replies to your people** | Reply to 5 people you already know | Counts only people who were *already* yours when the day started. |
+
+**About "your people."** It's the same set the reply gate uses to let you draft on a quiet post without the force dance: anyone you've actually posted a reply to before (stage **engaged** or higher), plus everyone on your 2–10× target roster. The target comes from your niche's **reciprocity** number, not from the ⚙ here.
+
+The **"already yours when the day started"** part is the whole point of the quest, and it's worth understanding. Replying to a stranger is what *promotes* them to "engaged" — so if the quest just asked "is this person in my circle?", every first reply of the day would score, and the number would only ever repeat what the *Quality replies* quest already told you. Instead it asks who was in your circle **before** today, so it measures the thing that actually compounds: going back to the same people. If a day's replies all went to new accounts you'll see `0/5` with the note *"today went to new faces — circle back to someone"* — that's a correct reading, not a broken counter. A brand-new install shows *"no one in your circle yet"* and is counted as done.
 
 **Gentle by design:** a quest with no opportunity today (e.g. you had no post to launch) is counted as done, with a note explaining why. A quiet day never breaks your streak. When every quest is done you'll see *"All done — the rest of the day is yours."*
 
 The heading shows your **streak** — the number of consecutive days you finished everything (e.g. *"5-day streak"*), or *"streak starts today"* the first day. There is no red, no penalty, anywhere in this section.
 
-The **⚙** in the header edits the quest targets themselves: originals per day, how many neglected targets to ask for, how cold "neglected" means, and the launch-room attendance window. The **reply** quest is deliberately not in there — it follows your niche's reply band, or a daily commitment when one is active, and a second knob for the same number would silently disagree with the first. The gear says so.
+The **⚙** in the header edits the quest targets themselves: originals per day, how many neglected targets to ask for, how cold "neglected" means, and the launch-room attendance window. Two quests are deliberately not in there — **Quality replies** follows your niche's reply band (or a daily commitment when one is active) and **replies to your people** follows your niche's reciprocity target. Both live on the Niche card under **Settings → General**, and a second knob for the same number would silently disagree with the first. The gear says so.
 
 **Your commitments set two of the targets.** If you've promised yourself a daily minimum in **Settings → Commitments**, the *Quality replies* and *1 original* quests read that number instead of the defaults — the labels become e.g. *"17 quality replies"* and *"3 original posts"*. A **paused** commitment changes nothing. A commitment can only ever *raise* a bar, so a streak already on the books can't be retroactively broken. (The **Replies quota** section further down deliberately keeps showing the 10–20/day doctrine band: a personal minimum isn't a redefinition of the doctrine, so the two legitimately disagree.)
 
@@ -323,7 +328,7 @@ Four section headers carry a **⚙**. Each one opens a small card of exactly the
 
 | Gear | What it holds | Notes |
 |---|---|---|
-| **Today's quests** | Originals per day · neglected targets per day · neglected-after (days) · launch attend window (min) | The *reply* quest is absent on purpose — your niche's reply band (or an active commitment) owns that number. |
+| **Today's quests** | Originals per day · neglected targets per day · neglected-after (days) · launch attend window (min) | The *reply* and *replies to your people* quests are absent on purpose — your niche's reply band (or an active commitment) and its reciprocity target own those numbers. |
 | **Do next** | Rows to show · snooze length (h) | Which follow-ups qualify is the **Follow-ups** group in Settings → Tuning. |
 | **Targets** | Neglected target after (days) | The same key the Do-next queue and the Sunday digest read. The 2–10× band is niche-owned. |
 | **Top fans** | Fan amber rank · fan unacknowledged after (days) | Moves the nudge only, never the ranking. |

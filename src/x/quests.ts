@@ -6,11 +6,19 @@
 //
 // A quest hit is measured from the same rows the rest of the brief reads:
 // posted reply_drafts (updatedAt = paste time), posts_published (the publisher
-// inserts at post time), mentions.answeredAt, and the 2–10x target roster.
+// inserts at post time), mentions.answeredAt, the 2–10x target roster, and
+// (GT.7) the reciprocity set those posted replies are matched against.
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export const QUEST_KEYS = ['replies', 'original', 'targets', 'loop', 'launch'] as const;
+export const QUEST_KEYS = [
+  'replies',
+  'original',
+  'targets',
+  'loop',
+  'launch',
+  'reciprocity',
+] as const;
 export type QuestKey = (typeof QUEST_KEYS)[number];
 
 // How long after a post goes live a pasted reply still counts as "attended the
@@ -70,12 +78,32 @@ export interface QuestInputs {
   launchesToday: number;
   /** Launches with at least one pasted reply inside the 30-min window. */
   launchesAttended: number;
+  /** GT.7: of today's posted replies, how many went to someone who was already
+   *  in the reciprocity set when the day started (people/reciprocity.ts — the
+   *  SAME set the band gate carves out, so the quest and the gate can't
+   *  disagree about who my people are). "Already" is load-bearing: replying is
+   *  what promotes a stranger to `engaged`, so the unqualified set would count
+   *  first contacts and make this a copy of the replies quest. */
+  reciprocityRepliesToday: number;
+  /** Niche-owned, like the reply quota: `loadDoctrine().reciprocityTargetMin`
+   *  (default 5). Deliberately NOT an `x.quests.*` knob — a second owner for the
+   *  same number is how two surfaces start disagreeing (D2). */
+  reciprocityTarget: number;
+  /** Size of that same day-start set. 0 ⇒ the quest is vacuously done: a fresh
+   *  install has nobody to be reciprocal with, and the streak never punishes
+   *  a quest that had no opportunity. */
+  knownPeopleCount: number;
 }
 
 export function computeQuests(i: QuestInputs, opts: QuestOpts = QUEST_DEFAULTS): Quest[] {
   const targetsTarget = Math.min(opts.neglectedTargetsCount, i.neglectedTargetsAtDayStart);
   const loopVacuous = i.loopsClosedToday === 0 && i.openLoopsNow === 0;
   const originalsTarget = i.originalsTarget ?? opts.originalsTarget;
+  // An empty circle asks for nothing (same shape as "no launch today"). The
+  // Math.max floor is defensive: the doctrine validator already rejects a
+  // non-positive knob, but this module is pure and takes whatever it is given.
+  const reciprocityTarget =
+    i.knownPeopleCount === 0 ? 0 : Math.max(0, Math.trunc(i.reciprocityTarget));
   return [
     {
       key: 'replies',
@@ -124,6 +152,28 @@ export function computeQuests(i: QuestInputs, opts: QuestOpts = QUEST_DEFAULTS):
       target: i.launchesToday > 0 ? 1 : 0,
       done: i.launchesToday === 0 || i.launchesAttended >= 1,
       note: i.launchesToday === 0 ? 'no launch today' : null,
+    },
+    {
+      // GT.7 — the reciprocity habit made visible. Overlaps the `targets` quest
+      // on purpose: a reply to a neglected roster target satisfies both, the
+      // same way a launch-room reply also counts toward the quota.
+      key: 'reciprocity',
+      label:
+        reciprocityTarget === 0
+          ? 'replies to your people'
+          : `${reciprocityTarget} ${reciprocityTarget === 1 ? 'reply' : 'replies'} to your people`,
+      n: i.reciprocityRepliesToday,
+      target: reciprocityTarget,
+      done: i.reciprocityRepliesToday >= reciprocityTarget,
+      // The second note exists because a correct zero otherwise reads as a bug:
+      // a day of nothing but first contacts is a real 0 next to a busy replies
+      // quest, and saying so is the whole point of measuring this separately.
+      note:
+        i.knownPeopleCount === 0
+          ? 'no one in your circle yet'
+          : i.reciprocityRepliesToday === 0 && i.repliesPostedToday > 0
+            ? 'today went to new faces — circle back to someone'
+            : null,
     },
   ];
 }
