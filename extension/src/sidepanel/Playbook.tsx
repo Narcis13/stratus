@@ -8,6 +8,8 @@
 // one-time own-winner template extraction button (~$0.005/post, bounded ≤20).
 
 import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import { COACH_BAND_LABEL } from '../postCoach.ts';
+import { FORMAT_LABELS } from '../postFormat.ts';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
@@ -366,6 +368,10 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
             )}
           </Section>
 
+          <FormatEffectivenessSection fe={data.formatEffectiveness} minN={data.minN} />
+
+          <CoachScoreSection cs={data.coachScoreEffectiveness} minN={data.minN} />
+
           <IdeaEffectivenessSection idea={data.ideaEffectiveness} minN={data.minN} />
 
           <Section title={`Reply latency (${data.latencyEffectiveness.totalMeasured} measured)`}>
@@ -638,6 +644,144 @@ function IdeaEffectivenessSection({
             <div className="muted pb-note">
               payoff stays silent until both seeded and unseeded clear n≥{minN} — whether captured
               ideas beat off-the-cuff drafts.
+            </div>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+// SC.5 — the fourth axis. pillar = topic, register = tone, angle = reply
+// stance, FORMAT = structure. The one Playbook table with real n on day one:
+// it is classified from the post text at read time, so it covers the whole
+// published history without a backfill (and re-labels itself when the
+// classifier improves). No lift line — 14 buckets have no baseline pair.
+function FormatEffectivenessSection({
+  fe,
+  minN,
+}: {
+  fe: Playbook['formatEffectiveness'];
+  minN: number;
+}): JSX.Element {
+  return (
+    <Section title={`Post format (${fe.totalPosted} originals, ${fe.totalMeasured} measured)`}>
+      {fe.cells.length === 0 ? (
+        <EmptyState
+          line="No published originals yet."
+          hint="This one fills itself the moment you have posts — the label is read off the text, so nothing needs to be tagged by hand."
+        />
+      ) : (
+        <table className="pb-table">
+          <thead>
+            <tr>
+              <th>format</th>
+              <th>posted</th>
+              <th>result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {fe.cells.map((c) => (
+              <tr key={c.format} className={c.format === 'other' ? 'pb-thin' : ''}>
+                <td>{FORMAT_LABELS[c.format]}</td>
+                <td>{c.posted}</td>
+                <td>
+                  <ResultCell cell={c} minN={minN} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <div className="muted pb-note">
+        structure, not topic — which SHAPE of post lands, independent of pillar and register. Read
+        off the text at post time, never stored. A cell stays silent until n≥{minN}; "Substance" and
+        "One-liner" are the fallbacks for a post that matched no declared shape.
+      </div>
+    </Section>
+  );
+}
+
+// SC.5 — the coach grading itself, shipped in the same commit as the cell it
+// judges. Two questions, because the band alone cannot answer the second: does
+// a higher score reach further (bands), and did the coach's FIX rows matter
+// (clean vs flagged — a 90-scoring draft can still carry one).
+const COACH_FIX_ROWS: Array<{ key: 'clean' | 'flagged'; label: string }> = [
+  { key: 'clean', label: 'no fixes flagged' },
+  { key: 'flagged', label: '1+ fix flagged' },
+];
+
+function CoachScoreSection({
+  cs,
+  minN,
+}: {
+  cs: Playbook['coachScoreEffectiveness'];
+  minN: number;
+}): JSX.Element {
+  return (
+    <Section title={`Does the coach score predict anything? (${cs.totalMeasured} measured)`}>
+      {cs.totalPosted === 0 ? (
+        <EmptyState
+          line="No published originals yet."
+          hint="This is the section that can tell you the score is worthless — it grades the coach against your own reach."
+        />
+      ) : (
+        <>
+          <table className="pb-table">
+            <thead>
+              <tr>
+                <th>score band</th>
+                <th>posted</th>
+                <th>result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {cs.cells.map((c) => (
+                <tr key={c.band}>
+                  <td>{COACH_BAND_LABEL[c.band]}</td>
+                  <td>{c.posted}</td>
+                  <td>
+                    <ResultCell cell={c} minN={minN} />
+                  </td>
+                </tr>
+              ))}
+              {COACH_FIX_ROWS.map((r) => (
+                <tr key={r.key} className="pb-thin">
+                  <td>{r.label}</td>
+                  <td>{cs[r.key].posted}</td>
+                  <td>
+                    <ResultCell cell={cs[r.key]} minN={minN} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {cs.spread !== null && cs.spreadBands !== null ? (
+            <div className="status-line">
+              score spread: {cs.spread}x views ({COACH_BAND_LABEL[cs.spreadBands.high]} vs{' '}
+              {COACH_BAND_LABEL[cs.spreadBands.low]})
+              {cs.profileVisitsSpread !== null && ` · ${cs.profileVisitsSpread}x profile clicks`}
+              {cs.spread >= 1
+                ? ' — higher-scoring posts reach further'
+                : ' — higher-scoring posts do not reach further'}
+            </div>
+          ) : (
+            <div className="muted pb-note">
+              no measurable spread at n={cs.totalMeasured} — the score is a floor, not a lift. Two
+              bands have to clear n≥{minN} before this can compare them.
+            </div>
+          )}
+          {cs.fixSpread !== null ? (
+            <div className="status-line">
+              fix rows: {cs.fixSpread}x views for posts the coach flagged nothing on
+              {cs.fixSpread >= 1
+                ? ' — clearing the fixes pays'
+                : ' — flagged posts reached further; clearing fixes buys nothing here'}
+            </div>
+          ) : (
+            <div className="muted pb-note">
+              the fix-row comparison stays silent until both sides clear n≥{minN} — it is the "did
+              the advice help" question the band alone can't answer.
             </div>
           )}
         </>

@@ -26,7 +26,8 @@
     "../src/shared/replyBand.ts",
     "../src/shared/channelSuggest.ts",
     "../src/shared/activeTimes.ts",
-    "../src/shared/postCoach.ts"
+    "../src/shared/postCoach.ts",
+    "../src/shared/postFormat.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }

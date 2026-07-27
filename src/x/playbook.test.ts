@@ -8,6 +8,7 @@ import {
   type LatencyRow,
   type MeasuredOutcome,
   type ModelRow,
+  type OriginalPostRow,
   type ScoredReply,
   type TimelineBand,
   type TimelineSeenRow,
@@ -15,6 +16,8 @@ import {
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildCoachScoreEffectiveness,
+  buildFormatEffectiveness,
   buildIdeaEffectiveness,
   buildLatencyEffectiveness,
   buildMeEffectiveness,
@@ -424,6 +427,137 @@ describe('buildMediaEffectiveness', () => {
     const open = buildMediaEffectiveness(rows, 2);
     expect(open.viewsLift).toBe(round(400 / 150));
     expect(open.profileVisitsLift).toBe(round(8 / 3));
+  });
+});
+
+// SC.5 — the two own-original cells. Texts are chosen so the classifier and the
+// coach engine both land somewhere known (verified against the modules, not
+// guessed); reword one and the expectations move with it.
+const FIXTURE = {
+  q1: 'What is the one tool you would not give up?', // question · 93 top · 0 fixes
+  q2: 'Which editor do you actually open every day?', // question · 93 top · 0 fixes
+  q3: 'Which habit changed your writing the most?', // question · 93 top · 0 fixes
+  wyr: 'Would you rather ship fast and break things, or ship slow and sleep well?', // would_you_rather · top
+  tiny: 'ship it', // other · 25 rework · 1 fix (too short)
+  story:
+    'Two years ago I spent 4h/day fixing drafts by hand.\n\nThen I built a checklist.\n\nNow it takes 20 minutes.', // story · 95 top · 0 fixes
+  milestone: 'Just crossed 1,000 followers.\n\nTook 14 months and 900 posts.', // milestone · 90 top
+  hedge:
+    'I think maybe this is sort of possibly the kind of thing that could perhaps matter, in a way, somewhat.', // one_liner · 83 ship · 0 fixes
+  long: Array.from({ length: 16 }, (_, i) => `line ${i + 1} of the thing`).join('\n'), // substance · 83 ship · 1 fix (show-more)
+};
+
+describe('buildFormatEffectiveness (SC.5)', () => {
+  const rows: OriginalPostRow[] = [
+    { text: FIXTURE.q1, outcome: out(500, 10) },
+    { text: FIXTURE.q2, outcome: out(300, 6) },
+    { text: FIXTURE.q3, outcome: null }, // posted, unmeasured
+    { text: FIXTURE.wyr, outcome: out(200, 4) },
+    { text: FIXTURE.tiny, outcome: out(999, 99) },
+  ];
+
+  test('buckets by classified format; posted counts unmeasured rows, n does not', () => {
+    const r = buildFormatEffectiveness(rows, 2);
+    const q = r.cells.find((c) => c.format === 'question');
+    expect(q).toMatchObject({ posted: 3, n: 2, medianViews: 400, sufficient: true });
+    expect(q?.medianProfileVisits).toBe(8);
+    expect(r.cells.find((c) => c.format === 'would_you_rather')).toMatchObject({ n: 1, posted: 1 });
+    expect(r.totalPosted).toBe(5);
+    expect(r.totalMeasured).toBe(4);
+  });
+
+  test('cells follow POST_FORMATS cascade order and skip formats nobody posted', () => {
+    const r = buildFormatEffectiveness(rows, 2);
+    expect(r.cells.map((c) => c.format)).toEqual(['would_you_rather', 'question', 'other']);
+  });
+
+  test('partition invariant: every original lands in exactly one format cell', () => {
+    const r = buildFormatEffectiveness(rows, 2);
+    expect(r.cells.reduce((s, c) => s + c.posted, 0)).toBe(rows.length);
+    expect(r.cells.reduce((s, c) => s + c.n, 0)).toBe(r.totalMeasured);
+  });
+
+  test('gate: each cell independently below minN is insufficient', () => {
+    const r = buildFormatEffectiveness(rows, 3);
+    expect(r.cells.every((c) => c.sufficient)).toBe(false);
+    expect(r.cells.find((c) => c.format === 'question')?.sufficient).toBe(false);
+  });
+
+  test('empty corpus is an empty table, not a fabricated row', () => {
+    const r = buildFormatEffectiveness([], 2);
+    expect(r.cells).toEqual([]);
+    expect(r.totalPosted).toBe(0);
+  });
+});
+
+describe('buildCoachScoreEffectiveness (SC.5)', () => {
+  const rows: OriginalPostRow[] = [
+    { text: FIXTURE.q1, outcome: out(1000, 20) }, // top, clean
+    { text: FIXTURE.story, outcome: out(600, 12) }, // top, clean
+    { text: FIXTURE.milestone, outcome: null }, // top, clean, unmeasured
+    { text: FIXTURE.hedge, outcome: out(100, 2) }, // ship, clean
+    { text: FIXTURE.long, outcome: out(200, 4) }, // ship, FLAGGED (show-more)
+    { text: FIXTURE.tiny, outcome: out(50, 1) }, // rework, FLAGGED (too short)
+  ];
+
+  test('all four bands always render, worst→best, empty bands included', () => {
+    const r = buildCoachScoreEffectiveness(rows, 2);
+    expect(r.cells.map((c) => c.band)).toEqual(['rework', 'almost', 'ship', 'top']);
+    expect(r.cells.find((c) => c.band === 'almost')).toMatchObject({ posted: 0, n: 0 });
+    expect(r.cells.find((c) => c.band === 'top')).toMatchObject({
+      posted: 3,
+      n: 2,
+      medianViews: 800,
+    });
+  });
+
+  test('the fix-count split is the SAME corpus keyed differently (D152b)', () => {
+    const r = buildCoachScoreEffectiveness(rows, 2);
+    // A `top`-band post can still carry a fix row — that is exactly why the
+    // band alone can't answer "did the advice help".
+    expect(r.clean).toMatchObject({ posted: 4, n: 3, medianViews: 600 });
+    expect(r.flagged).toMatchObject({ posted: 2, n: 2, medianViews: 125 });
+    expect(r.clean.posted + r.flagged.posted).toBe(rows.length);
+    expect(r.clean.n + r.flagged.n).toBe(r.totalMeasured);
+  });
+
+  test('spread names the two gated bands it actually compared', () => {
+    const r = buildCoachScoreEffectiveness(rows, 2);
+    expect(r.spreadBands).toEqual({ high: 'top', low: 'ship' });
+    expect(r.spread).toBe(round(800 / 150));
+    expect(r.profileVisitsSpread).toBe(round(16 / 3));
+    expect(r.fixSpread).toBe(round(600 / 125));
+    expect(r.fixProfileVisitsSpread).toBe(round(12 / 2.5));
+  });
+
+  test('no spread unless TWO distinct bands clear the gate', () => {
+    const r = buildCoachScoreEffectiveness(rows, 3);
+    expect(r.spread).toBeNull();
+    expect(r.spreadBands).toBeNull();
+    // clean clears n≥3 but flagged doesn't — both-sides discipline holds.
+    expect(r.clean.sufficient).toBe(true);
+    expect(r.flagged.sufficient).toBe(false);
+    expect(r.fixSpread).toBeNull();
+  });
+
+  test('a single gated band is not a spread against itself', () => {
+    const r = buildCoachScoreEffectiveness(
+      [
+        { text: FIXTURE.q1, outcome: out(1000, 20) },
+        { text: FIXTURE.story, outcome: out(600, 12) },
+      ],
+      2,
+    );
+    expect(r.cells.filter((c) => c.sufficient).map((c) => c.band)).toEqual(['top']);
+    expect(r.spread).toBeNull();
+  });
+
+  test('partition invariant: every original lands in exactly one band', () => {
+    const r = buildCoachScoreEffectiveness(rows, 2);
+    expect(r.cells.reduce((s, c) => s + c.posted, 0)).toBe(rows.length);
+    expect(r.cells.reduce((s, c) => s + c.n, 0)).toBe(r.totalMeasured);
+    expect(r.totalPosted).toBe(6);
+    expect(r.totalMeasured).toBe(5);
   });
 });
 

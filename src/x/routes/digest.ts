@@ -44,7 +44,7 @@ import { localDayKey } from '../quests.ts';
 import { getSetting } from '../settings/registry.ts';
 import { loadCommitmentsWithDebt, loadFlowCurrents, loadGoalsWithPacing } from './goals.ts';
 import {
-  loadMediaRows,
+  loadOriginalPostRows,
   loadPostGuidanceSafe,
   loadReplyGuidanceSafe,
   loadRosterCoverage,
@@ -309,7 +309,7 @@ async function loadFacts(
   // all-time media-vs-text lift the studio exists to earn (gated n≥20/side).
   const imageSpendUsd =
     Math.round(Number(costRows.find((r) => r.platform === 'xai')?.costUsd ?? 0) * 1e5) / 1e5;
-  const mediaVsText = buildMediaEffectiveness(await loadMediaRows());
+  const mediaVsText = buildMediaEffectiveness(await loadOriginalPostRows());
 
   // §GR.9 — the scorecard's own inputs (everything else it needs is derived
   // inside buildDigestFacts from the rows above).

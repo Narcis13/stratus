@@ -27,6 +27,7 @@ import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
 import { getSetting, resetSettings, setSettings } from '../settings/registry.ts';
 import {
   loadIdeaRows,
+  loadOriginalPostRows,
   loadPostGuidance,
   loadReplyGuidance,
   loadRosterCoverage,
@@ -274,6 +275,35 @@ describe('playbook route', () => {
     expect(
       ie.posts.seeded.n + ie.posts.unseeded.n + ie.replies.seeded.n + ie.replies.unseeded.n,
     ).toBe(ie.totalMeasured);
+
+    // SC.5 format + coach-score cells ride along on the same own-originals load
+    // as the media baseline. Both are partitions over the WHOLE corpus (other
+    // test files seed originals too), so the invariants are what's assertable
+    // here — the bucketing itself is pinned in ../playbook.test.ts.
+    const fe = body.formatEffectiveness;
+    expect(fe.cells.reduce((s: number, c: { posted: number }) => s + c.posted, 0)).toBe(
+      fe.totalPosted,
+    );
+    expect(fe.cells.reduce((s: number, c: { n: number }) => s + c.n, 0)).toBe(fe.totalMeasured);
+    const cs = body.coachScoreEffectiveness;
+    expect(cs.cells.map((c: { band: string }) => c.band)).toEqual([
+      'rework',
+      'almost',
+      'ship',
+      'top',
+    ]);
+    expect(cs.cells.reduce((s: number, c: { posted: number }) => s + c.posted, 0)).toBe(
+      cs.totalPosted,
+    );
+    expect(cs.clean.posted + cs.flagged.posted).toBe(cs.totalPosted);
+    expect(cs.clean.n + cs.flagged.n).toBe(cs.totalMeasured);
+    // One loader, three cells — the two axes see exactly the media baseline's rows.
+    expect(cs.totalPosted).toBe(fe.totalPosted);
+    expect(fe.totalMeasured).toBe(body.mediaEffectiveness.totalMeasured);
+    // Nothing is anywhere near n≥20, so neither comparison speaks.
+    expect(cs.spread).toBeNull();
+    expect(cs.spreadBands).toBeNull();
+    expect(cs.fixSpread).toBeNull();
 
     // Nothing clears the default gate on 2 measured rows.
     expect(body.guidance.reply).toBeNull();
@@ -892,4 +922,78 @@ describe('x.gates.minCellN is the default playbook gate', () => {
     expect(body.minN).toBe(minN ?? getSetting<number>('x.gates.minCellN'));
     return body.timelineFunnel.cells;
   }
+});
+
+// SC.5 — the widened own-originals loader (`text` rides along with hasMedia) and
+// the two cells it feeds. Declared LAST on purpose: it inserts posts_published
+// originals, and the media test above asserts exact bucket counts over the same
+// table. Deltas, not absolutes: other files seed originals into the shared
+// in-memory DB, so the assertions compare a before/after of THIS block's rows.
+describe('loadOriginalPostRows + format/coach cells (SC.5)', () => {
+  const WYR = 'sc5_wyr';
+  const TINY = 'sc5_tiny';
+  const WYR_TEXT = 'Would you rather ship fast and break things, or ship slow and sleep well?';
+  const TINY_TEXT = 'ship it';
+  let before = 0;
+
+  beforeAll(async () => {
+    before = (await loadOriginalPostRows()).length;
+    for (const p of [
+      { tweetId: WYR, text: WYR_TEXT, views: 700, clicks: 14 },
+      { tweetId: TINY, text: TINY_TEXT, views: 30, clicks: 0 },
+    ]) {
+      await db
+        .insert(postsPublished)
+        .values({
+          tweetId: p.tweetId,
+          text: p.text,
+          postedAt: at(250),
+          isReply: false,
+          source: 'test',
+          // retired so the daily *billed* metrics pass can never pick these up.
+          retired: true,
+        })
+        .onConflictDoNothing();
+      await db.insert(metricsSnapshots).values({
+        tweetId: p.tweetId,
+        publicMetrics: { impression_count: p.views, like_count: 0, reply_count: 0 },
+        nonPublicMetrics: { user_profile_clicks: p.clicks },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    for (const id of [WYR, TINY]) {
+      await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, id));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, id));
+    }
+  });
+
+  test('the loader carries text and the measured outcome on the same row', async () => {
+    const rows = await loadOriginalPostRows();
+    expect(rows.length).toBe(before + 2);
+    const wyr = rows.find((r) => r.text === WYR_TEXT);
+    expect(wyr?.outcome).toMatchObject({ views: 700, profileVisits: 14 });
+    // hasMedia still rides along — one query feeds all three cells.
+    expect(wyr?.hasMedia).toBeNull();
+  });
+
+  test('GET /x/playbook classifies those rows at read time, no backfill', async () => {
+    const body = (await (await app.request('/x/playbook?minN=1')).json()) as {
+      formatEffectiveness: {
+        cells: Array<{ format: string; posted: number; medianViews: number | null }>;
+      };
+      coachScoreEffectiveness: {
+        cells: Array<{ band: string; posted: number }>;
+        flagged: { posted: number };
+      };
+    };
+    const wyr = body.formatEffectiveness.cells.find((c) => c.format === 'would_you_rather');
+    expect(wyr?.posted).toBeGreaterThanOrEqual(1);
+    // `ship it` is 25/100 — the rework band, and a flagged (fix-carrying) row.
+    expect(
+      body.coachScoreEffectiveness.cells.find((c) => c.band === 'rework')?.posted,
+    ).toBeGreaterThanOrEqual(1);
+    expect(body.coachScoreEffectiveness.flagged.posted).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -48,6 +48,7 @@ import {
   type MeasuredOutcome,
   type MediaRow,
   type ModelRow,
+  type OriginalPostRow,
   type PillarRegisterRow,
   type ReplyOrigin,
   type RosterCoverage,
@@ -56,6 +57,8 @@ import {
   buildAngleEffectiveness,
   buildBandCalibration,
   buildBatchVsSingle,
+  buildCoachScoreEffectiveness,
+  buildFormatEffectiveness,
   buildIdeaEffectiveness,
   buildLatencyEffectiveness,
   buildMeEffectiveness,
@@ -323,19 +326,29 @@ async function loadStructureRows(): Promise<StructureRow[]> {
   }));
 }
 
-// -------------------------------------------------- media vs text-only rows
+// ------------------------------------------------------ own-original rows
 
 /** Own ORIGINAL posts only (isReply=false) — the studio composes images for
  *  posts, and mixing reply view-distributions in would confound the baseline.
- *  hasMedia is null on rows written before §S0.2 landed (bucketed as unknown). */
-export async function loadMediaRows(): Promise<MediaRow[]> {
+ *  hasMedia is null on rows written before §S0.2 landed (bucketed as unknown).
+ *
+ *  One query, three cells (SC.5): `text` rides along so the format and
+ *  coach-score axes classify at read time off the same rows the media baseline
+ *  uses — a second query over the same table would only invite the two
+ *  populations to drift apart. */
+export async function loadOriginalPostRows(): Promise<Array<MediaRow & OriginalPostRow>> {
   const posts = await db
-    .select({ tweetId: postsPublished.tweetId, hasMedia: postsPublished.hasMedia })
+    .select({
+      tweetId: postsPublished.tweetId,
+      hasMedia: postsPublished.hasMedia,
+      text: postsPublished.text,
+    })
     .from(postsPublished)
     .where(eq(postsPublished.isReply, false));
   const outcomes = await latestOutcomes(posts.map((p) => p.tweetId));
   return posts.map((p) => ({
     hasMedia: p.hasMedia,
+    text: p.text,
     outcome: outcomes.get(p.tweetId) ?? null,
   }));
 }
@@ -605,6 +618,8 @@ playbook.get('/playbook', async (c) => {
 
   const structures = buildStructureEffectiveness(await loadStructureRows(), minN);
   const origins = await loadOriginRows();
+  // One load, three cells — media / format / coach score all read own originals.
+  const originals = await loadOriginalPostRows();
 
   const angleEffectiveness = buildAngleEffectiveness(angleRows, minN);
   return c.json({
@@ -625,7 +640,9 @@ playbook.get('/playbook', async (c) => {
       replyRows.map((r) => ({ hasMe: r.hasMe, outcome: r.outcome })),
       minN,
     ),
-    mediaEffectiveness: buildMediaEffectiveness(await loadMediaRows(), minN),
+    mediaEffectiveness: buildMediaEffectiveness(originals, minN),
+    formatEffectiveness: buildFormatEffectiveness(originals, minN),
+    coachScoreEffectiveness: buildCoachScoreEffectiveness(originals, minN),
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),

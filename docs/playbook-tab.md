@@ -200,6 +200,38 @@ If both **media** and **text-only** clear the gate, an **image lift** line appea
 
 > On a normal account this stays gated for a long time, because stratus can't attach media through the X API yet — so nearly everything reads as text-only for now.
 
+### Post format
+
+**Question it answers:** *Which SHAPE of post lands — a question, a story, a list, a hot take?*
+
+This is a fourth axis, deliberately independent of the other three: **pillar** is the topic, **register** is the tone, **angle** is a reply's stance, and **format** is the *structure*. A "Would-you-rather" about pricing and a "Would-you-rather" about tooling are the same format and different pillars.
+
+Nothing gets tagged by hand. The format is read off the post's own text every time the page loads, using a fixed cascade of shape rules — so this table has **real n on day one**, over your entire published history, with no backfill step and nothing stored. It also means that when the classifier gets better, your whole history re-labels itself on the next refresh.
+
+Rows are one per format you've actually posted, in cascade order (the more specific shapes first). Two of them are fallbacks rather than shapes:
+
+- **Substance** — a multi-line post that matched no declared shape. On a normal account this is the biggest row by far (roughly half of everything), so treat it as "everything else", not as a style.
+- **One-liner** — a single line that matched no shape.
+- **Other** (thin row) — retweets, URL-only posts, and fragments under four words.
+
+There is **no lift line** here, on purpose: fourteen buckets have no natural baseline pair to divide by, so the useful comparison is a specific format against Substance, by eye. Each cell is gated independently, so most stay quiet until they've accumulated enough posts.
+
+### Does the coach score predict anything?
+
+**Question it answers:** *The Composer shows a 0–100 score on every draft. Is that score worth anything?*
+
+This section exists to try to **falsify** the coach, and it shipped in the same release as the coach itself. It takes the same published originals and buckets them two ways:
+
+- **By score band** — `rework` / `almost there` / `ship it` / `top tier`, the exact bands the Composer shows you while typing.
+- **By fix count** (the two thin rows) — **no fixes flagged** vs **1+ fix flagged**. This is the sharper question, because the score is a mean over ~20 rules: a draft can carry one red Fix row and still score 90. So "did a high score help?" and "did clearing the Fix rows help?" are genuinely different questions, and only the second one is about the *advice*.
+
+Below the table, one of two things appears:
+
+- If two bands have cleared the gate, a **score spread** line: `score spread: 2.1x views (top tier vs ship it) — higher-scoring posts reach further`. It names which two bands it compared, because on a real corpus that is rarely top-vs-rework. If the higher band did worse, the line says exactly that.
+- Otherwise: `no measurable spread at n=… — the score is a floor, not a lift.`
+
+Expect that second sentence for a long time, and possibly forever. Two things about a healthy account make it likely: the score is designed to catch own-goals rather than to predict reach, and once you're writing well nearly everything you post lands in **top tier** — which leaves nothing to compare it against. That's not a broken table. It's the table doing its job: the coach is a floor that stops you shipping an obvious mistake, and this section is what would tell you if it ever became more than that.
+
 ### Idea Inbox payoff
 
 **Question it answers:** *Do the drafts I built from a captured idea beat the ones I wrote off-the-cuff?*

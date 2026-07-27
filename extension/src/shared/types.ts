@@ -1,6 +1,8 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
+import type { CoachBand } from '../postCoach.ts';
+import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
 
 export type PostStatus =
@@ -1708,6 +1710,14 @@ export interface PlaybookModelCell extends PlaybookCell {
   model: string;
 }
 
+export interface PlaybookFormatCell extends PlaybookCell {
+  format: PostFormat;
+}
+
+export interface PlaybookCoachScoreCell extends PlaybookCell {
+  band: CoachBand;
+}
+
 // Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
 // no tweet time, so no age and no velocity to classify with; it never folds
 // into the null band, which does mean "judged not worth replying to".
@@ -1812,6 +1822,31 @@ export interface Playbook {
     totalMeasured: number;
     viewsLift: number | null;
     profileVisitsLift: number | null;
+  };
+  // Post format × outcome (SC.5): the fourth axis — pillar = topic, register =
+  // tone, angle = reply stance, FORMAT = structure. Classified at read time from
+  // posts_published.text, so it has n on day one. Cells in cascade order, only
+  // for formats that occur; no lift line (no canonical baseline pair).
+  formatEffectiveness: {
+    cells: PlaybookFormatCell[];
+    totalPosted: number;
+    totalMeasured: number;
+  };
+  // The coach's own judge (SC.5): does the score the Composer shows predict
+  // anything? Bands partition every original; `clean`/`flagged` is the same
+  // corpus split on fix count, which is the question the band alone can't answer
+  // (a 90-scoring draft can still carry one red fix row).
+  coachScoreEffectiveness: {
+    cells: PlaybookCoachScoreCell[];
+    clean: PlaybookCell;
+    flagged: PlaybookCell;
+    totalPosted: number;
+    totalMeasured: number;
+    spread: number | null;
+    profileVisitsSpread: number | null;
+    spreadBands: { high: CoachBand; low: CoachBand } | null;
+    fixSpread: number | null;
+    fixProfileVisitsSpread: number | null;
   };
   // Reply-latency × outcome (§S0.5): grades the doctrine's "reply early" bet.
   // `early` = replied <15m, `late` = replied ≥1h; lift only when both clear the
