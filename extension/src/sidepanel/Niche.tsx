@@ -45,6 +45,7 @@ const DOCTRINE_FIELDS: { key: keyof NicheDoctrine; label: string }[] = [
   { key: 'weekReplyTargetPct', label: 'Weekly reply %' },
   { key: 'targetBandMinX', label: 'Target band · min ×' },
   { key: 'targetBandMaxX', label: 'Target band · max ×' },
+  { key: 'reciprocityTargetMin', label: 'Replies to my people · min' },
 ];
 
 type DoctrineStrings = Record<keyof NicheDoctrine, string>;
@@ -56,12 +57,14 @@ function doctrineToStrings(d: NicheDoctrine): DoctrineStrings {
     weekReplyTargetPct: String(d.weekReplyTargetPct),
     targetBandMinX: String(d.targetBandMinX),
     targetBandMaxX: String(d.targetBandMaxX),
+    reciprocityTargetMin: String(d.reciprocityTargetMin),
   };
 }
 
-// Parse all 5 knobs; every one must be a finite positive number (the server's
-// own acceptance rule). Returns the full object so a save sends all 5 (D27c —
-// PATCH doctrine is replace, not merge).
+// Parse all 6 knobs; every one must be a finite positive number (the server's
+// own acceptance rule). Returns the full object so a save sends all 6 (D27c —
+// PATCH doctrine is replace, not merge, so a knob left out of the body is
+// silently reset to its default).
 function parseDoctrine(d: DoctrineStrings): NicheDoctrine | null {
   const out = {} as NicheDoctrine;
   for (const f of DOCTRINE_FIELDS) {
@@ -219,7 +222,7 @@ function ActiveNicheEditor({ settings, active, onSaved }: EditorProps): JSX.Elem
         setErr('Doctrine values must be positive numbers.');
         return;
       }
-      body.doctrine = parsed; // full 5-knob object — PATCH replaces, not merges
+      body.doctrine = parsed; // full 6-knob object — PATCH replaces, not merges
     }
     setBusy(true);
     setErr(null);

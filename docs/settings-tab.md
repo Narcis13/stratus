@@ -178,12 +178,13 @@ At the bottom sits the **roadmap**: features that are planned and specced but no
 
 ## Your niche (identity & strategy)
 
-The **Niche** card is where "who you are" lives. A niche bundles the four things every AI draft and every coaching number is built from: your **persona** (the biography the post drafter grounds on), your **beliefs** (the principles it argues from), your **reply persona** (the short self-description replies use), a prose **description**, and five **doctrine** knobs. Editing any of these changes the next drafted post and reply **without a deploy** — the same way pillars became editable.
+The **Niche** card is where "who you are" lives. A niche bundles the four things every AI draft and every coaching number is built from: your **persona** (the biography the post drafter grounds on), your **beliefs** (the principles it argues from), your **reply persona** (the short self-description replies use), a prose **description**, and six **doctrine** knobs. Editing any of these changes the next drafted post and reply **without a deploy** — the same way pillars became editable.
 
 ### The active-niche editor
 
 - **Persona / beliefs / reply persona / description:** free-text fields. Save commits them; Reset discards unsaved edits. The next `/x/posts/draft` and `/x/replies/generate` immediately ground on the new text (nothing is cached across an edit).
-- **Doctrine (5 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), and the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces). These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+- **Doctrine (6 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces), and **replies to my people · min** (default 5 — how many of the day's replies should go to accounts you already have a relationship with; see [Your people are exempt](replies-tab.md#your-people-are-exempt)). These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+- **Saving doctrine sends all six numbers.** The server replaces the stored block rather than merging it, so a knob you never touched still travels with the save — that is why the card always shows every field filled in.
 
 ### Niches list & activation
 

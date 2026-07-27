@@ -6,7 +6,7 @@ import { matchOrigin } from './middleware/cors.ts';
 import type { ActiveTimesGrid } from './shared/activeTimes.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
-import { metricsSnapshots, postsPublished } from './x/db/schema.ts';
+import { metricsSnapshots, people, postsPublished } from './x/db/schema.ts';
 import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
@@ -1418,6 +1418,78 @@ describe('replies band gate (§7.3)', () => {
       } finally {
         resetSettings({ group: 'band' });
       }
+    });
+  });
+
+  // GT.6: the people-layer carve-out. The exempt case is proven by how FAR it
+  // gets — both LLM keys are force-unset (the drafter.test.ts trick) so a draft
+  // that clears the gate lands on `llm_not_configured` instead of spending a
+  // real Grok call inside `bun run test`. The refusals need no such care: they
+  // return before anything is loaded.
+  describe('reciprocity exemption (GT.6)', () => {
+    const dead = { views: 40, replies: 1, reposts: 0, likes: 2 };
+    const deadCtx = (handle: string) =>
+      ctx({ handle, postedAt: '2026-06-08T08:00:00Z', metrics: dead });
+
+    // `fn` returns `Response | Promise<Response>` — app.request's own type (NT.7).
+    const keyless = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+      const xai = process.env.XAI_API_KEY;
+      const openrouter = process.env.OPENROUTER_API_KEY;
+      process.env.XAI_API_KEY = '';
+      process.env.OPENROUTER_API_KEY = '';
+      try {
+        return await fn();
+      } finally {
+        process.env.XAI_API_KEY = xai ?? '';
+        process.env.OPENROUTER_API_KEY = openrouter ?? '';
+      }
+    };
+
+    test('a dead post by someone I reply to clears the gate before any spend', async () => {
+      try {
+        await db.insert(people).values({ handle: 'gt6person', stage: 'engaged' });
+        const res = await keyless(() => post({ context: deadCtx('gt6person') }));
+        // Past the 422 and into the LLM layer — the gate opened, nothing was paid.
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as { error: string }).error).toBe('llm_not_configured');
+      } finally {
+        await db.delete(people).where(eq(people.handle, 'gt6person'));
+      }
+    });
+
+    test('a retired person is not my people — the dead post still 422s', async () => {
+      try {
+        await db.insert(people).values({ handle: 'gt6gone', stage: 'engaged', retired: true });
+        const res = await post({ context: deadCtx('gt6gone') });
+        expect(res.status).toBe(422);
+        expect(((await res.json()) as { error: string }).error).toBe('band_gate');
+      } finally {
+        await db.delete(people).where(eq(people.handle, 'gt6gone'));
+      }
+    });
+
+    test('an unknown handle keeps the refusal default', async () => {
+      const res = await post({ context: deadCtx('gt6stranger') });
+      expect(res.status).toBe(422);
+      const out = (await res.json()) as { error: string; band: unknown };
+      expect(out.error).toBe('band_gate');
+      expect(out.band).toBeNull();
+    });
+
+    test('gateBypass is never accepted from the client', () => {
+      const out = parseContext({
+        tweetId: '123456',
+        handle: 'someone',
+        author: 'Some One',
+        text: 'hello',
+        url: 'https://x.com/someone/status/123456',
+        postedAt: '2026-06-10T08:00:00Z',
+        metrics: { views: 1, replies: 0, reposts: 0, likes: 0 },
+        topComments: [],
+        gateBypass: 'roster',
+      });
+      expect('error' in out).toBe(false);
+      expect(out).not.toHaveProperty('gateBypass');
     });
   });
 });

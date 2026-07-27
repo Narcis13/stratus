@@ -26,6 +26,7 @@ import {
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
+import { isReciprocityHandleSafe } from '../people/reciprocity.ts';
 import {
   type RelationshipFacts,
   renderRelationship,
@@ -216,7 +217,21 @@ replies.post('/replies/generate', async (c) => {
   const gateSignals = gateSignalsFor(ctx, Date.now());
   const band = classifyBand(gateSignals, bandThresholdsFromSettings());
   if ((band === null || band === 'skip') && !override) {
-    return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
+    // GT.6: the refusal default stands for strangers, but not for the people
+    // layer — a quiet post by someone I already reply to (or by a 2–10x roster
+    // target) is the reciprocity lane, not a dead post. Server-side by design
+    // (§7.16): a client that could send its own exemption would weaken the
+    // money gate for every caller. $0 SQL, and it runs ONLY here, so a hot/warm
+    // post never pays for the lookup (§7.4). Uniform across `null` and `skip`:
+    // a roster person's bait post is still their post, and a human clicked.
+    if (await isReciprocityHandleSafe(ctx.handle)) {
+      // Stamped BEFORE the insert so `contextSnapshot` records why a refused
+      // band still drafted — that is what keeps the exempt drafts a cohort the
+      // BAND crosstab can tell apart from a human `override`.
+      ctx.gateBypass = 'roster';
+    } else {
+      return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
+    }
   }
 
   // Stamp the gate's verdict when the caller didn't send capture-time signals

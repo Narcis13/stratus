@@ -34,13 +34,16 @@ const SLUG = 'smoke-nutrition';
 const live = process.argv.includes('--live');
 
 // Custom doctrine so the brief/targets assertions are unambiguous (distinct from
-// the 10/20/70/2/10 defaults builder reads back to).
+// the 10/20/70/2/10/5 defaults builder reads back to). Every knob is sent: the
+// PATCH replaces the stored block, and a key the server doesn't know is dropped
+// silently — so the round-trip loop below is what proves a new knob is wired.
 const DOCTRINE = {
   replyTargetMin: 5,
   replyTargetMax: 8,
   weekReplyTargetPct: 55,
   targetBandMinX: 4,
   targetBandMaxX: 12,
+  reciprocityTargetMin: 3,
 };
 // Sentinels chosen to be unique to this niche's grounding, so an assembled prompt
 // containing them proves the niche fields substituted in.

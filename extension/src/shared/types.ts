@@ -431,6 +431,7 @@ export interface NicheDoctrine {
   weekReplyTargetPct: number;
   targetBandMinX: number;
   targetBandMaxX: number;
+  reciprocityTargetMin: number;
 }
 
 export interface Niche {

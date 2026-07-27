@@ -342,7 +342,7 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
     {
       title: 'Active niche',
       description:
-        'The active niche — the identity + strategy container: persona, beliefs, reply persona, prose description, and the resolved doctrine knobs (reply quota, week reply %, target follower band). Free, local read.',
+        'The active niche — the identity + strategy container: persona, beliefs, reply persona, prose description, and the resolved doctrine knobs (reply quota, week reply %, target follower band, reciprocity target). Free, local read.',
       inputSchema: {},
     },
     async () => route('/x/niche'),

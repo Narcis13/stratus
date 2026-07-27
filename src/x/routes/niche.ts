@@ -1,5 +1,5 @@
 // Niche CRUD + activation ratchet (N0.2). A niche is the first-class identity +
-// strategy container (persona/beliefs/replyPersona grounding + the 5 doctrine
+// strategy container (persona/beliefs/replyPersona grounding + the 6 doctrine
 // knobs); pillars/channels are owned by it. Mounted under `/x` by `mountX` —
 // always, $0 (no X/Grok). Static paths + a `:slug` param that shadows nothing.
 // The CRUD shape, validation style, and last-active 409 guard mirror pillars.ts.
@@ -32,6 +32,10 @@ const DOCTRINE_KEYS: (keyof NicheDoctrine)[] = [
   'weekReplyTargetPct',
   'targetBandMinX',
   'targetBandMaxX',
+  // A knob missing from this list is silently DROPPED by readDoctrine — the
+  // PATCH would 200 and the value would never persist. Add the key here in the
+  // same commit as the NicheDoctrine field.
+  'reciprocityTargetMin',
 ];
 
 // Validate a supplied doctrine blob: null clears to defaults; an object must have

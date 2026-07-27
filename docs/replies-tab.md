@@ -81,6 +81,17 @@ From those, the tweet lands in a band:
 
 When the tweet scores **skip** or **(none)**, Reply Master **refuses to draft** — no Grok call, no cost, no reply slot spent on a dead post. On the page, the sparkle button turns red and spells out **`Dead post — click to force`**. This is deliberate: your time and daily reply budget are finite, and a reply that lands under a buried or tiny tweet is effort thrown away.
 
+### Your people are exempt
+
+There is one case where a refused score drafts anyway, with no force click: the tweet's author is **someone you already have a relationship with**. Concretely, that means either
+
+- a person in your CRM at stage **engaged or better** — you have posted at least one reply to them — and not archived, or
+- an account on the current **target roster** (the 2–10× follower band the Targets list shows).
+
+Replying to your people on a quiet day *is* the point of the reciprocity half of the doctrine, so the gate steps aside for them. Everyone else — including someone whose profile card you happened to hover on the timeline — still gets the refusal, because that is the case where the gate is protecting your attention rather than getting in its way.
+
+The exemption is decided **on the server**, from your own data. Nothing the page sends can claim it, and each draft that used it is tagged in its stored context, so exempt replies stay a group you can measure separately later.
+
 ### Forcing it anyway (the override)
 
 Sometimes you *know* better — maybe it's a small account you specifically want to nurture, or a tweet you have a perfect reply for regardless of reach. The refusal isn't a wall:

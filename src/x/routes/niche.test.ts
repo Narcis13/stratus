@@ -171,6 +171,17 @@ describe('niche CRUD + activation', () => {
     expect(bad.body.error).toBe('invalid_doctrine');
   });
 
+  // GT.6: a knob missing from readDoctrine's DOCTRINE_KEYS is dropped silently —
+  // the PATCH 200s and the value never lands. This is the assertion that catches it.
+  test('the reciprocity knob survives a doctrine PATCH', async () => {
+    const ok = await send<NicheRow>(`/x/niches/${N1}`, 'PATCH', {
+      doctrine: { reciprocityTargetMin: 7 },
+    });
+    expect(ok.status).toBe(200);
+    const g = await send<{ doctrine: typeof DEFAULT_DOCTRINE }>('/x/niche', 'GET');
+    expect(g.body.doctrine.reciprocityTargetMin).toBe(7);
+  });
+
   test('DELETE active → 409; reactivate builder then DELETE inactive → 200; unknown → 404', async () => {
     const active = await send<{ error: string }>(`/x/niches/${N1}`, 'DELETE');
     expect(active.status).toBe(409);

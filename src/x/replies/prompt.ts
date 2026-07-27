@@ -58,6 +58,14 @@ export interface PostContext {
    *  Playbook's me-lift cell (ME.5) can split drafts that saw it from cold ones.
    *  Injected at the variable tail, order relationship → me → guidance. */
   me?: string;
+  /** Why a refused band still drafted (GT.6). Server-stamped on the gate's
+   *  exemption path only — parseContext never accepts it from the client, same
+   *  discipline as relationship/guidance/niche/me — and deliberately NOT
+   *  rendered into the prompt: it changes nothing the model sees (the C3
+   *  relationship block already carries the person context). It is bookkeeping,
+   *  so contextSnapshot can tell a roster-exempt draft apart from a human
+   *  `override` when the band cohorts are compared. */
+  gateBypass?: 'roster';
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
