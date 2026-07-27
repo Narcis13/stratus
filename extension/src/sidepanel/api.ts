@@ -30,6 +30,7 @@ import {
   type ChannelAggregate,
   type ChannelCreateBody,
   type ChannelPatchBody,
+  type CoachLexiconResponse,
   type Commitment,
   type CommitmentDebt,
   type CommitmentKey,
@@ -584,6 +585,15 @@ export const api = {
 
   // N0 — the niche: identity + strategy container. get() returns the active
   // niche + resolved doctrine; activation is update(slug, { active: true }).
+  // SC.7 — the niche lexicon the static coach grades with. $0 pure SQL; the
+  // panel holds one cached copy (sidepanel/coachLexicon.ts) and silently keeps
+  // the neutral default when this fails.
+  coach: {
+    lexicon(s: Settings): Promise<CoachLexiconResponse> {
+      return request<CoachLexiconResponse>(s, '/x/coach/lexicon');
+    },
+  },
+
   niche: {
     get(s: Settings): Promise<NicheActive> {
       return request<NicheActive>(s, '/x/niche');

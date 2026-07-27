@@ -17,6 +17,7 @@ import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
 import { channelsRouter } from './routes/channels.ts';
+import { coachRouter } from './routes/coach.ts';
 import { conversations } from './routes/conversations.ts';
 import { data, explorer } from './routes/data.ts';
 import { digest } from './routes/digest.ts';
@@ -116,6 +117,9 @@ export function mountX(app: Hono): void {
   app.route('/x', replyListsRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
+  // SC.7: the static coach's niche lexicon — derived from the active niche +
+  // channels + pillars, so it mounts after both. Pure SQL, always $0.
+  app.route('/x', coachRouter);
   // S4: Studio asset library (composed PNGs + AI backgrounds as SQLite BLOBs),
   // always mounted, $0. The image GENERATION route is Grok-gated below.
   app.route('/x', assets);

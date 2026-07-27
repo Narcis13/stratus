@@ -21,6 +21,7 @@ import {
   type UpdateBody,
   api,
 } from './api.ts';
+import { useCoachLexicon } from './coachLexicon.ts';
 import {
   CADENCE_SETTING_KEYS,
   audiencePeakHours,
@@ -740,9 +741,14 @@ export function ComposerPanel({
     const t = setTimeout(() => setCoachInput(coachDraft), COACH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [coachDraft]);
-  // Local and free: no fetch, no server round-trip, nothing stored (SC decision
-  // 2 — score and format are recomputed from text everywhere, never stamped).
-  const coach = useMemo(() => scoreDraft(coachInput), [coachInput]);
+  // SC.7 — the account's own vocabulary, fetched once per panel session and
+  // shared with the reply chips. It arrives after the first paint, so the score
+  // sharpens rather than appears; the neutral default is a valid lexicon.
+  const lexicon = useCoachLexicon();
+  // Grading itself stays local and free: no fetch per keystroke, no server
+  // round-trip, nothing stored (SC decision 2 — score and format are recomputed
+  // from text everywhere, never stamped).
+  const coach = useMemo(() => scoreDraft(coachInput, { lexicon }), [coachInput, lexicon]);
   const coachFixes = coach.checks.filter((c) => c.status === 'fix');
   const coachNudges = coach.checks.filter((c) => c.status === 'nudge');
   const coachPasses = coach.checks.filter((c) => c.status === 'pass');

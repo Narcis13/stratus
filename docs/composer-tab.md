@@ -56,6 +56,8 @@ That is the whole contract. **A low score never blocks anything** — Save works
 
 In thread mode the coach grades **segment 1** and says so — the head is the part a stranger is guaranteed to read, so it's the part that has to work. The panel is hidden while the box is empty and on a post that has already gone out.
 
+**The coach speaks your vocabulary.** Two of its rules need to know what counts as a *specific* word in your niche, and it doesn't guess — it reads what you already maintain: your active channels' keywords, your active pillars' slugs, and your niche's label. So "no concrete detail" stops firing on a post whose specific thing is a word only your audience uses (`creatine`, `ANAF`, `Turbo Pascal`) even when there's no number in it, and a post opening `builders,` counts as a hook. This is fetched once a minute in the background and costs nothing; add a keyword on the Channels tab and the coach picks it up within a minute. If the fetch fails, or you haven't set up channels or pillars yet, the coach quietly falls back to the rules that don't need a niche — the em-dash, the "show more" cutoff, hedges, weak closers — which is most of them. The same vocabulary is used by the score chips on reply variants (see the Replies tab).
+
 ### Scheduling controls
 
 The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.

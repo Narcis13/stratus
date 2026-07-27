@@ -22,6 +22,7 @@ import {
   type CoachStatus,
   scoreDraft,
 } from '../postCoach.ts';
+import { useCoachLexicon } from './coachLexicon.ts';
 
 export const COACH_TONE: Record<CoachStatus, string> = {
   fix: 'coach-tone-fix',
@@ -60,9 +61,15 @@ export function coachChipTitle(result: CoachResult): string {
 /** A score chip for one finished reply draft. `isReply` is fixed on purpose:
  *  every caller is a reply picker, and a reply is graded without the hook and
  *  breathing-room rules a standalone post owes (SC.1). Renders nothing for an
- *  empty draft — a "0" against no text is a verdict on nothing. */
+ *  empty draft — a "0" against no text is a verdict on nothing.
+ *
+ *  SC.7: the niche lexicon is read here rather than passed in, so all four
+ *  pickers grade with the account's vocabulary without touching a call site.
+ *  For a reply it moves exactly one rule — `concrete_detail` — since
+ *  `hook_opener` (the other lexicon reader) is skipped on replies entirely. */
 export function CoachChip({ text }: { text: string }): JSX.Element | null {
-  const result = scoreDraft(text, { isReply: true });
+  const lexicon = useCoachLexicon();
+  const result = scoreDraft(text, { isReply: true, lexicon });
   if (result.checks.length === 0) return null;
   return (
     <span

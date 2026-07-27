@@ -1718,6 +1718,15 @@ export interface PlaybookCoachScoreCell extends PlaybookCell {
   band: CoachBand;
 }
 
+/** SC.7 — `GET /x/coach/lexicon`. The two term lists `scoreDraft` takes as its
+ *  `lexicon` option (a superset of `CoachLexicon`: `niche` is provenance only),
+ *  derived server-side from the active niche + channels + pillars. */
+export interface CoachLexiconResponse {
+  niche: string;
+  specificTerms: string[];
+  tribeTerms: string[];
+}
+
 // Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
 // no tweet time, so no age and no velocity to classify with; it never folds
 // into the null band, which does mean "judged not worth replying to".
