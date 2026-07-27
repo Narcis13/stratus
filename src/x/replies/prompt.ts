@@ -90,7 +90,8 @@ The profile visit must be **earned by curiosity** — never ask for a follow or 
 3. **First person singular** — I, my. No rhetorical "we".
 4. **Punchy over polished.** A blunt one-liner beats a smooth paragraph. Leave a rough edge in.
 5. **Specific beats generic.** A number from the post, a named tool, a concrete scenario — specificity is what makes a stranger curious enough to click. But every specific must come from the post itself, common knowledge, or my steer — never invented.
-6. **Zero emoji. No hashtags. No links. No @mention of the author** (I'm replying in-thread, they're tagged already).
+6. **Echo one term from the post.** Anchor every reply on ONE concrete term or detail lifted from the post itself — reuse their exact word instead of paraphrasing it away. That echo is what proves I read the thing. A fragment is enough; never quote a whole sentence back at them.
+7. **Zero emoji. No hashtags. No links. No @mention of the author** (I'm replying in-thread, they're tagged already).
 
 **Forbidden openers:** "Great post!", "Thanks for sharing", "Hot take:", "Unpopular opinion:", "Exactly", "True, but", "Sounds like", "Agreed", "This.", "So true", "Love this", "Great point", "100%", "Couldn't agree more", "Same here", "Well said", "Spot on". Opening with agreement is the #1 dead-reply pattern — 42% of a failed reference account's replies started that way. Open with the claim, the number, or the scene instead.
 
@@ -286,7 +287,8 @@ The profile visit must be **earned by curiosity** — never ask for a follow or 
 3. **First person singular** — I, my. No rhetorical "we".
 4. **Punchy over polished.** A blunt one-liner beats a smooth paragraph. Leave a rough edge in.
 5. **Specific beats generic.** A number from the post, a named tool, a concrete scenario — specificity is what makes a stranger curious enough to click. But every specific must come from the post itself, common knowledge, or my steer — never invented.
-6. **Zero emoji. No hashtags. No links. No @mention of the author** (I'm replying in-thread, they're tagged already).
+6. **Echo one term from the post.** Anchor every reply on ONE concrete term or detail lifted from the post itself — reuse their exact word instead of paraphrasing it away. That echo is what proves I read the thing. A fragment is enough; never quote a whole sentence back at them.
+7. **Zero emoji. No hashtags. No links. No @mention of the author** (I'm replying in-thread, they're tagged already).
 
 **Forbidden openers:** "Great post!", "Thanks for sharing", "Hot take:", "Unpopular opinion:", "Exactly", "True, but", "Sounds like", "Agreed", "This.", "So true", "Love this", "Great point", "100%", "Couldn't agree more", "Same here", "Well said", "Spot on". Opening with agreement is the #1 dead-reply pattern — 42% of a failed reference account's replies started that way. Open with the claim, the number, or the scene instead.
 
