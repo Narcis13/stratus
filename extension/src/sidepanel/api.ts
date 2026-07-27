@@ -87,6 +87,10 @@ import {
   type IdeasResponse,
   type ImageGenerateBody,
   type ImageGenerateResponse,
+  type JudgeApplyBody,
+  type JudgeApplyResponse,
+  type JudgeRunBody,
+  type JudgeRunResponse,
   type ListOpts,
   type LlmModel,
   type LlmModelsResponse,
@@ -611,6 +615,26 @@ export const api = {
     // the fit moves when a post is measured while the format moves as you type.
     reach(s: Settings): Promise<ReachFit> {
       return request<ReachFit>(s, '/x/coach/reach');
+    },
+  },
+
+  // JD.4/JD.5 — the paid second opinion the free coach can't give. Both calls
+  // are human-triggered only: there is no worker, no batch and no automatic
+  // invocation anywhere (JD decision 1), which is the whole cost argument.
+  // Mounted behind the LLM gate, so an unconfigured install 404s here.
+  judge: {
+    /** ~$0.003. Grades one draft on the 13-dimension rubric and returns up to
+     *  twelve fixes quoted verbatim out of the text it judged. */
+    run(s: Settings, body: JudgeRunBody): Promise<JudgeRunResponse> {
+      return request<JudgeRunResponse>(s, '/x/judge', { method: 'POST', body });
+    },
+
+    /** ~$0.007 — a rewrite call plus a re-judge. `improved: false` is a SUCCESS:
+     *  the rewrite did not score strictly better, so the caller's own text comes
+     *  back with the original verdict and nothing was persisted. 409
+     *  `stale_verdict` means the draft was edited after it was judged. */
+    apply(s: Settings, body: JudgeApplyBody): Promise<JudgeApplyResponse> {
+      return request<JudgeApplyResponse>(s, '/x/judge/apply', { method: 'POST', body });
     },
   },
 

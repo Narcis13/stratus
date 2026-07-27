@@ -1,6 +1,7 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
+import type { JudgeVerdict } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
@@ -133,6 +134,62 @@ export interface RewriteResponse {
   costUsd: number;
   model: string;
   requestId?: string;
+}
+
+// JD.4/JD.5 — the LLM judge: one structured-outputs call grades ONE draft on the
+// 13-dimension rubric and comes back with anchored fixes; `apply` rewrites from
+// those fixes and keeps the result only if it re-judges strictly better.
+//
+// The verdict half of both responses is the CANONICAL `JudgeVerdict` from
+// src/shared/judge.ts (reached through the extension shim), extended rather than
+// re-typed: the band, the thirteen score keys and the annotation shape are the
+// same objects the server derived, so the panel can never grade a different
+// vocabulary than the row in `draft_judgments` (§7 rule 4c).
+
+export interface JudgeRunBody {
+  text: string;
+  /** v1 judges originals only (JD decision 2); the column is wider than this. */
+  surface?: 'post';
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+/** `POST /x/judge`. **`id` is null when the best-effort `draft_judgments` insert
+ *  failed** (JD decision 9 — a paid verdict is returned regardless), and with no
+ *  id there is nothing for `/judge/apply` to load, so a consumer must treat
+ *  "apply" as unavailable rather than assume a string. */
+export interface JudgeRunResponse extends JudgeVerdict {
+  id: string | null;
+  textHash: string;
+  model: string;
+  provider: string;
+  costUsd: number;
+  requestId: string | null;
+}
+
+export interface JudgeApplyBody {
+  judgmentId: string;
+  text: string;
+  /** Steers the REWRITER only — the re-judge is pinned to the stored judgment's
+   *  model+provider, because a never-worse compare across two graders compares
+   *  the graders (JD decision 11). */
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+/** `POST /x/judge/apply`. **`improved: false` is a 200, not an error**: the
+ *  never-worse guard kept the caller's own words and handed back the ORIGINAL
+ *  verdict. `text`, `textHash` and the verdict always describe the same draft
+ *  (JD decision 7), so a consumer reads them as one triple. `judgmentId` is the
+ *  row the returned verdict belongs to — null when persisting the winner failed. */
+export interface JudgeApplyResponse extends JudgeVerdict {
+  text: string;
+  improved: boolean;
+  judgmentId: string | null;
+  textHash: string;
+  model: string;
+  provider: string;
+  costUsd: number;
 }
 
 // --------------------------------------------------------------- ideas (C6)

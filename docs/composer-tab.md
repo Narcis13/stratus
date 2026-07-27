@@ -38,6 +38,36 @@ Clicking **Split into thread** breaks your text into a clean chain of tweets at 
 
 Under the text box is an **Improve with AI** button. It takes whatever you've written and asks the AI for **three sharper versions** of it — typically a tightened cut, a re-hooked opening, and a restructured take. You can add an optional instruction ("make it punchier", "lead with the number") to steer the rewrite. Each version comes back as a card you can preview; clicking one **replaces the text in the box** with that version (nothing is saved to your Calendar — it just edits your draft in place, so you're free to keep editing or undo by rewriting). It's one AI call (~$0.003) and it runs on whichever provider you picked in **Settings → AI**.
 
+### The judge (a paid second opinion, on demand)
+
+Under the rewrite button is a **Judge** section. Where the coach below it is free, local and instant, this one costs money and only runs when you click it — there is no worker, no batch, and nothing here is ever called automatically.
+
+Click **Run judge (~$0.003)** and one AI call reads your draft against a thirteen-dimension rubric. What comes back:
+
+- **A score out of 100 and a band** — *post it* (85+), *slight rework* (70+), *major rework* (40+), or *do not post* — plus the model's own confidence in the read.
+- **A one-line headline**: what it thinks the post is doing, in a sentence.
+- **The fixes.** Up to twelve rows, each quoting an exact phrase from your draft with what to do about it. **Clicking a row selects that phrase in the text box above**, cursor and all, so you can retype it without hunting for it. Red rows are warnings, amber ones are suggestions. If the model quotes something that isn't actually in your text, that row is silently dropped rather than shown pointing at nothing.
+- **Twelve dimensions** behind a disclosure: reply pull, profile pull, reach hook, save value, dwell, voice match, negative risk, answer effort, stranger answerability, status dependency, replies-vs-quotes, audience match. Two of them read backwards on purpose — a *high* **negative risk** or **status dependency** is bad news (the second one means "this only lands if you already have the famous bio"), and they're coloured accordingly.
+- **Strengths and improvements** behind a second disclosure.
+
+Two of those dimensions are graded against *you* rather than against a generic idea of a good tweet: **voice match** and **audience match** are scored using your active niche's persona and beliefs plus your active pillars. If you haven't set a niche up, audience match comes back as **—** (unknown) rather than as a number it invented.
+
+**Apply all fixes (~$0.007)** appears when the verdict actually flagged something. It rewrites your draft applying every fix, re-judges the result with the *same* model that graded the original, and then does the one thing that makes it safe to click:
+
+> **it keeps the rewrite only if it scores strictly better.**
+
+If the rewrite ties or scores worse, your text comes back untouched and the panel says *"Kept your version — the rewrite did not score better."* That is a success, not an error. A tie keeps your words on purpose. (The re-judge is deliberately pinned to the original grader even if you change providers, because comparing a Grok verdict to an OpenRouter one compares the two graders, not the two drafts.)
+
+**A verdict only ever describes the exact text it judged.** Edit one character and it disappears — no stale score decorating a post it never read. Undo that edit and it comes back, because it describes that text again; you don't pay twice for changing your mind. The same rule is enforced on the server, so a verdict can never be applied to a draft that moved on.
+
+And, as with everything else on this tab: **nothing here blocks anything.** Save works the same at 20 as at 95, no list is sorted by it, and no draft is refused. The panel says so under every verdict:
+
+> One model's opinion, not a gate — nothing here blocks scheduling; the fixes are the useful part.
+
+Treat the number as a diagnostic, not a target. Two of the dimensions (*answer effort* and *stranger answerability*), read as things to maximise, are exactly the gradient that produces reply-farm bait; they are useful as a description and harmful as a goal, which is why nothing in stratus optimises for them.
+
+The judge is single-post only — it does not appear in thread mode, on a locked (already-published) post, or on the Replies tab. Judging reply variants would cost several dollars a month on the surface with the least headroom, so it isn't offered.
+
 ### The coach (live score and fix list)
 
 Below the warnings, a small boxed panel grades what you've typed. It updates as you type — about a sixth of a second after you stop — and it costs nothing: the scoring runs inside the extension, so there is no server call, no AI call, and nothing is saved anywhere.
@@ -309,6 +339,7 @@ A post that has already **posted** or is currently **publishing** is locked: its
 
 - **Drafts never auto-post.** A post goes live only when it has a scheduled time (status **pending**) and the publisher reaches that minute. Anything without a time — including all AI drafts as generated — just waits on the Calendar.
 - **AI drafting costs about a cent per click.** Each **Generate 3 drafts** (and each **More like this**) is one Grok call, roughly $0.01. The exact cost is shown after each generation. Publishing itself is separate (~$0.015 per tweet).
+- **The judge is the only thing on this tab you can click twice by accident.** Run judge is ~$0.003 and Apply all fixes is ~$0.007 (a rewrite plus a re-judge), both billed on the click and both carrying the price in the button. Nothing polls them. Editing the draft throws the verdict away — that's deliberate, but it does mean a re-judge is another $0.003, so make your edits and then judge.
 - **Watch the link surcharge.** A link in your main post costs **$0.20** vs **$0.015** without one — the single biggest per-post cost. Use **Move link to first reply** (single posts) or put the link in a later thread segment to pay the cheap price. The Composer warns you before you save.
 - **Minute jitter is intentional.** Best time and Next slot always pick a slightly off-the-hour minute (like 8:17 instead of 8:00) so your schedule doesn't look automated. That's why the best-times hints show the hour as `HH:xx`.
 - **Best-times advice needs history.** Time recommendations only appear once a weekday-and-hour slot has at least three measured posts (the gate, editable from the Schedule ⚙). Until then you'll see the dimmed "so far" hours or "no measured best-time yet," and **Best time** falls back to audience peaks, then to the earliest open slot.

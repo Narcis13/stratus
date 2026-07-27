@@ -1,4 +1,4 @@
-import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { COACH_BAND_LABEL, COACH_DISCLAIMER, type CoachCheck, scoreDraft } from '../postCoach.ts';
 import { FORMAT_LABELS, classifyFormat } from '../postFormat.ts';
 import { audienceScoreFor } from '../shared/activeTimes.ts';
@@ -14,6 +14,7 @@ import type {
   ReachFit,
 } from '../shared/types.ts';
 import { COACH_BAND_TONE, COACH_TONE } from './CoachChip.tsx';
+import { JudgePanel } from './JudgePanel.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
@@ -242,6 +243,10 @@ export function ComposerPanel({
   const editor = useSettingsEditor(settings);
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
+  // JD.6 — the single-post textarea, so a judge fix can select the exact phrase
+  // it quotes. Nothing else reads it; the box stays an uncontrolled-selection,
+  // controlled-value textarea.
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [segments, setSegments] = useState<string[]>(['', '']);
   const [scheduledFor, setScheduledFor] = useState('');
   const [loading, setLoading] = useState(false);
@@ -993,6 +998,7 @@ export function ComposerPanel({
             </span>
           </span>
           <textarea
+            ref={textareaRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={6}
@@ -1027,6 +1033,20 @@ export function ComposerPanel({
             </div>
           )}
         </div>
+      )}
+
+      {/* JD.6 — the judge, directly under the other paid AI affordance and
+          deliberately NOT inside the coach box (D141): everything in that box is
+          free, local and instant, and a panel that costs $0.003 a click does not
+          belong in a container the user reads as live. Single posts only — the
+          head-vs-thread question is unanswered and would double the surface. */}
+      {!threadMode && !isThreadEdit && !isLocked && text.trim() !== '' && (
+        <JudgePanel
+          settings={settings}
+          text={text}
+          onApplyText={setText}
+          textareaRef={textareaRef}
+        />
       )}
 
       {(threadMode || isThreadEdit) && (

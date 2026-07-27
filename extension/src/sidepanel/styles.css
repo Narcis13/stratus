@@ -1846,6 +1846,95 @@ button.danger:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
   background: var(--bg-elev);
 }
+/* JD.6 — the LLM judge panel, under the composer's rewrite block. It borrows
+   the coach's three tone classes above rather than minting `.judge-tone-*`
+   aliases onto the same three tokens: the score pill, the fix rows and these
+   scores are one colour vocabulary, and a second set is how a badge and its
+   gate fork (the CoachChip argument). Same box treatment as `.coach` for the
+   same reason — a verdict is information, not a stamp, so no fills and no
+   badges. */
+.judge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-2);
+  padding: var(--strat-space-4) var(--strat-space-5);
+  border: var(--strat-border-hairline);
+  border-radius: var(--strat-radius-md);
+  background: var(--strat-bg-elev);
+}
+.judge-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.judge-score {
+  font-size: var(--strat-text-lg);
+  font-weight: var(--strat-weight-semibold);
+}
+.judge-headline {
+  font-size: var(--strat-text-sm);
+  line-height: var(--strat-leading-snug);
+}
+.judge-fixes,
+.judge-dims,
+.judge-notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-1);
+  font-size: var(--strat-text-sm);
+  line-height: var(--strat-leading-snug);
+}
+/* A fix is a button because it DOES something (selects its phrase in the box),
+   but it must read as a row, not a control. */
+.judge-fix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-1);
+  width: 100%;
+  padding: var(--strat-space-1) 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.judge-fix:hover .judge-fix-quote {
+  text-decoration: underline;
+}
+.judge-fix-quote {
+  font-style: italic;
+}
+.judge-fix-rec {
+  color: var(--strat-muted);
+}
+.judge-detail > summary {
+  cursor: pointer;
+  font-size: var(--strat-text-xs);
+  color: var(--strat-muted);
+  padding: var(--strat-space-1) 0;
+}
+.judge-dim {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--strat-space-4);
+}
+.judge-dim-score {
+  font-variant-numeric: tabular-nums;
+}
+.judge-actions {
+  gap: var(--strat-space-3);
+  padding-top: var(--strat-space-1);
+}
+.judge-note {
+  font-size: var(--strat-text-sm);
+}
+
 /* A3.7 — publish-mode (API | Manual) segmented toggle above the schedule row. */
 .publish-mode {
   display: flex;
