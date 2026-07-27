@@ -24,6 +24,7 @@ import { db } from '../../db/client.ts';
 import { ARTICLE_PROMPT_TEMPLATE } from '../articles/prompt.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
+import { JUDGE_PROMPT_TEMPLATE } from '../judge/prompt.ts';
 import { DM_PROMPT_TEMPLATE } from '../people/dm.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { IDEAS_PROMPT_TEMPLATE } from '../posts/ideasPrompt.ts';
@@ -49,6 +50,7 @@ export const PROMPT_KEYS = [
   'reply-list',
   'dm',
   'article',
+  'judge',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -170,6 +172,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: ARTICLE_PROMPT_TEMPLATE,
     required: ['{{PILLARS}}', '{{WINNERS}}', '{{GUIDANCE}}', '{{ARTICLE}}', '{{INSTRUCTION}}'],
     optional: [],
+  },
+  judge: {
+    name: 'Draft judge',
+    description:
+      'The 13-dimension rubric behind POST /x/judge — one graded read on a draft plus anchored fixes. The verdict label is derived from the score, never model-supplied, so an override that asks for one is ignored.',
+    defaultBody: JUDGE_PROMPT_TEMPLATE,
+    required: ['{{DRAFT}}'],
+    optional: ['{{GROUNDING}}'],
   },
 };
 
