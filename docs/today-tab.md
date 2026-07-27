@@ -79,7 +79,7 @@ Several section headers carry a small **⚙** button. That's the inline settings
 
 **What you can do:**
 
-- **Draft seed comment** (under "First comment") — one Grok call (~**$0.002–$0.004**) that writes your own first comment on the post, in your voice, told outright that the post is yours and to extend rather than restate it. You get the usual three angles as chips (**extends / contrarian / debate**) — click one to switch the text — then **Copy** and paste it under your post on X. (The draft is marked "copied" in the background and shows up in the Replies tab like any other, filed under `@me`.)
+- **Draft seed comment** (under "First comment") — one Grok call (~**$0.002–$0.004**) that writes your own first comment on the post, in your voice, told outright that the post is yours and to extend rather than restate it. You get the usual three angles as chips (**extends / contrarian / debate**), each carrying its **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**) — click one to switch the text — then **Copy** and paste it under your post on X. (The draft is marked "copied" in the background and shows up in the Replies tab like any other, filed under `@me`.)
 - **Pull from X** button (next to "Early repliers") — makes one paid call to X to fetch repliers you may not have scrolled past yet. It costs roughly **$0.001–$0.005** and is limited to 6 pulls per day across the whole app. The button hints *"(best at 20m)"* if you press it too early — around 20 minutes in is when most early replies have landed. After a successful pull it shows how many new mentions came in and tells you to check the Conversations section below.
 - Per replier row:
   - Their **name/handle** is a link to their **dossier** in the People tab.
@@ -194,7 +194,7 @@ The heading reads e.g. **Inbox — 3 owed (1 chain)**: 3 replies you owe, 1 of w
 
 When a thread is an open loop, expanding it reveals the reply workflow:
 
-- **Draft reply** — one Grok call drafts a reply in your voice (uses your original post as context). It may produce a couple of **variants** you can switch between with the small angle chips.
+- **Draft reply** — one Grok call drafts a reply in your voice (uses your original post as context). It may produce a couple of **variants** you can switch between with the small angle chips, each carrying its **coach score** (hover the number — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**).
 - **Copy** — copies the chosen draft to your clipboard. Paste it into X.
 - **Done** — marks the loop settled (once you've actually pasted your reply into X). This clears the "owed" flag immediately.
 - **canned ▾** — a **$0** premade reply instead of a Grok draft: pick one of your reply lists and stratus picks an item you haven't used recently, fills their name/handle in, humanizes it and copies it. Good for loops that just need a warm acknowledgment. Lists are managed in **Replies → Lists**.

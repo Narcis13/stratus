@@ -1812,6 +1812,23 @@ button.danger:hover:not(:disabled) {
 .coach-tone-pass {
   color: var(--ok);
 }
+/* SC.4 — the same coach, one number wide, riding inside a reply-variant chip /
+   radar angle tab. It takes its colour from the three tone classes above and
+   its border from `currentColor`, so a tone change never needs a second rule
+   here and neither theme needs its own value. Deliberately not a `.chip`: it
+   sits INSIDE one, and a chip within a chip would read as two labels.
+   The elevated background is load-bearing in exactly one place — the PICKED
+   variant fills with `--accent` and turns its text white, and amber ink on
+   that is unreadable; a neutral plate under the number keeps the three tones
+   legible in every parent (plain chip, filled chip, radar tab, hint line). */
+.coach-chip {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 3px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-elev);
+}
 /* A3.7 — publish-mode (API | Manual) segmented toggle above the schedule row. */
 .publish-mode {
   display: flex;

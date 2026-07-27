@@ -21,6 +21,7 @@ import {
   launchIsLive,
 } from '../shared/launch.ts';
 import type { LaunchDismiss, LaunchSync } from '../shared/messages.ts';
+import { CoachChip } from './CoachChip.tsx';
 import { QuickReplyPicker } from './QuickReplyPicker.tsx';
 import { ApiError, type PostContext, type ReplyDraft, api } from './api.ts';
 import type { Settings } from './storage.ts';
@@ -285,7 +286,7 @@ function SeedComment({
                 setCopied(false);
               }}
             >
-              {v.angle}
+              {v.angle} <CoachChip text={v.text} />
             </button>
           ))}
         </div>

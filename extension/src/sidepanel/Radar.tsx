@@ -32,6 +32,7 @@ import {
 } from '../shared/radar.ts';
 import { radarBatchSize } from '../shared/serverSettings.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
+import { CoachChip } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
@@ -402,6 +403,10 @@ function RadarRow({
         {s.text || s.url}
       </a>
       <div className="radar-why">{whyLine(s)}</div>
+      {/* SC.4 — the coach score sits with the CHOICE: on the tabs when there is
+          one to make, on the reply itself when the row carries a single draft
+          (a pre-variant or CLI row). Never on both, and it never reorders the
+          angles it labels. */}
       {angles.length > 1 && (
         <div className="radar-angle-tabs">
           {angles.map((v, i) => (
@@ -412,7 +417,7 @@ function RadarRow({
               title={v.text}
               onClick={() => setAngleIdx(i)}
             >
-              {v.angle ?? `variant ${i + 1}`}
+              {v.angle ?? `variant ${i + 1}`} <CoachChip text={v.text} />
             </button>
           ))}
         </div>
@@ -429,6 +434,12 @@ function RadarRow({
           {picked.text}
           <span className="radar-reply-hint">
             {copied ? 'copied ✓' : 'click → copies + opens the tweet'}
+            {angles.length === 1 && (
+              <>
+                {' '}
+                <CoachChip text={picked.text} />
+              </>
+            )}
           </span>
         </a>
       )}

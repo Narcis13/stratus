@@ -1,12 +1,5 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  COACH_BAND_LABEL,
-  COACH_DISCLAIMER,
-  type CoachBand,
-  type CoachCheck,
-  type CoachStatus,
-  scoreDraft,
-} from '../postCoach.ts';
+import { COACH_BAND_LABEL, COACH_DISCLAIMER, type CoachCheck, scoreDraft } from '../postCoach.ts';
 import { audienceScoreFor } from '../shared/activeTimes.ts';
 import type {
   AudienceCapture,
@@ -15,6 +8,7 @@ import type {
   PostRegister,
   PostStatus,
 } from '../shared/types.ts';
+import { COACH_BAND_TONE, COACH_TONE } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
@@ -99,21 +93,11 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 // the network, so there is nothing here to rate-limit.
 const COACH_DEBOUNCE_MS = 150;
 
-// The three tones the coach speaks in, mapped once so the score pill and the
-// rows can't disagree. Band → tone is presentation only: NO surface sorts,
-// gates, blocks or refuses on the score (SC decision 4).
-const COACH_TONE: Record<CoachStatus, string> = {
-  fix: 'coach-tone-fix',
-  nudge: 'coach-tone-nudge',
-  pass: 'coach-tone-pass',
-};
-
-const COACH_BAND_TONE: Record<CoachBand, CoachStatus> = {
-  top: 'pass',
-  ship: 'pass',
-  almost: 'nudge',
-  rework: 'fix',
-};
+// The three tones the coach speaks in moved to CoachChip.tsx at SC.4, where the
+// reply-variant chips read the same two maps — the score pill, these rows and a
+// chip on another tab must not fork into three colour vocabularies. Band → tone
+// stays presentation only: NO surface sorts, gates, blocks or refuses on the
+// score (SC decision 4).
 
 // One row per non-pass check. Filtered, never re-sorted — the engine emits its
 // checks in rule order (hygiene → craft → signal) and that order is the reading

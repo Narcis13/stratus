@@ -124,6 +124,8 @@ Every generate returns **three distinct replies** — one per angle — and each
 
 The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian` — the same chip shape the rest of the panel uses for stages and statuses, with the picked one filled in. **Click a chip to load that variant into the editor.** This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call, shown as angle tabs on each row — see the **[Radar tab](./radar-tab.md)**.)
 
+Each chip also carries a small **coach score** — the same 0–100 pre-publish check the Composer runs on originals (**[Composer → The coach](./composer-tab.md#the-coach-live-score-and-fix-list)**), graded here as a reply, so it never asks a mid-conversation line for a hook or blank-line spacing. It's computed on your machine: no call, no spend, no wait. **Hover the number** for the score, the worst two things about that variant, and the reminder that it's a floor rather than a target. It changes nothing else — the chips stay in generate order, nothing is pre-picked, and a 62 you'd actually send beats an 84 you wouldn't. The same number rides the angle tabs in Radar, the Conversations drafts, and the Launch Room's first comment.
+
 ### Editing the reply
 
 The reply itself sits in a big text box you can freely edit:

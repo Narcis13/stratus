@@ -65,7 +65,7 @@ Two ways in, both free:
 - **✕** to dismiss the row (done, or not worth it).
 - The **tweet text**, as a link — clicking it just opens the tweet on X.
 - A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
-- **Angle tabs** (once drafted) — `extends` · `contrarian` · `debate`. Click a tab to read that version; nothing else happens.
+- **Angle tabs** (once drafted) — `extends` · `contrarian` · `debate`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The score never reorders the tabs.
 - **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after.
 - A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.
 
@@ -103,7 +103,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **Empty queue** — the coach line above, with a second line reminding you nothing is fetched for this: it's what the page already showed you, banded and ranked.
 - **Drafting…** — the button is disabled while the single Grok call runs.
 - **A status line** under the header after a draft run: `N/M drafted · $0.0xxx`, or `Draft failed: <reason>`.
-- **Rows with no angle tabs** — an older draft (or one made from the CLI) that only kept a single reply. It still copies and opens the same way.
+- **Rows with no angle tabs** — an older draft (or one made from the CLI) that only kept a single reply. It still copies and opens the same way; with no tabs to carry it, the coach score sits at the end of the hint line under the reply.
 - **A queue that empties itself on browser restart** — expected. Anything that was drafted comes back; undrafted sightings don't.
 
 ---
