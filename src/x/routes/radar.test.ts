@@ -19,8 +19,9 @@ const T_NULL = '991000000000000002'; // CLI-shaped: null signals/variants/model
 const T_OTHER = '991000000000000003'; // filter-isolation sentinel
 const T_MANUAL = '991000000000000004'; // RU.8: band='manual' + signals
 const T_TTL = '991000000000000005'; // UI.4: 10h-old row for the TTL knob
+const T_ROSTER = '991000000000000006'; // GT.8: band='roster' + signals
 const T_UNKNOWN = '991999999999999999'; // no row — 404
-const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL];
+const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL, T_ROSTER];
 
 const PRIMARY_TEXT = 'v1 extends: I shipped mine in 3 days';
 const VARIANTS = [
@@ -86,6 +87,19 @@ beforeAll(async () => {
       band: 'manual',
       signals: { views: 800, replies: 3, ageMin: 10, vpm: 80, bait: false },
       replyText: 'manual reply',
+      angle: 'extends',
+    },
+    {
+      // GT.8: a roster capture — quiet post, real signals, in the queue because
+      // of who posted it.
+      tweetId: T_ROSTER,
+      url: `https://x.com/erin/status/${T_ROSTER}`,
+      handle: 'erin',
+      author: 'Erin',
+      snippet: 'a quiet post by someone in my circle',
+      band: 'roster',
+      signals: { views: 42, replies: 0, ageMin: 30, vpm: 1.4, bait: false },
+      replyText: 'roster reply',
       angle: 'extends',
     },
   ]);
@@ -259,5 +273,16 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
     expect(body.contextSnapshot.signals).toBeDefined();
     expect(body.contextSnapshot.signals?.band).toBeNull();
     expect(body.contextSnapshot.metrics.views).toBe(800);
+  });
+
+  test("confirm: a 'roster' band never reaches the reply snapshot (GT.8, §7.19)", async () => {
+    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_ROSTER}/confirm`, 'POST');
+    expect(status).toBe(201);
+    // Same rule as the ⊕ pin above: the queue's reason for holding the row is
+    // not a classifier verdict, so it must not become one in the Playbook's
+    // hot/warm cells. The real metrics still ride.
+    expect(body.contextSnapshot.signals).toBeDefined();
+    expect(body.contextSnapshot.signals?.band).toBeNull();
+    expect(body.contextSnapshot.metrics.views).toBe(42);
   });
 });

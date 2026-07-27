@@ -31,7 +31,14 @@ import { normalizePersonHandle } from './store.ts';
  *  gate off for the whole deliberate-reply flow instead of carving out a lane,
  *  and `contextSnapshot.gateBypass` stops being a distinguishable cohort. At
  *  `engaged` it covers the ~12 handles a reply was actually posted to. Widen it
- *  here, in one place, if the gate turns out to nag on people it shouldn't. */
+ *  here, in one place, if the gate turns out to nag on people it shouldn't.
+ *
+ *  TWIN (GT.8): the content script decides the same membership client-side, to
+ *  stamp a `roster` Radar sighting on a quiet post — `isReciprocityPerson` in
+ *  `extension/src/shared/glance.ts`, over the glance map (which is a superset:
+ *  every non-retired people row, at every stage). It cannot import this module
+ *  (db + drizzle, and the content script is a dependency-free IIFE), so the
+ *  floor is duplicated there. Move this constant and move that predicate. */
 export const RECIPROCITY_MIN_STAGE: Stage = 'engaged';
 
 export interface ReciprocityScope {

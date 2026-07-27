@@ -1156,6 +1156,14 @@ button.danger:hover:not(:disabled) {
   border: 1px solid color-mix(in srgb, var(--strat-accent) 50%, transparent);
   background: color-mix(in srgb, var(--strat-accent) 12%, transparent);
 }
+/* GT.8: a roster capture — quiet on purpose. It is the only band that is NOT a
+   claim about the tweet, so it must not compete with hot/warm/manual for the
+   eye; muted is the reading, not a new colour meaning. */
+.radar-band-roster {
+  color: var(--strat-muted);
+  border: 1px solid color-mix(in srgb, var(--strat-muted) 45%, transparent);
+  background: color-mix(in srgb, var(--strat-muted) 10%, transparent);
+}
 .radar-author {
   flex: 1;
   font-size: 11px;

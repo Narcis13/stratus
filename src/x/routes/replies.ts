@@ -582,12 +582,15 @@ export function parseBatchTweets(
       return { error: `invalid_tweet_text_${i}` };
     }
 
-    let band: 'hot' | 'warm' | 'manual' | undefined;
+    let band: 'hot' | 'warm' | 'manual' | 'roster' | undefined;
     if (r.band !== undefined && r.band !== null) {
-      // 'manual' = a ⊕ add (RU.8); stored on radar_drafts.band as queue metadata,
-      // never a classifier verdict — the confirm endpoint coerces it away from
-      // the reply_drafts contextSnapshot signals.
-      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual') {
+      // 'manual' = a ⊕ add (RU.8), 'roster' = a quiet post by someone in my
+      // circle (GT.8); both are stored on radar_drafts.band as queue metadata,
+      // never classifier verdicts — the confirm endpoint coerces them away from
+      // the reply_drafts contextSnapshot signals. Not re-checked against the
+      // people layer here: the band never reaches Grok and never reaches a
+      // Playbook cell, so a wrong claim costs a label, not money or a number.
+      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual' && r.band !== 'roster') {
         return { error: `invalid_tweet_band_${i}` };
       }
       band = r.band;

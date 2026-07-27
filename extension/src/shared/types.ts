@@ -810,9 +810,10 @@ export interface BatchReplyTweet {
   author: string;
   text: string;
   url?: string;
-  // 'manual' = a ⊕ pinned tweet (RU.8); carried through so radar_drafts.band
-  // records it (queue metadata), never sent to Grok.
-  band?: 'hot' | 'warm' | 'manual';
+  // 'manual' = a ⊕ pinned tweet (RU.8), 'roster' = a quiet post by someone in my
+  // circle (GT.8); carried through so radar_drafts.band records it (queue
+  // metadata), never sent to Grok.
+  band?: 'hot' | 'warm' | 'manual' | 'roster';
   signals?: TweetSignals;
 }
 

@@ -160,6 +160,44 @@ describe('mergeSightings', () => {
     expect(merged).toHaveLength(RADAR_CAP);
     expect(merged.some((s) => s.tweetId === 'pinned')).toBe(true);
   });
+
+  test('a roster row (GT.8) is UPGRADED by a hot re-sight — the tweet caught fire', () => {
+    const quiet = sighting('1', { band: 'roster' });
+    const loud = sighting('1', { band: 'hot' });
+    expect(mergeSightings([quiet], [loud], [])[0]?.band).toBe('hot');
+  });
+
+  test('a roster re-sight never DOWNGRADES a real verdict (vpm decays with age)', () => {
+    // Same tweet, later scroll: it was hot at capture, has since gone quiet, and
+    // its author is in my circle. The queue must keep the verdict it earned.
+    const hot = sighting('1', { band: 'hot' });
+    const nowQuiet = sighting('1', { band: 'roster', lastSeenAt: '2026-06-10T11:00:00.000Z' });
+    const merged = mergeSightings([hot], [nowQuiet], []);
+    expect(merged[0]?.band).toBe('hot');
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z'); // everything else still refreshes
+  });
+
+  test('a manual pin still outranks a roster re-sight', () => {
+    const pinned = sighting('1', { band: 'manual' });
+    expect(mergeSightings([pinned], [sighting('1', { band: 'roster' })], [])[0]?.band).toBe(
+      'manual',
+    );
+  });
+
+  test('eviction drops roster captures before real verdicts (GT.8 queue pressure)', () => {
+    // The roster row is the FRESHEST of the lot and still goes first: a chatty
+    // circle must not push the day's loudest opportunities out of the buffer.
+    const roster = sighting('roster-1', {
+      band: 'roster',
+      lastSeenAt: '2026-06-10T23:59:00.000Z',
+    });
+    const warm = Array.from({ length: RADAR_CAP }, (_, i) =>
+      sighting(`warm-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
+    );
+    const merged = mergeSightings([roster], warm, []);
+    expect(merged).toHaveLength(RADAR_CAP);
+    expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
+  });
 });
 
 describe('appendDismissed', () => {
@@ -224,6 +262,49 @@ describe('rankSightings', () => {
     const rows = [sighting('1', { band: 'warm' }), sighting('2', { band: 'hot' })];
     rankSightings(rows);
     expect(rows[0]?.tweetId).toBe('1');
+  });
+
+  test('a roster capture (GT.8) ranks below warm WITHIN the same tier', () => {
+    // Same person, same tier — so the only thing separating these is the band,
+    // and the quiet one that is here for who posted it goes last. vpm would say
+    // the opposite if band didn't lead it.
+    const rows = [
+      sighting('roster-fast', {
+        band: 'roster',
+        personTier: 'target',
+        signals: { views: 80, replies: 0, ageMin: 1, vpm: 80, bait: false },
+      }),
+      sighting('warm-slow', {
+        band: 'warm',
+        personTier: 'target',
+        signals: { views: 600, replies: 4, ageMin: 120, vpm: 5, bait: false },
+      }),
+      sighting('hot-slow', {
+        band: 'hot',
+        personTier: 'target',
+        signals: { views: 900, replies: 9, ageMin: 200, vpm: 4, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
+      'hot-slow',
+      'warm-slow',
+      'roster-fast',
+    ]);
+  });
+
+  test('a roster capture from an ally still outranks a hot stranger (tier leads band)', () => {
+    const rows = [
+      sighting('hot-rando', {
+        band: 'hot',
+        signals: { views: 9000, replies: 60, ageMin: 6, vpm: 1500, bait: false },
+      }),
+      sighting('roster-ally', {
+        band: 'roster',
+        personTier: 'ally',
+        signals: { views: 40, replies: 0, ageMin: 12, vpm: 3, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['roster-ally', 'hot-rando']);
   });
 
   test('roster tier leads band/vpm/recency (S0.3)', () => {
@@ -360,6 +441,9 @@ describe('groupQueue', () => {
 describe('isRadarSightings', () => {
   test('accepts a valid stored array and rejects junk', () => {
     expect(isRadarSightings([sighting('1')])).toBe(true);
+    expect(isRadarSightings([sighting('1', { band: 'manual' })])).toBe(true);
+    expect(isRadarSightings([sighting('1', { band: 'roster' })])).toBe(true); // GT.8
+    expect(isRadarSightings([{ ...sighting('1'), band: 'cold' }])).toBe(false);
     expect(isRadarSightings([])).toBe(true);
     expect(isRadarSightings(undefined)).toBe(false);
     expect(isRadarSightings([{ tweetId: 1 }])).toBe(false);

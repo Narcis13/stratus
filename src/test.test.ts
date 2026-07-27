@@ -973,6 +973,14 @@ describe('batch replies (Radar §7.2)', () => {
     if ('error' in manual) throw new Error(manual.error);
     expect(manual.tweets[0]?.band).toBe('manual');
 
+    // GT.8: a roster capture — a quiet post by someone in my circle — is the
+    // second queue-metadata band and rides the same column.
+    const roster = parseBatchTweets([
+      { tweetId: '444', handle: 'dave', text: 'd', band: 'roster' },
+    ]);
+    if ('error' in roster) throw new Error(roster.error);
+    expect(roster.tweets[0]?.band).toBe('roster');
+
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
     });

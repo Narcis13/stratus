@@ -14,7 +14,7 @@ Replies are how a small account grows: you show up under someone bigger, in fron
 
 That's the Radar's whole job:
 
-- **Capture** — as you scroll, the extension computes each tweet's **band** and streams every **hot** and **warm** one into this queue ($0 — it's reading what the page already rendered, not calling the X API).
+- **Capture** — as you scroll, the extension computes each tweet's **band** and streams every **hot** and **warm** one into this queue ($0 — it's reading what the page already rendered, not calling the X API). Plus one exception that isn't about heat at all: a **fresh post by someone already in your circle** is captured even when the band says skip.
 - **Rank** — the queue is ordered by what's actually worth your next five minutes, not by when you saw it.
 - **Draft** — one Grok call writes **three different angles** for every queued tweet at once.
 - **Hand off** — you pick the angle, it lands on your clipboard, and the tweet opens.
@@ -23,6 +23,7 @@ That's the Radar's whole job:
 |---|---|
 | **Band** | The verdict computed for each tweet as you scroll: **hot** ("reply now"), **warm** ("worth watching"), **skip** ("thread's too deep, you'd be buried"). Based on views, reply count, age, how fast it's gaining views, and whether it's "reply-bait". The thresholds live in **Settings → Tuning → Reply band** — the same twelve the on-page border uses. |
 | **manual** | A tweet *you* pinned with the ⊕ button on x.com, regardless of band. "I want to reply to this one, period." |
+| **your circle** | A quiet tweet that got in because of *who posted it*: someone you've replied to before, or someone on your 2–10× target roster. Same rule the reply gate uses, so anything captured this way is also something you can draft a reply to without forcing past the "dead post" warning. |
 | **Angle** | How a reply engages: **extends** (build on the point), **contrarian** (respectfully disagree), **debate** (open a real question). Every draft comes as one of each. |
 | **Tier** | What the people layer knows about the author: **ally**, **mutual**, or **target** (on your 2–10× roster). A warm tweet from an ally beats a hot tweet from a stranger. |
 
@@ -32,12 +33,17 @@ That's the Radar's whole job:
 
 ## Filling the queue
 
-Two ways in, both free:
+Three ways in, all free:
 
 1. **Automatically, by browsing.** Any **hot** or **warm** tweet you scroll past on x.com is added. You don't do anything.
-2. **By hand, with ⊕.** Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button. It pushes that tweet into the queue whatever its band — a cold tweet from someone you care about, a question you want to answer properly later. Pinned tweets get a **`manual`** band chip and rank at the very top.
+2. **Automatically, because it's your people.** A tweet by someone you've already replied to, or someone on your 2–10× target roster, is added even when the band says skip — as long as it's **less than 24 hours old**. Reach is not the point of those replies; the relationship is. These rows carry a quiet **`your circle`** chip.
+3. **By hand, with ⊕.** Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button. It pushes that tweet into the queue whatever its band — a question you want to answer properly later, a stranger nobody has noticed yet. Pinned tweets get a **`manual`** band chip and rank at the very top.
 
-**Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then band (hot before warm), then how fast the tweet is gaining views, then recency.
+**Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then band (hot, then warm, then `your circle`), then how fast the tweet is gaining views, then recency.
+
+**Under pressure the queue keeps the loud ones.** It holds 100 rows; when it overflows, `your circle` captures are dropped first, then the oldest hot/warm sightings, and a ⊕ pin is dropped last. A talkative circle can't push the day's biggest opportunity out.
+
+**Why 24 hours, and why not everyone you know:** "your circle" means *stage `engaged` or better* — someone you have actually posted a reply to — plus your target roster. It deliberately does **not** mean everyone stratus has a row for: simply hovering someone's name on the timeline files them away, and treating that as a relationship would put most of x.com in this queue.
 
 ---
 
@@ -58,7 +64,7 @@ Two ways in, both free:
 
 ## A row, part by part
 
-- A **band chip** — `hot`, `warm`, or `manual`.
+- A **band chip** — `hot`, `warm`, `manual`, or a muted `your circle` (hover it: it explains that the row is here for the person, not the numbers).
 - The **author** — click to open their dossier in the People tab.
 - A **tier chip** if they're on your roster (`ally`, `mutual`, `target`) — also a dossier link. This is *why* they outrank a louder stranger.
 - **reply ready** once a draft exists.
@@ -89,7 +95,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 
 ## Workflow: work the Radar
 
-1. Browse X normally for a while. Hot and warm tweets accumulate here on their own ($0). Hit **⊕** on anything you want in the queue regardless of band.
+1. Browse X normally for a while. Hot and warm tweets — plus fresh posts by your circle — accumulate here on their own ($0). Hit **⊕** on anything else you want in the queue regardless of band.
 2. Open **Radar**. Skim the **why** lines and dismiss (**✕**) whatever isn't worth it *before* drafting — you don't pay for tweets you dropped.
 3. Click **Draft replies (N)**. One Grok call, cost shown afterwards.
 4. For each **reply ready** row: read the three angle tabs, click the body of the one you want. It's copied and the tweet opens.
@@ -112,7 +118,8 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 
 - **Dismiss before you draft.** Drafting is one call for the whole batch, but a bigger batch is a bigger call. Culling the queue first is the cheapest way to spend less.
 - **The ⊕ is the escape hatch from the band rules.** If the classifier keeps skipping something you'd have replied to, pin it — and if that happens a lot, the thresholds are editable in **Settings → Tuning → Reply band**.
-- **A pinned tweet never pollutes your analytics.** `manual` is queue metadata, not a band verdict: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see.
+- **A pinned tweet never pollutes your analytics.** `manual` is queue metadata, not a band verdict: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see. **`your circle` works the same way** — it says who posted it, not how it did.
+- **`your circle` rows are the reciprocity lane's other half.** The Today tab counts how many of today's replies went to people who were already yours (*"N replies to your people"*); this is where those replies come from. A quiet post by an ally is worth more to you than a hot post by a stranger, and neither the band nor the reply gate will stop you any more.
 - **Every handle is a link.** Before replying to someone you half-recognize, click through to their dossier and see the history first.
 - **What this tab costs.** Capturing, ranking and rendering the queue: **$0**. The only spend is **Draft replies** (one Grok call per click, price shown after) — see **[Spend today](./today-tab.md)** on Today for the running meter.
 

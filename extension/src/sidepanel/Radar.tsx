@@ -368,7 +368,12 @@ function RadarRow({
   return (
     <li className={`radar-row${s.reply ? ' radar-row-replied' : ''}`}>
       <div className="radar-row-head">
-        <span className={`radar-band radar-band-${s.band}`}>{s.band}</span>
+        <span
+          className={`radar-band radar-band-${s.band}`}
+          title={s.band === 'roster' ? ROSTER_BAND_TITLE : undefined}
+        >
+          {BAND_LABEL[s.band]}
+        </span>
         <button
           type="button"
           className="radar-author person-link"
@@ -468,6 +473,19 @@ function rowAngles(s: RadarSighting): { angle: string | null; text: string }[] {
   return s.reply ? [{ angle: null, text: s.reply }] : [];
 }
 
+// The band chip's face. Only 'roster' needs a translation: the stored value is
+// the cohort key the server records, "your circle" is what it means to a human
+// (GT.8) — and it is the only band whose reason isn't visible in the numbers
+// below it, so it is also the only one carrying a tooltip.
+const BAND_LABEL: Record<RadarSighting['band'], string> = {
+  hot: 'hot',
+  warm: 'warm',
+  manual: 'manual',
+  roster: 'your circle',
+};
+const ROSTER_BAND_TITLE =
+  'Below the reply band, but in the queue anyway: you have replied to them before, or they are on your 2–10x target roster. Same rule the reply gate uses.';
+
 // S0.3 chip tooltip — why this author outranks a louder rando.
 function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
   if (tier === 'ally') return 'Ally — an established two-way relationship';
@@ -478,10 +496,15 @@ function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
 // "1.5k views · 8 replies · 22m · 70/min · bait"
 function whyLine(s: RadarSighting): string {
   const { views, replies, vpm, bait } = s.signals;
-  // A ⊕ manual add (RU.8) with no captured metrics — don't render a line of
-  // zeros; a cold tweet the human pinned has nothing to quantify yet.
-  if (s.band === 'manual' && views === 0 && replies === 0) {
-    return `manually added · ${fmtAge(displayAgeMin(s))}`;
+  // A queue-metadata row with no captured metrics — don't render a line of
+  // zeros; a cold tweet has nothing to quantify yet. The two bands that get here
+  // are the ones that entered the queue for a reason the numbers don't hold: a ⊕
+  // pin (RU.8) and a roster capture (GT.8). Roster rows usually DO have real
+  // (small) numbers, and then the numbers are the honest line — the chip above
+  // already says why they're here.
+  if (views === 0 && replies === 0 && (s.band === 'manual' || s.band === 'roster')) {
+    const why = s.band === 'manual' ? 'manually added' : 'someone in your circle';
+    return `${why} · ${fmtAge(displayAgeMin(s))}`;
   }
   const parts = [`${formatCount(views)} views`, `${replies} replies`, fmtAge(displayAgeMin(s))];
   if (vpm >= 1) parts.push(`${formatCount(Math.round(vpm))}/min`);

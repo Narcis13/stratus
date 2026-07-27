@@ -34,7 +34,7 @@ import {
   parseHeatColors,
 } from './shared/activeTimes.ts';
 import { parseEarlyReplies } from './shared/earlyReplies.ts';
-import { GLANCE_TTL_MS, buildPersonChips } from './shared/glance.ts';
+import { GLANCE_TTL_MS, buildPersonChips, isReciprocityPerson } from './shared/glance.ts';
 import type { GlanceMap } from './shared/glance.ts';
 import type { HarvestIngestRow } from './shared/harvest.ts';
 import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
@@ -2175,12 +2175,37 @@ function readTweetSignals(article: Element): TweetSignals | null {
   };
 }
 
-function applyBand(article: HTMLElement): void {
+// GT.8 flood control: a roster capture is an ambient auto-capture like a band
+// sighting, and without an age guard one deep scroll fills a cap-100 queue with
+// week-old debts. "Skip when the age is unknown" comes free — readTweetSignals
+// returns null without a parseable <time>.
+const ROSTER_MAX_AGE_MIN = 24 * 60;
+
+// Does a tweet the classifier passed on still belong in the queue because of WHO
+// posted it (GT.8)? Cheap gates first — applyBand re-runs on every mutation
+// burst, so the free age check comes before the DOM read that yields the handle
+// (one querySelector, the same one applyPersonChips already pays per article).
+function isRosterSighting(article: Element, sig: TweetSignals, glance: GlanceMap): boolean {
+  if (sig.ageMin > ROSTER_MAX_AGE_MIN) return false;
+  const permalink = findPermalink(article);
+  if (!permalink) return false;
+  // Membership is the reply gate's own rule, never "is the author in the map":
+  // the glance map holds every stage, most of it ambient hover capture.
+  return isReciprocityPerson(glance[permalink.username.toLowerCase()]);
+}
+
+function applyBand(article: HTMLElement, glance: GlanceMap): void {
   const sig = readTweetSignals(article);
   const band = sig ? classifyBand(sig, bandThresholds) : null;
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
   if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+  // A quiet post by someone already mine still enters the queue — the border and
+  // the dim stay exactly as the classifier called them, this only feeds the
+  // Radar (GT.8).
+  else if (sig && isRosterSighting(article, sig, glance)) {
+    recordRadarSighting(article, 'roster', sig);
+  }
   // Every band, including skip — the opportunity funnel needs the denominator.
   // A null sig is an ad/promoted row (no metrics label), which filters itself.
   if (sig) recordPassiveHarvest(article);
@@ -3529,7 +3554,7 @@ function scan(root: ParentNode): void {
   for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
     attachRadarAddButton(article);
-    applyBand(article);
+    applyBand(article, glance);
     applyPersonChips(article, glance);
     if (focusedId) {
       attachReplyMasterButton(article, focusedId);

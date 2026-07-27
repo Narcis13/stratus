@@ -12,10 +12,30 @@ import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyVariant } from './types.ts';
 
 // 'manual' = the user pinned this tweet into the queue via the ⊕ button (RU.8).
-// It's queue/UX metadata, not a classifier verdict — a manual row never enters
-// the Playbook's hot/warm band cells (its reply_drafts signals keep the real
-// computed band, null when uncomputed).
-export type RadarBand = 'hot' | 'warm' | 'manual';
+// 'roster' = a fresh post by someone already in my circle, captured despite a
+// null/skip verdict (GT.8) — the reciprocity lane is about who posted it, not
+// how it's doing.
+// Both are queue/UX metadata, not classifier verdicts — neither ever enters the
+// Playbook's hot/warm band cells (their reply_drafts signals keep the real
+// computed band, null when uncomputed; the confirm endpoint coerces both away).
+export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster';
+
+// How strongly a stored band resists being overwritten by a re-sighting. A
+// human pin outranks everything; a real classifier verdict outranks a roster
+// capture, which only says "someone I know posted this". Equal stickiness → the
+// fresher incoming band wins, which is the pre-GT.8 behaviour for every
+// hot/warm pair. This is also the eviction preference under cap pressure —
+// keep-longest is the same order as deserves-the-slot.
+//
+// The asymmetry matters in both directions: a roster row that catches fire takes
+// the fresher hot/warm verdict (the upgrade), while a tweet that EARNED hot and
+// then went quiet is never demoted to 'roster' on the next scroll past it — vpm
+// decays with age, so hot → skip is a live transition, not a hypothetical.
+function bandStickiness(b: RadarBand): number {
+  if (b === 'manual') return 2;
+  if (b === 'roster') return 0;
+  return 1;
+}
 
 // Who the author is, as far as the people layer knows (S0.3). A warm post from
 // an ally/mutual compounds a real relationship; a hot post from a rando is a
@@ -97,9 +117,9 @@ export function mergeSightings(
     const variants = s.variants ?? prev.variants;
     const clickedAt = s.clickedAt ?? prev.clickedAt;
     const draftId = s.draftId ?? prev.draftId;
-    // A manual add is a human pin (RU.8): a hot/warm re-sight from the content
-    // script never downgrades it. Otherwise the fresher incoming band wins.
-    const band = prev.band === 'manual' ? 'manual' : s.band;
+    // The stickier band survives (RU.8 human pin > classifier verdict > GT.8
+    // roster capture); at equal stickiness the fresher incoming band wins.
+    const band = bandStickiness(prev.band) > bandStickiness(s.band) ? prev.band : s.band;
     const merged: RadarSighting = { ...s, band, firstSeenAt: prev.firstSeenAt };
     if (reply !== undefined) merged.reply = reply;
     if (variants !== undefined) merged.variants = variants;
@@ -109,13 +129,16 @@ export function mergeSightings(
   }
   const all = [...byId.values()];
   if (all.length <= RADAR_CAP) return all;
-  // Evict least-recently-seen — but a manual add (a human pin) outlives any
-  // auto-captured row (RU.8): non-manual rows sort to the front (dropped first),
-  // manual rows to the back (kept). slice() keeps the tail.
+  // Evict least-recently-seen within a stickiness rung: the least sticky rows
+  // sort to the front (dropped first), the stickiest to the back (kept). A
+  // manual pin (RU.8) outlives any auto-capture, and a GT.8 roster capture goes
+  // before a real hot/warm verdict — otherwise a chatty circle could push the
+  // loudest opportunities of the day out of a cap-100 buffer. slice() keeps the
+  // tail.
   all.sort((a, b) => {
-    const am = a.band === 'manual' ? 1 : 0;
-    const bm = b.band === 'manual' ? 1 : 0;
-    if (am !== bm) return am - bm;
+    const sa = bandStickiness(a.band);
+    const sb = bandStickiness(b.band);
+    if (sa !== sb) return sa - sb;
     return a.lastSeenAt.localeCompare(b.lastSeenAt);
   });
   return all.slice(all.length - RADAR_CAP);
@@ -166,9 +189,19 @@ function tierWeight(t: PersonTier | undefined): number {
   return 0;
 }
 
+// How loud the tweet itself is. hot > warm > roster: a roster capture (GT.8) is
+// in the queue for who posted it, and the tier comparison above has already had
+// its say about that — so within a tier it sits below a real verdict.
+function bandWeight(b: RadarBand): number {
+  if (b === 'hot') return 2;
+  if (b === 'warm') return 1;
+  return 0; // roster — and 'manual', which never reaches here against a non-pin
+}
+
 // Queue order: a manual add (the human pinned it, RU.8) tops everything; then
-// (S0.3) who the author is (roster tier), THEN band (hot over warm), then
-// views-per-minute, then recency — the original order preserved within a rung.
+// (S0.3) who the author is (roster tier), THEN band (hot over warm over the
+// GT.8 roster capture), then views-per-minute, then recency — the original
+// order preserved within a rung.
 export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
   return [...sightings].sort((a, b) => {
     const am = a.band === 'manual' ? 1 : 0;
@@ -176,7 +209,8 @@ export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
     if (am !== bm) return bm - am;
     const tw = tierWeight(b.personTier) - tierWeight(a.personTier);
     if (tw !== 0) return tw;
-    if (a.band !== b.band) return a.band === 'hot' ? -1 : 1;
+    const bw = bandWeight(b.band) - bandWeight(a.band);
+    if (bw !== 0) return bw;
     if (a.signals.vpm !== b.signals.vpm) return b.signals.vpm - a.signals.vpm;
     return b.lastSeenAt.localeCompare(a.lastSeenAt);
   });
@@ -261,7 +295,7 @@ export function isRadarSightings(v: unknown): v is RadarSighting[] {
     return (
       typeof r.tweetId === 'string' &&
       typeof r.url === 'string' &&
-      (r.band === 'hot' || r.band === 'warm' || r.band === 'manual') &&
+      (r.band === 'hot' || r.band === 'warm' || r.band === 'manual' || r.band === 'roster') &&
       typeof r.signals === 'object' &&
       r.signals !== null
     );
