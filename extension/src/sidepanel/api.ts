@@ -156,6 +156,7 @@ import {
   type PromptResetResult,
   type PromptSummary,
   type PromptsRestoreResult,
+  type ReachFit,
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftStatus,
@@ -602,6 +603,14 @@ export const api = {
         s,
         `/x/posts/cooldowns${days === undefined ? '' : `?days=${days}`}`,
       );
+    },
+
+    // SC.8 — what this SHAPE has historically done against your own recent
+    // baseline, fitted on own posts only. $0 SQL. The whole table comes back
+    // once per mount and the panel looks up the draft's format locally, because
+    // the fit moves when a post is measured while the format moves as you type.
+    reach(s: Settings): Promise<ReachFit> {
+      return request<ReachFit>(s, '/x/coach/reach');
     },
   },
 

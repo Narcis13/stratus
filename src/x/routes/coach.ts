@@ -30,12 +30,14 @@
 //   colon alone). A generous list therefore costs almost nothing, while a
 //   missing audience noun costs a false nudge — so labels ARE word-split here.
 
-import { type SQL, and, eq, isNull, or } from 'drizzle-orm';
+import { type SQL, and, asc, eq, inArray, isNull, or } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { type CoachLexicon, DEFAULT_LEXICON } from '../../shared/postCoach.ts';
-import { channels } from '../db/schema.ts';
+import { type ReachRow, buildReachFit } from '../coach/reach.ts';
+import { channels, metricsSnapshots, postsPublished } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
+import { getSetting } from '../settings/registry.ts';
 import { getActivePillars } from './pillars.ts';
 
 export const coachRouter = new Hono();
@@ -177,3 +179,63 @@ export async function loadActiveCoachLexicon(): Promise<CoachLexiconPayload> {
 }
 
 coachRouter.get('/coach/lexicon', async (c) => c.json(await loadActiveCoachLexicon()));
+
+// ------------------------------------------------------- reach band (SC.8)
+
+/** Own originals with the FIRST snapshot's raw view count — deliberately NOT
+ *  the `latestOutcomes` shape every other aggregate uses, and the reason is in
+ *  `../coach/reach.ts`'s header: the second snapshot only exists on posts that
+ *  already won, so "latest" is two measurement protocols selected on the
+ *  outcome. First-seen wins here because snapshots come back oldest-first.
+ *
+ *  $0 — two indexed reads over rows already paid for, no X call, no LLM. */
+async function loadReachRows(): Promise<ReachRow[]> {
+  const posts = await db
+    .select({
+      tweetId: postsPublished.tweetId,
+      text: postsPublished.text,
+      postedAt: postsPublished.postedAt,
+    })
+    .from(postsPublished)
+    .where(eq(postsPublished.isReply, false));
+  if (posts.length === 0) return [];
+
+  const snaps = await db
+    .select({
+      tweetId: metricsSnapshots.tweetId,
+      publicMetrics: metricsSnapshots.publicMetrics,
+      nonPublicMetrics: metricsSnapshots.nonPublicMetrics,
+      ageAtSnapshotMin: metricsSnapshots.ageAtSnapshotMin,
+    })
+    .from(metricsSnapshots)
+    .where(
+      inArray(
+        metricsSnapshots.tweetId,
+        posts.map((p) => p.tweetId),
+      ),
+    )
+    .orderBy(asc(metricsSnapshots.snapshotAt));
+
+  const first = new Map<string, (typeof snaps)[number]>();
+  for (const s of snaps) if (!first.has(s.tweetId)) first.set(s.tweetId, s);
+
+  return posts.map((p) => {
+    const s = first.get(p.tweetId);
+    const pub = (s?.publicMetrics ?? null) as Record<string, number> | null;
+    const priv = (s?.nonPublicMetrics ?? null) as Record<string, number> | null;
+    return {
+      text: p.text,
+      postedAt: p.postedAt,
+      views: pub?.impression_count ?? priv?.impression_count ?? null,
+      ageAtSnapshotMin: s?.ageAtSnapshotMin ?? null,
+    };
+  });
+}
+
+// One payload per mount, not one per keystroke: the fit only moves when a post
+// publishes and gets measured, while the draft's format changes as you type. So
+// the panel takes the whole table and looks up its own format locally — the
+// same division of labour as `GET /posts/cooldowns` (SC.6).
+coachRouter.get('/coach/reach', async (c) =>
+  c.json(buildReachFit(await loadReachRows(), getSetting<number>('x.gates.minCellN'))),
+);

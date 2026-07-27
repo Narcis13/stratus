@@ -10,6 +10,8 @@ import type {
   PostPillar,
   PostRegister,
   PostStatus,
+  ReachCell,
+  ReachFit,
 } from '../shared/types.ts';
 import { COACH_BAND_TONE, COACH_TONE } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -114,6 +116,30 @@ function cooldownNote(cell: CooldownCell, windowDays: number): string {
   return cell.status === 'cooldown'
     ? `${label} · ${cell.count} ${window} — reach decays when the same shape repeats.`
     : `${label} · ${cell.count} ${window}.`;
+}
+
+// SC.8 — the reach band: what this SHAPE has done against your own recent
+// baseline. Fitted on own posts or absent — there is no seed table, so below the
+// gate this says how far off the sample is rather than showing a softer number.
+// Exempt formats render nothing at all: they are not below the gate, they are
+// off the axis (the label means "no shape detected"), and an "insufficient data"
+// line there would promise a band that can never arrive.
+function reachNote(cell: ReachCell, minN: number): string {
+  const label = FORMAT_LABELS[cell.format];
+  if (cell.weightSource === 'insufficient') {
+    return `${label} · reach band: insufficient data (n=${cell.n} of ${minN}).`;
+  }
+  const [low, high] = cell.stallRange as [number, number];
+  const pct = Math.round((cell.escapeProbability ?? 0) * 100);
+  return `${label} · usually ${low.toLocaleString()}–${high.toLocaleString()} views · ${pct}% clear ${(cell.escapeThreshold ?? 0).toLocaleString()}.`;
+}
+
+function reachTitle(cell: ReachCell, fit: ReachFit): string {
+  const base = fit.base?.toLocaleString() ?? '—';
+  const provenance = `Fitted from ${cell.n} of your own ${FORMAT_LABELS[cell.format].toLowerCase()} posts, against a baseline of ${base} views (the median of your last ${fit.baseWindow}).`;
+  return cell.weightSource === 'fitted'
+    ? `${provenance}\n\nHistory for this shape, not a forecast for this draft — nothing here blocks Save.`
+    : `${cell.n} measured, ${fit.minN} needed. No estimate is shown below the gate: stratus fits these on your own posts and ships no borrowed numbers.`;
 }
 
 function cooldownTitle(cell: CooldownCell): string {
@@ -801,6 +827,25 @@ export function ComposerPanel({
   const cooldown =
     cooldowns?.cells.find((c) => c.format === draftFormat && c.status !== 'clear') ?? null;
 
+  // SC.8 — the fit moves only when a post gets measured, so this is one $0 read
+  // per mount like the cooldowns above, and the draft's format is matched
+  // against the cells locally. `draftFormat` is already the DEBOUNCED draft's
+  // format (segment 1 in thread mode), which is the shape the band is about.
+  const [reachFit, setReachFit] = useState<ReachFit | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.coach
+      .reach(settings)
+      .then((r) => alive && setReachFit(r))
+      .catch(() => {
+        /* no reach line; every other coach row is local and unaffected */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+  const reach = reachFit?.cells.find((c) => c.format === draftFormat && !c.exempt) ?? null;
+
   return (
     <form className="panel" onSubmit={submit}>
       <div className="panel-header">
@@ -1035,6 +1080,14 @@ export function ComposerPanel({
               title={cooldownTitle(cooldown)}
             >
               {cooldownNote(cooldown, cooldowns.windowDays)}
+            </div>
+          )}
+          {/* SC.8 — the other corpus-derived line: what this shape has done,
+              rather than what this draft says. Always muted, never a tone —
+              it is measurement metadata, not a fix and not a nudge (§7.19). */}
+          {reach && reachFit && (
+            <div className="coach-reach muted" title={reachTitle(reach, reachFit)}>
+              {reachNote(reach, reachFit.minN)}
             </div>
           )}
           <CoachRows checks={coachFixes} />

@@ -1756,6 +1756,37 @@ export interface CooldownsResponse {
   cells: CooldownCell[];
 }
 
+/** SC.8 — `GET /x/coach/reach`. One cell per format, always all 14, in
+ *  `POST_FORMATS` cascade order. Mirrors `src/x/coach/reach.ts`; the panel reads
+ *  finished cells and does no arithmetic, so no shim ships for that module.
+ *
+ *  `weightSource` is the whole contract: `'insufficient'` cells carry `null` in
+ *  every numeric field because there is no seed table to fall back on — a format
+ *  we have not measured has no band, not a default one. Render `n` (and `minN`)
+ *  to say how far off it is; never invent the rest. */
+export interface ReachCell {
+  format: PostFormat;
+  n: number;
+  exempt: boolean;
+  weightSource: 'fitted' | 'insufficient';
+  /** Absolute views, `[p25, p75]` of the outcomes that did not escape. */
+  stallRange: [number, number] | null;
+  escapeThreshold: number | null;
+  /** 0–1. */
+  escapeProbability: number | null;
+  p50Multiplier: number | null;
+}
+
+export interface ReachFit {
+  base: number | null;
+  measuredPosts: number;
+  fittedPosts: number;
+  minN: number;
+  escapeMultiple: number;
+  baseWindow: number;
+  cells: ReachCell[];
+}
+
 // Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
 // no tweet time, so no age and no velocity to classify with; it never folds
 // into the null band, which does mean "judged not worth replying to".

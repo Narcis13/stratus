@@ -68,6 +68,23 @@ Three things about it are deliberate:
 
 If you posted the same *idea* twice rather than the same shape, a different surface catches it: the Today tab's monitor warns about near-duplicate originals within 14 days.
 
+**The reach band.** One more line in the same box, just under the cooldown line, answers a different question: *how have posts of this shape actually done for me?* It reads like this once there's enough history —
+
+> Audience CTA · usually 180–540 views · 35% clear 1,000.
+
+That is your own record, not a prediction and not an industry benchmark. stratus takes the median views of your **last 20 measured posts** as a baseline, works out how each past post of that shape landed against the baseline that existed *at the time it went out*, and reports the middle half of the ordinary outcomes plus how often that shape broke out (3× the baseline or better). Hover the line for the sample size and the baseline it used.
+
+Until a shape has enough measured posts, it says so instead:
+
+> List · reach band: insufficient data (n=16 of 20).
+
+**There is no fallback number anywhere behind that line.** Most tools in this space ship a table of "format multipliers" copied from someone else's account; stratus ships none, because a stranger's audience is not yours — so below the gate the honest answer is the sample count and nothing else. As of this writing no shape has cleared 20 yet (audience CTA is closest at 17), so the insufficient line is what you'll usually see; each one arms itself as you post. The gate is the same **Playbook cell gate** knob the Playbook uses (Settings → Gates).
+
+Two more things it deliberately doesn't do:
+
+- **It says nothing at all for prose.** *Substance*, *One-liner* and *Other* mean "no shape recognised" — the same three the cooldown skips — and a reach band for "unclassified" would be a number attached to nothing, so the line is simply absent. It isn't waiting for data there; there is no axis.
+- **It never blocks anything**, and nothing sorts by it. It is history, not a target — a shape that historically does well is not a reason to write one you don't mean.
+
 ### Scheduling controls
 
 The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.

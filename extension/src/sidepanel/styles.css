@@ -1814,7 +1814,8 @@ button.danger:hover:not(:disabled) {
 /* SC.6 — the format-cooldown line. Same type scale as a check row so the box
    reads as one list; it takes its colour from the tone classes below (amber at
    the cooldown bar) or from `.muted` while merely warming — no new token. */
-.coach-cooldown {
+.coach-cooldown,
+.coach-reach {
   font-size: 12px;
   line-height: 1.35;
   font-variant-numeric: tabular-nums;
