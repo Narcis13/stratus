@@ -169,6 +169,13 @@
       "when": 1784893447293,
       "tag": "0023_slimy_night_thrasher",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1785175604795,
+      "tag": "0024_soft_leopardon",
+      "breakpoints": true
     }
   ]
 }

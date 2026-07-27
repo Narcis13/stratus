@@ -29,6 +29,7 @@ import { goalsRouter } from './routes/goals.ts';
 import { harvest } from './routes/harvest.ts';
 import { ideasRouter } from './routes/ideas.ts';
 import { images } from './routes/images.ts';
+import { judgeRouter } from './routes/judge.ts';
 import { launch } from './routes/launch.ts';
 import { me } from './routes/me.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
@@ -166,9 +167,13 @@ export function mountX(app: Hono): void {
     app.route('/x', replies);
     app.route('/x', drafter);
     app.route('/x', voiceExtract);
+    // JD.4: the judge is on-demand only — no worker, no batch, one human click
+    // per call (decision 1), which is why it mounts beside the drafter rather
+    // than checking a key at runtime like images.
+    app.route('/x', judgeRouter);
   } else {
     console.log(
-      'x/replies: no LLM provider configured (set XAI_API_KEY or OPENROUTER_API_KEY) — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
+      'x/replies: no LLM provider configured (set XAI_API_KEY or OPENROUTER_API_KEY) — /x/replies/*, /x/posts/draft, /x/voice/*/extract and /x/judge not mounted',
     );
   }
 }
