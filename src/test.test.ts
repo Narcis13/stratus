@@ -57,9 +57,11 @@ import {
 } from './x/replies/prompt.ts';
 import {
   type AnnotatedGap,
+  MILESTONES,
   type PinnedWatchPost,
   annotateGaps,
   attachLatestSnapshots,
+  buildMilestoneWatch,
   buildPinnedWatch,
   findScheduleGaps,
   followerTrend,
@@ -1892,6 +1894,80 @@ describe('brief buildPinnedWatch (S0.9)', () => {
     const pin = { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 5 * 86_400_000) };
     expect(buildPinnedWatch(pin, null, [post('DDD', 500)], now).outperformer).toBeNull();
     expect(buildPinnedWatch(pin, 0, [post('DDD', 500)], now).outperformer).toBeNull();
+  });
+});
+
+describe('brief buildMilestoneWatch (GT.4)', () => {
+  const now = new Date('2026-07-11T12:00:00Z');
+  const day = 24 * 60 * 60 * 1000;
+  /** A snapshot `daysAgo` before `now`. */
+  const s = (daysAgo: number, followers: number) => ({
+    snapshotAt: new Date(now.getTime() - daysAgo * day),
+    followers,
+  });
+
+  test('no snapshots, or none past the first rung → null', () => {
+    expect(buildMilestoneWatch([], now)).toBeNull();
+    expect(buildMilestoneWatch([s(3, 12), s(2, 40)], now)).toBeNull();
+  });
+
+  test('crossed 2 days ago → nudge, carrying the crossing snapshot', () => {
+    const w = buildMilestoneWatch([s(4, 970), s(3, 995), s(2, 1004), s(1, 1031)], now);
+    expect(w).toEqual({
+      milestone: 1000,
+      crossedOn: new Date(now.getTime() - 2 * day),
+      followers: 1004,
+    });
+  });
+
+  test('crossed 5 days ago → quiet again', () => {
+    expect(buildMilestoneWatch([s(6, 995), s(5, 1004), s(1, 1080)], now)).toBeNull();
+    // The boundary: exactly 3 days still nudges, 4 does not.
+    expect(buildMilestoneWatch([s(4, 995), s(3, 1004)], now)?.milestone).toBe(1000);
+    expect(buildMilestoneWatch([s(5, 995), s(4, 1004)], now)).toBeNull();
+  });
+
+  test('a dip after the crossing still nudges (peak-based)', () => {
+    const w = buildMilestoneWatch([s(4, 995), s(2, 1005), s(1, 990)], now);
+    expect(w?.milestone).toBe(1000);
+    expect(w?.crossedOn).toEqual(new Date(now.getTime() - 2 * day));
+    // The count that PROVED the crossing, not today's dipped one.
+    expect(w?.followers).toBe(1005);
+  });
+
+  test('an exactly-equal count counts as crossed', () => {
+    expect(buildMilestoneWatch([s(3, 999), s(1, 1000)], now)?.milestone).toBe(1000);
+  });
+
+  test('reports the highest rung reached, not every one passed', () => {
+    const w = buildMilestoneWatch([s(3, 900), s(1, 2600)], now);
+    // 1000 was passed in the same jump, but 2500 is the news.
+    expect(w?.milestone).toBe(2500);
+    expect(w?.crossedOn).toEqual(new Date(now.getTime() - 1 * day));
+  });
+
+  test('a crossing nobody witnessed is not reported', () => {
+    // Cold start: the oldest snapshot we have is already past the rung, so the
+    // series proves the account is big, not that it just grew.
+    expect(buildMilestoneWatch([s(2, 1200), s(1, 1210)], now)).toBeNull();
+    // …and one below-rung snapshot is enough to make it reportable again.
+    expect(buildMilestoneWatch([s(3, 980), s(2, 1200), s(1, 1210)], now)?.milestone).toBe(1000);
+  });
+
+  test('unordered input is sorted before the walk', () => {
+    const w = buildMilestoneWatch([s(1, 1031), s(4, 970), s(2, 1004), s(3, 995)], now);
+    expect(w?.crossedOn).toEqual(new Date(now.getTime() - 2 * day));
+  });
+
+  test('the ladder is pinned against twin drift', () => {
+    // Plan decision 5 duplicates the ladder rather than sharing a module, so
+    // this can only pin the SERVER copy — it reddens on a one-sided edit here
+    // and points the editor at extension/src/studio/milestones.ts, which no
+    // server test may import (§5 build isolation, and the shared direction is
+    // src/shared/* + an extension re-export shim, not the reverse).
+    expect([...MILESTONES]).toEqual([
+      50, 100, 250, 500, 1000, 2500, 5000, 10_000, 25_000, 50_000, 100_000,
+    ]);
   });
 });
 

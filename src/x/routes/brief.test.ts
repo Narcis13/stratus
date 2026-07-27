@@ -17,7 +17,7 @@ import {
 } from '../db/schema.ts';
 import { localDayKey } from '../quests.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
-import { brief } from './brief.ts';
+import { MILESTONES, brief } from './brief.ts';
 
 const app = new Hono();
 app.route('/x', brief);
@@ -92,9 +92,16 @@ interface CommitmentBlock {
   debt: { missedLast7: number; missedLast30: number; trackedLast7: number; tier: number };
 }
 
+interface MilestoneWatchBody {
+  milestone: number;
+  crossedOn: string;
+  followers: number;
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   pinnedWatch: PinnedWatchBody;
+  milestoneWatch: MilestoneWatchBody | null;
   monitor: MonitorBlock;
   replyQuota: { postedToday: number; target: { min: number; max: number } };
   today: {
@@ -226,6 +233,23 @@ describe('brief quests (C9)', () => {
       expect(w.stale).toBe(false);
       expect(w.outperformer).toBeNull();
       expect(w.since).toBeNull();
+    }
+  });
+
+  test('carries the GT.4 milestone watch, silent or well-formed', async () => {
+    const body = await getBrief();
+    // The key is always present — the Today card keys off null vs object.
+    expect('milestoneWatch' in body).toBe(true);
+    const w = body.milestoneWatch;
+    // Not asserted null: every suite in this run shares one in-memory DB and
+    // four of them seed `account_snapshots`, so whether a rung looks freshly
+    // crossed here depends on file order. Behaviour is pinned in the pure
+    // `buildMilestoneWatch` tests; this asserts the wire shape.
+    if (w !== null) {
+      expect(MILESTONES).toContain(w.milestone as (typeof MILESTONES)[number]);
+      expect(Number.isNaN(Date.parse(w.crossedOn))).toBe(false);
+      expect(typeof w.followers).toBe('number');
+      expect(w.followers).toBeGreaterThanOrEqual(w.milestone);
     }
   });
 

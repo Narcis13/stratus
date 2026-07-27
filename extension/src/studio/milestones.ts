@@ -4,6 +4,14 @@
 // computation beats derived state). The rung values are opening guesses (same
 // spirit as the C1 stage thresholds); revisit if milestones feel too
 // sparse/dense at the account's real size.
+//
+// GT.4 TWIN: `src/x/routes/brief.ts` carries the same ladder (the server can't
+// import this bundle — §5 build isolation) for the Today tab's milestone nudge.
+// A rung added or moved here has to move there in the same commit. The server
+// helper differs on purpose: it only reports a crossing it actually WITNESSED
+// (a snapshot below the rung must precede the one that reaches it) and only for
+// 3 days, because it drives a nudge; `latestCrossed` reports the standing
+// milestone forever, because it labels a card.
 
 export const MILESTONES = [
   50, 100, 250, 500, 1000, 2500, 5000, 10_000, 25_000, 50_000, 100_000,

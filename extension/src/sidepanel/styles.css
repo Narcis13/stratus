@@ -1052,6 +1052,17 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
 }
 
+/* GT.4 — the milestone nudge's action row: one button plus its outcome line,
+   wrapping so a long notice never pushes the button off the panel. */
+.brief-milestone-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
 .brief-spend {
   font-size: 12px;
   color: var(--muted);

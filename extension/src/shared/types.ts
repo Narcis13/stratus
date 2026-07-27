@@ -1074,6 +1074,17 @@ export interface PinnedWatch {
   } | null;
 }
 
+// GT.4: a follower milestone crossed in the last 3 days, or null the rest of
+// the time. The server only reports a crossing it witnessed (a snapshot below
+// the rung precedes the one that reaches it), so a fresh install doesn't
+// announce a milestone it merely inherited. `followers` is the count on the
+// crossing snapshot — all three fields describe one event.
+export interface MilestoneWatch {
+  milestone: number;
+  crossedOn: string;
+  followers: number;
+}
+
 // GR.6: the activity monitor's alerts, mirrored from `src/x/monitor.ts` (§5
 // build isolation — the extension never imports server modules). At most one
 // alert per rule, so `rule` is a safe React key; sorted most-severe first.
@@ -1169,6 +1180,8 @@ export interface Brief {
     conversion?: { d7: ConversionWindow; d28: ConversionWindow };
   };
   pinnedWatch: PinnedWatch;
+  // GT.4, same predates-the-server tolerance: null on any ordinary day.
+  milestoneWatch?: MilestoneWatch | null;
   // Optional: absent when the deployed server predates GR.6 — the panel must
   // tolerate a brief payload without it rather than crash (the S0.1 precedent).
   monitor?: BriefMonitor;

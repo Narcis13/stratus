@@ -243,7 +243,15 @@ Empty state: *"No inbound in the last 30 days."*
 
 Pinning is manual in the X app — these are reminders, not actions.
 
-### 11. Account health
+### 11. Milestone
+
+**When it appears:** **only in the three days after you cross a follower milestone** — silent every other day. The ladder is 50 · 100 · 250 · 500 · 1,000 · 2,500 · 5,000 · 10,000 · 25,000 · 50,000 · 100,000.
+
+Reads: *"You crossed 1,000 followers on Jul 25 — post it. Milestone posts are one of your best formats."* A **Draft it** button spends one ~$0.006 Grok call on the ordinary post drafter, pre-steered with the milestone, and lands three drafts in the [Calendar](./calendar-tab.md) — *"3 drafts in the Calendar — pick one and slot it."* From there they behave like any other draft.
+
+Two things it deliberately doesn't do. It **doesn't check whether you already posted the milestone** — it's a nudge, not a tracker, and it goes quiet on its own after three days (same discipline as the pinned watch above). And it only reports a crossing it actually **watched happen**: the follower series has to contain a snapshot *below* the rung before the one that reaches it. So a fresh install won't congratulate you on a milestone you passed years ago — but it also means the very first snapshot after setup can never be the crossing one.
+
+### 12. Account health
 
 **When it appears:** **only when something actually fired** — on a normal day this section does not exist. That silence is the feature: an always-visible "all clear" panel trains you to stop reading it.
 
@@ -263,21 +271,21 @@ Every threshold is an **opening guess**, and each rule reports at most one row �
 
 One thing it deliberately doesn't do: thread tails don't count as a posting burst. They're published as self-replies, so a six-tweet thread stays one post as far as this card is concerned.
 
-### 12. Today's plan
+### 13. Today's plan
 
 **When it appears:** whenever the Brief loaded. From the Brief. Two parts:
 
 - **Scheduled posts today** — each with its time, a status badge (`pending`, `manual`, `posted`, etc.), and the post text. A `manual` badge (with a paste-hint on hover) marks a post you publish by hand rather than through the API. If nothing's scheduled: *"Nothing scheduled today."*
 - **Open slots (gaps)** — the recommended posting times ("anchors") for today that you *haven't* filled, ranked highest-value first. Each shows the hour and, when there's enough history, the average views-per-day that time slot has earned (`2.1k avg views/day · n=6`), or *"no data (n=…)"* when the sample's too small to advise. If every slot is filled you'll see *"All N slots filled."*
 
-### 13. Replies quota
+### 14. Replies quota
 
 **When it appears:** whenever the Brief loaded. From the Brief. Tracks the reply side of the 70/30 doctrine.
 
 - A **progress bar** and label like **7 / 10–20 today** — replies you've posted today against the daily target range. The bar turns green once you hit the minimum.
 - A **week line**: *"Week: 42 replies · 12 posts — 78% replies (target 70%)."* This is where you see whether your reply-to-post mix matches the 70/30 doctrine over the week.
 
-### 14. Yesterday
+### 15. Yesterday
 
 **When it appears:** whenever the Brief loaded. From the Brief. Yesterday's published output with measured numbers:
 
@@ -285,17 +293,17 @@ One thing it deliberately doesn't do: thread tails don't count as a posting burs
 - If a tweet hasn't been measured yet, it shows *"awaiting 03:00 UTC snapshot"* — stratus reads each tweet's metrics once, in a daily 3 AM UTC pass.
 - If you published nothing: *"Nothing published yesterday."*
 
-### 15. Profile-click leaders (7d)
+### 16. Profile-click leaders (7d)
 
 **When it appears:** only when there's at least one leader — otherwise absent. Your tweets from the last 7 days that earned the most **profile visits** (the follow-driving metric). Each shows the text, profile-visit count, views, and whether it's a post or reply.
 
 For **posts** (not replies) there's a **quote re-up** button: it drafts three fresh quote-tweet takes on that proven winner via Grok (roughly **$0.006**), landing them as draft rows in your Calendar. Nothing posts until you schedule one. A status line confirms *"3 quote drafts in the calendar ($0.0063)."*
 
-### 16. Spend today (UTC)
+### 17. Spend today (UTC)
 
 **When it appears:** whenever the Brief loaded. From the Brief. Today's API spend, split by source: *"X $0.0120 · Grok $0.0043 · total $0.0163."* Note this section is anchored to the **UTC billing day** (unlike the rest of the tab, which uses your local day), so it lines up with X's billing.
 
-### 17. Sunday Digest ("This week")
+### 18. Sunday Digest ("This week")
 
 **When it appears:** always present at the bottom. On **Sundays** it loads automatically; any other day it waits behind a **"Read the week's digest"** button.
 
@@ -367,7 +375,7 @@ That loop lives on its own tab now — see **[Radar → Workflow](./radar-tab.md
 ## States you'll see
 
 - **Loading** — the top **Refresh** button reads *"Loading…"* while the Brief fetches. Individual sections may briefly show nothing until their own data arrives.
-- **Empty** — most sections show a short coach line, usually with a second smaller line telling you what would fill it (*"Nothing owed — go hunting"* / *"Reply to a target from Radar or the roster and the chain comes back here when they answer"*). Some sections (**Launch Room**, **Pinned post**, **Profile-click leaders**) render nothing at all when they have no reason to appear — that's normal, not a bug.
+- **Empty** — most sections show a short coach line, usually with a second smaller line telling you what would fill it (*"Nothing owed — go hunting"* / *"Reply to a target from Radar or the roster and the chain comes back here when they answer"*). Some sections (**Launch Room**, **Pinned post**, **Milestone**, **Profile-click leaders**) render nothing at all when they have no reason to appear — that's normal, not a bug.
 - **Error** — a red line appears in the affected section (or under the header for the Brief). It's scoped: an error in one section doesn't take down the rest of the tab. Common causes are a bad or missing bearer token, or the server being unreachable. Refresh to retry.
 
 ---
