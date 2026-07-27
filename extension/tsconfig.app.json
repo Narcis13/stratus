@@ -27,7 +27,8 @@
     "../src/shared/channelSuggest.ts",
     "../src/shared/activeTimes.ts",
     "../src/shared/postCoach.ts",
-    "../src/shared/postFormat.ts"
+    "../src/shared/postFormat.ts",
+    "../src/shared/judge.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }
