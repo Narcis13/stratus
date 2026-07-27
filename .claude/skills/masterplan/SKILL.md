@@ -17,7 +17,8 @@ needs to know that isn't in the code must land in STATE.md before you finish.
 Files you own:
 - **Plan (static):** `plans/MASTERPLAN.md` — order, reasoning levels, waves, adaptations D1–D10. Never edit except to fix a discovered planning error (record why in STATE.md).
 - **State (dynamic):** `.claude/skills/masterplan/STATE.md` — status ledger, deviations register, gotchas log, hot-file locks. Kept small on purpose (see Step 6's archive rule).
-- **Archive (frozen):** `.claude/skills/masterplan/STATE-ARCHIVE.md` — closed-wave deviations + gotchas, verbatim. Never read whole (it is bigger than one `Read`); grep it by task id or filename when a task touches something a closed lane built.
+- **Archive (frozen):** `.claude/skills/masterplan/STATE-ARCHIVE.md` — closed-lane deviations, gotchas, header priors and ledger rows, verbatim. Never read whole (it is bigger than one `Read`); grep it by task id or filename when a task touches something a closed lane built.
+- **Debt (unpaid, added GT.9):** `.claude/skills/masterplan/VERIFY-DEBT.md` — browser-verification checks owed by shipped tasks, plus CA.2. **Not** the archive: these are still owed, they just bind no task. Don't read it in Step 0; read it when you happen to have Chrome open on the panel, and delete what you pay.
 - **Codemap:** `.claude/skills/plan-feature/references/codemap.md` — the repo index every task reads INSTEAD of scanning the repo. You update it after every task.
 
 ## Modes

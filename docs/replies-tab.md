@@ -133,6 +133,8 @@ Every generate returns **three distinct replies** — one per angle — and each
 | **contrarian** | Pushes back — offers the opposite or a sharper counter-view. |
 | **debate** | Opens a genuine back-and-forth — a pointed question or challenge. |
 
+**All three anchor on something the original tweet actually said.** Whatever the angle, a variant has to echo a concrete term, number or phrase from the post it answers rather than replying to the topic in general — that is the difference between a reply that reads as *to you* and one that could have been pasted under any tweet on the timeline, and it's the single instruction with the most measurable effect on whether people reply back. (It's about the tweet's *text* only; what stratus knows about the person is separate and is never recited — see **[Relationship-aware drafting](#relationship-aware-drafting)**.)
+
 The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian` — the same chip shape the rest of the panel uses for stages and statuses, with the picked one filled in. **Click a chip to load that variant into the editor.** This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call, shown as angle tabs on each row — see the **[Radar tab](./radar-tab.md)**.)
 
 Each chip also carries a small **coach score** — the same 0–100 pre-publish check the Composer runs on originals (**[Composer → The coach](./composer-tab.md#the-coach-live-score-and-fix-list)**), graded here as a reply, so it never asks a mid-conversation line for a hook or blank-line spacing. It's computed on your machine: no call, no spend, no wait. **Hover the number** for the score, the worst two things about that variant, and the reminder that it's a floor rather than a target. It changes nothing else — the chips stay in generate order, nothing is pre-picked, and a 62 you'd actually send beats an 84 you wouldn't. The same number rides the angle tabs in Radar, the Conversations drafts, and the Launch Room's first comment. It grades against your niche's vocabulary too — a variant whose specific thing is a word from your channels' keywords counts as concrete without needing a number in it.
@@ -151,7 +153,7 @@ Not happy with any variant? **Regenerate** runs a fresh set of three. It reuses 
 
 ### What a draft costs
 
-Drafting runs on Grok (xAI), **not** the X API — so it doesn't touch your X spend. A reply draft is roughly **$0.002–$0.004**: two variants in one call, plus — occasionally — one automatic re-draft if neither variant is specific enough (stratus quietly asks again for something less generic). The exact cost is shown under the reply box and in the history list.
+Drafting runs on Grok (xAI), **not** the X API — so it doesn't touch your X spend. A reply draft is roughly **$0.002–$0.004**: all three variants in one call, plus — occasionally — one automatic re-draft if neither variant is specific enough (stratus quietly asks again for something less generic). The exact cost is shown under the reply box and in the history list.
 
 ### Advanced: system prompt override
 

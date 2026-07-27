@@ -173,6 +173,14 @@ Click **Generate 3 drafts (~$0.01)**. Each click makes one Grok call (roughly a 
 
 Each draft is shown as a card with its **register** badge, its **pillar** badge, a character count, and the full text. A line above the cards notes how many "winners" (your top past posts) were used as voice anchors and the exact cost.
 
+**Four formats it knows how to reach for.** Posts engineered to be *answered* outperform posts engineered to be *admired* — measured at roughly 2× the views on a comparable builder account — so the drafter carries four proven skeletons: **would-you-rather** (two concrete stakes, one forced pick), **poll-list** (a short question, then 3–4 dashed options), **confessional question** ("be honest — …?"), and **audience CTA** ("show me the thing you're working on"). Three things about how they're used, all deliberate:
+
+- **At most one of the three drafts** may use one — they're a rotation, not a house style, and you should still be getting two ordinary takes to choose from.
+- The **skeleton** is the only borrowed part. It gets filled with your own material, your steer, or common knowledge — never with invented specifics.
+- Each one invites a **reply**, never a follow. This isn't the engagement-bait the prompt otherwise forbids: no "like if you agree", no reply-for-reply trading, no question wrapped around a brag. A real question you actually want answered isn't bait — but an audience CTA is a promise, so only ship one on a day you'll answer every response.
+
+If four of the same shape go out inside a week, the **cooldown line** above the fix list will start saying so.
+
 For each card you can:
 
 - **Use this →** — opens that draft in the editor so you can set a time and schedule it. The draft already exists on your Calendar as a `draft` row, so this just promotes it — no round-trip through the Calendar tab.

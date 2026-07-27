@@ -116,3 +116,32 @@ Local Playwright + CDP tool injecting a React shadow-DOM overlay into x.com. Nev
 **Meta-lesson:** he isn't winning on writing quality (median reply: 8 views). He wins on systematized
 volume + deliberate audience stratification — the game stratus was built for, currently run at 1/10th
 throttle with a gate that blocks the relationship half of the strategy.
+
+---
+
+## Shipped as GT.1–GT.8 (2026-07-27)
+
+Recommendations 2–8 above shipped as `plans/2026-07-22-mika-growth-tactics.md`, tasks GT.1–GT.8
+(masterplan Wave 6). Recommendation **1** (raise reply volume) needed no code and remains an operator
+action: PATCH the active niche's `replyTargetMin`/`Max` on **Settings → General → Niche**.
+Recommendation **7** ("don't over-invest in latency") is honored by having built nothing for it.
+
+Three of the recommendations **did not survive contact with our own data**, and that is the useful
+part of the record — every one was a number this account could measure, so the plan's borrowed
+threshold was replaced by a measured one rather than shipped on trust:
+
+- **Rec 2's membership rule** (`stage ≥ noticed` = "my CRM") was wrong here: 730 of 730 `noticed` rows
+  are ambient hover-card captures, so it would have exempted 24 of the 25 accounts ever drafted for —
+  an off switch, not a lane. Shipped at `stage ≥ engaged` ∪ the 2–10× roster: 14 handles, byte-identical
+  to the set `GET /x/people/rankmap` already ships, so the Radar chip and the money gate cannot fork.
+- **The reciprocity quest** (rec 2's visible half) had to ask who was already mine *when the day started*:
+  at that floor, posting the reply is what creates the membership, and over the whole corpus every one
+  of 14 posted replies was a first contact — the unqualified count would have equalled the replies quest
+  on every day, forever.
+- **Rec 6's format cooldown** (from x-builder) clusters a window by token-set Jaccard ≥ 0.45. Measured
+  over 137 real originals: 795 same-format pairs inside a 7-day window, **max 0.238**. Every cluster is
+  a singleton and the counter would have been silent forever, so it shipped as a plain format tally
+  (SC.6). Idea-repetition already has an owner — `monitor.ts`'s shingle-based `nearDuplicate`.
+
+Full prose entry: `docs/PHASE-HISTORY.md` §"Mika growth tactics". Verification:
+`bun run scripts/smoke-growth-tactics.ts` ($0).
