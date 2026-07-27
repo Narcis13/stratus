@@ -47,6 +47,7 @@ import {
   type PostContext,
   REPLY_BATCH_PROMPT_TEMPLATE,
   REPLY_PROMPT_TEMPLATE,
+  UNTRUSTED_CONTEXT_MARKER,
   blankLineBetweenPropositions,
   buildBatchGrokInput,
   buildGrokInput,
@@ -521,6 +522,12 @@ describe('buildAccountSeries', () => {
   });
 });
 
+// JD.1: the trust label must appear exactly ONCE per rendered prompt — a second
+// copy means some render path prefixed it twice.
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 describe('reply prompt (§7.1)', () => {
   const promptCtx: PostContext = {
     tweetId: '123456',
@@ -636,6 +643,32 @@ That is the entire biography you have. Never invent or imply anything else — n
   test('no parent → no thread-context block', () => {
     const [msg] = buildGrokInput(promptCtx);
     expect(msg?.content).not.toContain('MY POST');
+  });
+
+  test('JD.1: the scraped context is trust-labelled once, and the templates stay clean', () => {
+    const [msg] = buildGrokInput(promptCtx);
+    const content = msg?.content ?? '';
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+    // The label heads the quoted text, it doesn't trail it.
+    expect(content.indexOf(UNTRUSTED_CONTEXT_MARKER)).toBeLessThan(
+      content.indexOf('ORIGINAL TWEET'),
+    );
+    // It rides on the rendered VALUE — both byte-synced literals are untouched,
+    // so `reply prompt.md` needs no regeneration.
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain(UNTRUSTED_CONTEXT_MARKER);
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).not.toContain(UNTRUSTED_CONTEXT_MARKER);
+  });
+
+  test('JD.1: a mention-thread parent renders under the same single label', () => {
+    const [msg] = buildGrokInput({ ...promptCtx, parent: { text: 'my post about shipping' } });
+    const content = msg?.content ?? '';
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+    expect(content.indexOf(UNTRUSTED_CONTEXT_MARKER)).toBeLessThan(content.indexOf('MY POST'));
+  });
+
+  test('JD.1: an override without the context token still gets the label', () => {
+    const [msg] = buildGrokInput(promptCtx, 'Custom prompt with no context token');
+    expect(countOccurrences(msg?.content ?? '', UNTRUSTED_CONTEXT_MARKER)).toBe(1);
   });
 
   test('parseReplyVariants accepts the schema shape and trims', () => {
@@ -778,6 +811,27 @@ describe('batch replies (Radar §7.2)', () => {
     expect(REPLY_BATCH_PROMPT_TEMPLATE.indexOf('{{POSTS}}')).toBeLessThan(
       REPLY_BATCH_PROMPT_TEMPLATE.indexOf('{{IDEA}}'),
     );
+  });
+
+  test('JD.1: the batch posts block carries one trust label, above the first post', () => {
+    const content = buildBatchGrokInput(tweets, 'fii contrarian')[0]?.content ?? '';
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+    expect(content.indexOf(UNTRUSTED_CONTEXT_MARKER)).toBeLessThan(
+      content.indexOf('POST 1 (id: 111)'),
+    );
+    // ...and below the voice block: the cacheable instruction head is untouched.
+    expect(content.indexOf('Forbidden openers')).toBeLessThan(
+      content.indexOf(UNTRUSTED_CONTEXT_MARKER),
+    );
+  });
+
+  test('JD.1: a custom batch template keeps the label with the {{POSTS}} value', () => {
+    const custom = 'CUSTOM BATCH HEAD\n\nPOSTS:\n{{POSTS}}\n\nSTEER: <idea>{{IDEA}}</idea>';
+    const content =
+      buildBatchGrokInput(tweets, 'go', undefined, undefined, undefined, { template: custom })[0]
+        ?.content ?? '';
+    expect(content.startsWith('CUSTOM BATCH HEAD')).toBe(true);
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
   });
 
   test('AI.5: a reply-batch template override changes the rendered batch prompt', () => {

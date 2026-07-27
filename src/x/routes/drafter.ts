@@ -78,6 +78,12 @@ const WINNERS_LIMIT = 5;
 // Recent non-reply posts scanned for measured winners. The account is far from
 // outgrowing an in-memory rank at this size.
 const WINNERS_SCAN_LIMIT = 200;
+// JD.1: at most this many of WINNERS_LIMIT few-shot anchors may be drafter-
+// authored, so the block still reads as MY voice and not as the model's.
+const MACHINE_WINNERS_MAX = 2;
+// `scheduled_posts.source` values that mean "an LLM wrote this text". Anything
+// else — including no matching scheduled row at all — counts as hand-written.
+const MACHINE_SOURCES = new Set(['drafter']);
 // The post cache key comes from the registry (AI.3): a sha of the effective
 // prompt body, niche-suffixed at the call site.
 
@@ -550,6 +556,18 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
 }
 
 // Top own non-reply posts by latest measured views — the few-shot block.
+//
+// JD.1 (study §G2): the block is capped at MACHINE_WINNERS_MAX drafter-written
+// rows. Without the cap, a post the drafter wrote — that got scheduled, shipped
+// and performed well — comes back as a "this is your voice" anchor on the next
+// draft, with the measurement layer confirming the drift. Provenance is
+// `scheduled_posts.source` reached through `posted_tweet_id` (stamped by the
+// publisher and by the manual reconcile); `posts_published.source` answers a
+// different question — it is the PUBLISH path ('scheduled' | 'manual'), not
+// authorship. A hand-edited machine draft is partly mine, so the fix is
+// dilution, not exclusion — and the cap is a cap, not a quota: an account whose
+// whole measured history is drafter-written gets a SHORTER block, never five
+// machine posts.
 export async function topWinners(limit = WINNERS_LIMIT): Promise<WinnerPost[]> {
   const posts = await db
     .select({ tweetId: postsPublished.tweetId, text: postsPublished.text })
@@ -579,7 +597,23 @@ export async function topWinners(limit = WINNERS_LIMIT): Promise<WinnerPost[]> {
   const latest = new Map<string, (typeof snaps)[number]>();
   for (const s of snaps) if (!latest.has(s.tweetId)) latest.set(s.tweetId, s);
 
-  const measured: Array<WinnerPost & { sortViews: number }> = [];
+  // Provenance — one small third SELECT rather than a restructure of the two
+  // queries above. A tweet with no scheduled row (hand-written and posted off
+  // stratus, or discovered on the timeline) never lands in this set.
+  const provenance = await db
+    .select({ tweetId: scheduledPosts.postedTweetId, source: scheduledPosts.source })
+    .from(scheduledPosts)
+    .where(
+      inArray(
+        scheduledPosts.postedTweetId,
+        posts.map((p) => p.tweetId),
+      ),
+    );
+  const machineIds = new Set(
+    provenance.flatMap((r) => (r.tweetId && MACHINE_SOURCES.has(r.source) ? [r.tweetId] : [])),
+  );
+
+  const measured: Array<WinnerPost & { sortViews: number; machine: boolean }> = [];
   for (const p of posts) {
     const s = latest.get(p.tweetId);
     if (!s) continue;
@@ -592,13 +626,25 @@ export async function topWinners(limit = WINNERS_LIMIT): Promise<WinnerPost[]> {
       views,
       profileVisits: priv?.user_profile_clicks ?? null,
       sortViews: views,
+      machine: machineIds.has(p.tweetId),
     });
   }
 
-  return measured
-    .sort((a, b) => b.sortViews - a.sortViews)
-    .slice(0, limit)
-    .map(({ sortViews: _, ...w }) => w);
+  // Rank by views, then fill: hand-written rows are unrestricted, machine rows
+  // stop at the cap. Highest-viewed wins inside each group, so a hand-written
+  // post only loses its slot to a machine post that actually outperformed it.
+  const out: WinnerPost[] = [];
+  let machineTaken = 0;
+  for (const m of measured.sort((a, b) => b.sortViews - a.sortViews)) {
+    if (out.length >= limit) break;
+    if (m.machine) {
+      if (machineTaken >= MACHINE_WINNERS_MAX) continue;
+      machineTaken++;
+    }
+    const { sortViews: _views, machine: _machine, ...winner } = m;
+    out.push(winner);
+  }
+  return out;
 }
 
 // -------------------------------------------------------------- validation
