@@ -1727,6 +1727,32 @@ export interface CoachLexiconResponse {
   tribeTerms: string[];
 }
 
+/** SC.6 — `GET /x/posts/cooldowns`. One cell per format published inside the
+ *  window, in `POST_FORMATS` cascade order. Mirrors the wire shape of
+ *  `src/shared/postCooldown.ts` (which the panel never builds, only reads):
+ *  `lastPostedAt` is an ISO string here because it crossed JSON.
+ *
+ *  `exempt` marks the three fallback labels that mean "no format detected" and
+ *  can therefore never warn — read it instead of keeping a copy of the list, or
+ *  the panel and the server will disagree about what counts as a shape. */
+export type CooldownStatus = 'clear' | 'warming' | 'cooldown';
+
+export interface CooldownCell {
+  format: PostFormat;
+  count: number;
+  status: CooldownStatus;
+  exempt: boolean;
+  lastPostedAt: string;
+  exampleText: string;
+}
+
+export interface CooldownsResponse {
+  windowDays: number;
+  warmingAt: number;
+  cooldownAt: number;
+  cells: CooldownCell[];
+}
+
 // Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
 // no tweet time, so no age and no velocity to classify with; it never folds
 // into the null band, which does mean "judged not worth replying to".

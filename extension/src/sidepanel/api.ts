@@ -42,6 +42,7 @@ import {
   type ConversationThread,
   type ConversationsResponse,
   type ConversionWindow,
+  type CooldownsResponse,
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
@@ -591,6 +592,16 @@ export const api = {
   coach: {
     lexicon(s: Settings): Promise<CoachLexiconResponse> {
       return request<CoachLexiconResponse>(s, '/x/coach/lexicon');
+    },
+
+    // SC.6 — how often each structural shape went out lately. $0 SQL on the
+    // calendar router; the Composer reads it once and matches the current
+    // draft's own classified format against the cells. Advisory only.
+    cooldowns(s: Settings, days?: number): Promise<CooldownsResponse> {
+      return request<CooldownsResponse>(
+        s,
+        `/x/posts/cooldowns${days === undefined ? '' : `?days=${days}`}`,
+      );
     },
   },
 

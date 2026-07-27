@@ -47,11 +47,16 @@ const DUPE_ID = 'gr6_cal_dupe';
 const DUPE_TEXT =
   'the boring version of the feature shipped on tuesday and nobody complained about it';
 
+// SC.6 fixtures live in posts_published too; both id sets are cleaned here AND
+// in the test's own try/finally, because files share one in-memory DB and
+// afterAll alone leaves rows visible to every later test in this file.
+const publishedIds: string[] = [DUPE_ID];
+
 afterAll(async () => {
   if (createdIds.length > 0) {
     await db.delete(scheduledPosts).where(inArray(scheduledPosts.id, createdIds));
   }
-  await db.delete(postsPublished).where(inArray(postsPublished.tweetId, [DUPE_ID]));
+  await db.delete(postsPublished).where(inArray(postsPublished.tweetId, publishedIds));
 });
 
 describe('media_note (S3)', () => {
@@ -408,5 +413,125 @@ describe('manual rows are first-class in scheduleWarnings (A3.7)', () => {
     const cluster = manual.body.warnings.find((w) => w.includes('within'));
     expect(cluster).toBeDefined();
     expect(cluster).toContain('20 min away');
+  });
+});
+
+// SC.6 — `GET /posts/cooldowns`. The cooldown window is "the last N days from
+// now", and other suites seed `posts_published` freely, so every count
+// assertion here is a DELTA against a baseline read rather than an absolute
+// (the SC.5 discipline). Fixtures are `retired: true` (NT.7) so the daily
+// *billed* metrics pass can never pick them up.
+describe('format cooldown (SC.6)', () => {
+  const DAY_MS = 24 * 3_600_000;
+  const WYR = [
+    'Would you rather ship something ugly today or something perfect never?',
+    'Would you rather have 100 users who love it or 10,000 who shrug?',
+    'Would you rather own a slow business or rent a fast one?',
+    'Would you rather debug your own mess or inherit someone else’s?',
+  ];
+  const SUBSTANCE = [
+    'sc6 the gap between almost done and done is where side projects die.\n\nIt is 10% of the code and 90% of the resistance.',
+    'sc6 motivation is not the fuel.\n\nIt is the exhaust.\n\nStart moving and it shows up.',
+    'sc6 scope is a decision, not a discovery.\n\nWrite down what you are not building.',
+    'sc6 nobody claps for the fifth commit.\n\nThat is the one that ships the thing.',
+  ];
+
+  interface Cell {
+    format: string;
+    count: number;
+    status: string;
+    exempt: boolean;
+    lastPostedAt: string;
+    exampleText: string;
+  }
+  interface Payload {
+    windowDays: number;
+    warmingAt: number;
+    cooldownAt: number;
+    cells: Cell[];
+  }
+  const find = (p: Payload, f: string): Cell | undefined => p.cells.find((c) => c.format === f);
+  const count = (p: Payload, f: string): number => find(p, f)?.count ?? 0;
+
+  async function seed(prefix: string, texts: string[], daysAgo: number[]): Promise<void> {
+    await db.insert(postsPublished).values(
+      texts.map((text, i) => {
+        const tweetId = `${prefix}${i}`;
+        publishedIds.push(tweetId);
+        return {
+          tweetId,
+          text,
+          postedAt: new Date(Date.now() - (daysAgo[i] ?? 1) * DAY_MS),
+          isReply: false,
+          source: 'manual',
+          retired: true,
+        };
+      }),
+    );
+  }
+
+  test('four same-format originals inside the window read as cooldown', async () => {
+    const before = await send<Payload>('/x/posts/cooldowns', 'GET');
+    expect(before.status).toBe(200);
+    expect(before.body.windowDays).toBe(7);
+    expect(before.body.warmingAt).toBe(2);
+    expect(before.body.cooldownAt).toBe(4);
+    const baseline = count(before.body, 'would_you_rather');
+
+    try {
+      await seed('sc6wyr', WYR, [1, 2, 3, 4]);
+      const after = await send<Payload>('/x/posts/cooldowns', 'GET');
+      const cell = find(after.body, 'would_you_rather');
+      expect(cell).toBeDefined();
+      expect((cell as Cell).count - baseline).toBe(4);
+      expect((cell as Cell).status).toBe('cooldown');
+      expect((cell as Cell).exempt).toBe(false);
+      // The example is the most recent one, and it is real text, not a summary.
+      expect((cell as Cell).exampleText).toBe(WYR[0] as string);
+      expect(Number.isNaN(Date.parse((cell as Cell).lastPostedAt))).toBe(false);
+
+      // `?days=` narrows the window: only the 1-day-old row survives days=1.
+      const narrow = await send<Payload>('/x/posts/cooldowns?days=1', 'GET');
+      expect(narrow.body.windowDays).toBe(1);
+      expect(count(narrow.body, 'would_you_rather') - baseline).toBeLessThanOrEqual(1);
+    } finally {
+      await db.delete(postsPublished).where(
+        inArray(
+          postsPublished.tweetId,
+          WYR.map((_, i) => `sc6wyr${i}`),
+        ),
+      );
+    }
+  });
+
+  test('a fallback format is tallied but never warns (D146b)', async () => {
+    try {
+      await seed('sc6sub', SUBSTANCE, [1, 2, 3, 4]);
+      const res = await send<Payload>('/x/posts/cooldowns', 'GET');
+      const cell = find(res.body, 'substance');
+      expect(cell).toBeDefined();
+      expect((cell as Cell).count).toBeGreaterThanOrEqual(4);
+      expect((cell as Cell).exempt).toBe(true);
+      expect((cell as Cell).status).toBe('clear');
+      // Nothing else in the payload claims exemption it isn't entitled to.
+      for (const c of res.body.cells) {
+        if (c.exempt) expect(c.status).toBe('clear');
+      }
+    } finally {
+      await db.delete(postsPublished).where(
+        inArray(
+          postsPublished.tweetId,
+          SUBSTANCE.map((_, i) => `sc6sub${i}`),
+        ),
+      );
+    }
+  });
+
+  test('days validation refuses what it cannot mean', async () => {
+    for (const bad of ['0', '-3', '91', 'abc', '7.5']) {
+      const res = await send<{ error: string }>(`/x/posts/cooldowns?days=${bad}`, 'GET');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid_days');
+    }
   });
 });

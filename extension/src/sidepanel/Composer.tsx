@@ -1,9 +1,12 @@
 import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import { COACH_BAND_LABEL, COACH_DISCLAIMER, type CoachCheck, scoreDraft } from '../postCoach.ts';
+import { FORMAT_LABELS, classifyFormat } from '../postFormat.ts';
 import { audienceScoreFor } from '../shared/activeTimes.ts';
 import type {
   AudienceCapture,
   BestTimeCell,
+  CooldownCell,
+  CooldownsResponse,
   PostPillar,
   PostRegister,
   PostStatus,
@@ -37,6 +40,7 @@ import {
 import {
   addDays,
   dateToLocalInput,
+  formatDayLabel,
   isoToLocalInput,
   localInputToIso,
   startOfLocalDay,
@@ -99,6 +103,25 @@ const COACH_DEBOUNCE_MS = 150;
 // chip on another tab must not fork into three colour vocabularies. Band → tone
 // stays presentation only: NO surface sorts, gates, blocks or refuses on the
 // score (SC decision 4).
+
+// SC.6 — the cooldown line, one sentence inside the coach box. Two things it
+// deliberately does NOT do: block anything (Save never reads it) and speak
+// about a shape the classifier only guessed at (`exempt` cells are pinned
+// `clear` server-side, so a fallback label can never produce this line).
+function cooldownNote(cell: CooldownCell, windowDays: number): string {
+  const label = FORMAT_LABELS[cell.format];
+  const window = `in the last ${windowDays} days`;
+  return cell.status === 'cooldown'
+    ? `${label} · ${cell.count} ${window} — reach decays when the same shape repeats.`
+    : `${label} · ${cell.count} ${window}.`;
+}
+
+function cooldownTitle(cell: CooldownCell): string {
+  const when = new Date(cell.lastPostedAt);
+  const last = Number.isNaN(when.getTime()) ? '' : ` · last on ${formatDayLabel(when)}`;
+  const example = cell.exampleText.replace(/\s+/g, ' ').slice(0, 90);
+  return `${cell.count} published${last}\n"${example}"\n\nA count of what went out, not a verdict on this draft — nothing here blocks Save.`;
+}
 
 // One row per non-pass check. Filtered, never re-sorted — the engine emits its
 // checks in rule order (hygiene → craft → signal) and that order is the reading
@@ -754,6 +777,30 @@ export function ComposerPanel({
   const coachPasses = coach.checks.filter((c) => c.status === 'pass');
   const showCoach = !isLocked && coachInput.trim() !== '';
 
+  // SC.6 — how often each shape went out lately. One $0 read per mount, not per
+  // keystroke: the corpus only changes when a post publishes, and the draft's
+  // own format is classified locally against the cells that come back. A failed
+  // fetch leaves the list empty and the line simply never renders.
+  const [cooldowns, setCooldowns] = useState<CooldownsResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.coach
+      .cooldowns(settings)
+      .then((r) => alive && setCooldowns(r))
+      .catch(() => {
+        /* no cooldown line; every other coach row is local and unaffected */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+  // The DRAFT's format, not the text's: in thread mode `coachInput` is segment
+  // 1, and classifying the whole thread would put the head's cooldown on the
+  // wrong shape.
+  const draftFormat = useMemo(() => classifyFormat(coachInput), [coachInput]);
+  const cooldown =
+    cooldowns?.cells.find((c) => c.format === draftFormat && c.status !== 'clear') ?? null;
+
   return (
     <form className="panel" onSubmit={submit}>
       <div className="panel-header">
@@ -979,6 +1026,17 @@ export function ComposerPanel({
               {!isSinglePost && ' · segment 1'}
             </span>
           </div>
+          {/* SC.6 — the one row here that is about your WEEK rather than this
+              draft, so it sits above the per-check rows. Amber only at the
+              cooldown bar; a warming count is a fact, not a nudge. */}
+          {cooldown && cooldowns && (
+            <div
+              className={`coach-cooldown ${cooldown.status === 'cooldown' ? 'coach-tone-nudge' : 'muted'}`}
+              title={cooldownTitle(cooldown)}
+            >
+              {cooldownNote(cooldown, cooldowns.windowDays)}
+            </div>
+          )}
           <CoachRows checks={coachFixes} />
           <CoachRows checks={coachNudges} />
           {coachPasses.length > 0 && (

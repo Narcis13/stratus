@@ -58,6 +58,16 @@ In thread mode the coach grades **segment 1** and says so — the head is the pa
 
 **The coach speaks your vocabulary.** Two of its rules need to know what counts as a *specific* word in your niche, and it doesn't guess — it reads what you already maintain: your active channels' keywords, your active pillars' slugs, and your niche's label. So "no concrete detail" stops firing on a post whose specific thing is a word only your audience uses (`creatine`, `ANAF`, `Turbo Pascal`) even when there's no number in it, and a post opening `builders,` counts as a hook. This is fetched once a minute in the background and costs nothing; add a keyword on the Channels tab and the coach picks it up within a minute. If the fetch fails, or you haven't set up channels or pillars yet, the coach quietly falls back to the rules that don't need a niche — the em-dash, the "show more" cutoff, hedges, weak closers — which is most of them. The same vocabulary is used by the score chips on reply variants (see the Replies tab).
 
+**"That's the fourth hot take this week."** Inside the same box, above the fix list, one line sometimes appears about your *week* rather than your draft. stratus labels every original you publish with its **structure** — hot take, question, audience CTA, list, story, would-you-rather, milestone, and so on — and counts how many of each went out in the last 7 days. When what you're typing right now is a shape you've used **twice** it says so quietly; at **four** it turns amber and adds *"reach decays when the same shape repeats."* Hover it for the exact count, the day you last used that shape, and a snippet of the post.
+
+Three things about it are deliberate:
+
+- **It counts what you published, not what you drafted** — including posts you typed straight into X by hand, because the label is read off the text, not off a field only the drafter fills in. (A hand-written post joins the count within a day, when stratus next discovers it; posts sent by the scheduler count immediately.)
+- **It only speaks about shapes it actually recognised.** Most posts are just prose with no declared structure — stratus files those under *Substance*, *One-liner* or *Other*, and those three never trigger the line. Warning you that you "wrote four posts" is not advice.
+- **It never blocks anything**, same as the score. It is a count, not a verdict.
+
+If you posted the same *idea* twice rather than the same shape, a different surface catches it: the Today tab's monitor warns about near-duplicate originals within 14 days.
+
 ### Scheduling controls
 
 The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.

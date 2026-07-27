@@ -33,6 +33,12 @@ import { randomUUID } from 'node:crypto';
 import { type SQL, and, asc, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import {
+  COOLDOWN_THRESHOLD,
+  COOLDOWN_WINDOW_DAYS,
+  WARMING_THRESHOLD,
+  buildCooldowns,
+} from '../../shared/postCooldown.ts';
 import { ideas, postsPublished, scheduledPosts } from '../db/schema.ts';
 import { containsUrl } from '../endpoints.ts';
 import {
@@ -60,6 +66,12 @@ type Status = (typeof STATUSES)[number];
 const WRITABLE_STATUSES = ['draft', 'pending', 'manual', 'failed', 'cancelled'] as const;
 
 const MAX_THREAD_SEGMENTS = 25;
+
+// SC.6 — how far back `GET /posts/cooldowns` will look. A ceiling rather than a
+// knob: the window is the feature's meaning ("lately"), and a caller asking for
+// a year of history wants the Playbook's format table, which is gated and
+// measured, not a repetition counter.
+const MAX_COOLDOWN_DAYS = 90;
 
 export const calendar = new Hono();
 
@@ -357,6 +369,49 @@ calendar.get('/posts/scheduled', async (c) => {
     );
 
   return c.json(rows);
+});
+
+// SC.6 — how often each structural shape went out lately. $0: one indexed read
+// over own originals plus a pure classify-and-tally, no X call, nothing stored
+// (SC decision 2 — the format is recomputed from text, never stamped).
+//
+// The population is `posts_published`, which is what makes this supersede the
+// register-keyed GT.5: a hand-written post has no register and no drafter row,
+// but it has text, so it lands in a cell by construction. The one lag worth
+// knowing is where those rows come from — the publisher writes its own the
+// instant a post goes out, while a post typed on x.com arrives with the daily
+// discovery pass, so a hand-written post joins its cell within a day.
+//
+// §7.20: static segment, registered before `/posts/scheduled/:id` — `cooldowns`
+// is a different second segment, so it could not be shadowed anyway.
+calendar.get('/posts/cooldowns', async (c) => {
+  const daysStr = c.req.query('days');
+  let days = COOLDOWN_WINDOW_DAYS;
+  if (daysStr !== undefined) {
+    const parsed = Number(daysStr);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_COOLDOWN_DAYS) {
+      return c.json({ error: 'invalid_days' }, 400);
+    }
+    days = parsed;
+  }
+
+  const now = new Date();
+  const rows = await db
+    .select({ text: postsPublished.text, postedAt: postsPublished.postedAt })
+    .from(postsPublished)
+    .where(
+      and(
+        eq(postsPublished.isReply, false),
+        gte(postsPublished.postedAt, new Date(now.getTime() - days * DAY_MS)),
+      ),
+    );
+
+  return c.json({
+    windowDays: days,
+    warmingAt: WARMING_THRESHOLD,
+    cooldownAt: COOLDOWN_THRESHOLD,
+    cells: buildCooldowns(rows, now, days),
+  });
 });
 
 // Single-row fetch (§9.5) — the Composer edits one row; list+find was the
