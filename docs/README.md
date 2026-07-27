@@ -107,6 +107,7 @@ stratus also decorates the pages you're already reading. These aren't tabs — t
 - **In-band target** — an account roughly 2–10× your follower size; the people most worth replying to. See **[Today](./today-tab.md)**.
 - **Profile visits** — how many people clicked through to your profile from a tweet; stratus treats this as a key signal.
 - **The n≥20 gate** — analytics only show a confident number once ~20 measured items back it. See **[Playbook](./playbook-tab.md)**.
+- **Coach score / post format** — the free, on-device read of your own draft (a 0–100 floor, a short fix list) and the structural label it hangs off. It spans four tabs, so it has its own write-up: **[The static coach](./sc-static-coach.md)**.
 
 ---
 

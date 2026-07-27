@@ -275,3 +275,49 @@ guard.
 Adopt **L0 + L1 + L2 now** (re-implemented, niche-scoped, framed as a floor), adopt **L3's
 architecture but none of its numbers**, and let stratus's own measured corpus fill the table it
 was designed for. Plan: `plans/2026-07-22-static-coach.md`.
+
+---
+
+## Postscript: what we actually shipped (2026-07-27)
+
+Adopted as **SC.1–SC.8** (plan `plans/2026-07-22-static-coach.md`, masterplan Wave 6), at **$0
+recurring** and with no schema change: `src/shared/postCoach.ts` (L0+L1+L2, re-implemented,
+niche-scoped via `GET /x/coach/lexicon`), `src/shared/postFormat.ts` (14 formats),
+`src/shared/postCooldown.ts` + `GET /x/posts/cooldowns`, `src/x/coach/reach.ts` + `GET /x/coach/reach`
+(L3's architecture), two Playbook cells, and four panel surfaces. User-facing write-up:
+`docs/sc-static-coach.md`. Verification: `bun run scripts/smoke-coach.ts`.
+
+**Four of this study's own recommendations did not survive stratus's corpus, and that is the part
+worth carrying forward** — an analysis whose numbers were quietly overruled is worse than no
+analysis, because the next reader re-proposes them.
+
+1. **The 0.45 token-set Jaccard bar for idea-clustering inside the repetition window** (§Inputs).
+   Measured over 137 real published originals: **795** same-format pairs inside a 7-day window,
+   **max 0.238**, p99 0.115, p95 0.077, median 0.000 — zero pairs even at 0.25. A 280-character post
+   carries a median of ~15 content tokens, so two posts making the same point share almost none of
+   them; every cluster is a singleton and a cluster-keyed counter is silent forever. At any threshold
+   this corpus reaches, the top-scoring pairs are provably distinct ideas. **Shipped as a plain
+   format tally**; idea-repetition already has an owner (`nearDuplicate`, word-shingle Jaccard ≥0.8
+   over 14 days).
+2. **The seed multiplier table** (§L3). Not shipped in any form — not even as a below-gate
+   placeholder. Its own direction is adversarial to this account's persona (`cta_farm` 3.0× against
+   `substance_analysis` 0.3×), and the honest below-gate answer is the sample count. Measured on our
+   own corpus at n≥20 the answer today is **zero fitted formats** (substance 46 but exempt as a
+   non-detection, audience_cta 17, list 16, story 16, hot_take 5), so the feature ships rendering the
+   insufficient line and arms itself as posts accumulate. That is the design working, not a shortfall.
+3. **The environment multipliers** (posting hour, media, account age). Dropped per the assessment
+   above and confirmed in implementation: stratus measures all three elsewhere, and a second,
+   invented number beside a measured one is how two surfaces start contradicting each other.
+4. **The severity mapping implied by "three fix rows"** on the canonical bad draft. Em-dash and a
+   "thoughts?" closer ship as **nudges**; red is reserved for what costs money or hides the post.
+
+Two further rejections were *ours*, not this study's, and belong on the record because L3's
+arithmetic is where they bite: reading **the latest metrics snapshot per post** is a sample selected
+on the outcome (only winners get re-read — their median views at the *first* reading was already
+1,059 vs 122), and **age-normalizing views** (`views × 1440 / age`) is falsified by the corpus (raw
+counts under 12 h and at 12–27 h differ by 6% while the normalized rates differ by 170%). The fit
+uses first snapshots, raw counts, and only posts measured inside the daily pass's own 3–27 h window.
+
+**Verdict on the verdict:** the layer split (L0+L1+L2 now, L3's architecture without its numbers) held
+up exactly as written. What the implementation added is the discipline underneath it — every borrowed
+constant was replayed against the real corpus *before* it reached a test file, and four of them lost.

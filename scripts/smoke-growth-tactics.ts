@@ -23,8 +23,8 @@
 // script exists to prove we did not make.
 //
 // The format cooldown the plan's Task 9 also lists is NOT asserted here — GT.5
-// was superseded by SC.6 (masterplan D142) and `smoke-static-coach.ts` (SC.9)
-// owns that arithmetic.
+// was superseded by SC.6 (masterplan D142) and `smoke-coach.ts` (SC.9) owns
+// that arithmetic.
 //
 // Real-DB safety is namespace-then-delete (§D98c): every handle is `gt9*`
 // (≤15 chars, or `normalizePersonHandle` silently drops it and the assertions

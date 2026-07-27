@@ -220,7 +220,7 @@ There is **no lift line** here, on purpose: fourteen buckets have no natural bas
 
 **Question it answers:** *The Composer shows a 0–100 score on every draft. Is that score worth anything?*
 
-This section exists to try to **falsify** the coach, and it shipped in the same release as the coach itself. It takes the same published originals and buckets them two ways:
+This section exists to try to **falsify** the coach, and it shipped in the same release as the coach itself (what the coach checks and what it refuses to guess: **[The static coach](./sc-static-coach.md)**). It takes the same published originals and buckets them two ways:
 
 - **By score band** — `rework` / `almost there` / `ship it` / `top tier`, the exact bands the Composer shows you while typing.
 - **By fix count** (the two thin rows) — **no fixes flagged** vs **1+ fix flagged**. This is the sharper question, because the score is a mean over ~20 rules: a draft can carry one red Fix row and still score 90. So "did a high score help?" and "did clearing the Fix rows help?" are genuinely different questions, and only the second one is about the *advice*.

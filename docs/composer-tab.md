@@ -42,6 +42,8 @@ Under the text box is an **Improve with AI** button. It takes whatever you've wr
 
 Below the warnings, a small boxed panel grades what you've typed. It updates as you type — about a sixth of a second after you stop — and it costs nothing: the scoring runs inside the extension, so there is no server call, no AI call, and nothing is saved anywhere.
 
+> The coach spans four tabs. What every rule checks, and — the longer half — what it deliberately refuses to guess, is written up once in **[The static coach](./sc-static-coach.md)**.
+
 The first line is the score out of 100 with its band: **top tier** (85+), **ship it** (60+), **almost there** (45+), or **rework**. Below it come the things worth changing, worst first:
 
 - **Red rows are fixes** — an own-goal you'd regret. A URL in a standalone post (it bills $0.20 instead of $0.015 — move it to the first reply), a 15th line that hides the rest of your post behind X's "show more", two questions stacked in one post.
