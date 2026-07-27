@@ -25,6 +25,7 @@ import { ARTICLE_PROMPT_TEMPLATE } from '../articles/prompt.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
 import { JUDGE_PROMPT_TEMPLATE } from '../judge/prompt.ts';
+import { JUDGE_REWRITE_PROMPT_TEMPLATE } from '../judge/rewritePrompt.ts';
 import { DM_PROMPT_TEMPLATE } from '../people/dm.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { IDEAS_PROMPT_TEMPLATE } from '../posts/ideasPrompt.ts';
@@ -51,6 +52,7 @@ export const PROMPT_KEYS = [
   'dm',
   'article',
   'judge',
+  'judge-rewrite',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -180,6 +182,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: JUDGE_PROMPT_TEMPLATE,
     required: ['{{DRAFT}}'],
     optional: ['{{GROUNDING}}'],
+  },
+  'judge-rewrite': {
+    name: 'Judge rewrite',
+    description:
+      "The annotation-driven rewrite behind POST /x/judge/apply — applies every fix the judge quoted and hands back one post, kept only if the re-judge scores it higher. Separate from 'Rewrite assist', which stays the cheap no-verdict path.",
+    defaultBody: JUDGE_REWRITE_PROMPT_TEMPLATE,
+    required: ['{{DRAFT}}', '{{FIXES}}', '{{IMPROVEMENTS}}'],
+    optional: [],
   },
 };
 

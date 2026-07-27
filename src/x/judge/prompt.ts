@@ -46,6 +46,13 @@ import {
   deriveVerdictBand,
 } from '../../shared/judge.ts';
 
+/** The draft ceiling: one X post plus room for a draft still being cut down. A
+ *  thread is judged one tweet at a time or not at all. Lives here rather than in
+ *  the route because `rewritePrompt.ts` caps its OUTPUT at the same number — a
+ *  rewrite too long to judge is not a rewrite the apply route can hand back, and
+ *  two spellings of that ceiling is the twin §7 rule 4c forbids. */
+export const MAX_JUDGE_TEXT = 2000;
+
 // ------------------------------------------------------------------ prompt
 
 export const JUDGE_PROMPT_TEMPLATE = `## The job
