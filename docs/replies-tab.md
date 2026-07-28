@@ -284,6 +284,8 @@ Two guarantees: the result is **never longer than 280 characters** (a prefix tha
 
 Each list keeps its own humanizer. By default it uses the engine's numbers (the panel shows a `defaults` badge). Click **Customize for this list** and you get the pools as one-per-line textareas and the five chances as sliders — a "thanks" list can run calm while a "banter" list jitters harder. **Save humanizer** lights up only when something actually changed and confirms with `Saved ✓`; **Reset to defaults** puts it back.
 
+There is now a **second, project-level humanizer** in **[Settings → General → Reply humanizer](./settings-tab.md#reply-humanizer)**. It's a sibling, not a parent: it drives the [Radar](./radar-tab.md) tab's *Humanize picks* checkbox and nothing else. **Per-list overrides are unaffected by it** — a list customized here keeps its own numbers, and a list on `defaults` keeps using the *engine* defaults rather than whatever the project config says. Two settings, two surfaces, no inheritance between them.
+
 One thing worth setting deliberately: the default prefix/suffix pools are **English** ("honestly," "ngl," "well said"). If your list is in another language, replace both pools when you customize it, or turn those two chances down to 0 and let the casing/period/typo jitters carry it.
 
 ### Generating a list with AI

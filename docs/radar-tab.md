@@ -92,7 +92,11 @@ Two things it deliberately does **not** do:
 - **It never rewrites the stored draft.** The variants on the row stay exactly as Grok wrote them, so re-reading the card shows the real draft and the coach scores stay meaningful. What the jitter produces is recorded only as *what actually went out* — the same field a hand-edit lands in.
 - **It doesn't re-roll.** The jitter is decided at the moment you click; the row keeps showing the stored text afterwards.
 
-The chances and the prefix/suffix pools are project-level (shared by any surface that picks one up) and live server-side, so the checkbox survives a panel close and an extension reinstall. Each canned **reply list** still keeps its own separate humanizer override.
+**So the Clicked list shows the verbatim variant, not the text you pasted.** That's the same rule seen from the other side, not a bug: the jittered version lives in your reply history (**[Replies](./replies-tab.md)**), because that's where "what actually went out" belongs. If you re-copy a row from Clicked, the jitter is rolled again — it's a fresh pick.
+
+The chances and the prefix/suffix pools are project-level (shared by any surface that picks one up) and live server-side, so the checkbox survives a panel close and an extension reinstall. Edit them in **[Settings → General → Reply humanizer](./settings-tab.md#reply-humanizer)**: the two pools one entry per line, the five chances as numbers from 0 to 1, and a **Reset to defaults** that deletes the stored config outright — which also turns this checkbox off, since it's the same setting. Each canned **reply list** still keeps its own separate humanizer override.
+
+If the panel can't reach the server when the tab mounts, the checkbox renders **disabled** and picks stay verbatim. Decoration never breaks the queue.
 
 ---
 
