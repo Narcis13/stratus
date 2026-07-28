@@ -555,10 +555,11 @@ replies.post('/replies/generate-batch', async (c) => {
 });
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
-// Optional band/signals (C0) carry the Radar's capture-time verdict into
-// `radar_drafts`; they never reach the Grok prompt. `maxTweets` is defaulted to
-// today's constant (Decision 6) so every existing caller and test stays valid;
-// the route passes `x.ai.batchReplyCap`.
+// Optional band/signals (C0) carry the Radar's capture-time verdict — and
+// optional curationScore (RC.2) the curation pass's 0–100 verdict — into
+// `radar_drafts`; none of the three reaches the Grok prompt. `maxTweets` is
+// defaulted to today's constant (Decision 6) so every existing caller and test
+// stays valid; the route passes `x.ai.batchReplyCap`.
 export function parseBatchTweets(
   value: unknown,
   maxTweets = MAX_BATCH_TWEETS,
@@ -605,6 +606,20 @@ export function parseBatchTweets(
       signals = parsed;
     }
 
+    // RC.2: the curation pass's reply-payoff score for this tweet. Stored on
+    // radar_drafts as measurement metadata (it gates nothing, §7.19) and never
+    // rendered into the prompt. Strict: a fractional or out-of-range score means
+    // the caller isn't speaking this contract, and a silently clamped number
+    // would poison the very measurement the column exists for.
+    let curationScore: number | undefined;
+    if (r.curationScore !== undefined && r.curationScore !== null) {
+      const n = r.curationScore;
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 100) {
+        return { error: `invalid_tweet_curation_score_${i}` };
+      }
+      curationScore = n;
+    }
+
     seen.add(tweetId);
     const author =
       typeof r.author === 'string' && r.author.trim() !== '' ? r.author.trim() : handleRaw;
@@ -617,6 +632,9 @@ export function parseBatchTweets(
       ...(url ? { url } : {}),
       ...(band ? { band } : {}),
       ...(signals ? { signals } : {}),
+      // `!== undefined`, not truthiness like band/signals above: 0 is a valid
+      // score and would be dropped by a `? :` test.
+      ...(curationScore !== undefined ? { curationScore } : {}),
     });
   }
   return { tweets };

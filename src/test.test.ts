@@ -994,6 +994,38 @@ describe('batch replies (Radar §7.2)', () => {
       parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', signals: { views: -1 } }]),
     ).toEqual({ error: 'invalid_tweet_signals_0' });
   });
+
+  // RC.2: the curated batch stamps the scorer's verdict onto radar_drafts. It
+  // is storage metadata like band/signals — never a gate, never in the prompt.
+  test('parseBatchTweets carries an integer curationScore through (RC.2) and rejects junk', () => {
+    const ok = parseBatchTweets([
+      { tweetId: '111', handle: 'alice', text: 'a', curationScore: 87 },
+      { tweetId: '222', handle: 'bob', text: 'b' },
+      // 0 is a real verdict ("nothing to gain replying here"), not an absence —
+      // it must survive the optional-property spread, which a truthiness test
+      // would drop.
+      { tweetId: '333', handle: 'carol', text: 'c', curationScore: 0 },
+      { tweetId: '444', handle: 'dave', text: 'd', curationScore: 100 },
+    ]);
+    if ('error' in ok) throw new Error(ok.error);
+    expect(ok.tweets[0]?.curationScore).toBe(87);
+    expect('curationScore' in (ok.tweets[1] ?? {})).toBe(false);
+    expect(ok.tweets[2]?.curationScore).toBe(0);
+    expect(ok.tweets[3]?.curationScore).toBe(100);
+
+    // An explicit null is "not curated", the same as absent — not a 400.
+    const nulled = parseBatchTweets([
+      { tweetId: '555', handle: 'erin', text: 'e', curationScore: null },
+    ]);
+    if ('error' in nulled) throw new Error(nulled.error);
+    expect('curationScore' in (nulled.tweets[0] ?? {})).toBe(false);
+
+    for (const bad of [101, -1, 3.5, '25', Number.NaN]) {
+      expect(
+        parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', curationScore: bad }]),
+      ).toEqual({ error: 'invalid_tweet_curation_score_0' });
+    }
+  });
 });
 
 describe('radar drafts (C0)', () => {
@@ -1057,11 +1089,14 @@ describe('radar drafts (C0)', () => {
         { text: 'pick a side', angle: 'debate' },
       ],
       model: 'grok-4',
+      // RC.2: this fixture was drafted without curation → null, not 0.
+      curationScore: null,
     });
     expect(rows[1]?.author).toBeNull();
     expect(rows[1]?.band).toBeNull();
     expect(rows[1]?.url).toBeNull();
     expect(rows[1]?.model).toBe('grok-4');
+    expect(rows[1]?.curationScore).toBeNull();
     // A caller supplying only the primary (no variants) → null (RU.2 "unknown"
     // semantics); null model threads through too (CLI callers).
     const primaryOnly = buildRadarDraftRows(
@@ -1071,6 +1106,26 @@ describe('radar drafts (C0)', () => {
     );
     expect(primaryOnly[0]?.model).toBeNull();
     expect(primaryOnly[0]?.variants).toBeNull();
+  });
+
+  // RC.2: a curated batch threads the scorer's verdict onto every row it
+  // drafted, so "did high-scored tweets earn better replies" is later readable
+  // over the existing radar_drafts → reply_drafts → outcomes join.
+  test('buildRadarDraftRows stores curationScore, keeping 0 distinct from uncurated', () => {
+    const curated: RadarBatchTweet[] = [
+      { tweetId: '111', handle: 'alice', author: 'Alice', text: 'a', curationScore: 91 },
+      { tweetId: '222', handle: 'bob', author: 'bob', text: 'b', curationScore: 0 },
+      // A ⊕ pinned tweet rides the curated batch unscored (a human pin outranks
+      // the model) — it must land as null, not as a zero the Playbook would
+      // later read as a real verdict.
+      { tweetId: '333', handle: 'carol', author: 'carol', text: 'c', band: 'manual' },
+    ];
+    const rows = buildRadarDraftRows(
+      curated,
+      curated.map((t) => ({ tweetId: t.tweetId, text: 'r', angle: 'extends' })),
+      'grok-4',
+    );
+    expect(rows.map((r) => r.curationScore)).toEqual([91, 0, null]);
   });
 
   test('radarDraftExpired flips at exactly 48h', () => {

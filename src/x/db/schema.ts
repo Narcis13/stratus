@@ -420,6 +420,12 @@ export const radarDrafts = sqliteTable(
     replyDraftId: text('reply_draft_id'),
     // Channel slugs (C8) — tagged from the Radar row, keyed by tweet_id.
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    // RC.2: the 0–100 reply-payoff score the curation pass gave this tweet on
+    // the click that drafted it. Null = this draft was NOT produced through
+    // curation (every pre-RC row, every plain "Draft replies" click, every CLI
+    // caller) — never 0, which is a real "nothing to gain here" verdict.
+    // Measurement metadata: it gates nothing and never reaches a prompt (§7.19).
+    curationScore: integer('curation_score'),
     status: text('status').notNull().default('ready'), // ready | clicked | expired
     draftedAt: integer('drafted_at', { mode: 'timestamp_ms' })
       .default(sql`(unixepoch() * 1000)`)
