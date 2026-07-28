@@ -28,7 +28,9 @@ That's the Radar's whole job:
 | **Angle** | How a reply engages: **extends** (build on the point), **contrarian** (respectfully disagree), **debate** (open a real question). Every draft comes as one of each. |
 | **Tier** | What the people layer knows about the author: **ally**, **mutual**, or **target** (on your 2–10× roster). A warm tweet from an ally beats a hot tweet from a stranger. |
 
-**The queue lives in browser session memory** and clears when you close the browser. Drafted replies don't: they're saved server-side and rehydrate into the queue the next time you open the panel, all three angles intact.
+**The queue only grows while you browse.** It's stored in the extension's own local storage, so it survives a browser restart, an extension reload and a service-worker recycle — it used to live in *session* memory, which Chrome drops on any of those, and a queue that collapsed mid-scroll was the result. Two things take a tweet out, and only two: **you dismiss it** (the ✕, Clear, or a curated pass's drops), or it **ages out after 24 hours** — a tweet you first saw yesterday isn't a reply opportunity today. Beyond 100 rows the least-recently-seen are evicted (pins last).
+
+Drafted replies are also saved server-side and rehydrate into the queue the next time you open the panel, all three angles intact.
 
 ---
 

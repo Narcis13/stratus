@@ -84,13 +84,26 @@ export interface RadarSighting {
   personTier?: PersonTier;
 }
 
-// chrome.storage.session keys — cleared when the browser closes, which is
-// exactly the queue's intended lifetime.
+// Buffer keys. These live in **chrome.storage.local**, not `.session`: the
+// session area is dropped whenever Chrome decides the extension's session ended
+// (an extension reload, an update, a browser-process restart — none of which the
+// user does deliberately), and a queue that silently collapses from 18 rows to
+// whatever the next scroll re-sights is worse than useless: you can't work a
+// queue you can't trust. `local` survives all of it, and RADAR_TTL_MS below is
+// what actually bounds the queue's lifetime now — an explicit rule instead of a
+// browser lifecycle detail.
 export const RADAR_SIGHTINGS_KEY = 'radar:sightings';
 export const RADAR_DISMISSED_KEY = 'radar:dismissed';
 
 export const RADAR_CAP = 100;
 export const RADAR_DISMISSED_CAP = 500;
+
+// How long a sighting stays queueable. Replacing "until the browser closes",
+// and deliberately the same 24h ROSTER_MAX_AGE_MIN uses in content.ts: a tweet
+// you first saw yesterday is not a reply opportunity today, and the server
+// expires its own drafted copy at 48h anyway. This is the ONLY implicit way a
+// row leaves the queue — everything else is a dismiss the human asked for.
+export const RADAR_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Merge a report batch into the stored queue, keyed by tweetId: fresher
 // signals/band/lastSeenAt win, firstSeenAt survives from the earlier entry.
@@ -319,17 +332,43 @@ export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
   return s;
 }
 
+export function isRadarSighting(v: unknown): v is RadarSighting {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.tweetId === 'string' &&
+    typeof r.url === 'string' &&
+    (r.band === 'hot' || r.band === 'warm' || r.band === 'manual' || r.band === 'roster') &&
+    typeof r.signals === 'object' &&
+    r.signals !== null
+  );
+}
+
 export function isRadarSightings(v: unknown): v is RadarSighting[] {
-  if (!Array.isArray(v)) return false;
-  return v.every((s) => {
-    if (!s || typeof s !== 'object') return false;
-    const r = s as Record<string, unknown>;
-    return (
-      typeof r.tweetId === 'string' &&
-      typeof r.url === 'string' &&
-      (r.band === 'hot' || r.band === 'warm' || r.band === 'manual' || r.band === 'roster') &&
-      typeof r.signals === 'object' &&
-      r.signals !== null
-    );
+  return Array.isArray(v) && v.every(isRadarSighting);
+}
+
+// Read a stored buffer: keep every row that IS a sighting, drop the ones that
+// aren't. The all-or-nothing guard above used to be the reader, and that made
+// one malformed row (a hand-edited buffer, a future field, a half-written set)
+// silently equivalent to an empty queue — which the writers then persisted,
+// turning a single bad row into a wiped queue. A reader that can only ever
+// delete the rows it can't parse cannot do that.
+export function coerceSightings(v: unknown): RadarSighting[] {
+  return Array.isArray(v) ? v.filter(isRadarSighting) : [];
+}
+
+// Drop sightings last seen more than `ttlMs` ago (see RADAR_TTL_MS). An
+// unparseable `lastSeenAt` is KEPT, not dropped: the TTL exists to retire dead
+// opportunities, and a bad timestamp is a reason to distrust the clock, not a
+// reason to throw the row away.
+export function pruneStale(
+  sightings: RadarSighting[],
+  nowMs: number,
+  ttlMs: number = RADAR_TTL_MS,
+): RadarSighting[] {
+  return sightings.filter((s) => {
+    const seen = Date.parse(s.lastSeenAt);
+    return Number.isFinite(seen) ? nowMs - seen < ttlMs : true;
   });
 }

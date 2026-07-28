@@ -2,16 +2,19 @@ import { describe, expect, test } from 'bun:test';
 import {
   RADAR_CAP,
   RADAR_DISMISSED_CAP,
+  RADAR_TTL_MS,
   type RadarDraftRow,
   type RadarSighting,
   type RankMap,
   appendDismissed,
+  coerceSightings,
   draftRowToSighting,
   groupQueue,
   isRadarSightings,
   mergeSightings,
   partitionForCurate,
   personTierFor,
+  pruneStale,
   rankSightings,
   splitClicked,
   stampTiers,
@@ -508,6 +511,40 @@ describe('isRadarSightings', () => {
     expect(isRadarSightings(undefined)).toBe(false);
     expect(isRadarSightings([{ tweetId: 1 }])).toBe(false);
     expect(isRadarSightings([sighting('1'), { nope: true }])).toBe(false);
+  });
+});
+
+describe('coerceSightings', () => {
+  test('keeps the readable rows instead of nuking the whole buffer', () => {
+    const good = sighting('1');
+    expect(coerceSightings([good, { nope: true }, sighting('2')])).toEqual([good, sighting('2')]);
+    expect(coerceSightings([{ ...sighting('1'), band: 'cold' }])).toEqual([]);
+    expect(coerceSightings(undefined)).toEqual([]);
+    expect(coerceSightings('not an array')).toEqual([]);
+    expect(coerceSightings([])).toEqual([]);
+  });
+});
+
+describe('pruneStale', () => {
+  const now = Date.parse('2026-06-11T10:00:00.000Z');
+
+  test('drops sightings past the TTL and keeps the rest', () => {
+    const fresh = sighting('1', { lastSeenAt: '2026-06-11T09:30:00.000Z' });
+    const old = sighting('2', { lastSeenAt: '2026-06-10T09:00:00.000Z' }); // 25h
+    expect(pruneStale([fresh, old], now).map((s) => s.tweetId)).toEqual(['1']);
+  });
+
+  test('an unparseable lastSeenAt is kept, never silently dropped', () => {
+    const broken = sighting('3', { lastSeenAt: 'not a date' });
+    expect(pruneStale([broken], now)).toEqual([broken]);
+  });
+
+  test('the TTL is exactly RADAR_TTL_MS from lastSeenAt', () => {
+    const justInside = sighting('4', {
+      lastSeenAt: new Date(now - RADAR_TTL_MS + 1000).toISOString(),
+    });
+    const justOutside = sighting('5', { lastSeenAt: new Date(now - RADAR_TTL_MS).toISOString() });
+    expect(pruneStale([justInside, justOutside], now).map((s) => s.tweetId)).toEqual(['4']);
   });
 });
 

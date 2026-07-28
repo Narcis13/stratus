@@ -27,9 +27,10 @@ import {
   RADAR_CAP,
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
+  coerceSightings,
   groupQueue,
-  isRadarSightings,
   partitionForCurate,
+  pruneStale,
   rankSightings,
   splitClicked,
 } from '../shared/radar.ts';
@@ -82,21 +83,25 @@ function useRadarSightings(): RadarSighting[] {
 
   useEffect(() => {
     let alive = true;
-    void chrome.storage.session.get(RADAR_SIGHTINGS_KEY).then((out) => {
-      if (!alive) return;
-      const v = out[RADAR_SIGHTINGS_KEY];
-      setSightings(isRadarSightings(v) ? v : []);
+    // A change that lands while the initial read is still in flight wins: the
+    // read resolving second would put the pre-write buffer back on screen, and
+    // a queue that flickers backwards is exactly what this surface must not do.
+    let sawChange = false;
+    // chrome.storage.local, not `.session` — the buffer moved (shared/radar.ts).
+    void chrome.storage.local.get(RADAR_SIGHTINGS_KEY).then((out) => {
+      if (!alive || sawChange) return;
+      setSightings(pruneStale(coerceSightings(out[RADAR_SIGHTINGS_KEY]), Date.now()));
     });
 
     const onChanged = (
       changes: Record<string, chrome.storage.StorageChange>,
       area: chrome.storage.AreaName,
     ): void => {
-      if (area !== 'session') return;
+      if (area !== 'local') return;
       const change = changes[RADAR_SIGHTINGS_KEY];
       if (!change) return;
-      const v = change.newValue;
-      setSightings(isRadarSightings(v) ? v : []);
+      sawChange = true;
+      setSightings(pruneStale(coerceSightings(change.newValue), Date.now()));
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => {

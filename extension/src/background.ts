@@ -65,9 +65,10 @@ import {
   type RadarSighting,
   type RankMap,
   appendDismissed,
+  coerceSightings,
   draftRowToSighting,
-  isRadarSightings,
   mergeSightings,
+  pruneStale,
   stampTiers,
 } from './shared/radar.ts';
 import { SERVER_SETTINGS_KEY } from './shared/serverSettings.ts';
@@ -310,12 +311,27 @@ async function refreshRankMap(): Promise<void> {
   return rankMapInflight;
 }
 
+// The buffer moved from chrome.storage.session to chrome.storage.local (see
+// shared/radar.ts): session state is dropped on an extension reload/update or a
+// browser-process restart, and the queue was losing whole scroll sessions to it.
+// One-time carry-over below so a queue that is live right now survives the move.
 async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: string[] }> {
-  const out = await chrome.storage.session.get([RADAR_SIGHTINGS_KEY, RADAR_DISMISSED_KEY]);
-  const s = out[RADAR_SIGHTINGS_KEY];
-  const d = out[RADAR_DISMISSED_KEY];
+  const out = await chrome.storage.local.get([RADAR_SIGHTINGS_KEY, RADAR_DISMISSED_KEY]);
+  let s = out[RADAR_SIGHTINGS_KEY];
+  let d = out[RADAR_DISMISSED_KEY];
+  if (s === undefined && d === undefined) {
+    const legacy = await chrome.storage.session.get([RADAR_SIGHTINGS_KEY, RADAR_DISMISSED_KEY]);
+    s = legacy[RADAR_SIGHTINGS_KEY];
+    d = legacy[RADAR_DISMISSED_KEY];
+    // The sightings come back through the caller's own write; the dismissed set
+    // does not (only a dismiss writes that key), so persist it here or the
+    // adoption would resurrect tweets the user already worked.
+    if (d !== undefined) await chrome.storage.local.set({ [RADAR_DISMISSED_KEY]: d });
+  }
   return {
-    sightings: isRadarSightings(s) ? s : [],
+    // coerce (drop bad ROWS), never the old all-or-nothing guard: one unreadable
+    // row must not read as an empty queue that the next write then persists.
+    sightings: pruneStale(coerceSightings(s), Date.now()),
     dismissed: Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : [],
   };
 }
@@ -323,7 +339,7 @@ async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: str
 async function addSightings(incoming: RadarSighting[]): Promise<void> {
   const { sightings, dismissed } = await readRadar();
   const merged = mergeSightings(sightings, incoming, dismissed);
-  await chrome.storage.session.set({
+  await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
   });
 }
@@ -331,7 +347,7 @@ async function addSightings(incoming: RadarSighting[]): Promise<void> {
 async function dismissSightings(tweetIds: string[]): Promise<void> {
   const { sightings, dismissed } = await readRadar();
   const gone = new Set(tweetIds);
-  await chrome.storage.session.set({
+  await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: sightings.filter((s) => !gone.has(s.tweetId)),
     [RADAR_DISMISSED_KEY]: appendDismissed(dismissed, tweetIds),
   });
@@ -345,7 +361,7 @@ async function attachReplies(
 ): Promise<void> {
   const { sightings } = await readRadar();
   const byId = new Map(items.map((i) => [i.tweetId, i]));
-  await chrome.storage.session.set({
+  await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: sightings.map((s) => {
       const item = byId.get(s.tweetId);
       if (!item) return s;
@@ -360,7 +376,7 @@ async function attachReplies(
 // others — a sighting evicted between click and write is simply skipped.
 async function markClicked(tweetId: string, clickedAt: string): Promise<void> {
   const { sightings } = await readRadar();
-  await chrome.storage.session.set({
+  await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, clickedAt } : s)),
   });
 }
@@ -406,7 +422,7 @@ async function confirmDraft(tweetId: string, text?: string): Promise<void> {
 // markClicked — a sighting evicted between confirm and write is simply skipped.
 async function stampDraftId(tweetId: string, draftId: string): Promise<void> {
   const { sightings } = await readRadar();
-  await chrome.storage.session.set({
+  await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: sightings.map((s) => (s.tweetId === tweetId ? { ...s, draftId } : s)),
   });
 }
@@ -519,11 +535,15 @@ async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
     const s = draftRowToSighting(row);
     if (s) incoming.push(s);
   }
-  const merged = incoming.length ? mergeSightings(sightings, incoming, dismissed) : sightings;
-  await chrome.storage.session.set({
+  // The server keeps a draft `ready` for 48h but the queue retires a sighting at
+  // RADAR_TTL_MS — without this, a day-old draft would be re-added on every panel
+  // mount and pruned again on the next write, flashing in and out of the queue.
+  const fresh = pruneStale(incoming, Date.now());
+  const merged = fresh.length ? mergeSightings(sightings, fresh, dismissed) : sightings;
+  await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
   });
-  return incoming.length;
+  return fresh.length;
 }
 
 async function rehydrateFromServer(): Promise<{ added: number }> {
