@@ -27,6 +27,7 @@ import { followingRouter } from './routes/following.ts';
 import { followups } from './routes/followups.ts';
 import { goalsRouter } from './routes/goals.ts';
 import { harvest } from './routes/harvest.ts';
+import { humanizerRouter } from './routes/humanizer.ts';
 import { ideasRouter } from './routes/ideas.ts';
 import { images } from './routes/images.ts';
 import { judgeRouter } from './routes/judge.ts';
@@ -116,6 +117,10 @@ export function mountX(app: Hono): void {
   // RL: reply lists — premade canned replies. CRUD (and later /use) are pure SQL
   // and always mounted; only /generate (RL.4) needs an LLM and checks at runtime.
   app.route('/x', replyListsRouter);
+  // HM.2: the project-level humanizer config (one `app_settings` row) that the
+  // Radar pick path reads. Always mounted, $0, static paths only — a sibling of
+  // the per-list `humanizer` JSON, not a replacement for it.
+  app.route('/x', humanizerRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
   // SC.7: the static coach's niche lexicon — derived from the active niche +
