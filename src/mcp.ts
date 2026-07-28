@@ -27,7 +27,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { Context, Hono } from 'hono';
 import { registerXTools } from './x/index.ts';
 
-const SERVER_INFO = { name: 'stratus', version: '0.5.0' } as const;
+const SERVER_INFO = { name: 'stratus', version: '0.5.5' } as const;
 
 function jsonRpcError(code: number, message: string) {
   return { jsonrpc: '2.0' as const, error: { code, message }, id: null };

@@ -80,6 +80,7 @@ After a long scroll session the queue holds 40+ tweets, and "Draft replies" spen
 | `scored 42 · dropped 42 · nothing left to draft · $0.0051` | Everything graded as filler. You paid for the grading only. |
 | `scored 42 · dropped 17 · draft failed: … · $0.0051` | The drafting call failed *after* the drops. **The drops stand** — they were dismissed on their own merit, not as a side effect. The grading spend is still reported. |
 | `Curate failed: …` | The grading call itself failed. **Nothing was dismissed and nothing was drafted** — you can't lose queue rows to a call that never answered. |
+| `nothing to grade — 4 ⊕ pinned, 31 with no text · use Draft replies` | The queue is long enough for the button, but none of it is gradeable: every fresh row is either a ⊕ pin (never scored, by design) or has no text to score. **Nothing was spent** — the call was never made. |
 
 **Dismissal is permanent.** Dropped tweets go onto the same dismissed list the **✕** button uses, so they don't come back when you scroll past them again. That's the point — but it does mean a curated pass is a decision, not a filter you can undo. If the queue feels over-culled, the size knob is in **⚙** (**Curated batch size**, also in **[Settings → Tuning → Radar](./settings-tab.md)**): 5 to 50, default 25, and the effective size is always the *lower* of it and the batch reply cap.
 

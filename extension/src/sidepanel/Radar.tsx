@@ -333,10 +333,18 @@ export function RadarSection({
     // The same test the button renders on: curating a queue that already fits
     // in one batch is a second call that changes nothing.
     if (!canCurate) return;
-    const { pinned, scoreable } = partitionForCurate(fresh);
-    // Nothing gradeable (an all-pinned or all-textless queue) — the plain
-    // button already covers it, and an empty tweets array is a guaranteed 400.
-    if (scoreable.length === 0) return;
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    // Nothing gradeable (an all-pinned or all-textless queue) — the plain button
+    // already covers it, and an empty tweets array is a guaranteed 400. Say so
+    // rather than returning silently: a spending button that answers a click
+    // with nothing at all reads as broken, and the whole note contract on this
+    // flow exists so every click explains itself (RL.9's honesty rule).
+    if (scoreable.length === 0) {
+      setNote(
+        `nothing to grade — ${pinned.length} ⊕ pinned, ${skipped.length} with no text · use Draft replies`,
+      );
+      return;
+    }
     setBusy('curate');
     setNote(null);
     try {
@@ -360,7 +368,12 @@ export function RadarSection({
         const s = byId.get(id);
         return s ? [s] : [];
       });
-      const set = [...pinned, ...survivors].slice(0, server.batchReplyCap);
+      // `Math.max(1, …)` for the same reason `radarBatchSize`/`curatedBatchSize`
+      // carry it: `readServerConfig` guards the blob's SHAPE, not its range, so
+      // a corrupted mirror can hand back a 0 here — and a 0 would land after the
+      // drops, turning a corrupt config into "dismissed the queue, drafted
+      // nothing". Trimming to the cap is policy; trimming to nothing is a bug.
+      const set = [...pinned, ...survivors].slice(0, Math.max(1, server.batchReplyCap));
       const prefix = curateNote(res);
       // The trailing figure is always what THIS click spent, so a pass that
       // ends early still says what the grading cost — an unreported call is
