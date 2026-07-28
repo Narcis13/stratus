@@ -64,6 +64,12 @@ export interface ServerConfig {
   /** x.ai.batchReplyCap — the batch size the SERVER enforces. Mirrored only so
    *  the panel can stop asking for a batch it knows will be refused. */
   batchReplyCap: number;
+  /** x.radar.curatedCount — tweets that survive a "Curate & draft" pass (RC.3).
+   *  Mirrored for two panel-only jobs the server can't do: the button's label,
+   *  and deciding whether the button renders at all. Use it through
+   *  `curatedBatchSize()`, never raw — the drafting call still enforces
+   *  `batchReplyCap` on top of it. */
+  curatedCount: number;
   /** x.followups.neglectedTargetDays — days cold before a roster target reads as
    *  neglected. The same key the follow-up queue and the weekly digest use: the
    *  Today roster tint must not disagree with the queue that nags about it. */
@@ -95,6 +101,7 @@ export const SERVER_DEFAULTS: ServerConfig = {
   fansAmberTopN: 10,
   radarDraftCap: 20,
   batchReplyCap: 25,
+  curatedCount: 25,
   neglectedTargetDays: 7,
   dossierListLen: 5,
   channelPostsShown: 8,
@@ -108,6 +115,16 @@ export const SERVER_DEFAULTS: ServerConfig = {
  *  place — rather than in the Radar's render. */
 export function radarBatchSize(cfg: ServerConfig): number {
   return Math.max(1, Math.min(cfg.radarDraftCap, cfg.batchReplyCap));
+}
+
+/** How many tweets one "Curate & draft" pass drafts (RC.4): the curated size,
+ *  clamped by the same server-enforced batch cap. The server computes this
+ *  identically (`curateKeepTarget()`) to decide how many ids to KEEP; the panel
+ *  needs its own copy for the button label and the "is the queue big enough to
+ *  bother curating" test, both of which happen before any call is made. Two
+ *  readers of one pair of knobs, not two owners of a number. */
+export function curatedBatchSize(cfg: ServerConfig): number {
+  return Math.max(1, Math.min(cfg.curatedCount, cfg.batchReplyCap));
 }
 
 // Ranges/steps were already enforced by the registry when the value was
@@ -169,6 +186,7 @@ export function readServerConfig(raw: unknown): ServerConfig {
     fansAmberTopN: readNumber(blob, 'x.display.fansAmberTopN', SERVER_DEFAULTS.fansAmberTopN),
     radarDraftCap: readNumber(blob, 'x.display.radarDraftCap', SERVER_DEFAULTS.radarDraftCap),
     batchReplyCap: readNumber(blob, 'x.ai.batchReplyCap', SERVER_DEFAULTS.batchReplyCap),
+    curatedCount: readNumber(blob, 'x.radar.curatedCount', SERVER_DEFAULTS.curatedCount),
     neglectedTargetDays: readNumber(
       blob,
       'x.followups.neglectedTargetDays',

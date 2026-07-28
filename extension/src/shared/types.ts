@@ -873,6 +873,12 @@ export interface BatchReplyTweet {
   // metadata), never sent to Grok.
   band?: 'hot' | 'warm' | 'manual' | 'roster';
   signals?: TweetSignals;
+  // RC.2/RC.4 — the 0–100 reply-payoff score the curation pass gave this tweet,
+  // stored on radar_drafts so "did curation pick better tweets?" is answerable
+  // later. Storage metadata like band/signals: it never reaches the prompt.
+  // Omitted (not 0) when this draft didn't come through a curated pass — the
+  // column's whole value dies if "graded 0" and "never graded" collapse.
+  curationScore?: number;
 }
 
 export interface BatchReplyGenerateBody {
@@ -894,6 +900,52 @@ export interface BatchReplyResponse {
   replies: BatchReplyItem[];
   count: number;
   requested: number;
+  costUsd: number;
+  model: string;
+  requestId: string | null;
+}
+
+// Curated drafting (RC.3/RC.4): one cheap scoring call in FRONT of the paid
+// batch draft, so the drafting money goes to the best N of a long queue instead
+// of the newest N. Mirrors POST /x/replies/curate field-for-field. The call
+// writes nothing — only the panel owns the session queue, so acting on `drop`
+// (dismissing) and on `keep` (drafting) is the panel's job.
+export interface CurateTweet {
+  tweetId: string;
+  handle: string;
+  author: string;
+  text: string;
+  url?: string;
+}
+
+export interface CurateBody {
+  tweets: CurateTweet[];
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+}
+
+export interface CurateScoredItem {
+  tweetId: string;
+  /** Reply payoff, integer 0–100. */
+  score: number;
+  /** Filler not worth a reply at any score — always dropped. */
+  lowValue: boolean;
+  /** One sentence naming what decided the score. Not rendered in v1. */
+  reason: string;
+}
+
+export interface CurateResponse {
+  /** Verdicts, anchored to the ids we asked about (first occurrence wins). */
+  scored: CurateScoredItem[];
+  /** Ids to draft, **best first** — so trimming the tail trims the weakest. */
+  keep: string[];
+  /** Ids to dismiss: every lowValue post plus everything past the cut. */
+  drop: string[];
+  /** Asked-for ids the model never scored (a truncated response). Left alone:
+   *  a degraded response costs coverage, never queue rows. */
+  unscored: string[];
+  keepTarget: number;
   costUsd: number;
   model: string;
   requestId: string | null;

@@ -10,6 +10,7 @@ import {
   groupQueue,
   isRadarSightings,
   mergeSightings,
+  partitionForCurate,
   personTierFor,
   rankSightings,
   splitClicked,
@@ -435,6 +436,65 @@ describe('groupQueue', () => {
     const { ready, fresh } = groupQueue(queue);
     expect(ready.map((s) => s.tweetId)).toEqual(['ready-1', 'ready-2']);
     expect(fresh.map((s) => s.tweetId)).toEqual(['new-1', 'new-2']);
+  });
+});
+
+describe('partitionForCurate (RC.4)', () => {
+  test('manual pins are never scored; every other band is', () => {
+    const fresh = [
+      sighting('pin-1', { band: 'manual' }),
+      sighting('hot-1', { band: 'hot' }),
+      sighting('warm-1', { band: 'warm' }),
+      // GT.8 roster rows ARE scored: they are in the queue for WHO posted them,
+      // and whether the post is worth replying to is a different question.
+      sighting('roster-1', { band: 'roster' }),
+    ];
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    expect(pinned.map((s) => s.tweetId)).toEqual(['pin-1']);
+    expect(scoreable.map((s) => s.tweetId)).toEqual(['hot-1', 'warm-1', 'roster-1']);
+    expect(skipped).toEqual([]);
+  });
+
+  test('a textless row is skipped whatever its band — including a pin', () => {
+    // An image-only tweet captures as `text: ''`. Scoring is text-only, and the
+    // server refuses an empty text for the whole request — one of these in the
+    // queue would 400 the entire pass if it rode along.
+    const fresh = [
+      sighting('img-1', { text: '' }),
+      sighting('img-2', { text: '   ' }),
+      sighting('pin-blank', { band: 'manual', text: '' }),
+      sighting('warm-1'),
+    ];
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    expect(pinned).toEqual([]);
+    expect(scoreable.map((s) => s.tweetId)).toEqual(['warm-1']);
+    expect(skipped.map((s) => s.tweetId)).toEqual(['img-1', 'img-2', 'pin-blank']);
+  });
+
+  test('the three buckets always sum to the input — a row can never vanish here', () => {
+    const fresh = [
+      sighting('a', { band: 'manual' }),
+      sighting('b', { band: 'hot' }),
+      sighting('c', { text: '' }),
+      sighting('d', { band: 'roster' }),
+    ];
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    expect(pinned.length + scoreable.length + skipped.length).toBe(fresh.length);
+    expect([...pinned, ...scoreable, ...skipped].map((s) => s.tweetId).sort()).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+
+  test('queue order survives inside each bucket', () => {
+    const fresh = [sighting('z'), sighting('m'), sighting('a')];
+    expect(partitionForCurate(fresh).scoreable.map((s) => s.tweetId)).toEqual(['z', 'm', 'a']);
+  });
+
+  test('an empty queue partitions into three empty buckets', () => {
+    expect(partitionForCurate([])).toEqual({ pinned: [], scoreable: [], skipped: [] });
   });
 });
 

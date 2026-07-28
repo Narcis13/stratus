@@ -243,6 +243,38 @@ export function groupQueue(queue: RadarSighting[]): {
   return { ready, fresh };
 }
 
+// RC.4 — how a "Curate & draft" click splits the fresh queue before it spends.
+// Three buckets, and the sum is always the input: a curated pass may dismiss a
+// row on the scorer's verdict, never by losing track of it here.
+export interface CuratePartition {
+  /** ⊕ manual pins (RU.8) — never sent for scoring, always drafted, ahead of
+   *  the survivors. A deliberate human click outranks the model (decision 4).
+   *  `roster`/`hot`/`warm` are all scored: content quality is exactly what the
+   *  band numbers can't see. */
+  pinned: RadarSighting[];
+  /** Rows the scorer can grade — the ones the curate call is spent on. */
+  scoreable: RadarSighting[];
+  /** Rows a curated pass cannot touch at all, because they carry no text: an
+   *  image-only sighting has `text: ''` (the card renders its url instead).
+   *  Scoring is text-only (decision 5) so there is nothing to grade, and the
+   *  server's tweet validator refuses an empty text for the WHOLE request —
+   *  one such row in a 40-tweet queue would 400 the entire pass. They stay
+   *  queued and undrafted; "Draft replies" is still there for them. */
+  skipped: RadarSighting[];
+}
+
+export function partitionForCurate(rows: RadarSighting[]): CuratePartition {
+  const pinned: RadarSighting[] = [];
+  const scoreable: RadarSighting[] = [];
+  const skipped: RadarSighting[] = [];
+  for (const s of rows) {
+    if (s.text.trim() === '') skipped.push(s);
+    else if (s.band === 'manual') pinned.push(s);
+    else scoreable.push(s);
+  }
+  return { pinned, scoreable, skipped };
+}
+
 // --- server rehydration (CIRCLES-PLAN C0) ---
 
 // A radar_drafts row as GET /x/radar/drafts returns it (timestamps as ISO).

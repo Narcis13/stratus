@@ -46,6 +46,10 @@ import {
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
+  type CurateBody,
+  type CurateResponse,
+  type CurateScoredItem,
+  type CurateTweet,
   type DigestFacts,
   type DigestResponse,
   type DigestScorecard,
@@ -273,6 +277,10 @@ export type {
   CreateBody,
   CreateThreadBody,
   CreateThreadResponse,
+  CurateBody,
+  CurateResponse,
+  CurateScoredItem,
+  CurateTweet,
   FanItem,
   FansResponse,
   FollowingListOpts,
@@ -1208,6 +1216,15 @@ export const api = {
         method: 'POST',
         body: { ...body, applyPillars: s.applyPillarsToReplies },
       });
+    },
+
+    // RC.3 — one cheap scoring call that grades the queue for reply payoff, so
+    // the drafting call that follows spends on the best N instead of the newest
+    // N. Writes nothing: the caller dismisses `drop` and drafts `keep`. No
+    // `applyPillars` — pillars shape a written reply, not a verdict about
+    // whether a post is worth replying to.
+    curate(s: Settings, body: CurateBody): Promise<CurateResponse> {
+      return request<CurateResponse>(s, '/x/replies/curate', { method: 'POST', body });
     },
 
     // §7.2 — one Grok call drafts a reply per queued Radar tweet (not persisted).

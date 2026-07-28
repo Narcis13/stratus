@@ -136,7 +136,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **A pinned tweet never pollutes your analytics.** `manual` is queue metadata, not a band verdict: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see. **`your circle` works the same way** — it says who posted it, not how it did.
 - **`your circle` rows are the reciprocity lane's other half.** The Today tab counts how many of today's replies went to people who were already yours (*"N replies to your people"*); this is where those replies come from. A quiet post by an ally is worth more to you than a hot post by a stranger, and neither the band nor the reply gate will stop you any more.
 - **Every handle is a link.** Before replying to someone you half-recognize, click through to their dossier and see the history first.
-- **What this tab costs.** Capturing, ranking and rendering the queue: **$0**. The only spend is **Draft replies** (one Grok call per click, price shown after) — see **[Spend today](./today-tab.md)** on Today for the running meter.
+- **What this tab costs.** Capturing, ranking and rendering the queue: **$0**. The spend is the two drafting buttons: **Draft replies** (one Grok call per click, price shown after) and **Curate & draft** (a cheap scoring call *plus* that same drafting call — two prices, reported as one total). See **[Spend today](./today-tab.md)** on Today for the running meter.
 
 ---
 

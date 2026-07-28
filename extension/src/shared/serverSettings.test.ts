@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { BAND } from '../replyBand.ts';
-import { SERVER_DEFAULTS, radarBatchSize, readServerConfig } from './serverSettings.ts';
+import {
+  SERVER_DEFAULTS,
+  curatedBatchSize,
+  radarBatchSize,
+  readServerConfig,
+} from './serverSettings.ts';
 
 describe('readServerConfig — the mirrored blob (UI.6)', () => {
   test('a full blob wins over every baked default', () => {
@@ -16,6 +21,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
         'x.display.fansAmberTopN': 25,
         'x.display.radarDraftCap': 12,
         'x.ai.batchReplyCap': 40,
+        'x.radar.curatedCount': 30,
         'x.followups.neglectedTargetDays': 10,
         'x.display.dossierListLen': 12,
         'x.display.channelPostsShown': 20,
@@ -34,6 +40,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       fansAmberTopN: 25,
       radarDraftCap: 12,
       batchReplyCap: 40,
+      curatedCount: 30,
       neglectedTargetDays: 10,
       dossierListLen: 12,
       channelPostsShown: 20,
@@ -103,6 +110,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'batchReplyCap',
       'bestTimeMinN',
       'channelPostsShown',
+      'curatedCount',
       'doNextCap',
       'doNextSnoozeH',
       'dossierListLen',
@@ -137,6 +145,7 @@ describe('readServerConfig — Today display caps (UI.12)', () => {
     expect(SERVER_DEFAULTS.fansAmberTopN).toBe(10);
     expect(SERVER_DEFAULTS.radarDraftCap).toBe(20);
     expect(SERVER_DEFAULTS.batchReplyCap).toBe(25);
+    expect(SERVER_DEFAULTS.curatedCount).toBe(25);
     expect(SERVER_DEFAULTS.neglectedTargetDays).toBe(7);
   });
 });
@@ -154,6 +163,29 @@ describe('radarBatchSize — the display cap clamped to what the server allows',
     // Both knobs floor at 1 in the registry, so this is corruption-only — but a
     // 0 here would silently disable the button rather than surface a problem.
     expect(radarBatchSize({ ...SERVER_DEFAULTS, radarDraftCap: 0, batchReplyCap: 0 })).toBe(1);
+  });
+});
+
+// RC.4 — the curated pass reads a DIFFERENT pair of knobs than the plain batch:
+// curatedCount is what the server will keep, radarDraftCap has no say (curation
+// looks at the whole queue, not the display cap). The shared ceiling is the one
+// the drafting call actually enforces.
+describe('curatedBatchSize — the curated size clamped to the same server cap', () => {
+  test('the lower of curatedCount and batchReplyCap wins', () => {
+    expect(curatedBatchSize({ ...SERVER_DEFAULTS, curatedCount: 25, batchReplyCap: 25 })).toBe(25);
+    expect(curatedBatchSize({ ...SERVER_DEFAULTS, curatedCount: 50, batchReplyCap: 25 })).toBe(25);
+    expect(curatedBatchSize({ ...SERVER_DEFAULTS, curatedCount: 10, batchReplyCap: 25 })).toBe(10);
+  });
+
+  test('the display cap does not bind it', () => {
+    // radarDraftCap sizes "Draft replies", not "Curate & draft": curation reads
+    // the whole fresh queue and the survivors are what get drafted, so a small
+    // display cap must not silently shrink a curated pass.
+    expect(curatedBatchSize({ ...SERVER_DEFAULTS, radarDraftCap: 5, curatedCount: 25 })).toBe(25);
+  });
+
+  test('a corrupt blob can never produce a zero-or-negative batch', () => {
+    expect(curatedBatchSize({ ...SERVER_DEFAULTS, curatedCount: 0, batchReplyCap: 0 })).toBe(1);
   });
 });
 

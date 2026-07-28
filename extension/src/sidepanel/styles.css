@@ -1084,6 +1084,13 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   padding: 2px 8px;
 }
+/* RC.4 — the second spending button, same weight as the first: it only appears
+   when the queue has outgrown a plain batch, and which of the two you want is a
+   judgment call, not a default. */
+.radar-curate {
+  font-size: 11px;
+  padding: 2px 8px;
+}
 .radar-tabs {
   display: flex;
   gap: 4px;
