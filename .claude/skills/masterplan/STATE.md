@@ -1,18 +1,19 @@
 # Masterplan execution state
 
 > Dynamic memory for `/masterplan`. Updated after EVERY task, in the task's own commit.
-> Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10 + Wave-6 seeds D141–D144).
+> Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10 + Wave-6 seeds D141–D144 + Wave-7 seeds D172–D174).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 > History: `.claude/skills/masterplan/STATE-ARCHIVE.md` (frozen, grep-only — closed-lane deviations, gotchas, priors, ledger rows).
 > Debt: `.claude/skills/masterplan/VERIFY-DEBT.md` (**unpaid**, not history — browser-verify + CA.2. Read it when you have Chrome open; skip it otherwise).
 
-## ✅ THE MASTERPLAN IS COMPLETE — 131/131 across Waves 0–6, closed by JD.8 on 2026-07-27
+## Waves 0–6 CLOSED at 131/131 (JD.8, 2026-07-27) — Wave 7 OPEN at 0/10 (added 2026-07-28)
 
-**There is no open task and no open wave.** Wave 6 (the three backlog plans `static-coach`,
-`llm-judge`, `mika-growth-tactics`, scheduled 2026-07-25) closed at 25/25 — GT at GT.9, SC at
-SC.9, JD at JD.8 — and Waves 0–5 closed at 106/106 before it. `/masterplan next` has nothing to
-pick: **the correct answer to "what's next" is `/plan-feature`**, which writes a new plan file,
-after which MASTERPLAN.md gains a Wave 7 table and the ledger below gains its rows.
+**Wave 7 is the open wave**: HM (`plans/2026-07-28-project-humanizer.md`, 5 tasks) + RC
+(`plans/2026-07-28-radar-curated-drafting.md`, 5 tasks), both planned 2026-07-28. Order,
+reasoning levels and seeds D172–D174 live in MASTERPLAN.md §Wave 7; ledger rows are below.
+No task has started and no file is claimed yet. The wave's serial constraints: Radar.tsx/
+api.ts/types.ts HM.3 → RC.4 (D172); RC.2 is the only migration and runs alone (D173);
+docs-sync HM.5 → RC.5 (D174). Waves 0–5 closed at 106/106, Wave 6 at 25/25 before it.
 
 **What this file is now.** Only what is true of the repo regardless of which plan you are on:
 the size rule, the standing deviations (D7 / D97 / D113), the standing test·lint·docs·fixture
@@ -43,15 +44,16 @@ something an open task needs; if a pass slips, pay it as a standalone housekeepi
 `55c6d19`/`c9c8ade` precedent).
 
 - **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `docs(judge): LLM-judge docs-sync + $0 smoke-judge.ts (JD.8)`, parent `fc44d1c` = JD.7. **Step 0 is one command:** `git log -1 --format='%h %s'`, compared against the last ticked subject in the ledger below. **Do not hunt shas.** **Out-of-skill commits are NOT ledger drift and are already reconciled** — thirteen of them, all before SC.1, enumerated in `STATE-ARCHIVE.md` §"Archived at JD.2". If Step 0 finds a subject naming neither a ticked task nor one of those thirteen, run the `sync` reconciliation.
-- **current state of the repo (the numbers a new plan starts from):** suite **1855**; tables **41** (migrations through `0024`; the journal is **FREE from `0025`**); registry **14 groups / 61 knobs, 27 mirrored**; **prompt keys 15** (`registry.test.ts` asserts the exact list + `docs/settings-tab.md`'s three counts); MCP **23 tools** (`src/mcp.test.ts` asserts it exactly + `docs/s2-mcp-server.md`'s three counts); smoke scripts **31**; extension tsconfig `include` shims **6**; whole-repo lint **0 errors**. **No file is locked and no chain serializes anything.**
-- **next-up:** **nothing.** Run `/plan-feature <idea>` to open Wave 7, or `/masterplan status` to confirm this. **Standing gate reminders for whatever comes next:** `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); biome forbids `delete process.env.X` / `: any` in `scripts/`, **non-null assertions (`x!`) anywhere**, a `let` assigned once, and a backtick string with no interpolation — it also sorts imports case-sensitively, collapses short chained calls, and rejects a `console.log` string-concat unless every operand interpolates (run `bunx biome check --write` on the changed files FIRST). Extension-touching work adds `cd extension && bun run build` **and** its own `typecheck`, then `grep -cE '^\s*import[ {]' extension/dist/content.js` == 0.
+- **current state of the repo (the numbers a new plan starts from):** suite **1855**; tables **41** (migrations through `0024`; the journal is **FREE from `0025`**); registry **14 groups / 61 knobs, 27 mirrored**; **prompt keys 15** (`registry.test.ts` asserts the exact list + `docs/settings-tab.md`'s three counts); MCP **23 tools** (`src/mcp.test.ts` asserts it exactly + `docs/s2-mcp-server.md`'s three counts); smoke scripts **31**; extension tsconfig `include` shims **6**; whole-repo lint **0 errors**. **No file is locked; Wave 7's serial chains are D172–D174.**
+- **next-up:** **7.1 HM.1** (or, in a parallel lane, 7.2 RC.1 / 7.3 RC.2 — see MASTERPLAN §Wave 7). **Standing gate reminders for whatever comes next:** `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); biome forbids `delete process.env.X` / `: any` in `scripts/`, **non-null assertions (`x!`) anywhere**, a `let` assigned once, and a backtick string with no interpolation — it also sorts imports case-sensitively, collapses short chained calls, and rejects a `console.log` string-concat unless every operand interpolates (run `bunx biome check --write` on the changed files FIRST). Extension-touching work adds `cd extension && bun run build` **and** its own `typecheck`, then `grep -cE '^\s*import[ {]' extension/dist/content.js` == 0.
 
 ## Ledger
 
 Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date) · `[s]` skipped (reason in deviations).
 
-**All seven waves are CLOSED — 131/131.** Per-task entries (shas, parents, dates, notes) live in
-`STATE-ARCHIVE.md` — Waves 0–4 at UI.11, Wave 5 at GT.9, **Wave 6 at JD.8**. Grep by task id.
+**Waves 0–6 are CLOSED — 131/131; Wave 7 is open at 0/10.** Closed-wave per-task entries (shas,
+parents, dates, notes) live in `STATE-ARCHIVE.md` — Waves 0–4 at UI.11, Wave 5 at GT.9, **Wave 6
+at JD.8**. Grep by task id.
 
 - **Wave 0 — Foundations (13/13 ✓)**: UI.1, UI.8, UI.9, UI.10, ST.1–ST.9. Closed by `d1902e5` ST.9 studio docs+smoke.
 - **Wave 1 — Prompt & identity core (32/32 ✓)**: RU.1–RU.3, N.1–N.9, ME.1–ME.7, AI.1–AI.13. Closed by `f86e06a` AI.13 AI docs+smoke.
@@ -60,6 +62,17 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 - **Wave 4 — Authoring 3.0 (15/15 ✓)**: A3.1–A3.15. Took migration `0023_slimy_night_thrasher` (`articles`). Closed by `docs(authoring): Authoring 3.0 docs-sync + $0 smoke-authoring3.ts (A3.15)`, parent `819c61d`.
 - **Wave 5 — Settings moat + polish (16/16 ✓)**: UI.2–UI.7, UI.11–UI.17. Closed by `docs(ui): cockpit overhaul docs-sync + $0 smoke-settings.ts (UI.17)`, parent `7b10239`.
 - **Wave 6 — Coach, judge & growth tactics (25/25 ✓, + GT.5 `[s]` by design)**: SC.1–SC.9, GT.1–GT.9, JD.1–JD.8. Took migration `0024_soft_leopardon` (`draft_judgments`). Closed by `docs(judge): LLM-judge docs-sync + $0 smoke-judge.ts (JD.8)`, parent `fc44d1c`. Per-task rows archived at JD.8.
+- **Wave 7 — Radar follow-ups: curated drafting & humanize-at-pick (0/10)** — order/reasoning/seeds in MASTERPLAN §Wave 7:
+  - [ ] 7.1 HM.1 — promote humanize core to `src/shared/humanize.ts` + extension shim
+  - [ ] 7.2 RC.1 — pure curation core (`replies/curate.ts`) + `reply-curate` prompt key
+  - [ ] 7.3 RC.2 — migration `radar_drafts.curation_score` + batch threading (**runs alone**, D173)
+  - [ ] 7.4 HM.2 — humanizer settings store + `GET/PATCH/DELETE /x/humanizer`
+  - [ ] 7.5 RC.3 — `POST /x/replies/curate` + `x.radar.curatedCount` knob
+  - [ ] 7.6 HM.3 — Radar checkbox + humanize-at-pick (**before RC.4**, D172)
+  - [ ] 7.7 RC.4 — extension Curate & draft orchestration (**after HM.3**, D172)
+  - [ ] 7.8 HM.4 — Settings → General "Reply humanizer" editor card
+  - [ ] 7.9 HM.5 — HM docs-sync + $0 `smoke-humanizer.ts` (**before RC.5**, D174)
+  - [ ] 7.10 RC.5 — RC docs-sync + `smoke-radar-curate.ts`
 
 ## Hot-file locks
 
@@ -77,7 +90,8 @@ notes is to **grep `STATE-ARCHIVE.md` by filename** before touching a file that 
 ## Deviations & decisions register
 
 Pre-seeded from cross-plan analysis (see MASTERPLAN "Cross-plan adaptations" for full text).
-Append D172+ as work reveals divergences from plan text.
+D172–D174 are the Wave-7 seeds (full text in MASTERPLAN); append D175+ as work reveals
+divergences from plan text.
 
 **All 171 prior D-entries are in `STATE-ARCHIVE.md`** — Waves 0–3, the Wave-4 closer D127, the
 registry lane D128–D133, the polish lane D134–D140, the GT lane, the SC lane, and the whole JD

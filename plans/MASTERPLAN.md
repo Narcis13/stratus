@@ -1,8 +1,9 @@
-# MASTERPLAN — unified execution order for the 15 feature plans
+# MASTERPLAN — unified execution order for the 17 feature plans
 
 > **Created:** 2026-07-17. Combines every plan in `plans/` into one dependency-correct
 > execution order with per-task reasoning levels and parallel lanes.
 > **Extended 2026-07-25:** Wave 6 (SC / GT / JD — the x-builder-derived backlog plans).
+> **Extended 2026-07-28:** Wave 7 (HM / RC — the two Radar follow-up plans).
 > **Execution state lives in `.claude/skills/masterplan/STATE.md`** — this file is the
 > static plan; never mark progress here.
 > **Driven by the `/masterplan` skill** — one task per session, codemap-first, state
@@ -27,6 +28,8 @@
 | SC | `2026-07-22-static-coach.md` | 9 | Deterministic pre-publish coach, format classifier, fitted reach band |
 | GT | `2026-07-22-mika-growth-tactics.md` | 9 | Reciprocity lane, reply-bait formats, launch seeding, milestone nudge, cooldown |
 | JD | `2026-07-22-llm-judge.md` | 8 | On-demand 13-dimension draft judge, anchored fixes, falsification cell |
+| HM | `2026-07-28-project-humanizer.md` | 5 | Project-level humanizer: server-owned jitter config + Radar humanize-at-pick |
+| RC | `2026-07-28-radar-curated-drafting.md` | 5 | Radar curation: score the queue, dismiss the noise, draft the top N |
 
 Task IDs are `<code>.<n>` matching "Task n" in the source plan. **The source plan's task
 block is the implementation spec** — this file only fixes order, reasoning level, and
@@ -137,6 +140,35 @@ deviation, so the seeds start after it; STATE continues from D145):
   to the SC plan (`scoreDraft` as a drafter structural validator with one conditional
   retry; a `format` parameter on the drafter). No task blocks exist for them, so they are
   NOT in Wave 6 — write them into the SC plan first if wanted, then append to the wave.
+
+**Wave-7 seeds** (numbered D172+ — JD.8 minted **D171** as Wave 6's closing deviation,
+so the seeds take D172–D174; STATE continues from D175):
+
+- **D172 — Radar.tsx (with `sidepanel/api.ts` + `shared/types.ts`) is Wave 7's choke
+  point.** Both plans rework the same pick path: HM.3 replaces the `copied` boolean with
+  `pickNote`, threads a `humanizer` prop into `RadarRow` and adds `api.humanizer.*`;
+  RC.4 refactors `draftReplies` into `sendBatch(rows, scoreById?)` and adds the second
+  header button + `api.replies.curate`. Fixed serial order **HM.3 → RC.4** — RC.4 reads
+  Radar.tsx *as HM.3 left it*, not as its plan quotes it (the RC plan already flags its
+  line offsets as planning-time reads). Interaction to preserve, not duplicate: curation
+  only changes **which rows get drafted**; picks on curated drafts still flow through
+  HM.3's `onPick`, so curated picks are humanized for free — do NOT add jitter inside
+  `curateAndDraft`.
+- **D173 — RC.2 is the wave's only migration and runs alone.** Rule 1 applies: the plan
+  says `0025` and the journal is currently free from `0025` (STATE), but the number is
+  assigned by `bun run db:generate` at implementation time — generate against the current
+  journal and inspect the SQL for dropped seed INSERTs either way. HM needs **no**
+  migration: one raw `app_settings` key `'humanizer'` (the D1 `'ai'` precedent — NOT a
+  registry key; the UI.1 store and `settings/registry.ts` never touch it).
+- **D174 — the two closing docs-sync tasks collide, and the plans' repo counts are
+  planning-time snapshots.** HM.5 and RC.5 both write `docs/radar-tab.md`,
+  `docs/PHASE-HISTORY.md` and the codemap header: serial, **HM.5 → RC.5**, the second
+  re-stamp wins. Every count the task blocks assert (prompt keys 15→16, radar knob group
+  1→2 / registry 61→62 / mirrored 27→28, tsconfig shims 6→7, smoke scripts 31→33, suite
+  1855+) is re-derived from the current code at implementation time, never copied from
+  plan text. D171a binds both closers: pick-time jitter and the lowValue drop rule are
+  SELECTION RULES — their user-facing paragraphs go in the tab docs of the surfaces that
+  render them (`radar-tab`, `settings-tab`, `replies-tab`), not only in PHASE-HISTORY.
 
 ---
 
@@ -404,6 +436,52 @@ JD.4/JD.5's refuse-before-spend ladders and the never-worse guard).
 
 ---
 
+## Wave 7 — Radar follow-ups: curated drafting & humanize-at-pick
+
+Rationale: two small plans written 2026-07-28 after Wave 6 closed, both landing on the
+Radar reply queue. HM is $0 end-to-end (a pure-core promotion out of `replyLists/engine.ts`,
+one `app_settings` key, pick-time jitter that is never stored); RC adds one per-click
+scoring call (~$0.005–0.015) in front of the existing batch draft and the wave's only
+migration (D173). Order: the four foundation tasks first — two pure modules and the
+migration are pairwise parallel; HM.2 follows HM.1 in-order to skip its plan's
+import-fix-up caveat — then the money-adjacent curate route, then the serialized
+Radar.tsx lane (**D172**: HM.3 before RC.4 — the humanizer's `onPick` rewrite is the
+ground RC.4's `sendBatch` refactor stands on, and curated picks inherit the jitter for
+free). The Settings card runs beside RC.4 (disjoint files); the two docs-sync closers
+are serial (**D174**).
+
+| Order | ID | Task | Depends | Reasoning |
+|---|---|---|---|---|
+| 7.1 | HM.1 | Promote humanize core to `src/shared/humanize.ts` + extension shim (`engine.test.ts` byte-untouched) | — | high |
+| 7.2 | RC.1 | Pure curation core (`replies/curate.ts`) + `reply-curate` prompt key | — | high |
+| 7.3 | RC.2 | Migration: `radar_drafts.curation_score` + batch threading (**D173**: migration — runs alone) | — | high |
+| 7.4 | HM.2 | Humanizer settings store + `GET/PATCH/DELETE /x/humanizer` | HM.1 | high |
+| 7.5 | RC.3 | `POST /x/replies/curate` + `x.radar.curatedCount` knob | RC.1, RC.2 | **xhigh** |
+| 7.6 | HM.3 | Radar checkbox + humanize-at-pick (**D172**: before RC.4) | HM.1, HM.2 | **xhigh** |
+| 7.7 | RC.4 | Extension Curate & draft orchestration (**D172**: after HM.3) | RC.2, RC.3, HM.3 | **xhigh** |
+| 7.8 | HM.4 | Settings → General "Reply humanizer" editor card | HM.2, HM.3 | high |
+| 7.9 | HM.5 | HM docs-sync + $0 `smoke-humanizer.ts` (**D174**: before RC.5) | all HM | high |
+| 7.10 | RC.5 | RC docs-sync + `smoke-radar-curate.ts` (`--live` = one ~$0.003 call) | all RC, HM.5 | high |
+
+Parallelizable inside Wave 7: HM.1→HM.2 alongside RC.1/RC.2/RC.3 (disjoint files —
+HM touches `replyLists/engine.ts`/`src/shared/`/`settings/humanizer.ts`, RC touches
+`replies/curate.ts`/schema/`routes/replies.ts`); HM.4 alongside RC.4 (Settings.tsx +
+HumanizerCard vs Radar.tsx + shared modules). Serial constraints: Radar.tsx/api.ts/
+types.ts HM.3 → RC.4 (**D172**); RC.2 never in a parallel lane (**D173**); docs-sync
+HM.5 → RC.5 (**D174**). Reasoning-level notes: no task is **max** — nothing touches the
+prompt-surgery chain or the publisher; the moved humanizer core is pinned by a
+byte-untouched `engine.test.ts` and the curate route imitates generate-batch
+line-for-line. The **xhigh** set is where a subtle mistake passes tests but breaks an
+invariant: RC.3 (a paid `askLLM` call behind the §7.4 refuse-before-spend ladder —
+every 400 fires pre-spend, a post-spend parse failure is a 502 and never a retry),
+HM.3 (untested panel code carrying the §7.19 pick-time-never-stored contract — the
+jittered text must reach BOTH the clipboard and `confirmDraft`, with `background.ts`/
+`messages.ts` byte-untouched), and RC.4 (client-side dismissal ordering — dismiss only
+after a successful curate response, `unscored` ids neither drafted nor dismissed; a
+mistake here silently deletes queue rows and no test catches panel code).
+
+---
+
 ## Parallelism model (how many sessions at once)
 
 Practical ceiling: **2–3 concurrent sessions**, each owning a lane, coordinated through
@@ -420,6 +498,9 @@ STATE.md's hot-file locks:
 - **Wave 6:** SC pure/surface chain ∥ GT reciprocity chain ∥ JD pure modules (JD.2/JD.3);
   Composer.tsx, playbook.ts and `src/x/replies/*` serialize per D141/D143; JD.4
   (migration) runs alone.
+- **Wave 7:** HM server lane (HM.1→HM.2) ∥ RC server lane (RC.1 ∥ RC.2 → RC.3); the
+  Radar.tsx/api.ts/types.ts trio serializes HM.3 → RC.4 (D172); HM.4 ∥ RC.4 (disjoint
+  files); RC.2 (migration) runs alone (D173); docs-sync closes HM.5 → RC.5 (D174).
 
 Rules: a lane claims its hot files in STATE.md before starting and releases on commit;
 migration tasks always run alone; when in doubt, serialize — a merge conflict in
