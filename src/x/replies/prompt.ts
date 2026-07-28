@@ -347,7 +347,9 @@ Return JSON of the shape \`{"replies": [{"id": "<post id>", "variants": [{"text"
 
 <idea>{{IDEA}}</idea>`;
 
-function renderBatchTweet(t: BatchTweet, i: number): string {
+// Exported since RC.1 — the curation prompt renders the same queue with the
+// same numbering, so the two prompts can never disagree about what "POST 3" is.
+export function renderBatchTweet(t: BatchTweet, i: number): string {
   const lines = [
     `POST ${i + 1} (id: ${t.tweetId})`,
     `@${stripAt(t.handle)} (${t.author}):`,
@@ -491,7 +493,9 @@ export function parseBatchReplies(raw: string): BatchReply[] | null {
 // so client-supplied content can never inject an expandable {{REPLY_PERSONA}}
 // token. A template without the token (custom overrides predating it) passes
 // through untouched, the same tolerance the {{IDEA}} path extends.
-function substituteReplyPersona(template: string, replyPersona?: string): string {
+// Exported since RC.1: the curation prompt carries the same optional persona
+// token, and a second copy of an injection-ordering rule is how the two drift.
+export function substituteReplyPersona(template: string, replyPersona?: string): string {
   if (!template.includes(REPLY_PERSONA_PLACEHOLDER)) return template;
   return template.split(REPLY_PERSONA_PLACEHOLDER).join(replyPersona ?? DEFAULT_NICHE.replyPersona);
 }

@@ -16,6 +16,7 @@ import { IDEAS_PROMPT_TEMPLATE } from '../posts/ideasPrompt.ts';
 import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE, buildPostDraftInput } from '../posts/prompt.ts';
 import { THREAD_PROMPT_TEMPLATE } from '../posts/threadPrompt.ts';
+import { CURATE_PROMPT_TEMPLATE } from '../replies/curate.ts';
 import {
   type PostContext,
   REPLY_BATCH_PROMPT_TEMPLATE,
@@ -71,6 +72,7 @@ describe('prompt registry (AI.3)', () => {
       'article',
       'judge',
       'judge-rewrite',
+      'reply-curate',
     ]);
     expect(isPromptKey('reply')).toBe(true);
     expect(isPromptKey('reply-batch')).toBe(true);
@@ -84,6 +86,7 @@ describe('prompt registry (AI.3)', () => {
     expect(isPromptKey('article')).toBe(true);
     expect(isPromptKey('judge')).toBe(true);
     expect(isPromptKey('judge-rewrite')).toBe(true);
+    expect(isPromptKey('reply-curate')).toBe(true);
     expect(isPromptKey('nonsense')).toBe(false);
     expect(PROMPT_SPECS.reply.defaultBody).toBe(REPLY_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.post.defaultBody).toBe(POST_PROMPT_TEMPLATE);
@@ -99,6 +102,7 @@ describe('prompt registry (AI.3)', () => {
     expect(PROMPT_SPECS.article.defaultBody).toBe(ARTICLE_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS.judge.defaultBody).toBe(JUDGE_PROMPT_TEMPLATE);
     expect(PROMPT_SPECS['judge-rewrite'].defaultBody).toBe(JUDGE_REWRITE_PROMPT_TEMPLATE);
+    expect(PROMPT_SPECS['reply-curate'].defaultBody).toBe(CURATE_PROMPT_TEMPLATE);
     // Every spec's own default must validate clean — required present, no
     // unknown tokens (the optional niche placeholders are known).
     for (const key of PROMPT_KEYS) {

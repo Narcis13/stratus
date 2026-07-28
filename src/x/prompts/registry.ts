@@ -33,6 +33,7 @@ import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
 import { REWRITE_PROMPT_TEMPLATE } from '../posts/rewritePrompt.ts';
 import { THREAD_PROMPT_TEMPLATE } from '../posts/threadPrompt.ts';
+import { CURATE_PROMPT_TEMPLATE } from '../replies/curate.ts';
 import { REPLY_BATCH_PROMPT_TEMPLATE, REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
 import { REPLY_LIST_PROMPT_TEMPLATE } from '../replyLists/generate.ts';
 import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
@@ -53,6 +54,7 @@ export const PROMPT_KEYS = [
   'article',
   'judge',
   'judge-rewrite',
+  'reply-curate',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -190,6 +192,14 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: JUDGE_REWRITE_PROMPT_TEMPLATE,
     required: ['{{DRAFT}}', '{{FIXES}}', '{{IMPROVEMENTS}}'],
     optional: [],
+  },
+  'reply-curate': {
+    name: 'Reply curation',
+    description:
+      'The queue-scoring prompt behind POST /x/replies/curate — grades every fresh Radar tweet 0–100 for reply payoff and flags filler as low-value, so the paid batch draft spends on the best of the queue instead of the newest. Scoring only; it never writes a reply.',
+    defaultBody: CURATE_PROMPT_TEMPLATE,
+    required: ['{{POSTS}}'],
+    optional: ['{{REPLY_PERSONA}}'],
   },
 };
 
