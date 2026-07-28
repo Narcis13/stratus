@@ -6,7 +6,7 @@ The **Settings** tab is where you connect the stratus extension to your stratus 
 
 Settings is split into four subtabs across the top:
 
-- **General** — the connection fields, the behavior/privacy toggles, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
+- **General** — the connection fields, the behavior/privacy toggles, the reply humanizer, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
 - **Tuning** — every tunable number the server has, in one searchable list: doctrine, quests, people, follow-ups, the reply band, stat gates, budgets, workers and more. See [Tuning](#tuning-the-tuning-subtab).
 - **AI** — which LLM provider drafts your content (Grok or OpenRouter), and the model/temperature/token/effort knobs. See [AI provider](#ai-provider-the-ai-subtab).
 - **Prompts** — the editable text of every AI prompt behind the app, with a one-click "Restore Default Prompts". See [Prompts editor](#prompts-editor-the-prompts-subtab).
@@ -93,6 +93,26 @@ Four checkboxes sit between the connection fields and the harvest section. Each 
 - **Why it's on by default:** it's free, invisible, and it's what powers **People → Timeline affinity** ("who does the algorithm keep showing me?") and **Playbook → Timeline funnel** ("of what I was shown, what did I actually reply to?"). Neither says anything useful until a few days of real scrolling have accumulated.
 - **How to opt out:** **uncheck** this box. It takes effect immediately in every open X tab — no reload needed — and the Harvest tab's status line switches to *"Passive capture off"*.
 - **Note:** this is a **separate** toggle from *Passive contact capture from hover cards* above. One grows your people roster from profile pop-ups you hover; this one grows the tweet corpus from your timeline. Turning either off leaves the other running.
+
+---
+
+## Reply humanizer
+
+A card below the toggles that owns one server-side config: the small, deliberate imperfections stratus can add to an AI-drafted reply **at the moment you pick it** — a leading `honestly,`, a lowercased first letter, a dropped final period, a trailing `well said`, or a rare one-key typo. It's what stops a run of drafted replies from reading like a form letter.
+
+**Where it applies:** [Radar](./radar-tab.md) picks, and only when that tab's **Humanize picks** checkbox is on. The checkbox at the top of this card is *the same switch* — flip it here or there, it's one setting either way, and it's **off** until you turn it on. Each canned [reply list](./replies-tab.md) still keeps its own separate humanizer; this card doesn't touch those.
+
+**What you can edit:**
+
+- **Prefixes** and **Suffixes** — one entry per line, never comma-separated (a shipped default is literally `honestly,`). Empty a pool and that roll can never fire again. At most 25 lines, 60 characters each.
+- **Five chances**, each a number from **0** (never) to **1** (always): prefix, suffix, lowercase start, drop final period, typo. A value outside that range gets a message under the field instead of a silent failure, and **Save** stays off until you fix it.
+- A line underneath tells you roughly **what share of picks come out changed** at the numbers currently on screen, so you can dial the whole thing by feel rather than by arithmetic.
+
+**Save is only enabled when something actually differs from what's stored** — an untouched form can't be re-saved, and typing in one field while a background reload happens won't wipe what you typed. **Reset to defaults** asks first, then deletes the stored row entirely: the engine defaults come back and the Radar's humanizing turns off with them.
+
+**The jitter is decided when you click, never written into a draft.** The stored variants on a Radar row stay exactly as the AI wrote them; what changes is the text that lands on your clipboard. The Radar's Clicked list therefore shows the verbatim variant, while the jittered text — what you actually pasted — is what the [Replies](./replies-tab.md) history records.
+
+Everything on this card is **$0**: it's one row in your own database, no X call and no AI call.
 
 ---
 

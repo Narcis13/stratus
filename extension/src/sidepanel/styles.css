@@ -4339,3 +4339,15 @@ button.chip[aria-pressed="true"] {
   color: var(--strat-text);
   flex-shrink: 0;
 }
+
+/* HM.4 — Settings → Reply humanizer. The Lists card uses sliders; this one takes
+   typed values (0–1 with two decimals), which read better narrow than
+   full-width, and needs a per-field refusal line the block `.error` box is too
+   heavy for. */
+.hz-chances .field input {
+  max-width: 90px;
+}
+.hz-invalid {
+  color: var(--danger);
+  font-size: 11px;
+}
