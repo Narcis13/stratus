@@ -116,7 +116,7 @@ The list is rendered entirely from what the server reports, so a knob added in a
 
 ### The fourteen groups
 
-Today the registry holds **61 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
+Today the registry holds **62 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
 
 | Group | Knobs | What it decides | Where the change shows |
 |---|---|---|---|
@@ -128,14 +128,14 @@ Today the registry holds **61 knobs in 14 groups**. This is the map — what eac
 | **Digest** | 1 | How many neglected people the Sunday digest names. | The weekly digest. |
 | **Reply band** | 12 | The reply-band **classifier** thresholds — views, replies, freshness, views-per-minute, the too-small floors. | The on-page badge *and* the server's draft gate — same numbers, both sides. |
 | **Stat gates** | 2 | How much data a Playbook cell and a best-time cell need before they read as evidence. | The Playbook's `insufficient data (n=…/N)` cells; the best-time advice. |
-| **Radar** | 1 | How long a radar draft stays clickable. | The **[Radar](./radar-tab.md)** tab's queue. |
+| **Radar** | 2 | How long a radar draft stays clickable, and how many tweets a curated drafting pass keeps (the effective size is the lower of this and the batch reply cap). | The **[Radar](./radar-tab.md)** tab's queue. |
 | **Workers** | 4 | The daily-metrics hour, the publisher tick, and the winner re-read floor/cap. | Background only. The first two are `restart` knobs. |
 | **Budgets** | 2 | The soft X daily watchdog and the **hard** image-generation cap. | A refused image generation; the cost log's warnings. |
 | **AI calls** | 6 | Per-surface LLM defaults: reply/drafter/digest token caps, reply temperature and effort, the batch-reply ceiling. | Every AI draft — unless **Settings → AI** overrides them globally. |
 | **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
 | **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
 
-Twenty-seven of the 61 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
+Twenty-eight of the 62 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
 
 ### How a row works
 

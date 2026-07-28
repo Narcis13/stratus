@@ -568,7 +568,8 @@ const GATES: SettingDef[] = [
 
 // Radar (CIRCLES-PLAN C0) — how long a batch-drafted reply stays useful. Expiry
 // is a lazy status flip on read, never a delete, so raising this resurrects
-// nothing: rows already flipped to `expired` stay expired.
+// nothing: rows already flipped to `expired` stay expired. RC.3 adds the second
+// knob: how much of a scored queue is worth drafting.
 const RADAR: SettingDef[] = [
   {
     key: 'x.radar.draftTtlH',
@@ -582,6 +583,24 @@ const RADAR: SettingDef[] = [
     max: 168,
     unit: 'h',
     scope: 'server',
+  },
+  {
+    // `mirrored` because the panel needs the number twice before any call: to
+    // label the button ("Curate & draft (25)") and to decide the button is worth
+    // showing at all. The ceiling matches `x.ai.batchReplyCap`'s — the effective
+    // size is the LOWER of the two (the drafting call refuses a bigger batch, so
+    // a curated set above the cap would only move the refusal one click later),
+    // which is why raising this alone does nothing once it passes the cap.
+    key: 'x.radar.curatedCount',
+    group: 'radar',
+    label: 'Curated batch size',
+    description:
+      'How many tweets survive a Curate & draft pass and get drafted; the scored-out rest are dismissed from the queue. Effective size is the lower of this and the batch reply cap. An opening guess — recalibrate from measured reply outcomes, never by feel.',
+    type: 'number',
+    default: 25,
+    min: 5,
+    max: 50,
+    scope: 'mirrored',
   },
 ];
 
