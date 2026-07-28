@@ -36,6 +36,29 @@ const PLAYBOOK_SETTING_KEYS = ['x.gates.minCellN'];
 const GATE_NOTE =
   'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. Band thresholds are NOT here — those move by hand at ≥100 measured replies (Settings → Tuning → band).';
 
+// Every top-level slice of the response, in render order. Only used to NAME what
+// an out-of-date server left out — the per-section `slice()` guard is what
+// actually keeps the tab alive.
+const SLICE_KEYS: ReadonlyArray<keyof Playbook> = [
+  'guidance',
+  'angleEffectiveness',
+  'bandCalibration',
+  'batchVsSingle',
+  'relationshipLift',
+  'meEffectiveness',
+  'mediaEffectiveness',
+  'formatEffectiveness',
+  'coachScoreEffectiveness',
+  'judgeEffectiveness',
+  'ideaEffectiveness',
+  'latencyEffectiveness',
+  'modelEffectiveness',
+  'timelineFunnel',
+  'rosterCoverage',
+  'pillarRegister',
+  'structures',
+];
+
 // Long enough that the editor's own debounced PATCH has landed before we re-read
 // (see the reload effect for why a bounded retry, not a poll).
 const GATE_RELOAD_MS = PATCH_DEBOUNCE_MS + 300;
@@ -73,6 +96,11 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
   // server is unreachable — in which case the page simply keeps the gate the
   // response was built with.
   const gearGate = gateFromEditor(editor.groups);
+
+  // Named once at the top so the cause is obvious without scrolling past a dozen
+  // placeholder sections.
+  const missingSlices =
+    data === null ? [] : SLICE_KEYS.filter((k) => data[k] === undefined || data[k] === null);
   const gateReload = useRef<{ gate: number; attempts: number } | null>(null);
 
   // Moving the gate only changes this page after the SERVER re-gates it: every
@@ -149,418 +177,490 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
 
       {data && (
         <>
-          <Section title="What the prompts inject right now">
-            <div className="pb-guidance">
-              <div>
-                <span className="pb-guidance-label">replies</span>
-                {data.guidance.reply ?? (
-                  <span className="pb-gated">silent — no angle cell clears n≥{data.minN} yet</span>
-                )}
-              </div>
-              <div>
-                <span className="pb-guidance-label">posts</span>
-                {data.guidance.post ?? (
-                  <span className="pb-gated">
-                    silent — no structure cell clears n≥{data.minN} yet
-                  </span>
-                )}
-              </div>
+          {missingSlices.length > 0 && (
+            <div className="error">
+              This server is older than the extension build — {missingSlices.length} section
+              {missingSlices.length === 1 ? '' : 's'} missing ({missingSlices.join(', ')}). Redeploy
+              stratus to fill them in.
             </div>
-          </Section>
+          )}
 
-          <Section title={`Reply angles (${data.angleEffectiveness.totalMeasured} measured)`}>
-            <AngleTable cells={data.angleEffectiveness.overall} minN={data.minN} />
-            {data.angleEffectiveness.byAuthorSize.map((b) => (
-              <details key={b.bucket} className="pb-bucket">
-                <summary>
-                  authors {b.bucket} ({b.cells.reduce((s, c) => s + c.n, 0)} measured)
-                </summary>
-                <AngleTable cells={b.cells} minN={data.minN} />
-              </details>
-            ))}
-          </Section>
+          {slice(data.guidance, 'What the prompts inject right now', () => (
+            <Section title="What the prompts inject right now">
+              <div className="pb-guidance">
+                <div>
+                  <span className="pb-guidance-label">replies</span>
+                  {data.guidance.reply ?? (
+                    <span className="pb-gated">
+                      silent — no angle cell clears n≥{data.minN} yet
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <span className="pb-guidance-label">posts</span>
+                  {data.guidance.post ?? (
+                    <span className="pb-gated">
+                      silent — no structure cell clears n≥{data.minN} yet
+                    </span>
+                  )}
+                </div>
+              </div>
+            </Section>
+          ))}
 
-          <Section title={`Band calibration (${data.bandCalibration.totalMeasured} measured)`}>
-            {data.bandCalibration.totalMeasured === 0 ? (
-              <EmptyState
-                line="No measured replies yet."
-                hint="Mark a reply posted with its tweet link and the 03:00 UTC pass measures it — then this table can grade the hot/warm labels."
-              />
-            ) : (
-              <>
+          {slice(data.angleEffectiveness, 'Reply angles', () => (
+            <Section title={`Reply angles (${data.angleEffectiveness.totalMeasured} measured)`}>
+              <AngleTable cells={data.angleEffectiveness.overall} minN={data.minN} />
+              {data.angleEffectiveness.byAuthorSize.map((b) => (
+                <details key={b.bucket} className="pb-bucket">
+                  <summary>
+                    authors {b.bucket} ({b.cells.reduce((s, c) => s + c.n, 0)} measured)
+                  </summary>
+                  <AngleTable cells={b.cells} minN={data.minN} />
+                </details>
+              ))}
+            </Section>
+          ))}
+
+          {slice(data.bandCalibration, 'Band calibration', () => (
+            <Section title={`Band calibration (${data.bandCalibration.totalMeasured} measured)`}>
+              {data.bandCalibration.totalMeasured === 0 ? (
+                <EmptyState
+                  line="No measured replies yet."
+                  hint="Mark a reply posted with its tweet link and the 03:00 UTC pass measures it — then this table can grade the hot/warm labels."
+                />
+              ) : (
+                <>
+                  <table className="pb-table">
+                    <thead>
+                      <tr>
+                        <th>band</th>
+                        <th>n</th>
+                        <th>med views</th>
+                        <th>hit-rate</th>
+                        <th>≥1 like</th>
+                        <th>clicks</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.bandCalibration.bands.map((b) => (
+                        <tr key={String(b.band)} className={b.sufficient ? '' : 'pb-thin'}>
+                          <td>{b.band ?? 'null'}</td>
+                          <td>{b.n}</td>
+                          <td>{fmtN(b.medianViews)}</td>
+                          <td>{fmtPct(b.hitRate)}</td>
+                          <td>{fmtPct(b.likeRate)}</td>
+                          <td>{b.meanProfileClicks ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <div className="status-line">
+                    hit = ≥{fmtN(data.bandCalibration.hitThresholdViews)} views (my p75) ·
+                    actionable {data.bandCalibration.actionable.n} (med{' '}
+                    {fmtN(data.bandCalibration.actionable.medianViews)}) vs passed{' '}
+                    {data.bandCalibration.passed.n} (med{' '}
+                    {fmtN(data.bandCalibration.passed.medianViews)})
+                  </div>
+                  <div className="status-line">
+                    bait{' '}
+                    <ResultCell
+                      cell={baitAsCell(data.bandCalibration.bait?.bait)}
+                      minN={data.minN}
+                    />{' '}
+                    · non-bait{' '}
+                    <ResultCell
+                      cell={baitAsCell(data.bandCalibration.bait?.nonBait)}
+                      minN={data.minN}
+                    />
+                  </div>
+                  <div className="muted pb-note">
+                    BAND thresholds move only by hand at ≥100 measured — this table is the evidence,
+                    not the trigger. (The ⚙ above moves the sample gate, never a threshold.)
+                  </div>
+                </>
+              )}
+            </Section>
+          ))}
+
+          {slice(data.batchVsSingle, 'Batch vs single drafts', () => (
+            <Section title="Batch vs single drafts">
+              <table className="pb-table">
+                <thead>
+                  <tr>
+                    <th>surface</th>
+                    <th>result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Reply Master (single)</td>
+                    <td>
+                      <ResultCell cell={data.batchVsSingle.single} minN={data.minN} />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Radar (batch)</td>
+                    <td>
+                      <ResultCell cell={data.batchVsSingle.radar} minN={data.minN} />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>Canned (reply lists)</td>
+                    <td>
+                      <ResultCell cell={data.batchVsSingle.canned} minN={data.minN} />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div className="status-line">
+                Radar rows are confirmed drafts (attributed by reply source, not text match); canned
+                rows are matched on the text a list actually rendered. A reply that is both counts
+                as the draft, never twice. {data.batchVsSingle.unattributed} published replies
+                unattributed (hand-written or pre-tooling).
+              </div>
+            </Section>
+          ))}
+
+          {slice(data.relationshipLift, 'Relationship lift (C3 block on vs off)', () => (
+            <Section title="Relationship lift (C3 block on vs off)">
+              <table className="pb-table">
+                <tbody>
+                  <tr>
+                    <td>with relationship block</td>
+                    <td>
+                      <ResultCell cell={data.relationshipLift.withRelationship} minN={data.minN} />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>cold</td>
+                    <td>
+                      <ResultCell
+                        cell={data.relationshipLift.withoutRelationship}
+                        minN={data.minN}
+                      />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {data.relationshipLift.viewsLift !== null && (
+                <div className="status-line">
+                  lift: {data.relationshipLift.viewsLift}x views
+                  {data.relationshipLift.profileVisitsLift !== null &&
+                    ` · ${data.relationshipLift.profileVisitsLift}x profile clicks`}
+                </div>
+              )}
+            </Section>
+          ))}
+
+          {slice(data.meEffectiveness, 'Personal context', () => (
+            <Section title={`Personal context (${data.meEffectiveness.totalMeasured} measured)`}>
+              <table className="pb-table">
+                <tbody>
+                  <tr>
+                    <td>with me-brief</td>
+                    <td>
+                      <ResultCell cell={data.meEffectiveness.withMe} minN={data.minN} />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>cold</td>
+                    <td>
+                      <ResultCell cell={data.meEffectiveness.withoutMe} minN={data.minN} />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              {data.meEffectiveness.viewsLift !== null ? (
+                <div className="status-line">
+                  lift: {data.meEffectiveness.viewsLift}x views
+                  {data.meEffectiveness.profileVisitsLift !== null &&
+                    ` · ${data.meEffectiveness.profileVisitsLift}x profile clicks`}
+                </div>
+              ) : (
+                <div className="muted pb-note">
+                  lift stays silent until both sides clear n≥{data.minN} — whether the Me/profile
+                  brief makes replies land better.
+                </div>
+              )}
+            </Section>
+          ))}
+
+          {slice(data.mediaEffectiveness, 'Media vs text-only', () => (
+            <Section
+              title={`Media vs text-only (${data.mediaEffectiveness.totalMeasured} measured)`}
+            >
+              <table className="pb-table">
+                <tbody>
+                  <tr>
+                    <td>with media</td>
+                    <td>
+                      <ResultCell cell={data.mediaEffectiveness.media} minN={data.minN} />
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>text-only</td>
+                    <td>
+                      <ResultCell cell={data.mediaEffectiveness.textOnly} minN={data.minN} />
+                    </td>
+                  </tr>
+                  {(data.mediaEffectiveness.unknown?.posted ?? 0) > 0 && (
+                    <tr className="pb-thin">
+                      <td>unknown (pre-baseline)</td>
+                      <td>
+                        <ResultCell cell={data.mediaEffectiveness.unknown} minN={data.minN} />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              {data.mediaEffectiveness.viewsLift !== null ? (
+                <div className="status-line">
+                  image lift: {data.mediaEffectiveness.viewsLift}x views
+                  {data.mediaEffectiveness.profileVisitsLift !== null &&
+                    ` · ${data.mediaEffectiveness.profileVisitsLift}x profile clicks`}
+                </div>
+              ) : (
+                <div className="muted pb-note">
+                  lift stays silent until both sides clear n≥{data.minN} — the text-only baseline
+                  the studio's images will be judged against.
+                </div>
+              )}
+            </Section>
+          ))}
+
+          {slice(data.formatEffectiveness, 'Post format', () => (
+            <FormatEffectivenessSection fe={data.formatEffectiveness} minN={data.minN} />
+          ))}
+
+          {slice(data.coachScoreEffectiveness, 'Does the coach score predict anything?', () => (
+            <CoachScoreSection cs={data.coachScoreEffectiveness} minN={data.minN} />
+          ))}
+
+          {slice(data.judgeEffectiveness, 'Does the judge predict anything?', () => (
+            <JudgeEffectivenessSection je={data.judgeEffectiveness} minN={data.minN} />
+          ))}
+
+          {slice(data.ideaEffectiveness, 'Idea Inbox payoff', () => (
+            <IdeaEffectivenessSection idea={data.ideaEffectiveness} minN={data.minN} />
+          ))}
+
+          {slice(data.latencyEffectiveness, 'Reply latency', () => (
+            <Section title={`Reply latency (${data.latencyEffectiveness.totalMeasured} measured)`}>
+              {data.latencyEffectiveness.cells.length === 0 ? (
+                <EmptyState
+                  line="No posted replies yet."
+                  hint="This is the number that justifies (or retires) every push to reply fast — it needs both a <15m and a 1h+ cohort."
+                />
+              ) : (
                 <table className="pb-table">
                   <thead>
                     <tr>
-                      <th>band</th>
-                      <th>n</th>
-                      <th>med views</th>
-                      <th>hit-rate</th>
-                      <th>≥1 like</th>
-                      <th>clicks</th>
+                      <th>age at draft</th>
+                      <th>posted</th>
+                      <th>result</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {data.bandCalibration.bands.map((b) => (
-                      <tr key={String(b.band)} className={b.sufficient ? '' : 'pb-thin'}>
-                        <td>{b.band ?? 'null'}</td>
-                        <td>{b.n}</td>
-                        <td>{fmtN(b.medianViews)}</td>
-                        <td>{fmtPct(b.hitRate)}</td>
-                        <td>{fmtPct(b.likeRate)}</td>
-                        <td>{b.meanProfileClicks ?? '—'}</td>
+                    {data.latencyEffectiveness.cells.map((c) => (
+                      <tr key={c.bucket} className={c.bucket === 'unknown' ? 'pb-thin' : ''}>
+                        <td>{c.bucket}</td>
+                        <td>{c.posted}</td>
+                        <td>
+                          <ResultCell cell={c} minN={data.minN} />
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              )}
+              {data.latencyEffectiveness.viewsLift !== null ? (
                 <div className="status-line">
-                  hit = ≥{fmtN(data.bandCalibration.hitThresholdViews)} views (my p75) · actionable{' '}
-                  {data.bandCalibration.actionable.n} (med{' '}
-                  {fmtN(data.bandCalibration.actionable.medianViews)}) vs passed{' '}
-                  {data.bandCalibration.passed.n} (med{' '}
-                  {fmtN(data.bandCalibration.passed.medianViews)})
+                  early-reply lift: {data.latencyEffectiveness.viewsLift}x views (&lt;15m vs 1h+)
+                  {data.latencyEffectiveness.profileVisitsLift !== null &&
+                    ` · ${data.latencyEffectiveness.profileVisitsLift}x profile clicks`}
                 </div>
-                <div className="status-line">
-                  bait{' '}
-                  <ResultCell cell={baitAsCell(data.bandCalibration.bait.bait)} minN={data.minN} />{' '}
-                  · non-bait{' '}
-                  <ResultCell
-                    cell={baitAsCell(data.bandCalibration.bait.nonBait)}
-                    minN={data.minN}
-                  />
-                </div>
+              ) : (
                 <div className="muted pb-note">
-                  BAND thresholds move only by hand at ≥100 measured — this table is the evidence,
-                  not the trigger. (The ⚙ above moves the sample gate, never a threshold.)
+                  grade stays silent until both &lt;15m and 1h+ clear n≥{data.minN} — the number
+                  that would justify (or retire) the Radar/Launch-Room push to reply fast.
                 </div>
-              </>
-            )}
-          </Section>
+              )}
+            </Section>
+          ))}
 
-          <Section title="Batch vs single drafts">
-            <table className="pb-table">
-              <thead>
-                <tr>
-                  <th>surface</th>
-                  <th>result</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>Reply Master (single)</td>
-                  <td>
-                    <ResultCell cell={data.batchVsSingle.single} minN={data.minN} />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Radar (batch)</td>
-                  <td>
-                    <ResultCell cell={data.batchVsSingle.radar} minN={data.minN} />
-                  </td>
-                </tr>
-                <tr>
-                  <td>Canned (reply lists)</td>
-                  <td>
-                    <ResultCell cell={data.batchVsSingle.canned} minN={data.minN} />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <div className="status-line">
-              Radar rows are confirmed drafts (attributed by reply source, not text match); canned
-              rows are matched on the text a list actually rendered. A reply that is both counts as
-              the draft, never twice. {data.batchVsSingle.unattributed} published replies
-              unattributed (hand-written or pre-tooling).
-            </div>
-          </Section>
-
-          <Section title="Relationship lift (C3 block on vs off)">
-            <table className="pb-table">
-              <tbody>
-                <tr>
-                  <td>with relationship block</td>
-                  <td>
-                    <ResultCell cell={data.relationshipLift.withRelationship} minN={data.minN} />
-                  </td>
-                </tr>
-                <tr>
-                  <td>cold</td>
-                  <td>
-                    <ResultCell cell={data.relationshipLift.withoutRelationship} minN={data.minN} />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            {data.relationshipLift.viewsLift !== null && (
-              <div className="status-line">
-                lift: {data.relationshipLift.viewsLift}x views
-                {data.relationshipLift.profileVisitsLift !== null &&
-                  ` · ${data.relationshipLift.profileVisitsLift}x profile clicks`}
-              </div>
-            )}
-          </Section>
-
-          <Section title={`Personal context (${data.meEffectiveness.totalMeasured} measured)`}>
-            <table className="pb-table">
-              <tbody>
-                <tr>
-                  <td>with me-brief</td>
-                  <td>
-                    <ResultCell cell={data.meEffectiveness.withMe} minN={data.minN} />
-                  </td>
-                </tr>
-                <tr>
-                  <td>cold</td>
-                  <td>
-                    <ResultCell cell={data.meEffectiveness.withoutMe} minN={data.minN} />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            {data.meEffectiveness.viewsLift !== null ? (
-              <div className="status-line">
-                lift: {data.meEffectiveness.viewsLift}x views
-                {data.meEffectiveness.profileVisitsLift !== null &&
-                  ` · ${data.meEffectiveness.profileVisitsLift}x profile clicks`}
-              </div>
-            ) : (
+          {slice(data.modelEffectiveness, 'Model effectiveness', () => (
+            <Section
+              title={`Model effectiveness (${data.modelEffectiveness.totalMeasured} measured)`}
+            >
+              {data.modelEffectiveness.cells.length === 0 ? (
+                <EmptyState
+                  line="No posted replies yet."
+                  hint="Switch provider in Settings → AI and keep drafting — each model gets its own row once it has measured replies."
+                />
+              ) : (
+                <table className="pb-table">
+                  <thead>
+                    <tr>
+                      <th>model</th>
+                      <th>posted</th>
+                      <th>result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.modelEffectiveness.cells.map((c) => (
+                      <tr key={c.model}>
+                        <td>{c.model}</td>
+                        <td>{c.posted}</td>
+                        <td>
+                          <ResultCell cell={c} minN={data.minN} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
               <div className="muted pb-note">
-                lift stays silent until both sides clear n≥{data.minN} — whether the Me/profile
-                brief makes replies land better.
+                which model drafts the replies that land — the judge of the OpenRouter experiment. A
+                bucket stays silent until it reaches n≥{data.minN}.
               </div>
-            )}
-          </Section>
+            </Section>
+          ))}
 
-          <Section title={`Media vs text-only (${data.mediaEffectiveness.totalMeasured} measured)`}>
-            <table className="pb-table">
-              <tbody>
-                <tr>
-                  <td>with media</td>
-                  <td>
-                    <ResultCell cell={data.mediaEffectiveness.media} minN={data.minN} />
-                  </td>
-                </tr>
-                <tr>
-                  <td>text-only</td>
-                  <td>
-                    <ResultCell cell={data.mediaEffectiveness.textOnly} minN={data.minN} />
-                  </td>
-                </tr>
-                {data.mediaEffectiveness.unknown.posted > 0 && (
-                  <tr className="pb-thin">
-                    <td>unknown (pre-baseline)</td>
-                    <td>
-                      <ResultCell cell={data.mediaEffectiveness.unknown} minN={data.minN} />
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-            {data.mediaEffectiveness.viewsLift !== null ? (
-              <div className="status-line">
-                image lift: {data.mediaEffectiveness.viewsLift}x views
-                {data.mediaEffectiveness.profileVisitsLift !== null &&
-                  ` · ${data.mediaEffectiveness.profileVisitsLift}x profile clicks`}
-              </div>
-            ) : (
+          {slice(data.timelineFunnel, 'Timeline funnel', () => (
+            <Section
+              title={`Timeline funnel (${data.timelineFunnel.totalReplied}/${data.timelineFunnel.totalSeen} replied)`}
+            >
+              {data.timelineFunnel.cells.length === 0 ? (
+                <EmptyState
+                  line="Nothing captured yet — passive harvest fills this while you scroll x.com/home."
+                  hint="Check the passive-capture toggle in Settings, then browse normally: this needs days of scrolling, not minutes."
+                />
+              ) : (
+                <table className="pb-table">
+                  <thead>
+                    <tr>
+                      <th>band when seen</th>
+                      <th>seen</th>
+                      <th>replied</th>
+                      <th>capture</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.timelineFunnel.cells.map((c) => (
+                      <tr
+                        key={String(c.band)}
+                        className={c.band === 'hot' || c.band === 'warm' ? '' : 'pb-thin'}
+                      >
+                        <td>{c.band === null ? 'no band' : c.band}</td>
+                        <td>{c.seen}</td>
+                        <td>{c.replied}</td>
+                        <td>
+                          {c.rate === null ? (
+                            <span className="pb-gated">
+                              insufficient data (n={c.seen}/{data.minN})
+                            </span>
+                          ) : (
+                            fmtPct(c.rate)
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
               <div className="muted pb-note">
-                lift stays silent until both sides clear n≥{data.minN} — the text-only baseline the
-                studio's images will be judged against.
+                of the tweets the algorithm actually put in front of you, how many you replied to —
+                banded at first sighting, 30-day window. A cell stays silent until n≥{data.minN}{' '}
+                seen; "unknown" means the tweet's time never rendered, not a verdict.
               </div>
-            )}
-          </Section>
+            </Section>
+          ))}
 
-          <FormatEffectivenessSection fe={data.formatEffectiveness} minN={data.minN} />
+          {slice(data.rosterCoverage, 'Roster coverage — last 7 days', () => (
+            <RosterCoverageSection rc={data.rosterCoverage} minN={data.minN} />
+          ))}
 
-          <CoachScoreSection cs={data.coachScoreEffectiveness} minN={data.minN} />
-
-          <JudgeEffectivenessSection je={data.judgeEffectiveness} minN={data.minN} />
-
-          <IdeaEffectivenessSection idea={data.ideaEffectiveness} minN={data.minN} />
-
-          <Section title={`Reply latency (${data.latencyEffectiveness.totalMeasured} measured)`}>
-            {data.latencyEffectiveness.cells.length === 0 ? (
-              <EmptyState
-                line="No posted replies yet."
-                hint="This is the number that justifies (or retires) every push to reply fast — it needs both a <15m and a 1h+ cohort."
-              />
-            ) : (
-              <table className="pb-table">
-                <thead>
-                  <tr>
-                    <th>age at draft</th>
-                    <th>posted</th>
-                    <th>result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.latencyEffectiveness.cells.map((c) => (
-                    <tr key={c.bucket} className={c.bucket === 'unknown' ? 'pb-thin' : ''}>
-                      <td>{c.bucket}</td>
-                      <td>{c.posted}</td>
-                      <td>
-                        <ResultCell cell={c} minN={data.minN} />
-                      </td>
+          {slice(data.pillarRegister, 'Pillar × register', () => (
+            <Section title={`Pillar × register (${data.pillarRegister.totalMeasured} measured)`}>
+              {data.pillarRegister.cells.length === 0 ? (
+                <EmptyState
+                  line="No published drafter posts yet."
+                  hint="Only posts drafted in stratus carry a pillar and a register — hand-written ones can't fill this table."
+                />
+              ) : (
+                <table className="pb-table">
+                  <thead>
+                    <tr>
+                      <th>pillar</th>
+                      <th>register</th>
+                      <th>result</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            {data.latencyEffectiveness.viewsLift !== null ? (
-              <div className="status-line">
-                early-reply lift: {data.latencyEffectiveness.viewsLift}x views (&lt;15m vs 1h+)
-                {data.latencyEffectiveness.profileVisitsLift !== null &&
-                  ` · ${data.latencyEffectiveness.profileVisitsLift}x profile clicks`}
-              </div>
-            ) : (
-              <div className="muted pb-note">
-                grade stays silent until both &lt;15m and 1h+ clear n≥{data.minN} — the number that
-                would justify (or retire) the Radar/Launch-Room push to reply fast.
-              </div>
-            )}
-          </Section>
+                  </thead>
+                  <tbody>
+                    {data.pillarRegister.cells.map((c) => (
+                      <tr key={`${c.pillar}|${c.register}`}>
+                        <td>{c.pillar ?? '—'}</td>
+                        <td>{c.register ?? '—'}</td>
+                        <td>
+                          <ResultCell cell={c} minN={data.minN} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </Section>
+          ))}
 
-          <Section
-            title={`Model effectiveness (${data.modelEffectiveness.totalMeasured} measured)`}
-          >
-            {data.modelEffectiveness.cells.length === 0 ? (
-              <EmptyState
-                line="No posted replies yet."
-                hint="Switch provider in Settings → AI and keep drafting — each model gets its own row once it has measured replies."
-              />
-            ) : (
-              <table className="pb-table">
-                <thead>
-                  <tr>
-                    <th>model</th>
-                    <th>posted</th>
-                    <th>result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.modelEffectiveness.cells.map((c) => (
-                    <tr key={c.model}>
-                      <td>{c.model}</td>
-                      <td>{c.posted}</td>
-                      <td>
-                        <ResultCell cell={c} minN={data.minN} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <div className="muted pb-note">
-              which model drafts the replies that land — the judge of the OpenRouter experiment. A
-              bucket stays silent until it reaches n≥{data.minN}.
-            </div>
-          </Section>
-
-          <Section
-            title={`Timeline funnel (${data.timelineFunnel.totalReplied}/${data.timelineFunnel.totalSeen} replied)`}
-          >
-            {data.timelineFunnel.cells.length === 0 ? (
-              <EmptyState
-                line="Nothing captured yet — passive harvest fills this while you scroll x.com/home."
-                hint="Check the passive-capture toggle in Settings, then browse normally: this needs days of scrolling, not minutes."
-              />
-            ) : (
-              <table className="pb-table">
-                <thead>
-                  <tr>
-                    <th>band when seen</th>
-                    <th>seen</th>
-                    <th>replied</th>
-                    <th>capture</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.timelineFunnel.cells.map((c) => (
-                    <tr
-                      key={String(c.band)}
-                      className={c.band === 'hot' || c.band === 'warm' ? '' : 'pb-thin'}
-                    >
-                      <td>{c.band === null ? 'no band' : c.band}</td>
-                      <td>{c.seen}</td>
-                      <td>{c.replied}</td>
-                      <td>
-                        {c.rate === null ? (
-                          <span className="pb-gated">
-                            insufficient data (n={c.seen}/{data.minN})
-                          </span>
-                        ) : (
-                          fmtPct(c.rate)
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-            <div className="muted pb-note">
-              of the tweets the algorithm actually put in front of you, how many you replied to —
-              banded at first sighting, 30-day window. A cell stays silent until n≥{data.minN} seen;
-              "unknown" means the tweet's time never rendered, not a verdict.
-            </div>
-          </Section>
-
-          <RosterCoverageSection rc={data.rosterCoverage} minN={data.minN} />
-
-          <Section title={`Pillar × register (${data.pillarRegister.totalMeasured} measured)`}>
-            {data.pillarRegister.cells.length === 0 ? (
-              <EmptyState
-                line="No published drafter posts yet."
-                hint="Only posts drafted in stratus carry a pillar and a register — hand-written ones can't fill this table."
-              />
-            ) : (
-              <table className="pb-table">
-                <thead>
-                  <tr>
-                    <th>pillar</th>
-                    <th>register</th>
-                    <th>result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.pillarRegister.cells.map((c) => (
-                    <tr key={`${c.pillar}|${c.register}`}>
-                      <td>{c.pillar ?? '—'}</td>
-                      <td>{c.register ?? '—'}</td>
-                      <td>
-                        <ResultCell cell={c} minN={data.minN} />
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </Section>
-
-          <Section
-            title={`My winning structures (${data.structures.totalMeasured} measured)`}
-            actions={
-              <button type="button" onClick={() => void extractWinners()} disabled={extracting}>
-                {extracting ? 'Extracting…' : 'Extract winner templates'}
-              </button>
-            }
-          >
-            <div className="status-line">≤20 top posts, ~$0.005 each, one-time</div>
-            {extractMsg && <div className="status-line">{extractMsg}</div>}
-            {data.structures.hooks.length > 0 && (
-              <StructureTable title="hooks" cells={data.structures.hooks} minN={data.minN} />
-            )}
-            {data.structures.devices.length > 0 && (
-              <StructureTable title="devices" cells={data.structures.devices} minN={data.minN} />
-            )}
-            {data.structures.hooks.length === 0 && (
-              <EmptyState
-                line="No templates extracted from my posts yet."
-                hint="Extract winner templates above — it is what lets the measured 'posts' guidance line start steering your drafts."
-              />
-            )}
-          </Section>
+          {slice(data.structures, 'My winning structures', () => (
+            <Section
+              title={`My winning structures (${data.structures.totalMeasured} measured)`}
+              actions={
+                <button type="button" onClick={() => void extractWinners()} disabled={extracting}>
+                  {extracting ? 'Extracting…' : 'Extract winner templates'}
+                </button>
+              }
+            >
+              <div className="status-line">≤20 top posts, ~$0.005 each, one-time</div>
+              {extractMsg && <div className="status-line">{extractMsg}</div>}
+              {data.structures.hooks.length > 0 && (
+                <StructureTable title="hooks" cells={data.structures.hooks} minN={data.minN} />
+              )}
+              {data.structures.devices.length > 0 && (
+                <StructureTable title="devices" cells={data.structures.devices} minN={data.minN} />
+              )}
+              {data.structures.hooks.length === 0 && (
+                <EmptyState
+                  line="No templates extracted from my posts yet."
+                  hint="Extract winner templates above — it is what lets the measured 'posts' guidance line start steering your drafts."
+                />
+              )}
+            </Section>
+          ))}
         </>
       )}
     </div>
+  );
+}
+
+/** A slice and the section that reads it ship in the SAME commit, so a server
+ *  older than this build simply has no key for it — and one `undefined.foo` took
+ *  the whole tab down with it (SC.5's `formatEffectiveness` did exactly that
+ *  against a server 20 commits behind). Every slice is presence-checked at its
+ *  call site; a missing one degrades to a named placeholder that names the real
+ *  cause, because nothing here is fixable in the extension — only by redeploying
+ *  the server. Slice-level only: a field added to an EXISTING slice still
+ *  arrives as `undefined`, which is why `ResultCell` guards its own cell too. */
+function slice(value: unknown, title: string, render: () => JSX.Element): JSX.Element {
+  if (value !== undefined && value !== null) return render();
+  return (
+    <Section title={title}>
+      <div className="muted pb-note">
+        Missing from the server's response — the deployed server is older than this extension build.
+        Redeploy stratus to fill this section in.
+      </div>
+    </Section>
   );
 }
 
@@ -1038,8 +1138,13 @@ function StructureTable({
  *  second number was ignored here for four phases (the param was literally
  *  `_minN`), which was survivable while 20 was baked; now that the ⚙ in this
  *  tab's header moves it, a cell that only said "insufficient" would be silent
- *  about the very number the user is watching themselves change. */
-function ResultCell({ cell, minN }: { cell: PlaybookCell; minN: number }): JSX.Element {
+ *  about the very number the user is watching themselves change.
+ *
+ *  The nullish guard is the second half of the `slice()` defence: a field added
+ *  to an EXISTING slice (rather than a whole new one) survives the slice check
+ *  and lands here as `undefined`. One dash beats taking the tab down. */
+function ResultCell({ cell, minN }: { cell: PlaybookCell | undefined; minN: number }): JSX.Element {
+  if (cell === undefined || cell === null) return <span className="pb-gated">—</span>;
   if (!cell.sufficient) {
     return (
       <span className="pb-gated">
@@ -1052,11 +1157,16 @@ function ResultCell({ cell, minN }: { cell: PlaybookCell; minN: number }): JSX.E
   return <>{`${parts.join(' · ')} (n=${cell.n})`}</>;
 }
 
-function baitAsCell(b: {
-  n: number;
-  medianViews: number | null;
-  sufficient: boolean;
-}): PlaybookCell {
+function baitAsCell(
+  b:
+    | {
+        n: number;
+        medianViews: number | null;
+        sufficient: boolean;
+      }
+    | undefined,
+): PlaybookCell | undefined {
+  if (b === undefined) return undefined;
   return {
     posted: b.n,
     n: b.n,
