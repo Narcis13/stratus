@@ -8,6 +8,7 @@
 // stays an explicit human click.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { jitterOdds } from '../humanize.ts';
 import { invalidateReplyListsCache } from './QuickReplyPicker.tsx';
 import {
   ApiError,
@@ -908,21 +909,6 @@ function normalizedStored(cfg: HumanizerConfig): HumanizerConfig {
     dropPeriodChance: cfg.dropPeriodChance,
     typoChance: cfg.typoChance,
   };
-}
-
-/** P(at least one jitter fires) — the five rolls are independent (engine
- *  §humanize). An upper bound, not a promise: lowercase can't fire on a
- *  lowercase opener and drop-period can't fire on text that ends in "!". It
- *  exists so "the humanizer does nothing" is answerable with a number. */
-function jitterOdds(cfg: HumanizerConfig): number {
-  const rolls = [
-    cfg.prefixes.length > 0 ? cfg.prefixChance : 0,
-    cfg.suffixes.length > 0 ? cfg.suffixChance : 0,
-    cfg.lowercaseChance,
-    cfg.dropPeriodChance,
-    cfg.typoChance,
-  ];
-  return 1 - rolls.reduce((acc, p) => acc * (1 - Math.min(1, Math.max(0, p))), 1);
 }
 
 function chanceMap(cfg: HumanizerConfig | null): Record<string, number> {

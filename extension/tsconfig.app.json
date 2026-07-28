@@ -28,7 +28,8 @@
     "../src/shared/activeTimes.ts",
     "../src/shared/postCoach.ts",
     "../src/shared/postFormat.ts",
-    "../src/shared/judge.ts"
+    "../src/shared/judge.ts",
+    "../src/shared/humanize.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }
