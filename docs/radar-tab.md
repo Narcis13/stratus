@@ -72,12 +72,27 @@ Three ways in, all free:
 - The **tweet text**, as a link — clicking it just opens the tweet on X.
 - A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
 - **Angle tabs** (once drafted) — `extends` · `contrarian` · `debate`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The score never reorders the tabs.
-- **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after.
+- **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after — or to `copied ✓ · jitter: prefix, typo:swap` / `copied ✓ · no jitter this time` when **Humanize picks** is on (below).
 - A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.
 
 The angle you click is the one recorded as what went out — so the Playbook's angle numbers reflect what you actually chose, not always the first variant.
 
 Empty states: *"Browse X — hot/warm tweets you scroll past queue up here."* (Queue) and *"Replies you copy land here — most recent first."* (Clicked).
+
+---
+
+## Humanize picks
+
+Under the Queue/Clicked strip sits a checkbox: **Humanize picks**, with the odds next to it (`~56% of picks come out changed` at the default chances). Off by default.
+
+With it on, the angle you click is roughened on the way to your clipboard — a leading `honestly,`, a trailing `well said`, a lowercased first word, a dropped final period, or a small typo. Handles, names and links are never touched. The hint line then names what fired, so the feature is never silently doing nothing.
+
+Two things it deliberately does **not** do:
+
+- **It never rewrites the stored draft.** The variants on the row stay exactly as Grok wrote them, so re-reading the card shows the real draft and the coach scores stay meaningful. What the jitter produces is recorded only as *what actually went out* — the same field a hand-edit lands in.
+- **It doesn't re-roll.** The jitter is decided at the moment you click; the row keeps showing the stored text afterwards.
+
+The chances and the prefix/suffix pools are project-level (shared by any surface that picks one up) and live server-side, so the checkbox survives a panel close and an extension reinstall. Each canned **reply list** still keeps its own separate humanizer override.
 
 ---
 

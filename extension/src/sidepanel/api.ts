@@ -76,6 +76,8 @@ import {
   type GoalVerdict,
   type HarvestRun,
   type HumanizerConfig,
+  type HumanizerPatchBody,
+  type HumanizerSettings,
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
@@ -359,6 +361,8 @@ export type {
   ReplyGenerateBody,
   ReplyPatchBody,
   HumanizerConfig,
+  HumanizerPatchBody,
+  HumanizerSettings,
   ReplyList,
   ReplyListCreateBody,
   ReplyListDetail,
@@ -808,6 +812,27 @@ export const api = {
 
     restoreDefaults(s: Settings): Promise<PromptsRestoreResult> {
       return request<PromptsRestoreResult>(s, '/x/prompts/restore-defaults', { method: 'POST' });
+    },
+  },
+
+  // HM.2 — the project-level reply humanizer (prefix/suffix/casing/typo jitter
+  // the Radar applies at pick time). A raw `app_settings` row, NOT a registry
+  // key: the registry has no string-array type, so this sits beside `llm` and
+  // `prompts` rather than inside `settings`. All three calls are $0.
+  humanizer: {
+    get(s: Settings): Promise<HumanizerSettings> {
+      return request<HumanizerSettings>(s, '/x/humanizer');
+    },
+
+    // Partial; the server merges over the stored row so a patch can never land
+    // a half-written config. A rejected field 400s with its own code.
+    patch(s: Settings, body: HumanizerPatchBody): Promise<HumanizerSettings> {
+      return request<HumanizerSettings>(s, '/x/humanizer', { method: 'PATCH', body });
+    },
+
+    // Reset = delete the row; "untouched" has exactly one representation.
+    reset(s: Settings): Promise<HumanizerSettings> {
+      return request<HumanizerSettings>(s, '/x/humanizer', { method: 'DELETE' });
     },
   },
 

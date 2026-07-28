@@ -14,6 +14,7 @@
 // to Clicked, and opens the tweet — paste, done.
 
 import { type JSX, useEffect, useState } from 'react';
+import { type HumanizeResult, humanize, jitterOdds } from '../humanize.ts';
 import { formatCount } from '../replyBand.ts';
 import type {
   RadarClick,
@@ -31,6 +32,7 @@ import {
   splitClicked,
 } from '../shared/radar.ts';
 import { radarBatchSize } from '../shared/serverSettings.ts';
+import type { HumanizerSettings } from '../shared/types.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { CoachChip } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -158,6 +160,10 @@ export function RadarSection({
   const [view, setView] = useState<'queue' | 'clicked'>('queue');
   const [drafting, setDrafting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // HM.3: the project humanizer config (`GET /x/humanizer`, $0). `null` means
+  // "not loaded" — the checkbox is then disabled and every pick is byte-identical
+  // to the pre-HM.3 path, because decoration must never block the worked queue.
+  const [humanizer, setHumanizer] = useState<HumanizerSettings | null>(null);
 
   // C0: ask the background to pull the server's radar_drafts copy — after a
   // browser restart the session buffer is empty but paid-for drafts survive.
@@ -167,6 +173,39 @@ export function RadarSection({
       .sendMessage(msg)
       .catch((err) => console.warn('[stratus] radar rehydrate failed', err));
   }, []);
+
+  // One $0 read per mount. A failure is swallowed on purpose: an unreachable
+  // server means no jitter, not a broken Radar.
+  useEffect(() => {
+    let alive = true;
+    api.humanizer
+      .get(settings)
+      .then((cfg) => {
+        if (alive) setHumanizer(cfg);
+      })
+      .catch((err) => console.warn('[stratus] humanizer config load failed', err));
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+
+  // The checkbox writes the project-level flag, so it survives a panel reopen
+  // and any future surface reads the same switch. Optimistic: flip locally,
+  // then PATCH; a refusal puts the old value back and says so in `note`.
+  const toggleHumanize = (next: boolean): void => {
+    if (!humanizer) return;
+    const prev = humanizer;
+    setHumanizer({ ...humanizer, enabled: next });
+    void api.humanizer
+      .patch(settings, { enabled: next })
+      .then((saved) => setHumanizer(saved))
+      .catch((e) => {
+        setHumanizer(prev);
+        setNote(
+          e instanceof ApiError ? `Humanize toggle failed: ${e.message}` : 'Humanize toggle failed',
+        );
+      });
+  };
 
   // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
   const undrafted = fresh.slice(0, radarBatchSize(server));
@@ -262,6 +301,29 @@ export function RadarSection({
         </button>
       </div>
 
+      {/* HM.3 — opt-in jitter on the angle you click. Queue-only: it decorates
+          the act of picking, and the Clicked view is a log of picks already made
+          (a re-copy there still honors the flag, it just isn't where you set it). */}
+      {view === 'queue' && (
+        <label
+          className="radar-humanize"
+          title="Roughen the angle you click — a prefix, a suffix, lowercase, a dropped period or a small typo. Applied at pick time to what gets copied, never written back to the stored draft; @handles, names and links are never touched."
+        >
+          <input
+            type="checkbox"
+            checked={humanizer?.enabled ?? false}
+            disabled={humanizer === null}
+            onChange={(e) => toggleHumanize(e.target.checked)}
+          />
+          Humanize picks
+          {humanizer && (
+            <span className="radar-humanize-odds">
+              ~{Math.round(jitterOdds(humanizer) * 100)}% of picks come out changed
+            </span>
+          )}
+        </label>
+      )}
+
       {note && <div className="status-line">{note}</div>}
 
       {view === 'queue' ? (
@@ -278,6 +340,7 @@ export function RadarSection({
                 rows={ready}
                 settings={settings}
                 onOpenPerson={onOpenPerson}
+                humanizer={humanizer}
               />
             )}
             {fresh.length > 0 && (
@@ -286,6 +349,7 @@ export function RadarSection({
                 rows={fresh}
                 settings={settings}
                 onOpenPerson={onOpenPerson}
+                humanizer={humanizer}
               />
             )}
           </>
@@ -298,7 +362,13 @@ export function RadarSection({
       ) : (
         <ul className="radar-list">
           {clicked.map((s) => (
-            <RadarRow key={s.tweetId} s={s} settings={settings} onOpenPerson={onOpenPerson} />
+            <RadarRow
+              key={s.tweetId}
+              s={s}
+              settings={settings}
+              onOpenPerson={onOpenPerson}
+              humanizer={humanizer}
+            />
           ))}
         </ul>
       )}
@@ -311,18 +381,26 @@ function RadarGroup({
   rows,
   settings,
   onOpenPerson,
+  humanizer,
 }: {
   label: string;
   rows: RadarSighting[];
   settings: Settings;
   onOpenPerson: (handle: string) => void;
+  humanizer: HumanizerSettings | null;
 }): JSX.Element {
   return (
     <>
       <div className="radar-group-label">{label}</div>
       <ul className="radar-list">
         {rows.map((s) => (
-          <RadarRow key={s.tweetId} s={s} settings={settings} onOpenPerson={onOpenPerson} />
+          <RadarRow
+            key={s.tweetId}
+            s={s}
+            settings={settings}
+            onOpenPerson={onOpenPerson}
+            humanizer={humanizer}
+          />
         ))}
       </ul>
     </>
@@ -333,12 +411,16 @@ function RadarRow({
   s,
   settings,
   onOpenPerson,
+  humanizer,
 }: {
   s: RadarSighting;
   settings: Settings;
   onOpenPerson: (handle: string) => void;
+  humanizer: HumanizerSettings | null;
 }): JSX.Element {
-  const [copied, setCopied] = useState(false);
+  // HM.3 — what the last click actually did, not just that it happened: the
+  // humanizer is invisible otherwise, and "it does nothing" has to be answerable.
+  const [pickNote, setPickNote] = useState<string | null>(null);
   // C8: channel tags live on the server's radar_drafts copy (keyed by tweetId),
   // which only exists once a reply was drafted — so the picker shows then.
   // Session-local mirror; the persisted copy is what the aggregate reads.
@@ -354,13 +436,29 @@ function RadarRow({
   // move the row to Clicked, and promote the draft with the text that will
   // actually be pasted. The anchor's default still opens the tweet in a new tab.
   const onPick = (text: string): void => {
+    // HM.3 — the jitter is decided HERE and never stored: `radar_drafts.variants`
+    // stay verbatim (§7.19), and the roughened text is recorded only as what
+    // actually went out, through the RD.2 confirm path that already PATCHes
+    // `replyTextEdited` when the taken text isn't the primary. Zero wire change.
+    // Author + handle ride along as protected spans — a typo'd @mention breaks
+    // the mention and a typo'd name reads as disrespect.
+    const jittered: HumanizeResult | null =
+      humanizer?.enabled === true
+        ? humanize(
+            text,
+            humanizer,
+            Math.random,
+            [s.author ?? '', s.handle].filter((v) => v !== ''),
+          )
+        : null;
+    const taken = jittered?.text ?? text;
     markClicked(s.tweetId);
-    confirmDraft(s.tweetId, text);
+    confirmDraft(s.tweetId, taken);
     void navigator.clipboard
-      .writeText(text)
+      .writeText(taken)
       .then(() => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
+        setPickNote(pickNoteFor(jittered));
+        window.setTimeout(() => setPickNote(null), PICK_NOTE_MS);
       })
       .catch((err) => console.warn('[stratus] clipboard write failed', err));
   };
@@ -438,7 +536,7 @@ function RadarRow({
         >
           {picked.text}
           <span className="radar-reply-hint">
-            {copied ? 'copied ✓' : 'click → copies + opens the tweet'}
+            {pickNote ?? 'click → copies + opens the tweet'}
             {angles.length === 1 && (
               <>
                 {' '}
@@ -461,6 +559,19 @@ function RadarRow({
       )}
     </li>
   );
+}
+
+// Longer than the old 1500 ms `copied ✓` flash: the note now carries a list of
+// jitters to read, and it is the only place the humanizer is ever visible.
+const PICK_NOTE_MS = 2500;
+
+// RL.9's honesty pattern — the answer to "the humanizer does nothing". Three
+// distinct states, because "no jitter fired this time" and "the feature is off"
+// are different facts and only one of them is a reason to check the settings.
+function pickNoteFor(jittered: HumanizeResult | null): string {
+  if (jittered === null) return 'copied ✓';
+  if (jittered.applied.length === 0) return 'copied ✓ · no jitter this time';
+  return `copied ✓ · jitter: ${jittered.applied.join(', ')}`;
 }
 
 // The angles offered as tabs on a drafted row (RD.2). The full RU.4 set when

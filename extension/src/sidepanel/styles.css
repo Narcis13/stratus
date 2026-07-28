@@ -1102,6 +1102,29 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--strat-accent) 14%, transparent);
 }
+/* HM.3 — the pick-time jitter toggle, directly under the Queue/Clicked strip.
+   A label row rather than a button: it flips a server-owned project setting,
+   and the odds sit next to it so the switch says what it buys. */
+.radar-humanize {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.radar-humanize input {
+  margin: 0;
+  accent-color: var(--strat-accent);
+}
+.radar-humanize-odds {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
 .radar-group-label {
   font-size: 10px;
   font-weight: 600;

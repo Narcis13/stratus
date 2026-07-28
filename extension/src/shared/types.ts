@@ -1,6 +1,7 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
+import type { HumanizerConfig } from '../humanize.ts';
 import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
@@ -2219,16 +2220,25 @@ export interface SettingsResetResult {
 
 /** The per-list jitter knobs. A stored config is ALWAYS fully normalized by the
  *  server, so a non-null value here has every field. `null` on a list means the
- *  engine defaults apply — PATCH `{humanizer:{}}` to materialize them. */
-export interface HumanizerConfig {
-  prefixes: string[];
-  suffixes: string[];
-  prefixChance: number;
-  suffixChance: number;
-  lowercaseChance: number;
-  dropPeriodChance: number;
-  typoChance: number;
+ *  engine defaults apply — PATCH `{humanizer:{}}` to materialize them.
+ *
+ *  HM.3: re-exported from the `../humanize.ts` shim rather than declared here —
+ *  the panel now RUNS that engine (Radar picks), so a hand-mirrored copy of the
+ *  seven fields could drift from the module doing the work (§7 rule 4c, the
+ *  JD.6 `JudgeVerdict` precedent). Type-only, so nothing is bundled. */
+export type { HumanizerConfig };
+
+// HM.2/HM.3 — the PROJECT-level humanizer: one server-owned `app_settings` row
+// (`GET/PATCH/DELETE /x/humanizer`) that the Radar's pick path reads. A sibling
+// of the per-list configs above, never a replacement — lists keep their own.
+export interface HumanizerSettings extends HumanizerConfig {
+  /** Opt-in: the Radar checkbox defaults OFF. */
+  enabled: boolean;
 }
+
+/** PATCH is strict per field server-side — a bad value 400s (`invalid_enabled`,
+ *  `invalid_prefixes`, `invalid_typo_chance`, …), it never silently falls back. */
+export type HumanizerPatchBody = Partial<HumanizerSettings>;
 
 export type ReplyTemplateVar = 'name' | 'first_name' | 'handle';
 export type ReplyListItemSource = 'manual' | 'ai';
