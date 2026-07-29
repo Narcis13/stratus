@@ -45,12 +45,18 @@ export function radarDraftExpired(
 }
 
 // The batch endpoint's tweets, optionally carrying the Radar's capture-time
-// verdict (band + classifier inputs). CLI callers may omit them.
+// verdict (band + classifier inputs) and the curation pass's score. CLI callers
+// may omit all of them.
 export interface RadarBatchTweet extends BatchTweet {
-  // 'manual' = a ⊕ pinned tweet (RU.8) — queue metadata, never a classifier
-  // verdict; stored on radar_drafts.band, coerced away from the reply snapshot.
-  band?: 'hot' | 'warm' | 'manual';
+  // 'manual' = a ⊕ pinned tweet (RU.8), 'roster' = a quiet post by someone in my
+  // circle (GT.8) — queue metadata, never classifier verdicts; stored on
+  // radar_drafts.band, coerced away from the reply snapshot.
+  band?: 'hot' | 'warm' | 'manual' | 'roster';
   signals?: TweetSignals;
+  // RC.2: 0–100 reply-payoff score from the curation pass that picked this
+  // tweet. Absent = drafted without curation. Storage metadata like band and
+  // signals — it never reaches the Grok prompt (renderBatchTweet ignores it).
+  curationScore?: number;
 }
 
 export interface RadarDraftInsert {
@@ -59,7 +65,7 @@ export interface RadarDraftInsert {
   handle: string;
   author: string | null;
   snippet: string;
-  band: 'hot' | 'warm' | 'manual' | null;
+  band: 'hot' | 'warm' | 'manual' | 'roster' | null;
   signals: TweetSignals | null;
   replyText: string;
   angle: string;
@@ -69,6 +75,9 @@ export interface RadarDraftInsert {
   // The Grok model that drafted these; copied onto the confirmed reply_drafts
   // row later. Null when the batch didn't report one.
   model: string | null;
+  // RC.2: the curation score that selected this tweet. **Null = uncurated,
+  // never 0** — 0 is a real "nothing to gain replying here" verdict.
+  curationScore: number | null;
 }
 
 // The batch reply shape persistRadarDrafts/buildRadarDraftRows consume: the
@@ -110,6 +119,9 @@ export function buildRadarDraftRows(
       // primary. Null when the caller supplied only the primary.
       variants: r.variants && r.variants.length > 0 ? r.variants : null,
       model,
+      // `?? null` and not `|| null`: a 0 score is a real verdict, null is
+      // "this draft never went through curation".
+      curationScore: t.curationScore ?? null,
     });
   }
   return rows;
@@ -287,12 +299,14 @@ radar.post('/radar/drafts/:tweetId/confirm', async (c) => {
   // (ctx.signals / ctx.metrics) and the Playbook latency/band readers
   // (signals.ageMin) see the same shape a live Reply Master draft has. The
   // band lives in its own column; the signals JSON never carried it. A 'manual'
-  // add (RU.8) is queue metadata, not a classifier verdict — it becomes null in
-  // the snapshot so it never lands in the Playbook's hot/warm band cells (§7.19).
+  // add (RU.8) and a 'roster' capture (GT.8) are queue metadata, not classifier
+  // verdicts — both become null in the snapshot so neither ever lands in the
+  // Playbook's hot/warm band cells (§7.19). Anything else is the real verdict.
   const sig = row.signals as TweetSignals | null;
+  const queueMetaBand = row.band === 'manual' || row.band === 'roster';
   const signals: PostSignals | undefined = sig
     ? {
-        band: row.band === 'manual' ? null : (row.band as PostSignals['band']),
+        band: queueMetaBand ? null : (row.band as PostSignals['band']),
         views: sig.views,
         replies: sig.replies,
         ageMin: sig.ageMin,

@@ -1,6 +1,10 @@
 // Shared between the side panel, content script, and background worker.
 // Mirrors the server route shapes in src/x/routes/calendar.ts and voice.ts.
 
+import type { HumanizerConfig } from '../humanize.ts';
+import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
+import type { CoachBand } from '../postCoach.ts';
+import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
 
 export type PostStatus =
@@ -131,6 +135,62 @@ export interface RewriteResponse {
   costUsd: number;
   model: string;
   requestId?: string;
+}
+
+// JD.4/JD.5 — the LLM judge: one structured-outputs call grades ONE draft on the
+// 13-dimension rubric and comes back with anchored fixes; `apply` rewrites from
+// those fixes and keeps the result only if it re-judges strictly better.
+//
+// The verdict half of both responses is the CANONICAL `JudgeVerdict` from
+// src/shared/judge.ts (reached through the extension shim), extended rather than
+// re-typed: the band, the thirteen score keys and the annotation shape are the
+// same objects the server derived, so the panel can never grade a different
+// vocabulary than the row in `draft_judgments` (§7 rule 4c).
+
+export interface JudgeRunBody {
+  text: string;
+  /** v1 judges originals only (JD decision 2); the column is wider than this. */
+  surface?: 'post';
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+/** `POST /x/judge`. **`id` is null when the best-effort `draft_judgments` insert
+ *  failed** (JD decision 9 — a paid verdict is returned regardless), and with no
+ *  id there is nothing for `/judge/apply` to load, so a consumer must treat
+ *  "apply" as unavailable rather than assume a string. */
+export interface JudgeRunResponse extends JudgeVerdict {
+  id: string | null;
+  textHash: string;
+  model: string;
+  provider: string;
+  costUsd: number;
+  requestId: string | null;
+}
+
+export interface JudgeApplyBody {
+  judgmentId: string;
+  text: string;
+  /** Steers the REWRITER only — the re-judge is pinned to the stored judgment's
+   *  model+provider, because a never-worse compare across two graders compares
+   *  the graders (JD decision 11). */
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+}
+
+/** `POST /x/judge/apply`. **`improved: false` is a 200, not an error**: the
+ *  never-worse guard kept the caller's own words and handed back the ORIGINAL
+ *  verdict. `text`, `textHash` and the verdict always describe the same draft
+ *  (JD decision 7), so a consumer reads them as one triple. `judgmentId` is the
+ *  row the returned verdict belongs to — null when persisting the winner failed. */
+export interface JudgeApplyResponse extends JudgeVerdict {
+  text: string;
+  improved: boolean;
+  judgmentId: string | null;
+  textHash: string;
+  model: string;
+  provider: string;
+  costUsd: number;
 }
 
 // --------------------------------------------------------------- ideas (C6)
@@ -429,6 +489,7 @@ export interface NicheDoctrine {
   weekReplyTargetPct: number;
   targetBandMinX: number;
   targetBandMaxX: number;
+  reciprocityTargetMin: number;
 }
 
 export interface Niche {
@@ -807,10 +868,17 @@ export interface BatchReplyTweet {
   author: string;
   text: string;
   url?: string;
-  // 'manual' = a ⊕ pinned tweet (RU.8); carried through so radar_drafts.band
-  // records it (queue metadata), never sent to Grok.
-  band?: 'hot' | 'warm' | 'manual';
+  // 'manual' = a ⊕ pinned tweet (RU.8), 'roster' = a quiet post by someone in my
+  // circle (GT.8); carried through so radar_drafts.band records it (queue
+  // metadata), never sent to Grok.
+  band?: 'hot' | 'warm' | 'manual' | 'roster';
   signals?: TweetSignals;
+  // RC.2/RC.4 — the 0–100 reply-payoff score the curation pass gave this tweet,
+  // stored on radar_drafts so "did curation pick better tweets?" is answerable
+  // later. Storage metadata like band/signals: it never reaches the prompt.
+  // Omitted (not 0) when this draft didn't come through a curated pass — the
+  // column's whole value dies if "graded 0" and "never graded" collapse.
+  curationScore?: number;
 }
 
 export interface BatchReplyGenerateBody {
@@ -832,6 +900,52 @@ export interface BatchReplyResponse {
   replies: BatchReplyItem[];
   count: number;
   requested: number;
+  costUsd: number;
+  model: string;
+  requestId: string | null;
+}
+
+// Curated drafting (RC.3/RC.4): one cheap scoring call in FRONT of the paid
+// batch draft, so the drafting money goes to the best N of a long queue instead
+// of the newest N. Mirrors POST /x/replies/curate field-for-field. The call
+// writes nothing — only the panel owns the session queue, so acting on `drop`
+// (dismissing) and on `keep` (drafting) is the panel's job.
+export interface CurateTweet {
+  tweetId: string;
+  handle: string;
+  author: string;
+  text: string;
+  url?: string;
+}
+
+export interface CurateBody {
+  tweets: CurateTweet[];
+  model?: string;
+  provider?: 'grok' | 'openrouter';
+  reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+}
+
+export interface CurateScoredItem {
+  tweetId: string;
+  /** Reply payoff, integer 0–100. */
+  score: number;
+  /** Filler not worth a reply at any score — always dropped. */
+  lowValue: boolean;
+  /** One sentence naming what decided the score. Not rendered in v1. */
+  reason: string;
+}
+
+export interface CurateResponse {
+  /** Verdicts, anchored to the ids we asked about (first occurrence wins). */
+  scored: CurateScoredItem[];
+  /** Ids to draft, **best first** — so trimming the tail trims the weakest. */
+  keep: string[];
+  /** Ids to dismiss: every lowValue post plus everything past the cut. */
+  drop: string[];
+  /** Asked-for ids the model never scored (a truncated response). Left alone:
+   *  a degraded response costs coverage, never queue rows. */
+  unscored: string[];
+  keepTarget: number;
   costUsd: number;
   model: string;
   requestId: string | null;
@@ -1074,6 +1188,17 @@ export interface PinnedWatch {
   } | null;
 }
 
+// GT.4: a follower milestone crossed in the last 3 days, or null the rest of
+// the time. The server only reports a crossing it witnessed (a snapshot below
+// the rung precedes the one that reaches it), so a fresh install doesn't
+// announce a milestone it merely inherited. `followers` is the count on the
+// crossing snapshot — all three fields describe one event.
+export interface MilestoneWatch {
+  milestone: number;
+  crossedOn: string;
+  followers: number;
+}
+
 // GR.6: the activity monitor's alerts, mirrored from `src/x/monitor.ts` (§5
 // build isolation — the extension never imports server modules). At most one
 // alert per rule, so `rule` is a safe React key; sorted most-severe first.
@@ -1169,6 +1294,8 @@ export interface Brief {
     conversion?: { d7: ConversionWindow; d28: ConversionWindow };
   };
   pinnedWatch: PinnedWatch;
+  // GT.4, same predates-the-server tolerance: null on any ordinary day.
+  milestoneWatch?: MilestoneWatch | null;
   // Optional: absent when the deployed server predates GR.6 — the panel must
   // tolerate a brief payload without it rather than crash (the S0.1 precedent).
   monitor?: BriefMonitor;
@@ -1215,7 +1342,8 @@ export interface Brief {
 
 // -------------------------------------------------------------- quests (C9)
 
-export type QuestKey = 'replies' | 'original' | 'targets' | 'loop' | 'launch';
+// Mirrors QUEST_KEYS in src/x/quests.ts (GT.7 added `reciprocity`).
+export type QuestKey = 'replies' | 'original' | 'targets' | 'loop' | 'launch' | 'reciprocity';
 
 export interface Quest {
   key: QuestKey;
@@ -1695,6 +1823,84 @@ export interface PlaybookModelCell extends PlaybookCell {
   model: string;
 }
 
+export interface PlaybookFormatCell extends PlaybookCell {
+  format: PostFormat;
+}
+
+export interface PlaybookCoachScoreCell extends PlaybookCell {
+  band: CoachBand;
+}
+
+export interface PlaybookJudgeBandCell extends PlaybookCell {
+  band: JudgeVerdictLabel;
+}
+
+/** SC.7 — `GET /x/coach/lexicon`. The two term lists `scoreDraft` takes as its
+ *  `lexicon` option (a superset of `CoachLexicon`: `niche` is provenance only),
+ *  derived server-side from the active niche + channels + pillars. */
+export interface CoachLexiconResponse {
+  niche: string;
+  specificTerms: string[];
+  tribeTerms: string[];
+}
+
+/** SC.6 — `GET /x/posts/cooldowns`. One cell per format published inside the
+ *  window, in `POST_FORMATS` cascade order. Mirrors the wire shape of
+ *  `src/shared/postCooldown.ts` (which the panel never builds, only reads):
+ *  `lastPostedAt` is an ISO string here because it crossed JSON.
+ *
+ *  `exempt` marks the three fallback labels that mean "no format detected" and
+ *  can therefore never warn — read it instead of keeping a copy of the list, or
+ *  the panel and the server will disagree about what counts as a shape. */
+export type CooldownStatus = 'clear' | 'warming' | 'cooldown';
+
+export interface CooldownCell {
+  format: PostFormat;
+  count: number;
+  status: CooldownStatus;
+  exempt: boolean;
+  lastPostedAt: string;
+  exampleText: string;
+}
+
+export interface CooldownsResponse {
+  windowDays: number;
+  warmingAt: number;
+  cooldownAt: number;
+  cells: CooldownCell[];
+}
+
+/** SC.8 — `GET /x/coach/reach`. One cell per format, always all 14, in
+ *  `POST_FORMATS` cascade order. Mirrors `src/x/coach/reach.ts`; the panel reads
+ *  finished cells and does no arithmetic, so no shim ships for that module.
+ *
+ *  `weightSource` is the whole contract: `'insufficient'` cells carry `null` in
+ *  every numeric field because there is no seed table to fall back on — a format
+ *  we have not measured has no band, not a default one. Render `n` (and `minN`)
+ *  to say how far off it is; never invent the rest. */
+export interface ReachCell {
+  format: PostFormat;
+  n: number;
+  exempt: boolean;
+  weightSource: 'fitted' | 'insufficient';
+  /** Absolute views, `[p25, p75]` of the outcomes that did not escape. */
+  stallRange: [number, number] | null;
+  escapeThreshold: number | null;
+  /** 0–1. */
+  escapeProbability: number | null;
+  p50Multiplier: number | null;
+}
+
+export interface ReachFit {
+  base: number | null;
+  measuredPosts: number;
+  fittedPosts: number;
+  minN: number;
+  escapeMultiple: number;
+  baseWindow: number;
+  cells: ReachCell[];
+}
+
 // Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
 // no tweet time, so no age and no velocity to classify with; it never folds
 // into the null band, which does mean "judged not worth replying to".
@@ -1799,6 +2005,49 @@ export interface Playbook {
     totalMeasured: number;
     viewsLift: number | null;
     profileVisitsLift: number | null;
+  };
+  // Post format × outcome (SC.5): the fourth axis — pillar = topic, register =
+  // tone, angle = reply stance, FORMAT = structure. Classified at read time from
+  // posts_published.text, so it has n on day one. Cells in cascade order, only
+  // for formats that occur; no lift line (no canonical baseline pair).
+  formatEffectiveness: {
+    cells: PlaybookFormatCell[];
+    totalPosted: number;
+    totalMeasured: number;
+  };
+  // The coach's own judge (SC.5): does the score the Composer shows predict
+  // anything? Bands partition every original; `clean`/`flagged` is the same
+  // corpus split on fix count, which is the question the band alone can't answer
+  // (a 90-scoring draft can still carry one red fix row).
+  coachScoreEffectiveness: {
+    cells: PlaybookCoachScoreCell[];
+    clean: PlaybookCell;
+    flagged: PlaybookCell;
+    totalPosted: number;
+    totalMeasured: number;
+    spread: number | null;
+    profileVisitsSpread: number | null;
+    spreadBands: { high: CoachBand; low: CoachBand } | null;
+    fixSpread: number | null;
+    fixProfileVisitsSpread: number | null;
+  };
+  // Does the LLM judge predict anything (JD.7)? The same own originals bucketed
+  // by the verdict band the judge gave that EXACT text — the link is a read-time
+  // hash, so a post edited after judging reads as `unjudged` (its own bucket,
+  // never folded into a band). `approved`/`rejected` is the same judged rows
+  // split two ways, which clears the gate at half the sample.
+  judgeEffectiveness: {
+    cells: PlaybookJudgeBandCell[];
+    unjudged: PlaybookCell;
+    approved: PlaybookCell;
+    rejected: PlaybookCell;
+    totalPosted: number;
+    totalMeasured: number;
+    spread: number | null;
+    profileVisitsSpread: number | null;
+    spreadBands: { high: JudgeVerdictLabel; low: JudgeVerdictLabel } | null;
+    approvedSpread: number | null;
+    approvedProfileVisitsSpread: number | null;
   };
   // Reply-latency × outcome (§S0.5): grades the doctrine's "reply early" bet.
   // `early` = replied <15m, `late` = replied ≥1h; lift only when both clear the
@@ -2023,16 +2272,25 @@ export interface SettingsResetResult {
 
 /** The per-list jitter knobs. A stored config is ALWAYS fully normalized by the
  *  server, so a non-null value here has every field. `null` on a list means the
- *  engine defaults apply — PATCH `{humanizer:{}}` to materialize them. */
-export interface HumanizerConfig {
-  prefixes: string[];
-  suffixes: string[];
-  prefixChance: number;
-  suffixChance: number;
-  lowercaseChance: number;
-  dropPeriodChance: number;
-  typoChance: number;
+ *  engine defaults apply — PATCH `{humanizer:{}}` to materialize them.
+ *
+ *  HM.3: re-exported from the `../humanize.ts` shim rather than declared here —
+ *  the panel now RUNS that engine (Radar picks), so a hand-mirrored copy of the
+ *  seven fields could drift from the module doing the work (§7 rule 4c, the
+ *  JD.6 `JudgeVerdict` precedent). Type-only, so nothing is bundled. */
+export type { HumanizerConfig };
+
+// HM.2/HM.3 — the PROJECT-level humanizer: one server-owned `app_settings` row
+// (`GET/PATCH/DELETE /x/humanizer`) that the Radar's pick path reads. A sibling
+// of the per-list configs above, never a replacement — lists keep their own.
+export interface HumanizerSettings extends HumanizerConfig {
+  /** Opt-in: the Radar checkbox defaults OFF. */
+  enabled: boolean;
 }
+
+/** PATCH is strict per field server-side — a bad value 400s (`invalid_enabled`,
+ *  `invalid_prefixes`, `invalid_typo_chance`, …), it never silently falls back. */
+export type HumanizerPatchBody = Partial<HumanizerSettings>;
 
 export type ReplyTemplateVar = 'name' | 'first_name' | 'handle';
 export type ReplyListItemSource = 'manual' | 'ai';

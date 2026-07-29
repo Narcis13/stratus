@@ -10,6 +10,7 @@ import {
   commitments,
   meGoals,
   mentions,
+  people,
   postsPublished,
   replyDrafts,
   scheduledPosts,
@@ -17,7 +18,7 @@ import {
 } from '../db/schema.ts';
 import { localDayKey } from '../quests.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
-import { brief } from './brief.ts';
+import { MILESTONES, brief } from './brief.ts';
 
 const app = new Hono();
 app.route('/x', brief);
@@ -92,9 +93,16 @@ interface CommitmentBlock {
   debt: { missedLast7: number; missedLast30: number; trackedLast7: number; tier: number };
 }
 
+interface MilestoneWatchBody {
+  milestone: number;
+  crossedOn: string;
+  followers: number;
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
   pinnedWatch: PinnedWatchBody;
+  milestoneWatch: MilestoneWatchBody | null;
   monitor: MonitorBlock;
   replyQuota: { postedToday: number; target: { min: number; max: number } };
   today: {
@@ -179,10 +187,17 @@ describe('brief quests (C9)', () => {
     await db.delete(scheduledPosts).where(inArray(scheduledPosts.id, SLOT_IDS));
   });
 
-  test('quest block has all five quests and reads the seeded rows', async () => {
+  test('quest block has all six quests and reads the seeded rows', async () => {
     const body = await getBrief();
     const byKey = new Map(body.quests.items.map((q) => [q.key, q]));
-    expect([...byKey.keys()].sort()).toEqual(['launch', 'loop', 'original', 'replies', 'targets']);
+    expect([...byKey.keys()].sort()).toEqual([
+      'launch',
+      'loop',
+      'original',
+      'reciprocity',
+      'replies',
+      'targets',
+    ]);
 
     expect(byKey.get('original')?.done).toBe(true);
     expect(byKey.get('replies')?.n).toBeGreaterThanOrEqual(1);
@@ -192,6 +207,23 @@ describe('brief quests (C9)', () => {
     // A launch happened and a reply was pasted inside its window.
     expect(byKey.get('launch')?.done).toBe(true);
     expect(byKey.get('launch')?.target).toBe(1);
+
+    // GT.7 — wire shape only: other test files seed `people`, so whether this
+    // DB has a circle depends on file order (D151d). What is always true is
+    // that a reciprocity reply IS a posted reply, and that an empty circle is
+    // vacuously done with a note.
+    const recip = byKey.get('reciprocity');
+    expect(recip?.n).toBeLessThanOrEqual(byKey.get('replies')?.n ?? 0);
+    if (recip?.target === 0) {
+      expect(recip.done).toBe(true);
+      expect(recip.note).toContain('circle');
+    } else {
+      expect(recip?.target).toBe(5); // the shipped reciprocityTargetMin default
+      // A circle exists, so the only note that may fire is the first-contacts
+      // one — and only while nothing has landed on a member yet.
+      if (recip?.n === 0) expect(recip.note).toContain('new faces');
+      else expect(recip?.note).toBeNull();
+    }
   });
 
   test('today.gaps are best-times-annotated objects, sorted highest-value first (S0.4)', async () => {
@@ -226,6 +258,23 @@ describe('brief quests (C9)', () => {
       expect(w.stale).toBe(false);
       expect(w.outperformer).toBeNull();
       expect(w.since).toBeNull();
+    }
+  });
+
+  test('carries the GT.4 milestone watch, silent or well-formed', async () => {
+    const body = await getBrief();
+    // The key is always present — the Today card keys off null vs object.
+    expect('milestoneWatch' in body).toBe(true);
+    const w = body.milestoneWatch;
+    // Not asserted null: every suite in this run shares one in-memory DB and
+    // four of them seed `account_snapshots`, so whether a rung looks freshly
+    // crossed here depends on file order. Behaviour is pinned in the pure
+    // `buildMilestoneWatch` tests; this asserts the wire shape.
+    if (w !== null) {
+      expect(MILESTONES).toContain(w.milestone as (typeof MILESTONES)[number]);
+      expect(Number.isNaN(Date.parse(w.crossedOn))).toBe(false);
+      expect(typeof w.followers).toBe('number');
+      expect(w.followers).toBeGreaterThanOrEqual(w.milestone);
     }
   });
 
@@ -455,5 +504,59 @@ describe('brief honors store settings (UI.2)', () => {
     // defaults — which proves the store value reached the route.
     const anchors = JSON.stringify(body.today.anchors);
     expect([JSON.stringify([7, 11, 15]), JSON.stringify([6, 10, 14, 17])]).toContain(anchors);
+  });
+});
+
+// GT.7 — declared LAST on purpose: it is the only describe in this file that
+// writes a `people` row, and `people` is shared with every suite that runs
+// after it. Both fixtures are torn down in a try/finally inside the test as
+// well as afterAll, so nothing survives even a failed assertion.
+describe('brief reciprocity quest (GT.7)', () => {
+  const HANDLE = 'gt7_brief_pal'; // ≤15 chars — longer handles are silently skipped
+  const DRAFT_SOURCE_ID = '97000000000000077';
+
+  afterAll(async () => {
+    await db.delete(people).where(eq(people.handle, HANDLE));
+    await db.delete(replyDrafts).where(eq(replyDrafts.sourceTweetId, DRAFT_SOURCE_ID));
+  });
+
+  test('a posted reply to someone at stage ≥ engaged counts toward the quest', async () => {
+    const before = await getBrief();
+    const baseline = before.quests.items.find((q) => q.key === 'reciprocity')?.n ?? 0;
+    try {
+      await db.insert(people).values({ handle: HANDLE, stage: 'engaged' });
+      await db.insert(replyDrafts).values({
+        sourceTweetId: DRAFT_SOURCE_ID,
+        // Stored with the display casing on purpose: membership is matched
+        // lowercased on both sides, and a casing fork would silently zero this.
+        sourceAuthorUsername: 'GT7_Brief_Pal',
+        sourceText: 'gt7 source',
+        sourceUrl: `https://x.com/${HANDLE}/status/${DRAFT_SOURCE_ID}`,
+        contextSnapshot: {},
+        replyText: 'gt7 reply',
+        model: 'test',
+        status: 'posted',
+        updatedAt: new Date(),
+      });
+
+      const body = await getBrief();
+      const q = body.quests.items.find((k) => k.key === 'reciprocity');
+      expect(q?.n).toBe(baseline + 1);
+      // A circle now exists, so the quest is live rather than vacuous.
+      expect(q?.target).toBe(5);
+      expect(q?.note).toBeNull();
+      expect(q?.label).toBe('5 replies to your people');
+
+      // GT.7's deviation, end to end: promote the same person AS OF TODAY —
+      // which is what actually happens when a reply to a stranger is confirmed
+      // posted — and the very same reply stops counting. Without this the quest
+      // would grade every first contact as reciprocity (D158).
+      await db.update(people).set({ stageUpdatedAt: new Date() }).where(eq(people.handle, HANDLE));
+      const after = await getBrief();
+      expect(after.quests.items.find((k) => k.key === 'reciprocity')?.n).toBe(baseline);
+    } finally {
+      await db.delete(people).where(eq(people.handle, HANDLE));
+      await db.delete(replyDrafts).where(eq(replyDrafts.sourceTweetId, DRAFT_SOURCE_ID));
+    }
   });
 });

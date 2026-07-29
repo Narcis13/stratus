@@ -48,6 +48,28 @@ export interface PersonChip {
 // marker, ↩ owed (unanswered mentions I haven't cleared), and a `9d` neglect
 // mark on targets/allies I've gone quiet on. Order is fixed: stage, target,
 // owed, neglected.
+// "My people" (GT.8) — the same membership the server's reply-band gate carves
+// out in `src/x/people/reciprocity.ts` (`loadReciprocityHandles`, UNSCOPED: the
+// Radar asks "is this person mine right now", which is the gate's question, not
+// the quest's). Applied to the glance map it yields exactly that set — glance is
+// every non-retired people row plus the same bare-target backfill rankmap uses —
+// so this predicate is where the two sides agree. `RECIPROCITY_MIN_STAGE` lives
+// there and carries the twin comment; move one, move both.
+//
+// PRESENCE IN THE MAP IS NOT MEMBERSHIP, which is the trap this exists to close:
+// glance holds every stage, and ambient hover capture (AX.1) makes most of the
+// timeline `noticed` — on the real DB 730 of the 730 `noticed` rows are
+// hover-only. That measurement is what set the server's floor at `engaged`, and
+// it is the same reason the stage chip above starts there.
+//
+// An unknown stage string ranks -1 and reads as "not mine" — the gate's refusal
+// default, which is the safe direction for a client cache that tolerates a
+// server growing a stage.
+export function isReciprocityPerson(entry: GlanceEntry | undefined): boolean {
+  if (!entry) return false;
+  return entry.isTarget || STAGE_ORDER.indexOf(entry.stage) >= ENGAGED_RANK;
+}
+
 export function buildPersonChips(entry: GlanceEntry, nowMs: number): PersonChip[] {
   const chips: PersonChip[] = [];
 

@@ -21,6 +21,7 @@ import {
   launchIsLive,
 } from '../shared/launch.ts';
 import type { LaunchDismiss, LaunchSync } from '../shared/messages.ts';
+import { CoachChip } from './CoachChip.tsx';
 import { QuickReplyPicker } from './QuickReplyPicker.tsx';
 import { ApiError, type PostContext, type ReplyDraft, api } from './api.ts';
 import type { Settings } from './storage.ts';
@@ -134,11 +135,18 @@ export function LaunchRoomSection({
       </a>
 
       <ul className="launch-checklist">
+        {!active.linkInFirstReply && (
+          <li>Seed the first comment yourself — extend the post, don't restate it</li>
+        )}
         <li>Reply to every early commenter (in X — paste, human words)</li>
         {active.linkInFirstReply && <li>Pin your first reply — the link lives there</li>}
       </ul>
 
       {error && <div className="error">{error}</div>}
+
+      {!active.linkInFirstReply && (
+        <SeedComment active={active} settings={settings} onError={setError} />
+      )}
 
       <div className="launch-repliers-head">
         <h4>Early repliers {replies.length > 0 ? `(${replies.length})` : ''}</h4>
@@ -173,6 +181,118 @@ export function LaunchRoomSection({
         </ul>
       )}
     </section>
+  );
+}
+
+// GT.3: the first comment under my own post is mine to write, and the measured
+// pattern is a comment that EXTENDS the post (the detail that didn't fit, a
+// number, the counter-case) rather than restating it. It drafts through the
+// same pipeline as an early replier — my own post as the context, zero metrics
+// so there is nothing for the band gate to read (hence `override`), no `parent`
+// block since the post IS the target — and pasting stays manual: the $0.015 API
+// self-reply is deliberately not used (§7.28).
+//
+// The author is a placeholder on purpose: nothing in stratus stores the
+// account's own @handle (the system is keyed on SELF_X_USER_ID and its own
+// posts link through /i/web/status/), so the post is handed to the model as
+// mine by name, and the steer says so outright — without it the reply prompt
+// would write a reply TO the author instead of a comment under my own post.
+const SEED_HANDLE = 'me';
+const SEED_AUTHOR = 'my own post';
+const SEED_STEER =
+  'This is my own post and I am writing the first comment under it myself: extend the post with one concrete detail it left out. Never restate it, never address its author, no praise.';
+
+function SeedComment({
+  active,
+  settings,
+  onError,
+}: {
+  active: ActiveLaunch;
+  settings: Settings;
+  onError: (msg: string | null) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState<ReplyDraft | null>(null);
+  const [variantIdx, setVariantIdx] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const generate = async (): Promise<void> => {
+    setBusy(true);
+    onError(null);
+    try {
+      const context: PostContext = {
+        tweetId: active.tweetId,
+        handle: SEED_HANDLE,
+        author: SEED_AUTHOR,
+        text: active.text,
+        url: active.url,
+        postedAt: active.firedAt,
+        metrics: { views: 0, replies: 0, reposts: 0, likes: 0 },
+        topComments: [],
+      };
+      const d = await api.replies.generate(settings, {
+        context,
+        idea: SEED_STEER,
+        override: true,
+      });
+      setDraft(d);
+      setVariantIdx(0);
+      setCopied(false);
+    } catch (e) {
+      onError(e instanceof ApiError ? `Seed draft failed: ${e.message}` : 'Seed draft failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const variants = draft?.variants ?? null;
+  const draftText = variants?.[variantIdx]?.text ?? draft?.replyText ?? null;
+
+  const copy = async (): Promise<void> => {
+    if (!draft || draftText === null) return;
+    await navigator.clipboard.writeText(draftText);
+    setCopied(true);
+    api.replies.patch(settings, draft.id, { status: 'copied' }).catch(() => {});
+  };
+
+  return (
+    <div className="launch-seed">
+      <div className="launch-seed-head">
+        <h4>First comment</h4>
+        {draft === null ? (
+          <button
+            type="button"
+            disabled={busy}
+            title="One Grok call (~$0.002–$0.004) — a comment that extends your post. You paste it."
+            onClick={() => void generate()}
+          >
+            {busy ? 'Drafting…' : 'Draft seed comment'}
+          </button>
+        ) : (
+          <button type="button" disabled={draftText === null} onClick={() => void copy()}>
+            {copied ? 'Copied ✓' : 'Copy'}
+          </button>
+        )}
+      </div>
+      {variants && variants.length > 1 && (
+        <div className="reply-variants">
+          {variants.map((v, i) => (
+            <button
+              key={v.angle + String(i)}
+              type="button"
+              className={`reply-variant${i === variantIdx ? ' active' : ''}`}
+              onClick={() => {
+                setVariantIdx(i);
+                setCopied(false);
+              }}
+            >
+              {v.angle} <CoachChip text={v.text} />
+            </button>
+          ))}
+        </div>
+      )}
+      {draftText && <div className="launch-reply-draft">{draftText}</div>}
+    </div>
   );
 }
 

@@ -204,7 +204,7 @@ describe('registry adapter + grouping', () => {
     const keysOf = (id: string) => groups.find((g) => g.id === id)?.defs.map((d) => d.key) ?? [];
 
     expect(keysOf('gates')).toEqual(['x.gates.minCellN', 'x.gates.bestTimeMinN']);
-    expect(keysOf('radar')).toEqual(['x.radar.draftTtlH']);
+    expect(keysOf('radar')).toEqual(['x.radar.draftTtlH', 'x.radar.curatedCount']);
     expect(keysOf('workers')).toEqual([
       'x.workers.dailyMetricsHourUtc',
       'x.workers.publisherIntervalSec',
@@ -303,6 +303,15 @@ describe('registry adapter + grouping', () => {
     expect(settingsRegistry.validate('x.gates.bestTimeMinN', 0)).toBe('out_of_range');
     expect(settingsRegistry.validate('x.radar.draftTtlH', 168)).toBeNull();
     expect(settingsRegistry.validate('x.radar.draftTtlH', 169)).toBe('out_of_range');
+    // RC.3: the curated size shares the batch cap's ceiling on purpose — the
+    // effective size is the lower of the two, so a curated set that could
+    // outgrow the cap would be a number the drafting call silently ignores.
+    expect(settingsRegistry.validate('x.radar.curatedCount', 5)).toBeNull();
+    expect(settingsRegistry.validate('x.radar.curatedCount', 4)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.radar.curatedCount', 50)).toBeNull();
+    expect(settingsRegistry.validate('x.radar.curatedCount', 51)).toBe('out_of_range');
+    const defs = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
+    expect(defs.get('x.radar.curatedCount')?.max).toBe(defs.get('x.ai.batchReplyCap')?.max);
     expect(settingsRegistry.validate('x.workers.dailyMetricsHourUtc', 23)).toBeNull();
     expect(settingsRegistry.validate('x.workers.dailyMetricsHourUtc', 24)).toBe('out_of_range');
     expect(settingsRegistry.validate('x.workers.publisherIntervalSec', 29)).toBe('out_of_range');
@@ -346,6 +355,7 @@ describe('registry adapter + grouping', () => {
       'x.band.tooSmallViews',
       'x.band.tooSmallVpm',
       'x.gates.bestTimeMinN',
+      'x.radar.curatedCount',
       'x.ai.batchReplyCap',
       'x.mentions.panelRefreshCap',
       'x.display.doNextCap',

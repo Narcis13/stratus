@@ -1,4 +1,5 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CoachChip } from './CoachChip.tsx';
 import { ReplyListsPanel } from './ReplyLists.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
@@ -552,7 +553,7 @@ function DraftEditor({
               disabled={isTerminal || busy !== null}
               title={v.text}
             >
-              V{i + 1} · {v.angle}
+              V{i + 1} · {v.angle} <CoachChip text={v.text} />
             </button>
           ))}
         </div>

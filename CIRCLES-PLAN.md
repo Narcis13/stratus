@@ -366,6 +366,19 @@ a real exchange.
 **Cost:** ~few hundred extra input tokens per call on existing Grok spend (~+$0.0005).
 **Done when:** a reply to a `mutual`-stage person visibly builds on the prior exchange.
 
+> **The people layer now also decides whether the draft happens at all (GT.6/GT.8, 2026-07-27).**
+> Relationship-aware drafting was always about *how* a reply reads; **Mika growth tactics** made it
+> about *whether the band gate lets you draft*. A quiet post by someone at stage ≥ `engaged` — or on
+> the 2–10× target roster — clears the gate without the override dance, stamped
+> `contextSnapshot.gateBypass = 'roster'`, and the same set makes those people's fresh posts enter the
+> Radar queue with a **`your circle`** chip regardless of heat. The floor is deliberately `engaged`
+> ("I have actually replied to them") and not `noticed`: ambient hover-card capture files most of the
+> timeline as `noticed`, so that floor would have removed the money gate from ~96% of the deliberate
+> reply flow instead of carving out a lane. **`src/x/people/reciprocity.ts` is the one definition** —
+> the gate, the quest and the client-side Radar predicate all read it (or reproduce it with a twin
+> comment), because a chip that promises a draft the gate then refuses is the UI.7 badge-vs-gate fork
+> with a new coat. See `docs/replies-tab.md` §"Your people are exempt" and `docs/radar-tab.md`.
+
 ---
 
 ## Phase C4 — The Playbook (close the learning loop)
@@ -612,6 +625,18 @@ own-post performance of that topic on one screen.
 **Tests:** quest computation; digest fact-builder; icebreaker grounding renderer.
 **Cost:** ~$0.05/week all-in at heavy use.
 **Done when:** Sunday's panel reads like a note from a coach who watched your week.
+
+> **Shipped, plus a sixth quest the plan didn't anticipate (GT.7, 2026-07-27).** The five quests above
+> are live. **Mika growth tactics** added `reciprocity` — *"N replies to your people"* — the visible half
+> of the reciprocity lane (`plans/2026-07-22-mika-growth-tactics.md`; the gate half is the C1/C3 note
+> below). Its target is **niche-owned** (`doctrine.reciprocityTargetMin`, default 5), like the reply
+> quota and unlike the four `x.quests.*` knobs — a second registry knob for the same number could
+> silently disagree with the first. The counting rule is the part worth remembering: membership is
+> `stage ≥ engaged`, which *means* "I have posted a reply to them", so the act being counted is what
+> creates the membership. Counted plainly, the quest was provably a copy of the *Quality replies* quest
+> (over the whole corpus, every posted reply was a first contact). It counts the set **as of the day's
+> start** instead — one rule at two instants — so it measures going back to the same people, which is
+> the thing that compounds. See `docs/today-tab.md` §3 and `docs/PHASE-HISTORY.md` §"Mika growth tactics".
 
 ---
 

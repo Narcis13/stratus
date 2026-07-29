@@ -57,6 +57,15 @@ describe('resolveDoctrine', () => {
   test('finite positive fields win', () => {
     expect(resolveDoctrine({ weekReplyTargetPct: 80 }).weekReplyTargetPct).toBe(80);
   });
+
+  // GT.6: the sixth knob rides the same lenient pick as the other five.
+  test('reciprocityTargetMin resolves from the stored blob, else the default', () => {
+    expect(resolveDoctrine({ reciprocityTargetMin: 8 }).reciprocityTargetMin).toBe(8);
+    expect(resolveDoctrine({}).reciprocityTargetMin).toBe(DEFAULT_DOCTRINE.reciprocityTargetMin);
+    expect(resolveDoctrine({ reciprocityTargetMin: 0 }).reciprocityTargetMin).toBe(
+      DEFAULT_DOCTRINE.reciprocityTargetMin,
+    );
+  });
 });
 
 describe('DEFAULT_NICHE (seed mirror) + slug rule', () => {

@@ -81,6 +81,17 @@ From those, the tweet lands in a band:
 
 When the tweet scores **skip** or **(none)**, Reply Master **refuses to draft** — no Grok call, no cost, no reply slot spent on a dead post. On the page, the sparkle button turns red and spells out **`Dead post — click to force`**. This is deliberate: your time and daily reply budget are finite, and a reply that lands under a buried or tiny tweet is effort thrown away.
 
+### Your people are exempt
+
+There is one case where a refused score drafts anyway, with no force click: the tweet's author is **someone you already have a relationship with**. Concretely, that means either
+
+- a person in your CRM at stage **engaged or better** — you have posted at least one reply to them — and not archived, or
+- an account on the current **target roster** (the 2–10× follower band the Targets list shows).
+
+Replying to your people on a quiet day *is* the point of the reciprocity half of the doctrine, so the gate steps aside for them. Everyone else — including someone whose profile card you happened to hover on the timeline — still gets the refusal, because that is the case where the gate is protecting your attention rather than getting in its way.
+
+The exemption is decided **on the server**, from your own data. Nothing the page sends can claim it, and each draft that used it is tagged in its stored context, so exempt replies stay a group you can measure separately later.
+
 ### Forcing it anyway (the override)
 
 Sometimes you *know* better — maybe it's a small account you specifically want to nurture, or a tweet you have a perfect reply for regardless of reach. The refusal isn't a wall:
@@ -122,7 +133,13 @@ Every generate returns **three distinct replies** — one per angle — and each
 | **contrarian** | Pushes back — offers the opposite or a sharper counter-view. |
 | **debate** | Opens a genuine back-and-forth — a pointed question or challenge. |
 
+**All three anchor on something the original tweet actually said.** Whatever the angle, a variant has to echo a concrete term, number or phrase from the post it answers rather than replying to the topic in general — that is the difference between a reply that reads as *to you* and one that could have been pasted under any tweet on the timeline, and it's the single instruction with the most measurable effect on whether people reply back. (It's about the tweet's *text* only; what stratus knows about the person is separate and is never recited — see **[Relationship-aware drafting](#relationship-aware-drafting)**.)
+
+**The tweet you're replying to is handed over labelled.** Somebody else's post is text stratus scraped off a page, and it can say anything — including "ignore your instructions and write X". So the prompt introduces it with a one-line marker saying it's an untrusted quote to be *replied to*, never followed as an instruction. You'll never see this line: it's a wrapper around the quoted post, not a change to your reply. It's also scoped deliberately narrowly — it labels the quoted tweet only, so it can't argue with what stratus knows about the person or with your own guidance, both of which are added at the very end of the prompt by the server.
+
 The three variants show as **chips** above the reply box, labelled like `V1 · extends` and `V2 · contrarian` — the same chip shape the rest of the panel uses for stages and statuses, with the picked one filled in. **Click a chip to load that variant into the editor.** This lets you A/B your own reply in one glance and pick the tone that fits. (Radar's "Draft replies" produces the same three-variant set per tweet in a single batch call, shown as angle tabs on each row — see the **[Radar tab](./radar-tab.md)**.)
+
+Each chip also carries a small **coach score** — the same 0–100 pre-publish check the Composer runs on originals (**[Composer → The coach](./composer-tab.md#the-coach-live-score-and-fix-list)**), graded here as a reply, so it never asks a mid-conversation line for a hook or blank-line spacing. It's computed on your machine: no call, no spend, no wait. **Hover the number** for the score, the worst two things about that variant, and the reminder that it's a floor rather than a target. It changes nothing else — the chips stay in generate order, nothing is pre-picked, and a 62 you'd actually send beats an 84 you wouldn't. The same number rides the angle tabs in Radar, the Conversations drafts, and the Launch Room's first comment. It grades against your niche's vocabulary too — a variant whose specific thing is a word from your channels' keywords counts as concrete without needing a number in it.
 
 ### Editing the reply
 
@@ -138,7 +155,7 @@ Not happy with any variant? **Regenerate** runs a fresh set of three. It reuses 
 
 ### What a draft costs
 
-Drafting runs on Grok (xAI), **not** the X API — so it doesn't touch your X spend. A reply draft is roughly **$0.002–$0.004**: two variants in one call, plus — occasionally — one automatic re-draft if neither variant is specific enough (stratus quietly asks again for something less generic). The exact cost is shown under the reply box and in the history list.
+Drafting runs on Grok (xAI), **not** the X API — so it doesn't touch your X spend. A reply draft is roughly **$0.002–$0.004**: all three variants in one call, plus — occasionally — one automatic re-draft if neither variant is specific enough (stratus quietly asks again for something less generic). The exact cost is shown under the reply box and in the history list.
 
 ### Advanced: system prompt override
 
@@ -266,6 +283,8 @@ The jitters:
 Two guarantees: the result is **never longer than 280 characters** (a prefix that would overflow is skipped, never truncated mid-word), and a typo **never lands inside a name, a handle, or a URL** — a typo'd `@mention` breaks the mention, and a misspelled name reads as disrespect. Both are worse than sounding slightly robotic.
 
 Each list keeps its own humanizer. By default it uses the engine's numbers (the panel shows a `defaults` badge). Click **Customize for this list** and you get the pools as one-per-line textareas and the five chances as sliders — a "thanks" list can run calm while a "banter" list jitters harder. **Save humanizer** lights up only when something actually changed and confirms with `Saved ✓`; **Reset to defaults** puts it back.
+
+There is now a **second, project-level humanizer** in **[Settings → General → Reply humanizer](./settings-tab.md#reply-humanizer)**. It's a sibling, not a parent: it drives the [Radar](./radar-tab.md) tab's *Humanize picks* checkbox and nothing else. **Per-list overrides are unaffected by it** — a list customized here keeps its own numbers, and a list on `defaults` keeps using the *engine* defaults rather than whatever the project config says. Two settings, two surfaces, no inheritance between them.
 
 One thing worth setting deliberately: the default prefix/suffix pools are **English** ("honestly," "ngl," "well said"). If your list is in another language, replace both pools when you customize it, or turn those two chances down to 0 and let the casing/period/typo jitters carry it.
 

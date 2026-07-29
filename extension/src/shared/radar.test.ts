@@ -2,15 +2,19 @@ import { describe, expect, test } from 'bun:test';
 import {
   RADAR_CAP,
   RADAR_DISMISSED_CAP,
+  RADAR_TTL_MS,
   type RadarDraftRow,
   type RadarSighting,
   type RankMap,
   appendDismissed,
+  coerceSightings,
   draftRowToSighting,
   groupQueue,
   isRadarSightings,
   mergeSightings,
+  partitionForCurate,
   personTierFor,
+  pruneStale,
   rankSightings,
   splitClicked,
   stampTiers,
@@ -160,6 +164,44 @@ describe('mergeSightings', () => {
     expect(merged).toHaveLength(RADAR_CAP);
     expect(merged.some((s) => s.tweetId === 'pinned')).toBe(true);
   });
+
+  test('a roster row (GT.8) is UPGRADED by a hot re-sight — the tweet caught fire', () => {
+    const quiet = sighting('1', { band: 'roster' });
+    const loud = sighting('1', { band: 'hot' });
+    expect(mergeSightings([quiet], [loud], [])[0]?.band).toBe('hot');
+  });
+
+  test('a roster re-sight never DOWNGRADES a real verdict (vpm decays with age)', () => {
+    // Same tweet, later scroll: it was hot at capture, has since gone quiet, and
+    // its author is in my circle. The queue must keep the verdict it earned.
+    const hot = sighting('1', { band: 'hot' });
+    const nowQuiet = sighting('1', { band: 'roster', lastSeenAt: '2026-06-10T11:00:00.000Z' });
+    const merged = mergeSightings([hot], [nowQuiet], []);
+    expect(merged[0]?.band).toBe('hot');
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z'); // everything else still refreshes
+  });
+
+  test('a manual pin still outranks a roster re-sight', () => {
+    const pinned = sighting('1', { band: 'manual' });
+    expect(mergeSightings([pinned], [sighting('1', { band: 'roster' })], [])[0]?.band).toBe(
+      'manual',
+    );
+  });
+
+  test('eviction drops roster captures before real verdicts (GT.8 queue pressure)', () => {
+    // The roster row is the FRESHEST of the lot and still goes first: a chatty
+    // circle must not push the day's loudest opportunities out of the buffer.
+    const roster = sighting('roster-1', {
+      band: 'roster',
+      lastSeenAt: '2026-06-10T23:59:00.000Z',
+    });
+    const warm = Array.from({ length: RADAR_CAP }, (_, i) =>
+      sighting(`warm-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
+    );
+    const merged = mergeSightings([roster], warm, []);
+    expect(merged).toHaveLength(RADAR_CAP);
+    expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
+  });
 });
 
 describe('appendDismissed', () => {
@@ -224,6 +266,49 @@ describe('rankSightings', () => {
     const rows = [sighting('1', { band: 'warm' }), sighting('2', { band: 'hot' })];
     rankSightings(rows);
     expect(rows[0]?.tweetId).toBe('1');
+  });
+
+  test('a roster capture (GT.8) ranks below warm WITHIN the same tier', () => {
+    // Same person, same tier — so the only thing separating these is the band,
+    // and the quiet one that is here for who posted it goes last. vpm would say
+    // the opposite if band didn't lead it.
+    const rows = [
+      sighting('roster-fast', {
+        band: 'roster',
+        personTier: 'target',
+        signals: { views: 80, replies: 0, ageMin: 1, vpm: 80, bait: false },
+      }),
+      sighting('warm-slow', {
+        band: 'warm',
+        personTier: 'target',
+        signals: { views: 600, replies: 4, ageMin: 120, vpm: 5, bait: false },
+      }),
+      sighting('hot-slow', {
+        band: 'hot',
+        personTier: 'target',
+        signals: { views: 900, replies: 9, ageMin: 200, vpm: 4, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
+      'hot-slow',
+      'warm-slow',
+      'roster-fast',
+    ]);
+  });
+
+  test('a roster capture from an ally still outranks a hot stranger (tier leads band)', () => {
+    const rows = [
+      sighting('hot-rando', {
+        band: 'hot',
+        signals: { views: 9000, replies: 60, ageMin: 6, vpm: 1500, bait: false },
+      }),
+      sighting('roster-ally', {
+        band: 'roster',
+        personTier: 'ally',
+        signals: { views: 40, replies: 0, ageMin: 12, vpm: 3, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['roster-ally', 'hot-rando']);
   });
 
   test('roster tier leads band/vpm/recency (S0.3)', () => {
@@ -357,13 +442,109 @@ describe('groupQueue', () => {
   });
 });
 
+describe('partitionForCurate (RC.4)', () => {
+  test('manual pins are never scored; every other band is', () => {
+    const fresh = [
+      sighting('pin-1', { band: 'manual' }),
+      sighting('hot-1', { band: 'hot' }),
+      sighting('warm-1', { band: 'warm' }),
+      // GT.8 roster rows ARE scored: they are in the queue for WHO posted them,
+      // and whether the post is worth replying to is a different question.
+      sighting('roster-1', { band: 'roster' }),
+    ];
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    expect(pinned.map((s) => s.tweetId)).toEqual(['pin-1']);
+    expect(scoreable.map((s) => s.tweetId)).toEqual(['hot-1', 'warm-1', 'roster-1']);
+    expect(skipped).toEqual([]);
+  });
+
+  test('a textless row is skipped whatever its band — including a pin', () => {
+    // An image-only tweet captures as `text: ''`. Scoring is text-only, and the
+    // server refuses an empty text for the whole request — one of these in the
+    // queue would 400 the entire pass if it rode along.
+    const fresh = [
+      sighting('img-1', { text: '' }),
+      sighting('img-2', { text: '   ' }),
+      sighting('pin-blank', { band: 'manual', text: '' }),
+      sighting('warm-1'),
+    ];
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    expect(pinned).toEqual([]);
+    expect(scoreable.map((s) => s.tweetId)).toEqual(['warm-1']);
+    expect(skipped.map((s) => s.tweetId)).toEqual(['img-1', 'img-2', 'pin-blank']);
+  });
+
+  test('the three buckets always sum to the input — a row can never vanish here', () => {
+    const fresh = [
+      sighting('a', { band: 'manual' }),
+      sighting('b', { band: 'hot' }),
+      sighting('c', { text: '' }),
+      sighting('d', { band: 'roster' }),
+    ];
+    const { pinned, scoreable, skipped } = partitionForCurate(fresh);
+    expect(pinned.length + scoreable.length + skipped.length).toBe(fresh.length);
+    expect([...pinned, ...scoreable, ...skipped].map((s) => s.tweetId).sort()).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+    ]);
+  });
+
+  test('queue order survives inside each bucket', () => {
+    const fresh = [sighting('z'), sighting('m'), sighting('a')];
+    expect(partitionForCurate(fresh).scoreable.map((s) => s.tweetId)).toEqual(['z', 'm', 'a']);
+  });
+
+  test('an empty queue partitions into three empty buckets', () => {
+    expect(partitionForCurate([])).toEqual({ pinned: [], scoreable: [], skipped: [] });
+  });
+});
+
 describe('isRadarSightings', () => {
   test('accepts a valid stored array and rejects junk', () => {
     expect(isRadarSightings([sighting('1')])).toBe(true);
+    expect(isRadarSightings([sighting('1', { band: 'manual' })])).toBe(true);
+    expect(isRadarSightings([sighting('1', { band: 'roster' })])).toBe(true); // GT.8
+    expect(isRadarSightings([{ ...sighting('1'), band: 'cold' }])).toBe(false);
     expect(isRadarSightings([])).toBe(true);
     expect(isRadarSightings(undefined)).toBe(false);
     expect(isRadarSightings([{ tweetId: 1 }])).toBe(false);
     expect(isRadarSightings([sighting('1'), { nope: true }])).toBe(false);
+  });
+});
+
+describe('coerceSightings', () => {
+  test('keeps the readable rows instead of nuking the whole buffer', () => {
+    const good = sighting('1');
+    expect(coerceSightings([good, { nope: true }, sighting('2')])).toEqual([good, sighting('2')]);
+    expect(coerceSightings([{ ...sighting('1'), band: 'cold' }])).toEqual([]);
+    expect(coerceSightings(undefined)).toEqual([]);
+    expect(coerceSightings('not an array')).toEqual([]);
+    expect(coerceSightings([])).toEqual([]);
+  });
+});
+
+describe('pruneStale', () => {
+  const now = Date.parse('2026-06-11T10:00:00.000Z');
+
+  test('drops sightings past the TTL and keeps the rest', () => {
+    const fresh = sighting('1', { lastSeenAt: '2026-06-11T09:30:00.000Z' });
+    const old = sighting('2', { lastSeenAt: '2026-06-10T09:00:00.000Z' }); // 25h
+    expect(pruneStale([fresh, old], now).map((s) => s.tweetId)).toEqual(['1']);
+  });
+
+  test('an unparseable lastSeenAt is kept, never silently dropped', () => {
+    const broken = sighting('3', { lastSeenAt: 'not a date' });
+    expect(pruneStale([broken], now)).toEqual([broken]);
+  });
+
+  test('the TTL is exactly RADAR_TTL_MS from lastSeenAt', () => {
+    const justInside = sighting('4', {
+      lastSeenAt: new Date(now - RADAR_TTL_MS + 1000).toISOString(),
+    });
+    const justOutside = sighting('5', { lastSeenAt: new Date(now - RADAR_TTL_MS).toISOString() });
+    expect(pruneStale([justInside, justOutside], now).map((s) => s.tweetId)).toEqual(['4']);
   });
 });
 

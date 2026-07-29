@@ -5,6 +5,7 @@ import {
   aiSettingsToForm,
   pricePerMillion,
 } from '../shared/aiSettings.ts';
+import { HumanizerCard } from './HumanizerCard.tsx';
 import { NicheCard } from './Niche.tsx';
 import { PromptsPanel } from './Prompts.tsx';
 import {
@@ -265,6 +266,8 @@ export function SettingsPanel(): JSX.Element {
               </label>
             </Section>
           </div>
+
+          <HumanizerCard settings={currentSettings} />
 
           <div className="panel">
             <Section title="Appearance">

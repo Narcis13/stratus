@@ -1,12 +1,20 @@
-import { type FormEvent, type JSX, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { COACH_BAND_LABEL, COACH_DISCLAIMER, type CoachCheck, scoreDraft } from '../postCoach.ts';
+import { FORMAT_LABELS, classifyFormat } from '../postFormat.ts';
 import { audienceScoreFor } from '../shared/activeTimes.ts';
 import type {
   AudienceCapture,
   BestTimeCell,
+  CooldownCell,
+  CooldownsResponse,
   PostPillar,
   PostRegister,
   PostStatus,
+  ReachCell,
+  ReachFit,
 } from '../shared/types.ts';
+import { COACH_BAND_TONE, COACH_TONE } from './CoachChip.tsx';
+import { JudgePanel } from './JudgePanel.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
@@ -19,6 +27,7 @@ import {
   type UpdateBody,
   api,
 } from './api.ts';
+import { useCoachLexicon } from './coachLexicon.ts';
 import {
   CADENCE_SETTING_KEYS,
   audiencePeakHours,
@@ -34,6 +43,7 @@ import {
 import {
   addDays,
   dateToLocalInput,
+  formatDayLabel,
   isoToLocalInput,
   localInputToIso,
   startOfLocalDay,
@@ -85,6 +95,77 @@ const CADENCE_NOTE =
   "These are the anchor hours, not the quota — how many originals a day you owe lives in Today's quests, and the reply band comes from your niche (Settings → General).";
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
+
+// SC.3 — the live coach recomputes on the debounced draft. Purely a React-churn
+// guard: `scoreDraft` is a few regexes over ≤1120 chars, and it never touches
+// the network, so there is nothing here to rate-limit.
+const COACH_DEBOUNCE_MS = 150;
+
+// The three tones the coach speaks in moved to CoachChip.tsx at SC.4, where the
+// reply-variant chips read the same two maps — the score pill, these rows and a
+// chip on another tab must not fork into three colour vocabularies. Band → tone
+// stays presentation only: NO surface sorts, gates, blocks or refuses on the
+// score (SC decision 4).
+
+// SC.6 — the cooldown line, one sentence inside the coach box. Two things it
+// deliberately does NOT do: block anything (Save never reads it) and speak
+// about a shape the classifier only guessed at (`exempt` cells are pinned
+// `clear` server-side, so a fallback label can never produce this line).
+function cooldownNote(cell: CooldownCell, windowDays: number): string {
+  const label = FORMAT_LABELS[cell.format];
+  const window = `in the last ${windowDays} days`;
+  return cell.status === 'cooldown'
+    ? `${label} · ${cell.count} ${window} — reach decays when the same shape repeats.`
+    : `${label} · ${cell.count} ${window}.`;
+}
+
+// SC.8 — the reach band: what this SHAPE has done against your own recent
+// baseline. Fitted on own posts or absent — there is no seed table, so below the
+// gate this says how far off the sample is rather than showing a softer number.
+// Exempt formats render nothing at all: they are not below the gate, they are
+// off the axis (the label means "no shape detected"), and an "insufficient data"
+// line there would promise a band that can never arrive.
+function reachNote(cell: ReachCell, minN: number): string {
+  const label = FORMAT_LABELS[cell.format];
+  if (cell.weightSource === 'insufficient') {
+    return `${label} · reach band: insufficient data (n=${cell.n} of ${minN}).`;
+  }
+  const [low, high] = cell.stallRange as [number, number];
+  const pct = Math.round((cell.escapeProbability ?? 0) * 100);
+  return `${label} · usually ${low.toLocaleString()}–${high.toLocaleString()} views · ${pct}% clear ${(cell.escapeThreshold ?? 0).toLocaleString()}.`;
+}
+
+function reachTitle(cell: ReachCell, fit: ReachFit): string {
+  const base = fit.base?.toLocaleString() ?? '—';
+  const provenance = `Fitted from ${cell.n} of your own ${FORMAT_LABELS[cell.format].toLowerCase()} posts, against a baseline of ${base} views (the median of your last ${fit.baseWindow}).`;
+  return cell.weightSource === 'fitted'
+    ? `${provenance}\n\nHistory for this shape, not a forecast for this draft — nothing here blocks Save.`
+    : `${cell.n} measured, ${fit.minN} needed. No estimate is shown below the gate: stratus fits these on your own posts and ships no borrowed numbers.`;
+}
+
+function cooldownTitle(cell: CooldownCell): string {
+  const when = new Date(cell.lastPostedAt);
+  const last = Number.isNaN(when.getTime()) ? '' : ` · last on ${formatDayLabel(when)}`;
+  const example = cell.exampleText.replace(/\s+/g, ' ').slice(0, 90);
+  return `${cell.count} published${last}\n"${example}"\n\nA count of what went out, not a verdict on this draft — nothing here blocks Save.`;
+}
+
+// One row per non-pass check. Filtered, never re-sorted — the engine emits its
+// checks in rule order (hygiene → craft → signal) and that order is the reading
+// order (SC.1).
+function CoachRows({ checks }: { checks: CoachCheck[] }): JSX.Element | null {
+  if (checks.length === 0) return null;
+  return (
+    <ul className="coach-rows">
+      {checks.map((c) => (
+        <li key={c.id} className={`coach-row ${COACH_TONE[c.status]}`}>
+          {c.label}
+          {c.why && <span className="muted"> {c.why}</span>}
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 // The counter's className for `remaining` characters left of the 280 limit.
 function counterClass(remaining: number): string {
@@ -162,6 +243,10 @@ export function ComposerPanel({
   const editor = useSettingsEditor(settings);
   const [threadMode, setThreadMode] = useState(false);
   const [text, setText] = useState('');
+  // JD.6 — the single-post textarea, so a judge fix can select the exact phrase
+  // it quotes. Nothing else reads it; the box stays an uncontrolled-selection,
+  // controlled-value textarea.
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [segments, setSegments] = useState<string[]>(['', '']);
   const [scheduledFor, setScheduledFor] = useState('');
   const [loading, setLoading] = useState(false);
@@ -701,6 +786,71 @@ export function ComposerPanel({
   const threadCharTotal = threadSegments.reduce((n, s) => n + s.length, 0);
   const threadFilledCount = threadSegments.filter((s) => s.trim() !== '').length;
 
+  // SC.3 — what the coach grades. In either thread branch that is segment 1:
+  // the head is the only part a stranger is guaranteed to read, so it is the
+  // part that has to hook.
+  const coachDraft = isSinglePost ? text : (threadSegments[0] ?? '');
+  const [coachInput, setCoachInput] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setCoachInput(coachDraft), COACH_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [coachDraft]);
+  // SC.7 — the account's own vocabulary, fetched once per panel session and
+  // shared with the reply chips. It arrives after the first paint, so the score
+  // sharpens rather than appears; the neutral default is a valid lexicon.
+  const lexicon = useCoachLexicon();
+  // Grading itself stays local and free: no fetch per keystroke, no server
+  // round-trip, nothing stored (SC decision 2 — score and format are recomputed
+  // from text everywhere, never stamped).
+  const coach = useMemo(() => scoreDraft(coachInput, { lexicon }), [coachInput, lexicon]);
+  const coachFixes = coach.checks.filter((c) => c.status === 'fix');
+  const coachNudges = coach.checks.filter((c) => c.status === 'nudge');
+  const coachPasses = coach.checks.filter((c) => c.status === 'pass');
+  const showCoach = !isLocked && coachInput.trim() !== '';
+
+  // SC.6 — how often each shape went out lately. One $0 read per mount, not per
+  // keystroke: the corpus only changes when a post publishes, and the draft's
+  // own format is classified locally against the cells that come back. A failed
+  // fetch leaves the list empty and the line simply never renders.
+  const [cooldowns, setCooldowns] = useState<CooldownsResponse | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.coach
+      .cooldowns(settings)
+      .then((r) => alive && setCooldowns(r))
+      .catch(() => {
+        /* no cooldown line; every other coach row is local and unaffected */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+  // The DRAFT's format, not the text's: in thread mode `coachInput` is segment
+  // 1, and classifying the whole thread would put the head's cooldown on the
+  // wrong shape.
+  const draftFormat = useMemo(() => classifyFormat(coachInput), [coachInput]);
+  const cooldown =
+    cooldowns?.cells.find((c) => c.format === draftFormat && c.status !== 'clear') ?? null;
+
+  // SC.8 — the fit moves only when a post gets measured, so this is one $0 read
+  // per mount like the cooldowns above, and the draft's format is matched
+  // against the cells locally. `draftFormat` is already the DEBOUNCED draft's
+  // format (segment 1 in thread mode), which is the shape the band is about.
+  const [reachFit, setReachFit] = useState<ReachFit | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api.coach
+      .reach(settings)
+      .then((r) => alive && setReachFit(r))
+      .catch(() => {
+        /* no reach line; every other coach row is local and unaffected */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+  const reach = reachFit?.cells.find((c) => c.format === draftFormat && !c.exempt) ?? null;
+
   return (
     <form className="panel" onSubmit={submit}>
       <div className="panel-header">
@@ -848,6 +998,7 @@ export function ComposerPanel({
             </span>
           </span>
           <textarea
+            ref={textareaRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={6}
@@ -884,6 +1035,20 @@ export function ComposerPanel({
         </div>
       )}
 
+      {/* JD.6 — the judge, directly under the other paid AI affordance and
+          deliberately NOT inside the coach box (D141): everything in that box is
+          free, local and instant, and a panel that costs $0.003 a click does not
+          belong in a container the user reads as live. Single posts only — the
+          head-vs-thread question is unanswered and would double the surface. */}
+      {!threadMode && !isThreadEdit && !isLocked && text.trim() !== '' && (
+        <JudgePanel
+          settings={settings}
+          text={text}
+          onApplyText={setText}
+          textareaRef={textareaRef}
+        />
+      )}
+
       {(threadMode || isThreadEdit) && (
         <div className="thread-total muted">
           {threadFilledCount} segment{threadFilledCount === 1 ? '' : 's'} · {threadCharTotal} chars
@@ -908,6 +1073,52 @@ export function ComposerPanel({
               Move link to first reply ($0.030)
             </button>
           )}
+        </div>
+      )}
+
+      {/* SC.3 — the static coach. It sits with the other things said ABOUT the
+          text (over-limit, URL surcharge) rather than at the bottom of the tab,
+          because every row here is a thing you fix in the box directly above.
+          It is advisory end to end: the Save button never reads the score. */}
+      {showCoach && (
+        <div className="coach">
+          <div className="coach-head">
+            <span className={`coach-score ${COACH_TONE[COACH_BAND_TONE[coach.band]]}`}>
+              {coach.score}
+            </span>
+            <span className="muted">
+              /100 · {COACH_BAND_LABEL[coach.band]}
+              {!isSinglePost && ' · segment 1'}
+            </span>
+          </div>
+          {/* SC.6 — the one row here that is about your WEEK rather than this
+              draft, so it sits above the per-check rows. Amber only at the
+              cooldown bar; a warming count is a fact, not a nudge. */}
+          {cooldown && cooldowns && (
+            <div
+              className={`coach-cooldown ${cooldown.status === 'cooldown' ? 'coach-tone-nudge' : 'muted'}`}
+              title={cooldownTitle(cooldown)}
+            >
+              {cooldownNote(cooldown, cooldowns.windowDays)}
+            </div>
+          )}
+          {/* SC.8 — the other corpus-derived line: what this shape has done,
+              rather than what this draft says. Always muted, never a tone —
+              it is measurement metadata, not a fix and not a nudge (§7.19). */}
+          {reach && reachFit && (
+            <div className="coach-reach muted" title={reachTitle(reach, reachFit)}>
+              {reachNote(reach, reachFit.minN)}
+            </div>
+          )}
+          <CoachRows checks={coachFixes} />
+          <CoachRows checks={coachNudges} />
+          {coachPasses.length > 0 && (
+            <details className="coach-passing">
+              <summary>{coachPasses.length} passing</summary>
+              <CoachRows checks={coachPasses} />
+            </details>
+          )}
+          <small className="muted">{COACH_DISCLAIMER}</small>
         </div>
       )}
 

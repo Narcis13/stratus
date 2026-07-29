@@ -6,7 +6,13 @@ import { matchOrigin } from './middleware/cors.ts';
 import type { ActiveTimesGrid } from './shared/activeTimes.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
-import { metricsSnapshots, postsPublished } from './x/db/schema.ts';
+import {
+  metricsSnapshots,
+  people,
+  personEvents,
+  postsPublished,
+  replyDrafts,
+} from './x/db/schema.ts';
 import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
@@ -47,6 +53,7 @@ import {
   type PostContext,
   REPLY_BATCH_PROMPT_TEMPLATE,
   REPLY_PROMPT_TEMPLATE,
+  UNTRUSTED_CONTEXT_MARKER,
   blankLineBetweenPropositions,
   buildBatchGrokInput,
   buildGrokInput,
@@ -56,9 +63,11 @@ import {
 } from './x/replies/prompt.ts';
 import {
   type AnnotatedGap,
+  MILESTONES,
   type PinnedWatchPost,
   annotateGaps,
   attachLatestSnapshots,
+  buildMilestoneWatch,
   buildPinnedWatch,
   findScheduleGaps,
   followerTrend,
@@ -521,6 +530,12 @@ describe('buildAccountSeries', () => {
   });
 });
 
+// JD.1: the trust label must appear exactly ONCE per rendered prompt — a second
+// copy means some render path prefixed it twice.
+function countOccurrences(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 describe('reply prompt (§7.1)', () => {
   const promptCtx: PostContext = {
     tweetId: '123456',
@@ -636,6 +651,32 @@ That is the entire biography you have. Never invent or imply anything else — n
   test('no parent → no thread-context block', () => {
     const [msg] = buildGrokInput(promptCtx);
     expect(msg?.content).not.toContain('MY POST');
+  });
+
+  test('JD.1: the scraped context is trust-labelled once, and the templates stay clean', () => {
+    const [msg] = buildGrokInput(promptCtx);
+    const content = msg?.content ?? '';
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+    // The label heads the quoted text, it doesn't trail it.
+    expect(content.indexOf(UNTRUSTED_CONTEXT_MARKER)).toBeLessThan(
+      content.indexOf('ORIGINAL TWEET'),
+    );
+    // It rides on the rendered VALUE — both byte-synced literals are untouched,
+    // so `reply prompt.md` needs no regeneration.
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain(UNTRUSTED_CONTEXT_MARKER);
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).not.toContain(UNTRUSTED_CONTEXT_MARKER);
+  });
+
+  test('JD.1: a mention-thread parent renders under the same single label', () => {
+    const [msg] = buildGrokInput({ ...promptCtx, parent: { text: 'my post about shipping' } });
+    const content = msg?.content ?? '';
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+    expect(content.indexOf(UNTRUSTED_CONTEXT_MARKER)).toBeLessThan(content.indexOf('MY POST'));
+  });
+
+  test('JD.1: an override without the context token still gets the label', () => {
+    const [msg] = buildGrokInput(promptCtx, 'Custom prompt with no context token');
+    expect(countOccurrences(msg?.content ?? '', UNTRUSTED_CONTEXT_MARKER)).toBe(1);
   });
 
   test('parseReplyVariants accepts the schema shape and trims', () => {
@@ -780,6 +821,27 @@ describe('batch replies (Radar §7.2)', () => {
     );
   });
 
+  test('JD.1: the batch posts block carries one trust label, above the first post', () => {
+    const content = buildBatchGrokInput(tweets, 'fii contrarian')[0]?.content ?? '';
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+    expect(content.indexOf(UNTRUSTED_CONTEXT_MARKER)).toBeLessThan(
+      content.indexOf('POST 1 (id: 111)'),
+    );
+    // ...and below the voice block: the cacheable instruction head is untouched.
+    expect(content.indexOf('Forbidden openers')).toBeLessThan(
+      content.indexOf(UNTRUSTED_CONTEXT_MARKER),
+    );
+  });
+
+  test('JD.1: a custom batch template keeps the label with the {{POSTS}} value', () => {
+    const custom = 'CUSTOM BATCH HEAD\n\nPOSTS:\n{{POSTS}}\n\nSTEER: <idea>{{IDEA}}</idea>';
+    const content =
+      buildBatchGrokInput(tweets, 'go', undefined, undefined, undefined, { template: custom })[0]
+        ?.content ?? '';
+    expect(content.startsWith('CUSTOM BATCH HEAD')).toBe(true);
+    expect(countOccurrences(content, UNTRUSTED_CONTEXT_MARKER)).toBe(1);
+  });
+
   test('AI.5: a reply-batch template override changes the rendered batch prompt', () => {
     const custom = 'CUSTOM BATCH HEAD\n\nPOSTS:\n{{POSTS}}\n\nSTEER: <idea>{{IDEA}}</idea>';
     const content =
@@ -917,12 +979,52 @@ describe('batch replies (Radar §7.2)', () => {
     if ('error' in manual) throw new Error(manual.error);
     expect(manual.tweets[0]?.band).toBe('manual');
 
+    // GT.8: a roster capture — a quiet post by someone in my circle — is the
+    // second queue-metadata band and rides the same column.
+    const roster = parseBatchTweets([
+      { tweetId: '444', handle: 'dave', text: 'd', band: 'roster' },
+    ]);
+    if ('error' in roster) throw new Error(roster.error);
+    expect(roster.tweets[0]?.band).toBe('roster');
+
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
     });
     expect(
       parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', signals: { views: -1 } }]),
     ).toEqual({ error: 'invalid_tweet_signals_0' });
+  });
+
+  // RC.2: the curated batch stamps the scorer's verdict onto radar_drafts. It
+  // is storage metadata like band/signals — never a gate, never in the prompt.
+  test('parseBatchTweets carries an integer curationScore through (RC.2) and rejects junk', () => {
+    const ok = parseBatchTweets([
+      { tweetId: '111', handle: 'alice', text: 'a', curationScore: 87 },
+      { tweetId: '222', handle: 'bob', text: 'b' },
+      // 0 is a real verdict ("nothing to gain replying here"), not an absence —
+      // it must survive the optional-property spread, which a truthiness test
+      // would drop.
+      { tweetId: '333', handle: 'carol', text: 'c', curationScore: 0 },
+      { tweetId: '444', handle: 'dave', text: 'd', curationScore: 100 },
+    ]);
+    if ('error' in ok) throw new Error(ok.error);
+    expect(ok.tweets[0]?.curationScore).toBe(87);
+    expect('curationScore' in (ok.tweets[1] ?? {})).toBe(false);
+    expect(ok.tweets[2]?.curationScore).toBe(0);
+    expect(ok.tweets[3]?.curationScore).toBe(100);
+
+    // An explicit null is "not curated", the same as absent — not a 400.
+    const nulled = parseBatchTweets([
+      { tweetId: '555', handle: 'erin', text: 'e', curationScore: null },
+    ]);
+    if ('error' in nulled) throw new Error(nulled.error);
+    expect('curationScore' in (nulled.tweets[0] ?? {})).toBe(false);
+
+    for (const bad of [101, -1, 3.5, '25', Number.NaN]) {
+      expect(
+        parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', curationScore: bad }]),
+      ).toEqual({ error: 'invalid_tweet_curation_score_0' });
+    }
   });
 });
 
@@ -987,11 +1089,14 @@ describe('radar drafts (C0)', () => {
         { text: 'pick a side', angle: 'debate' },
       ],
       model: 'grok-4',
+      // RC.2: this fixture was drafted without curation → null, not 0.
+      curationScore: null,
     });
     expect(rows[1]?.author).toBeNull();
     expect(rows[1]?.band).toBeNull();
     expect(rows[1]?.url).toBeNull();
     expect(rows[1]?.model).toBe('grok-4');
+    expect(rows[1]?.curationScore).toBeNull();
     // A caller supplying only the primary (no variants) → null (RU.2 "unknown"
     // semantics); null model threads through too (CLI callers).
     const primaryOnly = buildRadarDraftRows(
@@ -1001,6 +1106,26 @@ describe('radar drafts (C0)', () => {
     );
     expect(primaryOnly[0]?.model).toBeNull();
     expect(primaryOnly[0]?.variants).toBeNull();
+  });
+
+  // RC.2: a curated batch threads the scorer's verdict onto every row it
+  // drafted, so "did high-scored tweets earn better replies" is later readable
+  // over the existing radar_drafts → reply_drafts → outcomes join.
+  test('buildRadarDraftRows stores curationScore, keeping 0 distinct from uncurated', () => {
+    const curated: RadarBatchTweet[] = [
+      { tweetId: '111', handle: 'alice', author: 'Alice', text: 'a', curationScore: 91 },
+      { tweetId: '222', handle: 'bob', author: 'bob', text: 'b', curationScore: 0 },
+      // A ⊕ pinned tweet rides the curated batch unscored (a human pin outranks
+      // the model) — it must land as null, not as a zero the Playbook would
+      // later read as a real verdict.
+      { tweetId: '333', handle: 'carol', author: 'carol', text: 'c', band: 'manual' },
+    ];
+    const rows = buildRadarDraftRows(
+      curated,
+      curated.map((t) => ({ tweetId: t.tweetId, text: 'r', angle: 'extends' })),
+      'grok-4',
+    );
+    expect(rows.map((r) => r.curationScore)).toEqual([91, 0, null]);
   });
 
   test('radarDraftExpired flips at exactly 48h', () => {
@@ -1362,6 +1487,146 @@ describe('replies band gate (§7.3)', () => {
       } finally {
         resetSettings({ group: 'band' });
       }
+    });
+  });
+
+  // GT.6: the people-layer carve-out. The exempt case is proven by how FAR it
+  // gets — both LLM keys are force-unset (the drafter.test.ts trick) so a draft
+  // that clears the gate lands on `llm_not_configured` instead of spending a
+  // real Grok call inside `bun run test`. The refusals need no such care: they
+  // return before anything is loaded.
+  describe('reciprocity exemption (GT.6)', () => {
+    const dead = { views: 40, replies: 1, reposts: 0, likes: 2 };
+    const deadCtx = (handle: string) =>
+      ctx({ handle, postedAt: '2026-06-08T08:00:00Z', metrics: dead });
+
+    // `fn` returns `Response | Promise<Response>` — app.request's own type (NT.7).
+    const keyless = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+      const xai = process.env.XAI_API_KEY;
+      const openrouter = process.env.OPENROUTER_API_KEY;
+      process.env.XAI_API_KEY = '';
+      process.env.OPENROUTER_API_KEY = '';
+      try {
+        return await fn();
+      } finally {
+        process.env.XAI_API_KEY = xai ?? '';
+        process.env.OPENROUTER_API_KEY = openrouter ?? '';
+      }
+    };
+
+    test('a dead post by someone I reply to clears the gate before any spend', async () => {
+      try {
+        await db.insert(people).values({ handle: 'gt6person', stage: 'engaged' });
+        const res = await keyless(() => post({ context: deadCtx('gt6person') }));
+        // Past the 422 and into the LLM layer — the gate opened, nothing was paid.
+        expect(res.status).toBe(503);
+        expect(((await res.json()) as { error: string }).error).toBe('llm_not_configured');
+      } finally {
+        await db.delete(people).where(eq(people.handle, 'gt6person'));
+      }
+    });
+
+    test('a retired person is not my people — the dead post still 422s', async () => {
+      try {
+        await db.insert(people).values({ handle: 'gt6gone', stage: 'engaged', retired: true });
+        const res = await post({ context: deadCtx('gt6gone') });
+        expect(res.status).toBe(422);
+        expect(((await res.json()) as { error: string }).error).toBe('band_gate');
+      } finally {
+        await db.delete(people).where(eq(people.handle, 'gt6gone'));
+      }
+    });
+
+    test('an unknown handle keeps the refusal default', async () => {
+      const res = await post({ context: deadCtx('gt6stranger') });
+      expect(res.status).toBe(422);
+      const out = (await res.json()) as { error: string; band: unknown };
+      expect(out.error).toBe('band_gate');
+      expect(out.band).toBeNull();
+    });
+
+    test('gateBypass is never accepted from the client', () => {
+      const out = parseContext({
+        tweetId: '123456',
+        handle: 'someone',
+        author: 'Some One',
+        text: 'hello',
+        url: 'https://x.com/someone/status/123456',
+        postedAt: '2026-06-10T08:00:00Z',
+        metrics: { views: 1, replies: 0, reposts: 0, likes: 0 },
+        topComments: [],
+        gateBypass: 'roster',
+      });
+      expect('error' in out).toBe(false);
+      expect(out).not.toHaveProperty('gateBypass');
+    });
+  });
+
+  // GT.3 fallout: the LaunchRoom seed comment replies to MY OWN post under the
+  // placeholder handle 'me'. The posted flip must not upsert that into the CRM —
+  // a phantom stage-`engaged` row would join the reciprocity set (the gate, the
+  // quest AND the glance map). "Own post" is a posts_published lookup, so a
+  // reply to anyone real still tracks normally.
+  describe('posted flip skips the CRM for replies to my own post', () => {
+    const OWN_TWEET = '890000000000000777';
+    const OTHER_TWEET = '890000000000000778';
+
+    const seedDraft = async (sourceTweetId: string, handle: string): Promise<string> => {
+      const [row] = await db
+        .insert(replyDrafts)
+        .values({
+          sourceTweetId,
+          sourceAuthorUsername: handle,
+          sourceText: 'gt3 seed source',
+          sourceUrl: `https://x.com/${handle}/status/${sourceTweetId}`,
+          contextSnapshot: {},
+          replyText: 'gt3 seed reply',
+          model: 'test',
+        })
+        .returning({ id: replyDrafts.id });
+      if (!row) throw new Error('seed insert failed');
+      return row.id;
+    };
+
+    const flip = (id: string) =>
+      replies.request(`/replies/${id}`, {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ status: 'posted' }),
+      });
+
+    afterAll(async () => {
+      await db
+        .delete(replyDrafts)
+        .where(inArray(replyDrafts.sourceTweetId, [OWN_TWEET, OTHER_TWEET]));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, OWN_TWEET));
+      await db.delete(personEvents).where(inArray(personEvents.handle, ['me', 'gt3realperson']));
+      await db.delete(people).where(inArray(people.handle, ['me', 'gt3realperson']));
+    });
+
+    test("the seed comment's placeholder 'me' never becomes a person", async () => {
+      // retired + long-posted so the daily *billed* metrics pass can't see it.
+      await db.insert(postsPublished).values({
+        tweetId: OWN_TWEET,
+        text: 'gt3 launched post',
+        postedAt: new Date(Date.now() - 400 * 24 * 3600_000),
+        isReply: false,
+        source: 'test',
+        retired: true,
+      });
+      const id = await seedDraft(OWN_TWEET, 'me');
+      expect((await flip(id)).status).toBe(200);
+      const rows = await db.select().from(people).where(eq(people.handle, 'me'));
+      expect(rows.length).toBe(0);
+      const events = await db.select().from(personEvents).where(eq(personEvents.handle, 'me'));
+      expect(events.length).toBe(0);
+    });
+
+    test('a reply to someone else still tracks the person', async () => {
+      const id = await seedDraft(OTHER_TWEET, 'gt3realperson');
+      expect((await flip(id)).status).toBe(200);
+      const rows = await db.select().from(people).where(eq(people.handle, 'gt3realperson'));
+      expect(rows.length).toBe(1);
     });
   });
 });
@@ -1838,6 +2103,80 @@ describe('brief buildPinnedWatch (S0.9)', () => {
     const pin = { pinnedTweetId: 'AAA', since: new Date(now.getTime() - 5 * 86_400_000) };
     expect(buildPinnedWatch(pin, null, [post('DDD', 500)], now).outperformer).toBeNull();
     expect(buildPinnedWatch(pin, 0, [post('DDD', 500)], now).outperformer).toBeNull();
+  });
+});
+
+describe('brief buildMilestoneWatch (GT.4)', () => {
+  const now = new Date('2026-07-11T12:00:00Z');
+  const day = 24 * 60 * 60 * 1000;
+  /** A snapshot `daysAgo` before `now`. */
+  const s = (daysAgo: number, followers: number) => ({
+    snapshotAt: new Date(now.getTime() - daysAgo * day),
+    followers,
+  });
+
+  test('no snapshots, or none past the first rung → null', () => {
+    expect(buildMilestoneWatch([], now)).toBeNull();
+    expect(buildMilestoneWatch([s(3, 12), s(2, 40)], now)).toBeNull();
+  });
+
+  test('crossed 2 days ago → nudge, carrying the crossing snapshot', () => {
+    const w = buildMilestoneWatch([s(4, 970), s(3, 995), s(2, 1004), s(1, 1031)], now);
+    expect(w).toEqual({
+      milestone: 1000,
+      crossedOn: new Date(now.getTime() - 2 * day),
+      followers: 1004,
+    });
+  });
+
+  test('crossed 5 days ago → quiet again', () => {
+    expect(buildMilestoneWatch([s(6, 995), s(5, 1004), s(1, 1080)], now)).toBeNull();
+    // The boundary: exactly 3 days still nudges, 4 does not.
+    expect(buildMilestoneWatch([s(4, 995), s(3, 1004)], now)?.milestone).toBe(1000);
+    expect(buildMilestoneWatch([s(5, 995), s(4, 1004)], now)).toBeNull();
+  });
+
+  test('a dip after the crossing still nudges (peak-based)', () => {
+    const w = buildMilestoneWatch([s(4, 995), s(2, 1005), s(1, 990)], now);
+    expect(w?.milestone).toBe(1000);
+    expect(w?.crossedOn).toEqual(new Date(now.getTime() - 2 * day));
+    // The count that PROVED the crossing, not today's dipped one.
+    expect(w?.followers).toBe(1005);
+  });
+
+  test('an exactly-equal count counts as crossed', () => {
+    expect(buildMilestoneWatch([s(3, 999), s(1, 1000)], now)?.milestone).toBe(1000);
+  });
+
+  test('reports the highest rung reached, not every one passed', () => {
+    const w = buildMilestoneWatch([s(3, 900), s(1, 2600)], now);
+    // 1000 was passed in the same jump, but 2500 is the news.
+    expect(w?.milestone).toBe(2500);
+    expect(w?.crossedOn).toEqual(new Date(now.getTime() - 1 * day));
+  });
+
+  test('a crossing nobody witnessed is not reported', () => {
+    // Cold start: the oldest snapshot we have is already past the rung, so the
+    // series proves the account is big, not that it just grew.
+    expect(buildMilestoneWatch([s(2, 1200), s(1, 1210)], now)).toBeNull();
+    // …and one below-rung snapshot is enough to make it reportable again.
+    expect(buildMilestoneWatch([s(3, 980), s(2, 1200), s(1, 1210)], now)?.milestone).toBe(1000);
+  });
+
+  test('unordered input is sorted before the walk', () => {
+    const w = buildMilestoneWatch([s(1, 1031), s(4, 970), s(2, 1004), s(3, 995)], now);
+    expect(w?.crossedOn).toEqual(new Date(now.getTime() - 2 * day));
+  });
+
+  test('the ladder is pinned against twin drift', () => {
+    // Plan decision 5 duplicates the ladder rather than sharing a module, so
+    // this can only pin the SERVER copy — it reddens on a one-sided edit here
+    // and points the editor at extension/src/studio/milestones.ts, which no
+    // server test may import (§5 build isolation, and the shared direction is
+    // src/shared/* + an extension re-export shim, not the reverse).
+    expect([...MILESTONES]).toEqual([
+      50, 100, 250, 500, 1000, 2500, 5000, 10_000, 25_000, 50_000, 100_000,
+    ]);
   });
 });
 

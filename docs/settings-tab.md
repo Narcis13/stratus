@@ -6,7 +6,7 @@ The **Settings** tab is where you connect the stratus extension to your stratus 
 
 Settings is split into four subtabs across the top:
 
-- **General** — the connection fields, the behavior/privacy toggles, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
+- **General** — the connection fields, the behavior/privacy toggles, the reply humanizer, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
 - **Tuning** — every tunable number the server has, in one searchable list: doctrine, quests, people, follow-ups, the reply band, stat gates, budgets, workers and more. See [Tuning](#tuning-the-tuning-subtab).
 - **AI** — which LLM provider drafts your content (Grok or OpenRouter), and the model/temperature/token/effort knobs. See [AI provider](#ai-provider-the-ai-subtab).
 - **Prompts** — the editable text of every AI prompt behind the app, with a one-click "Restore Default Prompts". See [Prompts editor](#prompts-editor-the-prompts-subtab).
@@ -96,6 +96,26 @@ Four checkboxes sit between the connection fields and the harvest section. Each 
 
 ---
 
+## Reply humanizer
+
+A card below the toggles that owns one server-side config: the small, deliberate imperfections stratus can add to an AI-drafted reply **at the moment you pick it** — a leading `honestly,`, a lowercased first letter, a dropped final period, a trailing `well said`, or a rare one-key typo. It's what stops a run of drafted replies from reading like a form letter.
+
+**Where it applies:** [Radar](./radar-tab.md) picks, and only when that tab's **Humanize picks** checkbox is on. The checkbox at the top of this card is *the same switch* — flip it here or there, it's one setting either way, and it's **off** until you turn it on. Each canned [reply list](./replies-tab.md) still keeps its own separate humanizer; this card doesn't touch those.
+
+**What you can edit:**
+
+- **Prefixes** and **Suffixes** — one entry per line, never comma-separated (a shipped default is literally `honestly,`). Empty a pool and that roll can never fire again. At most 25 lines, 60 characters each.
+- **Five chances**, each a number from **0** (never) to **1** (always): prefix, suffix, lowercase start, drop final period, typo. A value outside that range gets a message under the field instead of a silent failure, and **Save** stays off until you fix it.
+- A line underneath tells you roughly **what share of picks come out changed** at the numbers currently on screen, so you can dial the whole thing by feel rather than by arithmetic.
+
+**Save is only enabled when something actually differs from what's stored** — an untouched form can't be re-saved, and typing in one field while a background reload happens won't wipe what you typed. **Reset to defaults** asks first, then deletes the stored row entirely: the engine defaults come back and the Radar's humanizing turns off with them.
+
+**The jitter is decided when you click, never written into a draft.** The stored variants on a Radar row stay exactly as the AI wrote them; what changes is the text that lands on your clipboard. The Radar's Clicked list therefore shows the verbatim variant, while the jittered text — what you actually pasted — is what the [Replies](./replies-tab.md) history records.
+
+Everything on this card is **$0**: it's one row in your own database, no X call and no AI call.
+
+---
+
 ## Appearance
 
 Three dropdowns controlling how the side panel *looks*. They're panel-only — nothing here reaches the server, nothing here changes what stratus does — and each applies the instant you change it, with no Save.
@@ -116,7 +136,7 @@ The list is rendered entirely from what the server reports, so a knob added in a
 
 ### The fourteen groups
 
-Today the registry holds **61 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
+Today the registry holds **62 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
 
 | Group | Knobs | What it decides | Where the change shows |
 |---|---|---|---|
@@ -128,14 +148,14 @@ Today the registry holds **61 knobs in 14 groups**. This is the map — what eac
 | **Digest** | 1 | How many neglected people the Sunday digest names. | The weekly digest. |
 | **Reply band** | 12 | The reply-band **classifier** thresholds — views, replies, freshness, views-per-minute, the too-small floors. | The on-page badge *and* the server's draft gate — same numbers, both sides. |
 | **Stat gates** | 2 | How much data a Playbook cell and a best-time cell need before they read as evidence. | The Playbook's `insufficient data (n=…/N)` cells; the best-time advice. |
-| **Radar** | 1 | How long a radar draft stays clickable. | The **[Radar](./radar-tab.md)** tab's queue. |
+| **Radar** | 2 | How long a radar draft stays clickable, and how many tweets a curated drafting pass keeps (the effective size is the lower of this and the batch reply cap). | The **[Radar](./radar-tab.md)** tab's queue. |
 | **Workers** | 4 | The daily-metrics hour, the publisher tick, and the winner re-read floor/cap. | Background only. The first two are `restart` knobs. |
 | **Budgets** | 2 | The soft X daily watchdog and the **hard** image-generation cap. | A refused image generation; the cost log's warnings. |
 | **AI calls** | 6 | Per-surface LLM defaults: reply/drafter/digest token caps, reply temperature and effort, the batch-reply ceiling. | Every AI draft — unless **Settings → AI** overrides them globally. |
 | **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
 | **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
 
-Twenty-seven of the 61 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
+Twenty-eight of the 62 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
 
 ### How a row works
 
@@ -156,7 +176,7 @@ Every group header has a **Reset group** button, which drops every override in t
 
 ### The same knobs, next to the feature (inline ⚙)
 
-Tuning is the complete list, but you rarely arrive here wondering about "the display group" — you arrive wondering why the Do-next strip only shows five rows. So the knobs that shape a section also appear behind a small **⚙** on that section's own header. The **[Today tab](./today-tab.md#tuning-today-from-today-the--gears)** has four of them (quests, Do next, Targets, Top fans) and the **[Radar tab](./radar-tab.md)** carries the fifth (its two batch caps); the **[Composer](./composer-tab.md)** (Schedule) and the **[Calendar](./calendar-tab.md)** (This week) share a sixth — the cadence ladder plus the best-time gate, one gear on both tabs because both render the same anchor hours. Four more size the lists you read most: the **[People](./people-tab.md#-dossier-list-rows)** dossier header (how many rows its capped lists show), the **[Channels](./channels-tab.md)** room's *My posts* section, the **[Voice](./voice-tab.md)** library's *Saved tweets* section, and the **[Replies](./replies-tab.md#the-history-list)** tab's *History* section. And one changes what a whole page is willing to *say*: the **[Playbook](./playbook-tab.md)** header's gear moves the per-cell sample gate (`x.gates.minCellN`), which re-gates every stat on that page and decides whether the measured guidance lines are allowed to steer your AI drafts — the one gear worth reading the warning on before you touch it.
+Tuning is the complete list, but you rarely arrive here wondering about "the display group" — you arrive wondering why the Do-next strip only shows five rows. So the knobs that shape a section also appear behind a small **⚙** on that section's own header. The **[Today tab](./today-tab.md#tuning-today-from-today-the--gears)** has four of them (quests, Do next, Targets, Top fans) and the **[Radar tab](./radar-tab.md)** carries the fifth (its two batch caps plus the curated size — how many tweets survive a *Curate & draft* pass); the **[Composer](./composer-tab.md)** (Schedule) and the **[Calendar](./calendar-tab.md)** (This week) share a sixth — the cadence ladder plus the best-time gate, one gear on both tabs because both render the same anchor hours. Four more size the lists you read most: the **[People](./people-tab.md#-dossier-list-rows)** dossier header (how many rows its capped lists show), the **[Channels](./channels-tab.md)** room's *My posts* section, the **[Voice](./voice-tab.md)** library's *Saved tweets* section, and the **[Replies](./replies-tab.md#the-history-list)** tab's *History* section. And one changes what a whole page is willing to *say*: the **[Playbook](./playbook-tab.md)** header's gear moves the per-cell sample gate (`x.gates.minCellN`), which re-gates every stat on that page and decides whether the measured guidance lines are allowed to steer your AI drafts — the one gear worth reading the warning on before you touch it.
 
 There is no second store and no second copy: a gear edits the same key with the same discipline (auto-save, the same accent dot, the same server-side refusal), so a number changed in a gear reads back identically here. A gear simply doesn't render when the server is unreachable — the section keeps working off its mirrored copy.
 
@@ -178,12 +198,13 @@ At the bottom sits the **roadmap**: features that are planned and specced but no
 
 ## Your niche (identity & strategy)
 
-The **Niche** card is where "who you are" lives. A niche bundles the four things every AI draft and every coaching number is built from: your **persona** (the biography the post drafter grounds on), your **beliefs** (the principles it argues from), your **reply persona** (the short self-description replies use), a prose **description**, and five **doctrine** knobs. Editing any of these changes the next drafted post and reply **without a deploy** — the same way pillars became editable.
+The **Niche** card is where "who you are" lives. A niche bundles the four things every AI draft and every coaching number is built from: your **persona** (the biography the post drafter grounds on), your **beliefs** (the principles it argues from), your **reply persona** (the short self-description replies use), a prose **description**, and six **doctrine** knobs. Editing any of these changes the next drafted post and reply **without a deploy** — the same way pillars became editable.
 
 ### The active-niche editor
 
 - **Persona / beliefs / reply persona / description:** free-text fields. Save commits them; Reset discards unsaved edits. The next `/x/posts/draft` and `/x/replies/generate` immediately ground on the new text (nothing is cached across an edit).
-- **Doctrine (5 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), and the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces). These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+- **Doctrine (6 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces), and **replies to my people · min** (default 5 — how many of the day's replies should go to accounts you already have a relationship with; see [Your people are exempt](replies-tab.md#your-people-are-exempt)) — which is also the target of Today's *replies to your people* quest. These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+- **Saving doctrine sends all six numbers.** The server replaces the stored block rather than merging it, so a knob you never touched still travels with the save — that is why the card always shows every field filled in.
 
 ### Niches list & activation
 
@@ -239,14 +260,18 @@ The **AI** subtab controls which large language model drafts your posts, replies
 
 ## Prompts editor (the Prompts subtab)
 
-Every AI feature in stratus is driven by a **prompt** — the instructions the model reads before it writes. The **Prompts** subtab lets you read and edit all **13** of them, and revert to the shipped defaults whenever you want.
+Every AI feature in stratus is driven by a **prompt** — the instructions the model reads before it writes. The **Prompts** subtab lets you read and edit all **16** of them, and revert to the shipped defaults whenever you want.
 
-The 13 prompts are: **reply drafts**, **reply drafts (batch)**, **post drafts**, **thread drafts**, **rewrite assist**, **idea generator**, **template extraction**, **pillar drafting**, **Sunday digest**, **icebreakers**, **reply-list items** (the generator that fills a canned-reply list from a category prompt), **DM drafts** (the direct-message drafter grounded strictly on real shared context), and **article assist** (the long-form Writer prompt behind the outline / section / polish / full drafting on the `/writer` page). Each row shows its name, a one-line description, and an amber **"customized"** chip if you've edited it.
+The 16 prompts are: **reply drafts**, **reply drafts (batch)**, **post drafts**, **thread drafts**, **rewrite assist**, **idea generator**, **template extraction**, **pillar drafting**, **Sunday digest**, **icebreakers**, **reply-list items** (the generator that fills a canned-reply list from a category prompt), **DM drafts** (the direct-message drafter grounded strictly on real shared context), **article assist** (the long-form Writer prompt behind the outline / section / polish / full drafting on the `/writer` page), **draft judge** (the 13-dimension rubric that grades one draft and hands back quoted fixes), **judge rewrite** (the annotation-driven rewrite behind **Apply all fixes** — it applies every span the judge quoted, and the result is kept only if a re-judge scores it higher), and **reply curation** (the queue scorer described just below). Each row shows its name, a one-line description, and an amber **"customized"** chip if you've edited it.
+
+**What the reply-curation prompt decides:** it is the only prompt that *removes* things rather than writing them. It reads the fresh Radar queue and grades every tweet 0–100 for reply payoff — how likely one sharp reply under it is to earn you impressions and profile visits — and it flags filler (connection invites, follow trains, giveaways, engagement bait, announcements with nothing to add) as **low value**. A low-value flag dismisses that tweet from your queue outright, whatever its score, so the category list in that prompt is worth reading before you edit it: widen it and you throw more of the queue away. Everything the model *doesn't* answer for is left in the queue untouched — a truncated answer costs you coverage, never rows. The score itself is only ever used to rank; nothing is blocked or drafted differently because of it.
+
+**One thing the judge prompt does not let you change:** the verdict. The rubric asks the model for thirteen 0–100 scores and nothing else — the "post it / slight rework / major rework / do not post" label is worked out from the `overall` score on stratus's side, so an edited prompt that asks the model to hand back its own verdict is simply ignored. The label and the number can never disagree. Same for the score range: an out-of-range or missing dimension makes stratus reject the whole answer rather than show you a partial one.
 
 - **Editing a prompt:** click a row to open the editor — a big monospace text box with the full prompt, a character count, and a set of **required-placeholder chips**. Placeholders look like `{{TWEET_CONTEXT}}` or `{{IDEA}}`; they're where the app injects the actual tweet, your pillars, your winners, and so on at draft time. A chip is **green** when its placeholder is still present in your text and **red** when it's missing. You can't save while any required placeholder is missing (Save greys out, and the server refuses it too) — a prompt that dropped `{{IDEA}}` would silently ignore your idea, so the editor won't let that happen. You can freely edit all the surrounding prose.
 - **Save / Reset this prompt:** Save stores your version as an override on the server; the next draft of that kind uses it immediately. "Reset this prompt" deletes just that one override, reverting it to the shipped default.
 - **Show default:** lets you compare your edit against the original text.
-- **Restore Default Prompts:** the big button (with a confirm dialog) that deletes **every** override at once — all 13 prompts snap back to their shipped defaults and the "customized" chips disappear. This is the recovery button if an edit made your drafts worse.
+- **Restore Default Prompts:** the big button (with a confirm dialog) that deletes **every** override at once — all 16 prompts snap back to their shipped defaults and the "customized" chips disappear. This is the recovery button if an edit made your drafts worse.
 
 **How overrides work under the hood:** a prompt you never edit has *no* stored row — it just uses the code default, which means an improved default shipped in a later stratus update applies automatically. The moment you save an edit, a row is stored and "customized" turns on; reset/restore delete that row. So "customized" is a real fact (a row exists), not a guess.
 

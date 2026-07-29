@@ -117,6 +117,7 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
         <>
           <FollowersCard brief={brief} />
           <PinnedWatchCard brief={brief} />
+          <MilestoneCard settings={settings} brief={brief} />
           <AccountHealthCard brief={brief} />
           <TodayPlan brief={brief} />
           <ReplyQuota brief={brief} />
@@ -138,9 +139,10 @@ export function TodayPanel({ settings, onOpenPerson, onMakeVisual }: Props): JSX
 
 // UI.12 — the quest targets are the one set of numbers a user wants to change
 // the moment they disagree with the checklist, so they get a gear on the very
-// section that grades them. The reply quest is deliberately absent: it follows
-// the niche reply band (or an active commitment that outranks it), and a knob
-// here would be a second silent owner of that number.
+// section that grades them. Two quests are deliberately absent: `replies`
+// follows the niche reply band (or an active commitment that outranks it) and
+// `reciprocity` follows the niche doctrine's `reciprocityTargetMin` (GT.7) — a
+// knob here would be a second silent owner of a number the niche already owns.
 const QUEST_KEYS = [
   'x.quests.originalsTarget',
   'x.quests.neglectedTargetsCount',
@@ -174,7 +176,7 @@ function QuestsSection({
             editor={editor}
             keys={QUEST_KEYS}
             label="Configure the daily quest targets"
-            note="The reply quest isn't here — it follows your niche's reply band, or a daily commitment when one is active. Both live under Settings → General."
+            note="The reply and 'replies to your people' quests aren't here — they follow your niche's reply band and reciprocity target (or a daily commitment when one is active). Both live under Settings → General."
           />
         </>
       }
@@ -421,6 +423,67 @@ function PinnedWatchCard({ brief }: { brief: Brief }): JSX.Element | null {
             </a>
           </div>
         )}
+      </div>
+    </Section>
+  );
+}
+
+// GT.4: the morning you cross a follower rung is the morning to post about it
+// — milestone posts measure as one of the account's best formats, and the
+// moment is the whole point of the post. The server reports a crossing for 3
+// days and then goes quiet on its own; whether the post actually got written is
+// deliberately not tracked (PinnedWatchCard's nudge-not-tracker discipline).
+//
+// "Draft it" spends one ~$0.006 Grok call on the ordinary post drafter, so the
+// three drafts land as calendar rows exactly like the Composer's — the only
+// thing this button knows that the Composer doesn't is the steer.
+function MilestoneCard({
+  settings,
+  brief,
+}: {
+  settings: Settings;
+  brief: Brief;
+}): JSX.Element | null {
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Absent when the deployed server predates GT.4; null on any ordinary day.
+  const w = brief.milestoneWatch;
+  if (!w) return null;
+
+  const count = fmtNum(w.milestone);
+  const draftIt = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.drafts.generate(settings, {
+        idea: `I just crossed ${w.milestone} followers — write the milestone post.`,
+      });
+      setNotice(
+        `${res.drafts.length} draft${res.drafts.length === 1 ? '' : 's'} in the Calendar — pick one and slot it.`,
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? `Draft failed: ${e.message}` : 'Draft failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Section title="Milestone">
+      <div className="ok">
+        You crossed <strong>{count}</strong> followers on{' '}
+        {new Date(w.crossedOn).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} —
+        post it. Milestone posts are one of your best formats.
+      </div>
+      <div className="brief-milestone-actions">
+        <button type="button" disabled={busy} onClick={() => void draftIt()}>
+          {busy ? 'Drafting…' : 'Draft it'}
+        </button>
+        {notice && <span className="muted">{notice}</span>}
+        {error && <span className="error">{error}</span>}
       </div>
     </Section>
   );

@@ -8,6 +8,7 @@
 // Posting stays MANUAL PASTE: Copy → open the tweet → paste → Done.
 
 import { type JSX, useCallback, useEffect, useState } from 'react';
+import { CoachChip } from './CoachChip.tsx';
 import { QuickReplyPicker } from './QuickReplyPicker.tsx';
 import {
   ApiError,
@@ -445,7 +446,7 @@ function OpenLoopActions({
                     setCopied(false);
                   }}
                 >
-                  {v.angle}
+                  {v.angle} <CoachChip text={v.text} />
                 </button>
               ))}
             </div>

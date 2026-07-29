@@ -26,6 +26,7 @@ import {
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
+import { isReciprocityHandleSafe } from '../people/reciprocity.ts';
 import {
   type RelationshipFacts,
   renderRelationship,
@@ -39,6 +40,14 @@ import {
   upsertPerson,
 } from '../people/store.ts';
 import { loadPromptSafe } from '../prompts/registry.ts';
+import {
+  CURATE_SCHEMA,
+  type CurateScore,
+  MAX_CURATE_TWEETS,
+  buildCurateInput,
+  parseCurateScores,
+  selectCurated,
+} from '../replies/curate.ts';
 import {
   BATCH_REPLY_SCHEMA,
   type PostContext,
@@ -216,7 +225,21 @@ replies.post('/replies/generate', async (c) => {
   const gateSignals = gateSignalsFor(ctx, Date.now());
   const band = classifyBand(gateSignals, bandThresholdsFromSettings());
   if ((band === null || band === 'skip') && !override) {
-    return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
+    // GT.6: the refusal default stands for strangers, but not for the people
+    // layer — a quiet post by someone I already reply to (or by a 2–10x roster
+    // target) is the reciprocity lane, not a dead post. Server-side by design
+    // (§7.16): a client that could send its own exemption would weaken the
+    // money gate for every caller. $0 SQL, and it runs ONLY here, so a hot/warm
+    // post never pays for the lookup (§7.4). Uniform across `null` and `skip`:
+    // a roster person's bait post is still their post, and a human clicked.
+    if (await isReciprocityHandleSafe(ctx.handle)) {
+      // Stamped BEFORE the insert so `contextSnapshot` records why a refused
+      // band still drafted — that is what keeps the exempt drafts a cohort the
+      // BAND crosstab can tell apart from a human `override`.
+      ctx.gateBypass = 'roster';
+    } else {
+      return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
+    }
   }
 
   // Stamp the gate's verdict when the caller didn't send capture-time signals
@@ -356,9 +379,11 @@ replies.post('/replies/generate', async (c) => {
 
 // --------------------------------------------------------- batch (Radar §7.2)
 //
-// One Grok call drafts a reply for a whole queue of hot/warm tweets the Radar
-// collected. Unlike /replies/generate this does NOT create reply_drafts rows or
-// run the band gate (the Radar already filtered to hot/warm): the replies live
+// One Grok call drafts a reply for a whole queue of tweets the Radar collected.
+// Unlike /replies/generate this does NOT create reply_drafts rows or run the
+// band gate — the queue is already a deliberate selection (hot/warm by the band
+// scan, plus ⊕ manual pins and GT.8 roster sightings, both human-curated lanes
+// the gate would have exempted anyway): the replies live
 // in the extension's session ring buffer, copied to the clipboard when the user
 // opens a tweet. Since CIRCLES-PLAN C0 each reply also lands in `radar_drafts`
 // so a browser restart no longer loses paid-for drafts (routes/radar.ts).
@@ -538,10 +563,11 @@ replies.post('/replies/generate-batch', async (c) => {
 });
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
-// Optional band/signals (C0) carry the Radar's capture-time verdict into
-// `radar_drafts`; they never reach the Grok prompt. `maxTweets` is defaulted to
-// today's constant (Decision 6) so every existing caller and test stays valid;
-// the route passes `x.ai.batchReplyCap`.
+// Optional band/signals (C0) carry the Radar's capture-time verdict — and
+// optional curationScore (RC.2) the curation pass's 0–100 verdict — into
+// `radar_drafts`; none of the three reaches the Grok prompt. `maxTweets` is
+// defaulted to today's constant (Decision 6) so every existing caller and test
+// stays valid; the route passes `x.ai.batchReplyCap`.
 export function parseBatchTweets(
   value: unknown,
   maxTweets = MAX_BATCH_TWEETS,
@@ -567,12 +593,15 @@ export function parseBatchTweets(
       return { error: `invalid_tweet_text_${i}` };
     }
 
-    let band: 'hot' | 'warm' | 'manual' | undefined;
+    let band: 'hot' | 'warm' | 'manual' | 'roster' | undefined;
     if (r.band !== undefined && r.band !== null) {
-      // 'manual' = a ⊕ add (RU.8); stored on radar_drafts.band as queue metadata,
-      // never a classifier verdict — the confirm endpoint coerces it away from
-      // the reply_drafts contextSnapshot signals.
-      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual') {
+      // 'manual' = a ⊕ add (RU.8), 'roster' = a quiet post by someone in my
+      // circle (GT.8); both are stored on radar_drafts.band as queue metadata,
+      // never classifier verdicts — the confirm endpoint coerces them away from
+      // the reply_drafts contextSnapshot signals. Not re-checked against the
+      // people layer here: the band never reaches Grok and never reaches a
+      // Playbook cell, so a wrong claim costs a label, not money or a number.
+      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual' && r.band !== 'roster') {
         return { error: `invalid_tweet_band_${i}` };
       }
       band = r.band;
@@ -583,6 +612,20 @@ export function parseBatchTweets(
       const parsed = parseTweetSignals(r.signals);
       if (parsed === null) return { error: `invalid_tweet_signals_${i}` };
       signals = parsed;
+    }
+
+    // RC.2: the curation pass's reply-payoff score for this tweet. Stored on
+    // radar_drafts as measurement metadata (it gates nothing, §7.19) and never
+    // rendered into the prompt. Strict: a fractional or out-of-range score means
+    // the caller isn't speaking this contract, and a silently clamped number
+    // would poison the very measurement the column exists for.
+    let curationScore: number | undefined;
+    if (r.curationScore !== undefined && r.curationScore !== null) {
+      const n = r.curationScore;
+      if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 100) {
+        return { error: `invalid_tweet_curation_score_${i}` };
+      }
+      curationScore = n;
     }
 
     seen.add(tweetId);
@@ -597,6 +640,9 @@ export function parseBatchTweets(
       ...(url ? { url } : {}),
       ...(band ? { band } : {}),
       ...(signals ? { signals } : {}),
+      // `!== undefined`, not truthiness like band/signals above: 0 is a valid
+      // score and would be dropped by a `? :` test.
+      ...(curationScore !== undefined ? { curationScore } : {}),
     });
   }
   return { tweets };
@@ -620,6 +666,175 @@ function parseTweetSignals(value: unknown): TweetSignals | null {
   if (typeof s.bait !== 'boolean') return null;
   return { ...nums, bait: s.bait };
 }
+
+// ------------------------------------------------------------- curate (RC.3)
+//
+// One cheap scoring call in FRONT of the paid batch draft: after a long scroll
+// session the queue holds 40+ tweets and generate-batch spends on whatever
+// ranked first. This grades every fresh tweet for reply payoff so the drafting
+// money goes to the best 25 instead of the newest 25.
+//
+// Text-only (§7.19): `parseBatchTweets` still accepts band/signals/curationScore
+// because the panel sends one tweet shape everywhere, but `buildCurateInput`
+// projects each tweet down to four fields before rendering — the classifier
+// already priced the numbers in when it admitted the tweet, and the score it
+// produces is measurement metadata, never a gate.
+//
+// Writes NOTHING. The queue lives in the extension's session ring buffer, so
+// only the panel can act on `drop`; the score reaches the DB one call later,
+// on `radar_drafts.curation_score` (RC.2).
+
+/** Scoring is judgment, not prose — the voice-extract temperature, not the
+ *  reply drafter's. Deliberately NOT `x.ai.*` knobs: those size one written
+ *  reply, and a user who raises reply temperature for more varied drafts must
+ *  not silently make the grader flightier too. */
+const CURATE_TEMPERATURE = 0.2;
+const CURATE_REASONING: LlmReasoningEffort = 'low';
+
+/** How many scored tweets survive one curated pass. The knob, clamped by the
+ *  cap the drafting call itself enforces: asking for 40 keeps when
+ *  generate-batch refuses anything over 25 would just move the refusal one
+ *  click later. Exported because the live path costs money to reach, so the
+ *  clamp is pinned by a unit test instead (the JD.5 `rewriteWins` precedent). */
+export function curateKeepTarget(): number {
+  return Math.min(
+    getSetting<number>('x.radar.curatedCount'),
+    getSetting<number>('x.ai.batchReplyCap'),
+  );
+}
+
+interface CurateBody {
+  tweets?: unknown;
+  model?: unknown;
+  provider?: unknown;
+  reasoningEffort?: unknown;
+}
+
+replies.post('/replies/curate', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as CurateBody;
+
+  // MAX_CURATE_TWEETS (the radar ring-buffer size), not `x.ai.batchReplyCap`:
+  // scoring the whole queue in one cheap call is the entire point, and the
+  // queue being bigger than what we will draft is the precondition, not an
+  // error. The batch cap binds later, through `curateKeepTarget`.
+  const parsed = parseBatchTweets(body.tweets, MAX_CURATE_TWEETS);
+  if ('error' in parsed) return c.json({ error: parsed.error }, 400);
+  const tweets = parsed.tweets;
+
+  let model: string | undefined;
+  if (body.model !== undefined && body.model !== null) {
+    if (typeof body.model !== 'string' || body.model.trim() === '') {
+      return c.json({ error: 'invalid_model' }, 400);
+    }
+    model = body.model;
+  }
+
+  let provider: LlmProvider | undefined;
+  if (body.provider !== undefined && body.provider !== null) {
+    if (body.provider !== 'grok' && body.provider !== 'openrouter') {
+      return c.json({ error: 'invalid_provider' }, 400);
+    }
+    provider = body.provider;
+  }
+
+  let reasoningEffort: LlmReasoningEffort | undefined;
+  if (body.reasoningEffort !== undefined && body.reasoningEffort !== null) {
+    const r = body.reasoningEffort;
+    if (r !== 'none' && r !== 'low' && r !== 'medium' && r !== 'high') {
+      return c.json({ error: 'invalid_reasoning_effort' }, 400);
+    }
+    reasoningEffort = r;
+  }
+
+  // ---- every refusal is above this line (§7.4); everything below may spend ----
+
+  const keepTarget = curateKeepTarget();
+  // No relationship / guidance / me / pillar loading, unlike generate-batch:
+  // none of it changes whether a post is worth replying to, and every skipped
+  // lookup is latency on a click the user is waiting behind.
+  const niche = loadActiveNicheSafe();
+  const prompt = loadPromptSafe('reply-curate');
+  const messages = buildCurateInput(tweets, {
+    replyPersona: niche.replyPersona,
+    template: prompt.body,
+  });
+  // ~35 output tokens per row (id + int + bool + a clipped one-liner) plus JSON
+  // overhead; the 4500 ceiling covers a full 100-tweet queue. Truncation is not
+  // silent — it costs coverage, not queue rows (`unscored`, decision 6).
+  const maxOutputTokens = Math.min(4500, 300 + tweets.length * 35);
+
+  let result: AskLlmResult;
+  try {
+    result = await askLLM(
+      {
+        ...(model !== undefined ? { model } : {}),
+        ...(provider !== undefined ? { provider } : {}),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        messages,
+        jsonSchema: { name: 'curate_scores', schema: CURATE_SCHEMA },
+        // Niche-suffixed like the two drafting paths: the persona sits inside
+        // the cached prefix, so a niche edit must bust it or the grader keeps
+        // scoring payoff for who I used to be.
+        promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
+      },
+      {
+        defaults: {
+          temperature: CURATE_TEMPERATURE,
+          maxOutputTokens,
+          reasoningEffort: CURATE_REASONING,
+        },
+      },
+    );
+  } catch (err) {
+    const mapped = llmErrorPayload(err);
+    if (mapped) return c.json(mapped.body, mapped.status);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('/x/replies/curate failed:', detail);
+    return c.json({ error: 'curate_failed', detail }, 502);
+  }
+
+  // The call is billed. A body we can't parse is a 502 and never a retry — a
+  // retry here doubles the spend on a model that just proved it is answering
+  // off-contract, and `parseCurateScores` degrades to null exactly when a
+  // malformed row would otherwise dismiss a queue entry nobody graded.
+  const scores = parseCurateScores(result.text);
+  if (scores === null) {
+    return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
+  }
+
+  const wantedIds = tweets.map((t) => t.tweetId);
+  const selection = selectCurated(scores, wantedIds, keepTarget);
+
+  // Anchor the verdicts to what we asked about, first occurrence wins — the
+  // same shape generate-batch applies to its replies, and it makes the response
+  // self-consistent: `scored` ⊆ asked, and keep ∪ drop ∪ unscored = asked. The
+  // panel only ever looks scores up by sighting id, so a hallucinated row is
+  // inert there today; anchoring is what keeps a later consumer that ITERATES
+  // `scored` from rendering a verdict for a tweet that was never in the queue.
+  const wanted = new Set(wantedIds);
+  const seen = new Set<string>();
+  const scored: CurateScore[] = [];
+  for (const s of scores) {
+    if (!wanted.has(s.tweetId) || seen.has(s.tweetId)) continue;
+    seen.add(s.tweetId);
+    scored.push(s);
+  }
+
+  return c.json({
+    scored,
+    keep: selection.keep,
+    drop: selection.drop,
+    unscored: selection.unscored,
+    keepTarget,
+    costUsd: result.costUsd,
+    model: result.model,
+    requestId: result.requestId,
+  });
+});
 
 // ---------------------------------------------------------------- list/get
 
@@ -934,7 +1149,28 @@ replies.patch('/replies/:id', async (c) => {
   // updatedAt is in effect paste time. Best-effort, never fails the PATCH.
   if (updates.status === 'posted') {
     const handle = normalizePersonHandle(existing.sourceAuthorUsername);
+    // A reply to MY OWN post tracks no person: the LaunchRoom seed comment
+    // (GT.3) arrives under the placeholder handle 'me', and upserting it would
+    // mint a phantom stage-`engaged` row that joins the reciprocity set — the
+    // band-gate exemption, the daily quest AND the glance map (GT.6–GT.8).
+    // "Own post" is structural, not a sentinel compare: the source tweet is a
+    // posts_published row, which a real @me account's tweets can never be.
+    // Best-effort in the §7.8 direction — a failed lookup keeps the old
+    // behaviour (track the person) rather than silently dropping CRM events.
+    let selfReply = false;
     if (handle) {
+      try {
+        const own = await db
+          .select({ tweetId: postsPublished.tweetId })
+          .from(postsPublished)
+          .where(eq(postsPublished.tweetId, existing.sourceTweetId))
+          .limit(1);
+        selfReply = own.length > 0;
+      } catch (err) {
+        console.error('people: own-post lookup failed (person still tracked):', err);
+      }
+    }
+    if (handle && !selfReply) {
       await upsertPerson(handle, {
         source: 'reply',
         fields: { displayName: existing.sourceAuthorDisplayName },

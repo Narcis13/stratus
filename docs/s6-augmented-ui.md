@@ -61,6 +61,8 @@ GET /x/people/glance  →  200 {
 
 Registered in `routes/people.ts` **before `GET /people/:handle`** (static path must win — the same §7.20 trap `rankmap` dodges). Membership is deliberately different from `rankmap` (which stays untouched and feeds the radar tier stamp): glance is all non-retired people plus target-roster backfill (a target with no `people` row appears as `stage:'stranger'`).
 
+**GT.8 rides this same map for a second job:** `isReciprocityPerson(entry)` (in the pure `shared/glance.ts`) narrows it back down to *stage ≥ `engaged` ∪ target roster* — the reply gate's own membership rule — and a fresh (<24h) tweet by such an author is streamed into the Radar with `band:'roster'` even when the classifier says skip. **The narrowing is the point:** presence in this map is not membership, because ambient hover capture files most of the timeline at `noticed`. Measured against prod: glance holds 1,596 handles, the shipped rule 14 — identical to what `GET /people/rankmap` returns, so the Radar chip and the money gate cannot disagree.
+
 ---
 
 ## The context panel (tweet page)
@@ -135,8 +137,8 @@ On tweet pages, stratus injects a defensive CSS rule `#reply-master-btn { displa
 
 ## What did *not* change
 
-- **The band border/dim and the radar stream** — `applyBand` keeps `readTweetSignals` + `data-stratus-band` + `recordRadarSighting` byte-identical. Only the green *badge* was removed.
-- **`rankmap` / `stampTiers` / radar ranking / the band classifier thresholds** — untouched.
+- **The band border/dim** — `applyBand` keeps `readTweetSignals` + `data-stratus-band` byte-identical. Only the green *badge* was removed. (The **radar stream** was byte-identical here too until **GT.8** added the `band:'roster'` branch above; the border and the dim still show exactly what the classifier said, and no roster capture alters them.)
+- **`rankmap` / `stampTiers` / the band classifier thresholds** — untouched. (Radar *ranking* gained one rung at GT.8: within a tier, `roster` sorts below `warm`.)
 - **The MCP surface** — still 19 tools; no server data change, no migration.
 
 ---

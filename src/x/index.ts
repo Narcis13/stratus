@@ -17,6 +17,7 @@ import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
 import { channelsRouter } from './routes/channels.ts';
+import { coachRouter } from './routes/coach.ts';
 import { conversations } from './routes/conversations.ts';
 import { data, explorer } from './routes/data.ts';
 import { digest } from './routes/digest.ts';
@@ -26,8 +27,10 @@ import { followingRouter } from './routes/following.ts';
 import { followups } from './routes/followups.ts';
 import { goalsRouter } from './routes/goals.ts';
 import { harvest } from './routes/harvest.ts';
+import { humanizerRouter } from './routes/humanizer.ts';
 import { ideasRouter } from './routes/ideas.ts';
 import { images } from './routes/images.ts';
+import { judgeRouter } from './routes/judge.ts';
 import { launch } from './routes/launch.ts';
 import { me } from './routes/me.ts';
 import { createMentionsRouter } from './routes/mentions.ts';
@@ -114,8 +117,15 @@ export function mountX(app: Hono): void {
   // RL: reply lists — premade canned replies. CRUD (and later /use) are pure SQL
   // and always mounted; only /generate (RL.4) needs an LLM and checks at runtime.
   app.route('/x', replyListsRouter);
+  // HM.2: the project-level humanizer config (one `app_settings` row) that the
+  // Radar pick path reads. Always mounted, $0, static paths only — a sibling of
+  // the per-list `humanizer` JSON, not a replacement for it.
+  app.route('/x', humanizerRouter);
   // C8: channels — topic rooms as saved views over tags, pure SQL, always $0.
   app.route('/x', channelsRouter);
+  // SC.7: the static coach's niche lexicon — derived from the active niche +
+  // channels + pillars, so it mounts after both. Pure SQL, always $0.
+  app.route('/x', coachRouter);
   // S4: Studio asset library (composed PNGs + AI backgrounds as SQLite BLOBs),
   // always mounted, $0. The image GENERATION route is Grok-gated below.
   app.route('/x', assets);
@@ -162,9 +172,13 @@ export function mountX(app: Hono): void {
     app.route('/x', replies);
     app.route('/x', drafter);
     app.route('/x', voiceExtract);
+    // JD.4: the judge is on-demand only — no worker, no batch, one human click
+    // per call (decision 1), which is why it mounts beside the drafter rather
+    // than checking a key at runtime like images.
+    app.route('/x', judgeRouter);
   } else {
     console.log(
-      'x/replies: no LLM provider configured (set XAI_API_KEY or OPENROUTER_API_KEY) — /x/replies/*, /x/posts/draft and /x/voice/*/extract not mounted',
+      'x/replies: no LLM provider configured (set XAI_API_KEY or OPENROUTER_API_KEY) — /x/replies/*, /x/posts/draft, /x/voice/*/extract and /x/judge not mounted',
     );
   }
 }

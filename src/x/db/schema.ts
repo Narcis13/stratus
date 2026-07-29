@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { blob, index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import type { JudgeAnnotation, JudgeScores } from '../../shared/judge.ts';
 import type { NicheDoctrine } from '../niche/defaults.ts';
 import type { HumanizerConfig } from '../replyLists/engine.ts';
 
@@ -419,6 +420,12 @@ export const radarDrafts = sqliteTable(
     replyDraftId: text('reply_draft_id'),
     // Channel slugs (C8) — tagged from the Radar row, keyed by tweet_id.
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    // RC.2: the 0–100 reply-payoff score the curation pass gave this tweet on
+    // the click that drafted it. Null = this draft was NOT produced through
+    // curation (every pre-RC row, every plain "Draft replies" click, every CLI
+    // caller) — never 0, which is a real "nothing to gain here" verdict.
+    // Measurement metadata: it gates nothing and never reaches a prompt (§7.19).
+    curationScore: integer('curation_score'),
     status: text('status').notNull().default('ready'), // ready | clicked | expired
     draftedAt: integer('drafted_at', { mode: 'timestamp_ms' })
       .default(sql`(unixepoch() * 1000)`)
@@ -1017,4 +1024,62 @@ export const articles = sqliteTable(
   },
   // List is `WHERE status ORDER BY updated_at DESC` — same shape as ideas.
   (t) => [index('articles_status_updated_idx').on(t.status, t.updatedAt)],
+);
+
+// JD.4 — one paid 13-dimension read on a draft, kept so the Playbook can later
+// ask whether the read predicted anything (JD.7). x-builder, where the rubric
+// comes from, cannot run that check: its verdict is never persisted.
+//
+// The verdict↔post link is `text_hash`, computed at READ time, and there is
+// deliberately no `judgment_id` column on scheduled_posts/posts_published
+// (§7.12 — no derived-state column). That is semantics, not a shortcut: a
+// verdict is only valid for the exact text it graded, so a post edited after
+// judging SHOULD read as unjudged, which is the same reset-on-edit rule the
+// panel enforces. It also covers hand-written-then-judged posts and needs no
+// migration on either post table. `judgeTextHash` normalizes internally
+// (whitespace collapse + trim), so a reflow is not an edit.
+//
+// `verdict` and `overall` are the same fact twice on purpose: `overall` is what
+// JD.7 aggregates, `verdict` is the band `deriveVerdictBand` derived from it at
+// judge time. They cannot disagree because nothing writes them separately —
+// `insertJudgment` takes the parsed verdict whole. `approved` is NOT stored: it
+// is a pure function of the band, and a third copy is how a label starts lying.
+//
+// `surface` exists so a future decision can judge replies without a migration,
+// but v1 only ever writes 'post' — judging 3 variants × 10–20 replies/day is
+// $3–6/month, a 3–5× increase of the whole LLM budget (JD decision 2).
+//
+// `parent_judgment_id` is set only by JD.5's apply path: the re-judge of a
+// rewrite points at the judgment whose fixes produced it. Soft link, no FK — a
+// deleted parent must not take the measurement with it.
+export const draftJudgments = sqliteTable(
+  'draft_judgments',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    textHash: text('text_hash').notNull(),
+    // Exactly what was graded (§7.18 transparency) — the trimmed draft the
+    // model saw, not the raw request body.
+    text: text('text').notNull(),
+    surface: text('surface').notNull().default('post'), // post (v1) | reply (never yet)
+    verdict: text('verdict').notNull(), // post_now | slight_rework | major_rework | do_not_post
+    overall: integer('overall').notNull(),
+    headline: text('headline').notNull().default(''),
+    confidence: text('confidence'), // low | medium | high; null = the model didn't say
+    scores: text('scores', { mode: 'json' }).$type<JudgeScores>().notNull(),
+    annotations: text('annotations', { mode: 'json' }).$type<JudgeAnnotation[]>().notNull(),
+    strengths: text('strengths', { mode: 'json' }).$type<string[]>(),
+    improvements: text('improvements', { mode: 'json' }).$type<string[]>(),
+    model: text('model').notNull(),
+    provider: text('provider').notNull(), // grok | openrouter — a judge on the drafting model likes its own prose (decision 11)
+    costUsd: real('cost_usd'),
+    parentJudgmentId: text('parent_judgment_id'),
+    judgedAt: integer('judged_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  // The only lookup that exists: JD.7 hashes every measured own post and probes
+  // this index. Nothing queries by date or by band.
+  (t) => [index('draft_judgments_text_hash_idx').on(t.textHash)],
 );

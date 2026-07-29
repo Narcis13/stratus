@@ -30,6 +30,7 @@ import {
   type ChannelAggregate,
   type ChannelCreateBody,
   type ChannelPatchBody,
+  type CoachLexiconResponse,
   type Commitment,
   type CommitmentDebt,
   type CommitmentKey,
@@ -41,9 +42,14 @@ import {
   type ConversationThread,
   type ConversationsResponse,
   type ConversionWindow,
+  type CooldownsResponse,
   type CreateBody,
   type CreateThreadBody,
   type CreateThreadResponse,
+  type CurateBody,
+  type CurateResponse,
+  type CurateScoredItem,
+  type CurateTweet,
   type DigestFacts,
   type DigestResponse,
   type DigestScorecard,
@@ -74,6 +80,8 @@ import {
   type GoalVerdict,
   type HarvestRun,
   type HumanizerConfig,
+  type HumanizerPatchBody,
+  type HumanizerSettings,
   type IcebreakersResponse,
   type Idea,
   type IdeaCreateBody,
@@ -85,6 +93,10 @@ import {
   type IdeasResponse,
   type ImageGenerateBody,
   type ImageGenerateResponse,
+  type JudgeApplyBody,
+  type JudgeApplyResponse,
+  type JudgeRunBody,
+  type JudgeRunResponse,
   type ListOpts,
   type LlmModel,
   type LlmModelsResponse,
@@ -106,6 +118,7 @@ import {
   type MentionsRefreshResult,
   type MentionsResponse,
   type MetricsAccountResponse,
+  type MilestoneWatch,
   type MonitorAlert,
   type MonitorSeverity,
   type Niche,
@@ -136,8 +149,11 @@ import {
   type Playbook,
   type PlaybookAngleCell,
   type PlaybookCell,
+  type PlaybookCoachScoreCell,
   type PlaybookExtractResult,
+  type PlaybookFormatCell,
   type PlaybookIdeaSurface,
+  type PlaybookJudgeBandCell,
   type PlaybookLatencyCell,
   type PlaybookModelCell,
   type PlaybookRosterCoverage,
@@ -151,6 +167,7 @@ import {
   type PromptResetResult,
   type PromptSummary,
   type PromptsRestoreResult,
+  type ReachFit,
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftStatus,
@@ -260,6 +277,10 @@ export type {
   CreateBody,
   CreateThreadBody,
   CreateThreadResponse,
+  CurateBody,
+  CurateResponse,
+  CurateScoredItem,
+  CurateTweet,
   FanItem,
   FansResponse,
   FollowingListOpts,
@@ -283,6 +304,7 @@ export type {
   IdeaStatus,
   IdeasResponse,
   PinnedWatch,
+  MilestoneWatch,
   ListOpts,
   GoalKind,
   GoalStatus,
@@ -320,8 +342,11 @@ export type {
   Playbook,
   PlaybookAngleCell,
   PlaybookCell,
+  PlaybookCoachScoreCell,
   PlaybookExtractResult,
+  PlaybookFormatCell,
   PlaybookIdeaSurface,
+  PlaybookJudgeBandCell,
   PlaybookLatencyCell,
   PlaybookModelCell,
   PlaybookRosterCoverage,
@@ -344,6 +369,8 @@ export type {
   ReplyGenerateBody,
   ReplyPatchBody,
   HumanizerConfig,
+  HumanizerPatchBody,
+  HumanizerSettings,
   ReplyList,
   ReplyListCreateBody,
   ReplyListDetail,
@@ -578,6 +605,53 @@ export const api = {
 
   // N0 — the niche: identity + strategy container. get() returns the active
   // niche + resolved doctrine; activation is update(slug, { active: true }).
+  // SC.7 — the niche lexicon the static coach grades with. $0 pure SQL; the
+  // panel holds one cached copy (sidepanel/coachLexicon.ts) and silently keeps
+  // the neutral default when this fails.
+  coach: {
+    lexicon(s: Settings): Promise<CoachLexiconResponse> {
+      return request<CoachLexiconResponse>(s, '/x/coach/lexicon');
+    },
+
+    // SC.6 — how often each structural shape went out lately. $0 SQL on the
+    // calendar router; the Composer reads it once and matches the current
+    // draft's own classified format against the cells. Advisory only.
+    cooldowns(s: Settings, days?: number): Promise<CooldownsResponse> {
+      return request<CooldownsResponse>(
+        s,
+        `/x/posts/cooldowns${days === undefined ? '' : `?days=${days}`}`,
+      );
+    },
+
+    // SC.8 — what this SHAPE has historically done against your own recent
+    // baseline, fitted on own posts only. $0 SQL. The whole table comes back
+    // once per mount and the panel looks up the draft's format locally, because
+    // the fit moves when a post is measured while the format moves as you type.
+    reach(s: Settings): Promise<ReachFit> {
+      return request<ReachFit>(s, '/x/coach/reach');
+    },
+  },
+
+  // JD.4/JD.5 — the paid second opinion the free coach can't give. Both calls
+  // are human-triggered only: there is no worker, no batch and no automatic
+  // invocation anywhere (JD decision 1), which is the whole cost argument.
+  // Mounted behind the LLM gate, so an unconfigured install 404s here.
+  judge: {
+    /** ~$0.003. Grades one draft on the 13-dimension rubric and returns up to
+     *  twelve fixes quoted verbatim out of the text it judged. */
+    run(s: Settings, body: JudgeRunBody): Promise<JudgeRunResponse> {
+      return request<JudgeRunResponse>(s, '/x/judge', { method: 'POST', body });
+    },
+
+    /** ~$0.007 — a rewrite call plus a re-judge. `improved: false` is a SUCCESS:
+     *  the rewrite did not score strictly better, so the caller's own text comes
+     *  back with the original verdict and nothing was persisted. 409
+     *  `stale_verdict` means the draft was edited after it was judged. */
+    apply(s: Settings, body: JudgeApplyBody): Promise<JudgeApplyResponse> {
+      return request<JudgeApplyResponse>(s, '/x/judge/apply', { method: 'POST', body });
+    },
+  },
+
   niche: {
     get(s: Settings): Promise<NicheActive> {
       return request<NicheActive>(s, '/x/niche');
@@ -746,6 +820,27 @@ export const api = {
 
     restoreDefaults(s: Settings): Promise<PromptsRestoreResult> {
       return request<PromptsRestoreResult>(s, '/x/prompts/restore-defaults', { method: 'POST' });
+    },
+  },
+
+  // HM.2 — the project-level reply humanizer (prefix/suffix/casing/typo jitter
+  // the Radar applies at pick time). A raw `app_settings` row, NOT a registry
+  // key: the registry has no string-array type, so this sits beside `llm` and
+  // `prompts` rather than inside `settings`. All three calls are $0.
+  humanizer: {
+    get(s: Settings): Promise<HumanizerSettings> {
+      return request<HumanizerSettings>(s, '/x/humanizer');
+    },
+
+    // Partial; the server merges over the stored row so a patch can never land
+    // a half-written config. A rejected field 400s with its own code.
+    patch(s: Settings, body: HumanizerPatchBody): Promise<HumanizerSettings> {
+      return request<HumanizerSettings>(s, '/x/humanizer', { method: 'PATCH', body });
+    },
+
+    // Reset = delete the row; "untouched" has exactly one representation.
+    reset(s: Settings): Promise<HumanizerSettings> {
+      return request<HumanizerSettings>(s, '/x/humanizer', { method: 'DELETE' });
     },
   },
 
@@ -1121,6 +1216,15 @@ export const api = {
         method: 'POST',
         body: { ...body, applyPillars: s.applyPillarsToReplies },
       });
+    },
+
+    // RC.3 — one cheap scoring call that grades the queue for reply payoff, so
+    // the drafting call that follows spends on the best N instead of the newest
+    // N. Writes nothing: the caller dismisses `drop` and drafts `keep`. No
+    // `applyPillars` — pillars shape a written reply, not a verdict about
+    // whether a post is worth replying to.
+    curate(s: Settings, body: CurateBody): Promise<CurateResponse> {
+      return request<CurateResponse>(s, '/x/replies/curate', { method: 'POST', body });
     },
 
     // §7.2 — one Grok call drafts a reply per queued Radar tweet (not persisted).

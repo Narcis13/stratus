@@ -7,6 +7,9 @@
 // Pure on purpose: no DB, no clock. routes/playbook.ts loads the rows and
 // calls these; fixtures drive the tests.
 
+import { JUDGE_VERDICT_ORDER, type JudgeVerdictLabel, deriveApproved } from '../shared/judge.ts';
+import { type CoachBand, type CoachLexicon, scoreDraft } from '../shared/postCoach.ts';
+import { POST_FORMATS, type PostFormat, classifyFormat } from '../shared/postFormat.ts';
 import {
   BAND,
   type Band,
@@ -998,6 +1001,261 @@ export function buildTimelineFunnel(
   });
 
   return { cells, totalSeen: firstByTweet.size, totalReplied };
+}
+
+// -------------------------------------- 13. post format effectiveness (SC.5)
+
+/** One own ORIGINAL post. `text` is `posts_published.text` RAW — both
+ *  classifiers normalize at their own input (X's HTML entities, curly
+ *  apostrophes, t.co URLs), so pre-normalizing here would double-strip. The
+ *  label is derived at read time and never stored (SC decision 2): improving
+ *  `classifyFormat` re-labels the entire measured history on the next request. */
+export interface OriginalPostRow {
+  text: string;
+  outcome: MeasuredOutcome | null;
+}
+
+export interface FormatCell extends OutcomeCell {
+  format: PostFormat;
+}
+
+export interface FormatEffectiveness {
+  /** One cell per format that actually occurs, in `POST_FORMATS` cascade order.
+   *  Fixed order, not most-sampled-first: the cascade order is itself
+   *  information (earlier = more specific shape), and a diagnostic table you
+   *  re-read weekly should keep its rows where you left them. No lift line —
+   *  a 14-way axis has no canonical baseline pair (same shape as
+   *  `buildModelEffectiveness`), so cells are compared by eye, each gated. */
+  cells: FormatCell[];
+  /** Every original, measured or not — the format axis is knowable on rows
+   *  whose metrics never landed, unlike every other cell's denominator. */
+  totalPosted: number;
+  totalMeasured: number;
+}
+
+/** The fourth axis (SC decision 3): pillar = topic, register = tone, angle =
+ *  reply stance, FORMAT = structure. Unlike every other Playbook cell this one
+ *  has n on day one — `posts_published.text` is NOT NULL, so the whole measured
+ *  history classifies without a backfill. */
+export function buildFormatEffectiveness(
+  rows: OriginalPostRow[],
+  minN = DEFAULT_MIN_CELL_N,
+): FormatEffectiveness {
+  const byFormat = new Map<PostFormat, Array<MeasuredOutcome | null>>();
+  for (const r of rows) {
+    const format = classifyFormat(r.text);
+    const list = byFormat.get(format) ?? [];
+    list.push(r.outcome);
+    byFormat.set(format, list);
+  }
+  const cells = POST_FORMATS.flatMap((format) => {
+    const outcomes = byFormat.get(format);
+    return outcomes === undefined ? [] : [{ format, ...cellOf(outcomes, minN) }];
+  });
+  return {
+    cells,
+    totalPosted: rows.length,
+    totalMeasured: rows.filter((r) => r.outcome !== null).length,
+  };
+}
+
+// ------------------------------------ 14. the coach's own judge (SC.5)
+
+/** Bands worst→best. Deliberately NOT re-cut here: `scoreDraft` owns the cut
+ *  points, and this cell exists to grade the number the Composer actually
+ *  showed. Re-deriving bands locally would measure a different score than the
+ *  user saw — the badge-vs-gate fork, one surface later. */
+const COACH_BAND_ORDER: readonly CoachBand[] = ['rework', 'almost', 'ship', 'top'];
+
+export interface CoachScoreCell extends OutcomeCell {
+  band: CoachBand;
+}
+
+export interface CoachScoreEffectiveness {
+  /** All four bands, worst→best. An empty band is an honest zero here (the
+   *  bands partition every original), unlike the format table's absent rows. */
+  cells: CoachScoreCell[];
+  /** The band is a WEAK key: `standard` is a mean over ~20 rules, so a draft
+   *  with one red fix row still scores ~90 and lands in `top`. "Did the coach's
+   *  advice help" is the fix-count question, so it is reported BESIDE the band
+   *  one rather than instead of it — `clean` = the coach flagged no fixes. */
+  clean: OutcomeCell;
+  flagged: OutcomeCell;
+  totalPosted: number;
+  totalMeasured: number;
+  /** Highest ÷ lowest GATED band and which two those were — null unless two
+   *  distinct bands clear the gate. Naming the pair is what keeps the number
+   *  honest: on a small corpus the comparison is rarely top-vs-rework. */
+  spread: number | null;
+  profileVisitsSpread: number | null;
+  spreadBands: { high: CoachBand; low: CoachBand } | null;
+  /** clean ÷ flagged, only when BOTH sides clear the gate (the media/idea/
+   *  relationship both-sides discipline). */
+  fixSpread: number | null;
+  fixProfileVisitsSpread: number | null;
+}
+
+/** The phase's own falsification test (SC design, non-optional): does the score
+ *  the coach shows predict anything about reach? Shipped in the same commit as
+ *  the format cell on purpose — if the answer is "no measurable spread", the
+ *  coach stays a floor and the UI copy already says so (decision 4). Originals
+ *  only, graded with the post rules (`isReply` defaults false) — a reply skips
+ *  two checks and would be scored on a different denominator.
+ *
+ *  `lexicon` must be the ACTIVE niche lexicon (the route passes
+ *  `loadActiveCoachLexicon()`), for the same reason the bands are not re-cut
+ *  here: the Composer grades with it, so grading without it measures a score
+ *  the user never saw — two rules (`concrete_detail`, `hook_opener`'s vocative
+ *  branch) move with it. Omitting it falls back to the empty default, which is
+ *  only right for a caller that never showed the user a score. */
+export function buildCoachScoreEffectiveness(
+  rows: OriginalPostRow[],
+  minN = DEFAULT_MIN_CELL_N,
+  lexicon?: CoachLexicon,
+): CoachScoreEffectiveness {
+  const byBand = new Map<CoachBand, Array<MeasuredOutcome | null>>();
+  const clean: Array<MeasuredOutcome | null> = [];
+  const flagged: Array<MeasuredOutcome | null> = [];
+  for (const r of rows) {
+    const result = lexicon ? scoreDraft(r.text, { lexicon }) : scoreDraft(r.text);
+    const list = byBand.get(result.band) ?? [];
+    list.push(r.outcome);
+    byBand.set(result.band, list);
+    (result.counts.fix > 0 ? flagged : clean).push(r.outcome);
+  }
+  const cells = COACH_BAND_ORDER.map((band) => ({
+    band,
+    ...cellOf(byBand.get(band) ?? [], minN),
+  }));
+  const gated = cells.filter((c) => c.sufficient);
+  const low = gated[0];
+  const high = gated[gated.length - 1];
+  const pair =
+    low !== undefined && high !== undefined && low.band !== high.band ? { low, high } : null;
+  const cleanCell = cellOf(clean, minN);
+  const flaggedCell = cellOf(flagged, minN);
+  const fixGated = cleanCell.sufficient && flaggedCell.sufficient;
+  return {
+    cells,
+    clean: cleanCell,
+    flagged: flaggedCell,
+    totalPosted: rows.length,
+    totalMeasured: rows.filter((r) => r.outcome !== null).length,
+    spread: pair ? ratio(pair.high.medianViews, pair.low.medianViews) : null,
+    profileVisitsSpread: pair
+      ? ratio(pair.high.medianProfileVisits, pair.low.medianProfileVisits)
+      : null,
+    spreadBands: pair ? { high: pair.high.band, low: pair.low.band } : null,
+    fixSpread: fixGated ? ratio(cleanCell.medianViews, flaggedCell.medianViews) : null,
+    fixProfileVisitsSpread: fixGated
+      ? ratio(cleanCell.medianProfileVisits, flaggedCell.medianProfileVisits)
+      : null,
+  };
+}
+
+// ------------------------------- 15. does the LLM judge predict anything? (JD.7)
+
+/** One own original with the band the judge gave the EXACT text that shipped.
+ *  `verdictBand: null` = never judged, or judged and then edited — the link is a
+ *  read-time text hash (JD decision 6), so a post whose typo was fixed after
+ *  judging correctly reads as unjudged rather than carrying a verdict about
+ *  different words. The loader owns the hashing; this file stays clock- and
+ *  crypto-free. */
+export interface JudgeRow {
+  verdictBand: JudgeVerdictLabel | null;
+  outcome: MeasuredOutcome | null;
+}
+
+export interface JudgeBandCell extends OutcomeCell {
+  band: JudgeVerdictLabel;
+}
+
+export interface JudgeEffectiveness {
+  /** All four bands, worst→best (`JUDGE_VERDICT_ORDER`) — they partition the
+   *  JUDGED rows only, which is why `unjudged` is a sibling and not a fifth. */
+  cells: JudgeBandCell[];
+  /** Never judged, or edited after judging. Its own bucket (§7.11): folding it
+   *  into a band would put a number on "we don't know", and on this cell it is
+   *  expected to be the biggest row for months (the tool is on-demand). */
+  unjudged: OutcomeCell;
+  /** The same judged rows split two ways instead of four — `deriveApproved` is
+   *  the only other reading the verdict supports, and a 2-way split clears the
+   *  gate at half the sample. Ships BESIDE the band table for the reason SC.5's
+   *  clean/flagged does: on a small corpus the 4-way axis is too sparse to say
+   *  anything, and this one might not be. */
+  approved: OutcomeCell;
+  rejected: OutcomeCell;
+  totalPosted: number;
+  totalMeasured: number;
+  /** Highest ÷ lowest GATED band, and which two those were — null unless two
+   *  distinct bands clear the gate. Naming the pair is what keeps the number
+   *  honest: it is rarely post_now-vs-do_not_post. */
+  spread: number | null;
+  profileVisitsSpread: number | null;
+  spreadBands: { high: JudgeVerdictLabel; low: JudgeVerdictLabel } | null;
+  /** approved ÷ rejected, only when BOTH sides clear the gate. */
+  approvedSpread: number | null;
+  approvedProfileVisitsSpread: number | null;
+}
+
+/** The falsification cell for the paid judge, shipped in the same phase as the
+ *  tool (JD design, non-optional): do the posts it liked actually reach further?
+ *  x-builder — where the rubric comes from — cannot ask this, because its verdict
+ *  is never persisted. Ours is, keyed to the exact text.
+ *
+ *  Expect "insufficient data" for a long time: two gated bands is ~40 judged AND
+ *  measured originals. That is the honest alternative to shipping an unvalidated
+ *  number as advice, and nothing anywhere sorts or gates on the score (decision
+ *  4) regardless of what this cell eventually says. */
+export function buildJudgeEffectiveness(
+  rows: JudgeRow[],
+  minN = DEFAULT_MIN_CELL_N,
+): JudgeEffectiveness {
+  const byBand = new Map<JudgeVerdictLabel, Array<MeasuredOutcome | null>>();
+  const unjudged: Array<MeasuredOutcome | null> = [];
+  const approved: Array<MeasuredOutcome | null> = [];
+  const rejected: Array<MeasuredOutcome | null> = [];
+  for (const r of rows) {
+    if (r.verdictBand === null) {
+      unjudged.push(r.outcome);
+      continue;
+    }
+    const list = byBand.get(r.verdictBand) ?? [];
+    list.push(r.outcome);
+    byBand.set(r.verdictBand, list);
+    (deriveApproved(r.verdictBand) ? approved : rejected).push(r.outcome);
+  }
+  const cells = JUDGE_VERDICT_ORDER.map((band) => ({
+    band,
+    ...cellOf(byBand.get(band) ?? [], minN),
+  }));
+  const gated = cells.filter((c) => c.sufficient);
+  const low = gated[0];
+  const high = gated[gated.length - 1];
+  const pair =
+    low !== undefined && high !== undefined && low.band !== high.band ? { low, high } : null;
+  const approvedCell = cellOf(approved, minN);
+  const rejectedCell = cellOf(rejected, minN);
+  const approvedGated = approvedCell.sufficient && rejectedCell.sufficient;
+  return {
+    cells,
+    unjudged: cellOf(unjudged, minN),
+    approved: approvedCell,
+    rejected: rejectedCell,
+    totalPosted: rows.length,
+    totalMeasured: rows.filter((r) => r.outcome !== null).length,
+    spread: pair ? ratio(pair.high.medianViews, pair.low.medianViews) : null,
+    profileVisitsSpread: pair
+      ? ratio(pair.high.medianProfileVisits, pair.low.medianProfileVisits)
+      : null,
+    spreadBands: pair ? { high: pair.high.band, low: pair.low.band } : null,
+    approvedSpread: approvedGated
+      ? ratio(approvedCell.medianViews, rejectedCell.medianViews)
+      : null,
+    approvedProfileVisitsSpread: approvedGated
+      ? ratio(approvedCell.medianProfileVisits, rejectedCell.medianProfileVisits)
+      : null,
+  };
 }
 
 // ------------------------------------------------ feedback into generation

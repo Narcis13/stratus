@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { type GlanceEntry, NEGLECT_DAYS, type PersonChip, buildPersonChips } from './glance.ts';
+import {
+  type GlanceEntry,
+  NEGLECT_DAYS,
+  type PersonChip,
+  buildPersonChips,
+  isReciprocityPerson,
+} from './glance.ts';
 
 const NOW = Date.parse('2026-07-20T12:00:00Z');
 const DAY_MS = 86_400_000;
@@ -143,5 +149,44 @@ describe('buildPersonChips — order & assembly', () => {
 
   test('a fully cold unknown handle produces no chips', () => {
     expect(buildPersonChips(entry(), NOW)).toEqual([]);
+  });
+});
+
+describe('isReciprocityPerson (GT.8 — the Radar roster capture)', () => {
+  test('mirrors the server floor: engaged and up are mine', () => {
+    for (const stage of ['engaged', 'responded', 'mutual', 'ally']) {
+      expect(isReciprocityPerson(entry({ stage }))).toBe(true);
+    }
+  });
+
+  test('presence in the map is NOT membership — hover capture stops at noticed', () => {
+    // The whole reason this predicate exists: the glance map holds every
+    // non-retired person, and ambient AX.1 hover capture makes most of the
+    // timeline `noticed`. RECIPROCITY_MIN_STAGE was measured onto `engaged`.
+    for (const stage of ['stranger', 'noticed']) {
+      expect(isReciprocityPerson(entry({ stage }))).toBe(false);
+    }
+  });
+
+  test('a 2–10x target is mine at any stage (the roster half is unconditional)', () => {
+    expect(isReciprocityPerson(entry({ stage: 'stranger', isTarget: true }))).toBe(true);
+    expect(isReciprocityPerson(entry({ stage: 'noticed', isTarget: true }))).toBe(true);
+  });
+
+  test('an unknown handle, and an unknown stage word, are not mine', () => {
+    expect(isReciprocityPerson(undefined)).toBe(false);
+    // A server that grows a stage the cached client has never heard of must fail
+    // toward the gate's refusal default, not toward membership.
+    expect(isReciprocityPerson(entry({ stage: 'confidant' }))).toBe(false);
+  });
+
+  test('the chip gate and the membership rule share one floor', () => {
+    // If these ever disagree, the timeline shows a stage chip for someone the
+    // Radar refuses to capture (or worse, the reverse) — same STAGE_ORDER,
+    // same ENGAGED_RANK, asserted rather than assumed.
+    for (const stage of ['stranger', 'noticed', 'engaged', 'responded', 'mutual', 'ally']) {
+      const hasStageChip = kinds(buildPersonChips(entry({ stage }), NOW)).includes('stage');
+      expect(isReciprocityPerson(entry({ stage }))).toBe(hasStageChip);
+    }
   });
 });

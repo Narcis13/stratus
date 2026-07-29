@@ -24,6 +24,8 @@ import { db } from '../../db/client.ts';
 import { ARTICLE_PROMPT_TEMPLATE } from '../articles/prompt.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { DIGEST_PROMPT_TEMPLATE } from '../digest.ts';
+import { JUDGE_PROMPT_TEMPLATE } from '../judge/prompt.ts';
+import { JUDGE_REWRITE_PROMPT_TEMPLATE } from '../judge/rewritePrompt.ts';
 import { DM_PROMPT_TEMPLATE } from '../people/dm.ts';
 import { ICEBREAKER_PROMPT_TEMPLATE } from '../people/icebreakers.ts';
 import { IDEAS_PROMPT_TEMPLATE } from '../posts/ideasPrompt.ts';
@@ -31,6 +33,7 @@ import { PILLAR_DRAFT_TEMPLATE } from '../posts/pillarDraft.ts';
 import { POST_PROMPT_TEMPLATE } from '../posts/prompt.ts';
 import { REWRITE_PROMPT_TEMPLATE } from '../posts/rewritePrompt.ts';
 import { THREAD_PROMPT_TEMPLATE } from '../posts/threadPrompt.ts';
+import { CURATE_PROMPT_TEMPLATE } from '../replies/curate.ts';
 import { REPLY_BATCH_PROMPT_TEMPLATE, REPLY_PROMPT_TEMPLATE } from '../replies/prompt.ts';
 import { REPLY_LIST_PROMPT_TEMPLATE } from '../replyLists/generate.ts';
 import { EXTRACT_PROMPT_TEMPLATE } from '../voice/extractPrompt.ts';
@@ -49,6 +52,9 @@ export const PROMPT_KEYS = [
   'reply-list',
   'dm',
   'article',
+  'judge',
+  'judge-rewrite',
+  'reply-curate',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
 
@@ -170,6 +176,30 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
     defaultBody: ARTICLE_PROMPT_TEMPLATE,
     required: ['{{PILLARS}}', '{{WINNERS}}', '{{GUIDANCE}}', '{{ARTICLE}}', '{{INSTRUCTION}}'],
     optional: [],
+  },
+  judge: {
+    name: 'Draft judge',
+    description:
+      'The 13-dimension rubric behind POST /x/judge — one graded read on a draft plus anchored fixes. The verdict label is derived from the score, never model-supplied, so an override that asks for one is ignored.',
+    defaultBody: JUDGE_PROMPT_TEMPLATE,
+    required: ['{{DRAFT}}'],
+    optional: ['{{GROUNDING}}'],
+  },
+  'judge-rewrite': {
+    name: 'Judge rewrite',
+    description:
+      "The annotation-driven rewrite behind POST /x/judge/apply — applies every fix the judge quoted and hands back one post, kept only if the re-judge scores it higher. Separate from 'Rewrite assist', which stays the cheap no-verdict path.",
+    defaultBody: JUDGE_REWRITE_PROMPT_TEMPLATE,
+    required: ['{{DRAFT}}', '{{FIXES}}', '{{IMPROVEMENTS}}'],
+    optional: [],
+  },
+  'reply-curate': {
+    name: 'Reply curation',
+    description:
+      'The queue-scoring prompt behind POST /x/replies/curate — grades every fresh Radar tweet 0–100 for reply payoff and flags filler as low-value, so the paid batch draft spends on the best of the queue instead of the newest. Scoring only; it never writes a reply.',
+    defaultBody: CURATE_PROMPT_TEMPLATE,
+    required: ['{{POSTS}}'],
+    optional: ['{{REPLY_PERSONA}}'],
   },
 };
 

@@ -8,13 +8,14 @@
 // the template bodies and their equivalence tests compare line-by-line, so this
 // text must stay byte-identical to the source until those tasks move it.
 
-/** The five REPLY-GUIDE doctrine knobs — method-configuration, not stats. */
+/** The six REPLY-GUIDE doctrine knobs — method-configuration, not stats. */
 export interface NicheDoctrine {
   replyTargetMin: number; // brief.ts REPLY_TARGET.min
   replyTargetMax: number; // brief.ts REPLY_TARGET.max
   weekReplyTargetPct: number; // brief.ts WEEK_REPLY_TARGET_PCT
   targetBandMinX: number; // voice.ts targetBand lower multiplier
   targetBandMaxX: number; // voice.ts targetBand upper multiplier
+  reciprocityTargetMin: number; // GT.6/GT.7: daily replies aimed at my people
 }
 
 export const DEFAULT_DOCTRINE: NicheDoctrine = {
@@ -23,6 +24,9 @@ export const DEFAULT_DOCTRINE: NicheDoctrine = {
   weekReplyTargetPct: 70,
   targetBandMinX: 2,
   targetBandMaxX: 10,
+  // Opening guess (C1-threshold spirit): a third of the 10–20/day quota aimed
+  // at people already in the reciprocity set. Recalibrate off measured days.
+  reciprocityTargetMin: 5,
 };
 
 /** Kebab-case slug, 2–41 chars, starts alphanumeric — the PILLAR_SLUG_RE value. */
@@ -118,5 +122,6 @@ export function resolveDoctrine(json: unknown): NicheDoctrine {
     weekReplyTargetPct: pick('weekReplyTargetPct'),
     targetBandMinX: pick('targetBandMinX'),
     targetBandMaxX: pick('targetBandMaxX'),
+    reciprocityTargetMin: pick('reciprocityTargetMin'),
   };
 }

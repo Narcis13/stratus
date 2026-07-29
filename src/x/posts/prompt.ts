@@ -111,6 +111,15 @@ Use these as texture, not a checklist. One vivid, specific scene beats a paragra
 - Max 0–1 hashtag, only if load-bearing. No emoji as punctuation.
 - Hook patterns to rotate: stat hook ("{surprising number}. Here's what it changes:"), story hook ("Last week I killed a SaaS idea after 14 days."), constraint flex ("I build 4h/day. Here's what I cut."), flashback ("My first computer: 386, 4MB RAM. Today {contrast}."), field note ("20 years in a Romanian public hospital. {observation}.").
 
+**Proven engagement formats** — measured on a comparable builder account: posts engineered to be *answered* beat posts engineered to be *admired*, roughly 2x the views. Each one invites a reply, never a follow — the no-begging rule at the top still holds.
+
+- **Would-you-rather** — two concrete stakes, one forced pick, no third option. Money against time, safety against upside. The two sides have to be close enough that people argue about it.
+- **Poll-list** — a short question, then 3–4 options as dashed lines, one per line, the last one self-deprecating. One second to read, one word to answer.
+- **Confessional question** — "be honest — …?": the thing people only admit in a reply. Only ask what I'd answer myself, in public.
+- **Audience CTA** — "show me the thing you're working on, I'll respond to every one" (X = whatever my audience actually makes). Use it only when I'm ready to reply to every single answer; a promise I don't keep costs more than the post earns.
+
+At most ONE of the three drafts may use one of these, and only when the topic fits — they're a rotation, not a house style. The skeleton is the borrowed part: fill it with my own material (§1/§6), the steer, or common knowledge, never with invented specifics. This is not the engagement-bait §7 forbids — no "like if you agree", no reply-for-reply trading, no question wrapped around a brag. A real question I actually want answered is not bait.
+
 ---
 
 ## The three drafts

@@ -38,6 +38,85 @@ Clicking **Split into thread** breaks your text into a clean chain of tweets at 
 
 Under the text box is an **Improve with AI** button. It takes whatever you've written and asks the AI for **three sharper versions** of it — typically a tightened cut, a re-hooked opening, and a restructured take. You can add an optional instruction ("make it punchier", "lead with the number") to steer the rewrite. Each version comes back as a card you can preview; clicking one **replaces the text in the box** with that version (nothing is saved to your Calendar — it just edits your draft in place, so you're free to keep editing or undo by rewriting). It's one AI call (~$0.003) and it runs on whichever provider you picked in **Settings → AI**.
 
+### The judge (a paid second opinion, on demand)
+
+Under the rewrite button is a **Judge** section. Where the coach below it is free, local and instant, this one costs money and only runs when you click it — there is no worker, no batch, and nothing here is ever called automatically.
+
+Click **Run judge (~$0.003)** and one AI call reads your draft against a thirteen-dimension rubric. What comes back:
+
+- **A score out of 100 and a band** — *post it* (85+), *slight rework* (70+), *major rework* (40+), or *do not post* — plus the model's own confidence in the read.
+- **A one-line headline**: what it thinks the post is doing, in a sentence.
+- **The fixes.** Up to twelve rows, each quoting an exact phrase from your draft with what to do about it. **Clicking a row selects that phrase in the text box above**, cursor and all, so you can retype it without hunting for it. Red rows are warnings, amber ones are suggestions. If the model quotes something that isn't actually in your text, that row is silently dropped rather than shown pointing at nothing.
+- **Twelve dimensions** behind a disclosure: reply pull, profile pull, reach hook, save value, dwell, voice match, negative risk, answer effort, stranger answerability, status dependency, replies-vs-quotes, audience match. Two of them read backwards on purpose — a *high* **negative risk** or **status dependency** is bad news (the second one means "this only lands if you already have the famous bio"), and they're coloured accordingly.
+- **Strengths and improvements** behind a second disclosure.
+
+Two of those dimensions are graded against *you* rather than against a generic idea of a good tweet: **voice match** and **audience match** are scored using your active niche's persona and beliefs plus your active pillars. If you haven't set a niche up, audience match comes back as **—** (unknown) rather than as a number it invented.
+
+**Apply all fixes (~$0.007)** appears when the verdict actually flagged something. It rewrites your draft applying every fix, re-judges the result with the *same* model that graded the original, and then does the one thing that makes it safe to click:
+
+> **it keeps the rewrite only if it scores strictly better.**
+
+If the rewrite ties or scores worse, your text comes back untouched and the panel says *"Kept your version — the rewrite did not score better."* That is a success, not an error. A tie keeps your words on purpose. (The re-judge is deliberately pinned to the original grader even if you change providers, because comparing a Grok verdict to an OpenRouter one compares the two graders, not the two drafts.)
+
+**A verdict only ever describes the exact text it judged.** Edit one character and it disappears — no stale score decorating a post it never read. Undo that edit and it comes back, because it describes that text again; you don't pay twice for changing your mind. The same rule is enforced on the server, so a verdict can never be applied to a draft that moved on.
+
+And, as with everything else on this tab: **nothing here blocks anything.** Save works the same at 20 as at 95, no list is sorted by it, and no draft is refused. The panel says so under every verdict:
+
+> One model's opinion, not a gate — nothing here blocks scheduling; the fixes are the useful part.
+
+Treat the number as a diagnostic, not a target. Two of the dimensions (*answer effort* and *stranger answerability*), read as things to maximise, are exactly the gradient that produces reply-farm bait; they are useful as a description and harmful as a goal, which is why nothing in stratus optimises for them.
+
+The judge is single-post only — it does not appear in thread mode, on a locked (already-published) post, or on the Replies tab. Judging reply variants would cost several dollars a month on the surface with the least headroom, so it isn't offered.
+
+### The coach (live score and fix list)
+
+Below the warnings, a small boxed panel grades what you've typed. It updates as you type — about a sixth of a second after you stop — and it costs nothing: the scoring runs inside the extension, so there is no server call, no AI call, and nothing is saved anywhere.
+
+> The coach spans four tabs. What every rule checks, and — the longer half — what it deliberately refuses to guess, is written up once in **[The static coach](./sc-static-coach.md)**.
+
+The first line is the score out of 100 with its band: **top tier** (85+), **ship it** (60+), **almost there** (45+), or **rework**. Below it come the things worth changing, worst first:
+
+- **Red rows are fixes** — an own-goal you'd regret. A URL in a standalone post (it bills $0.20 instead of $0.015 — move it to the first reply), a 15th line that hides the rest of your post behind X's "show more", two questions stacked in one post.
+- **Amber rows are nudges** — smaller stuff. An em-dash, a canned "thoughts?" closer, hedge words piling up, a flat opening line, no concrete number or name.
+- Everything that passed is folded into an **N passing** disclosure you can click open.
+
+The last line says it plainly:
+
+> Signals, not verdicts — 60+ reads ship-ready; the goal is the post, not the score.
+
+That is the whole contract. **A low score never blocks anything** — Save works the same at 20 as at 95, nothing is sorted or filtered by it, and no draft is ever refused. Treat it as a floor that catches own-goals, not a target to farm: writing quality and reach are only loosely related, and a post that scores 70 because it says something true is worth more than a 95 that says nothing.
+
+In thread mode the coach grades **segment 1** and says so — the head is the part a stranger is guaranteed to read, so it's the part that has to work. The panel is hidden while the box is empty and on a post that has already gone out.
+
+**The coach speaks your vocabulary.** Two of its rules need to know what counts as a *specific* word in your niche, and it doesn't guess — it reads what you already maintain: your active channels' keywords, your active pillars' slugs, and your niche's label. So "no concrete detail" stops firing on a post whose specific thing is a word only your audience uses (`creatine`, `ANAF`, `Turbo Pascal`) even when there's no number in it, and a post opening `builders,` counts as a hook. This is fetched once a minute in the background and costs nothing; add a keyword on the Channels tab and the coach picks it up within a minute. If the fetch fails, or you haven't set up channels or pillars yet, the coach quietly falls back to the rules that don't need a niche — the em-dash, the "show more" cutoff, hedges, weak closers — which is most of them. The same vocabulary is used by the score chips on reply variants (see the Replies tab).
+
+**"That's the fourth hot take this week."** Inside the same box, above the fix list, one line sometimes appears about your *week* rather than your draft. stratus labels every original you publish with its **structure** — hot take, question, audience CTA, list, story, would-you-rather, milestone, and so on — and counts how many of each went out in the last 7 days. When what you're typing right now is a shape you've used **twice** it says so quietly; at **four** it turns amber and adds *"reach decays when the same shape repeats."* Hover it for the exact count, the day you last used that shape, and a snippet of the post.
+
+Three things about it are deliberate:
+
+- **It counts what you published, not what you drafted** — including posts you typed straight into X by hand, because the label is read off the text, not off a field only the drafter fills in. (A hand-written post joins the count within a day, when stratus next discovers it; posts sent by the scheduler count immediately.)
+- **It only speaks about shapes it actually recognised.** Most posts are just prose with no declared structure — stratus files those under *Substance*, *One-liner* or *Other*, and those three never trigger the line. Warning you that you "wrote four posts" is not advice.
+- **It never blocks anything**, same as the score. It is a count, not a verdict.
+
+If you posted the same *idea* twice rather than the same shape, a different surface catches it: the Today tab's monitor warns about near-duplicate originals within 14 days.
+
+**The reach band.** One more line in the same box, just under the cooldown line, answers a different question: *how have posts of this shape actually done for me?* It reads like this once there's enough history —
+
+> Audience CTA · usually 180–540 views · 35% clear 1,000.
+
+That is your own record, not a prediction and not an industry benchmark. stratus takes the median views of your **last 20 measured posts** as a baseline, works out how each past post of that shape landed against the baseline that existed *at the time it went out*, and reports the middle half of the ordinary outcomes plus how often that shape broke out (3× the baseline or better). Hover the line for the sample size and the baseline it used.
+
+Until a shape has enough measured posts, it says so instead:
+
+> List · reach band: insufficient data (n=16 of 20).
+
+**There is no fallback number anywhere behind that line.** Most tools in this space ship a table of "format multipliers" copied from someone else's account; stratus ships none, because a stranger's audience is not yours — so below the gate the honest answer is the sample count and nothing else. As of this writing no shape has cleared 20 yet (audience CTA is closest at 17), so the insufficient line is what you'll usually see; each one arms itself as you post. The gate is the same **Playbook cell gate** knob the Playbook uses (Settings → Gates).
+
+Two more things it deliberately doesn't do:
+
+- **It says nothing at all for prose.** *Substance*, *One-liner* and *Other* mean "no shape recognised" — the same three the cooldown skips — and a reach band for "unclassified" would be a number attached to nothing, so the line is simply absent. It isn't waiting for data there; there is no axis.
+- **It never blocks anything**, and nothing sorts by it. It is history, not a target — a shape that historically does well is not a reason to write one you don't mean.
+
 ### Scheduling controls
 
 The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.
@@ -142,6 +221,20 @@ Click **Generate 3 drafts (~$0.01)**. Each click makes one Grok call (roughly a 
 - **reflective** — more thoughtful.
 
 Each draft is shown as a card with its **register** badge, its **pillar** badge, a character count, and the full text. A line above the cards notes how many "winners" (your top past posts) were used as voice anchors and the exact cost.
+
+**Those anchors are capped at two machine-written posts.** The winners block is the drafter's answer to "what does this person sound like", picked by measured views — and left alone it eats itself: a post the drafter wrote, that you scheduled and that performed well, comes back as a *this is your voice* example on the next draft, with the numbers confirming the drift. So at most **two of the five** anchors may be posts stratus drafted; the rest of the slots go to things you wrote. Three things worth knowing about the rule:
+
+- It's **dilution, not exclusion**. A machine draft you edited before shipping is partly yours, and throwing it out would waste your best-performing text.
+- The cap is a cap, not a quota. If your whole measured history is drafter-written, the block gets **shorter** — it never pads back up to five machine posts.
+- Provenance comes from the **Calendar row** the post shipped from, so a post you wrote by hand and posted from the X app is always counted as yours.
+
+**Four formats it knows how to reach for.** Posts engineered to be *answered* outperform posts engineered to be *admired* — measured at roughly 2× the views on a comparable builder account — so the drafter carries four proven skeletons: **would-you-rather** (two concrete stakes, one forced pick), **poll-list** (a short question, then 3–4 dashed options), **confessional question** ("be honest — …?"), and **audience CTA** ("show me the thing you're working on"). Three things about how they're used, all deliberate:
+
+- **At most one of the three drafts** may use one — they're a rotation, not a house style, and you should still be getting two ordinary takes to choose from.
+- The **skeleton** is the only borrowed part. It gets filled with your own material, your steer, or common knowledge — never with invented specifics.
+- Each one invites a **reply**, never a follow. This isn't the engagement-bait the prompt otherwise forbids: no "like if you agree", no reply-for-reply trading, no question wrapped around a brag. A real question you actually want answered isn't bait — but an audience CTA is a promise, so only ship one on a day you'll answer every response.
+
+If four of the same shape go out inside a week, the **cooldown line** above the fix list will start saying so.
 
 For each card you can:
 
@@ -252,6 +345,7 @@ A post that has already **posted** or is currently **publishing** is locked: its
 
 - **Drafts never auto-post.** A post goes live only when it has a scheduled time (status **pending**) and the publisher reaches that minute. Anything without a time — including all AI drafts as generated — just waits on the Calendar.
 - **AI drafting costs about a cent per click.** Each **Generate 3 drafts** (and each **More like this**) is one Grok call, roughly $0.01. The exact cost is shown after each generation. Publishing itself is separate (~$0.015 per tweet).
+- **The judge is the only thing on this tab you can click twice by accident.** Run judge is ~$0.003 and Apply all fixes is ~$0.007 (a rewrite plus a re-judge), both billed on the click and both carrying the price in the button. Nothing polls them. Editing the draft throws the verdict away — that's deliberate, but it does mean a re-judge is another $0.003, so make your edits and then judge.
 - **Watch the link surcharge.** A link in your main post costs **$0.20** vs **$0.015** without one — the single biggest per-post cost. Use **Move link to first reply** (single posts) or put the link in a later thread segment to pay the cheap price. The Composer warns you before you save.
 - **Minute jitter is intentional.** Best time and Next slot always pick a slightly off-the-hour minute (like 8:17 instead of 8:00) so your schedule doesn't look automated. That's why the best-times hints show the hour as `HH:xx`.
 - **Best-times advice needs history.** Time recommendations only appear once a weekday-and-hour slot has at least three measured posts (the gate, editable from the Schedule ⚙). Until then you'll see the dimmed "so far" hours or "no measured best-time yet," and **Best time** falls back to audience peaks, then to the earliest open slot.

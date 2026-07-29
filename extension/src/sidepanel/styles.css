@@ -1052,6 +1052,17 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
 }
 
+/* GT.4 — the milestone nudge's action row: one button plus its outcome line,
+   wrapping so a long notice never pushes the button off the panel. */
+.brief-milestone-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
 .brief-spend {
   font-size: 12px;
   color: var(--muted);
@@ -1073,6 +1084,13 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   padding: 2px 8px;
 }
+/* RC.4 — the second spending button, same weight as the first: it only appears
+   when the queue has outgrown a plain batch, and which of the two you want is a
+   judgment call, not a default. */
+.radar-curate {
+  font-size: 11px;
+  padding: 2px 8px;
+}
 .radar-tabs {
   display: flex;
   gap: 4px;
@@ -1090,6 +1108,29 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--strat-accent) 14%, transparent);
+}
+/* HM.3 — the pick-time jitter toggle, directly under the Queue/Clicked strip.
+   A label row rather than a button: it flips a server-owned project setting,
+   and the odds sit next to it so the switch says what it buys. */
+.radar-humanize {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.radar-humanize input {
+  margin: 0;
+  accent-color: var(--strat-accent);
+}
+.radar-humanize-odds {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 .radar-group-label {
   font-size: 10px;
@@ -1144,6 +1185,14 @@ button.danger:hover:not(:disabled) {
   color: var(--strat-accent);
   border: 1px solid color-mix(in srgb, var(--strat-accent) 50%, transparent);
   background: color-mix(in srgb, var(--strat-accent) 12%, transparent);
+}
+/* GT.8: a roster capture — quiet on purpose. It is the only band that is NOT a
+   claim about the tweet, so it must not compete with hot/warm/manual for the
+   eye; muted is the reading, not a new colour meaning. */
+.radar-band-roster {
+  color: var(--strat-muted);
+  border: 1px solid color-mix(in srgb, var(--strat-muted) 45%, transparent);
+  background: color-mix(in srgb, var(--strat-muted) 10%, transparent);
 }
 .radar-author {
   flex: 1;
@@ -1750,6 +1799,172 @@ button.danger:hover:not(:disabled) {
   color: var(--warn);
   font-weight: 600;
 }
+/* SC.3 — the live static coach under the composer textarea. Three tones only
+   (fix / nudge / pass), all aliases so the light theme re-points them for free.
+   The score is a FLOOR, never a target, so nothing here is a fill or a badge:
+   loud chrome would read as a verdict on a draft you are still typing. */
+.coach {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-elev);
+}
+.coach-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.coach-score {
+  font-size: var(--strat-text-lg);
+  font-weight: 600;
+}
+.coach-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.coach-row {
+  font-size: 12px;
+  line-height: 1.35;
+}
+.coach-passing summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 0;
+}
+/* SC.6 — the format-cooldown line. Same type scale as a check row so the box
+   reads as one list; it takes its colour from the tone classes below (amber at
+   the cooldown bar) or from `.muted` while merely warming — no new token. */
+.coach-cooldown,
+.coach-reach {
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.coach-tone-fix {
+  color: var(--danger);
+}
+.coach-tone-nudge {
+  color: var(--warn);
+}
+.coach-tone-pass {
+  color: var(--ok);
+}
+/* SC.4 — the same coach, one number wide, riding inside a reply-variant chip /
+   radar angle tab. It takes its colour from the three tone classes above and
+   its border from `currentColor`, so a tone change never needs a second rule
+   here and neither theme needs its own value. Deliberately not a `.chip`: it
+   sits INSIDE one, and a chip within a chip would read as two labels.
+   The elevated background is load-bearing in exactly one place — the PICKED
+   variant fills with `--accent` and turns its text white, and amber ink on
+   that is unreadable; a neutral plate under the number keeps the three tones
+   legible in every parent (plain chip, filled chip, radar tab, hint line). */
+.coach-chip {
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 0 3px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-elev);
+}
+/* JD.6 — the LLM judge panel, under the composer's rewrite block. It borrows
+   the coach's three tone classes above rather than minting `.judge-tone-*`
+   aliases onto the same three tokens: the score pill, the fix rows and these
+   scores are one colour vocabulary, and a second set is how a badge and its
+   gate fork (the CoachChip argument). Same box treatment as `.coach` for the
+   same reason — a verdict is information, not a stamp, so no fills and no
+   badges. */
+.judge {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-2);
+  padding: var(--strat-space-4) var(--strat-space-5);
+  border: var(--strat-border-hairline);
+  border-radius: var(--strat-radius-md);
+  background: var(--strat-bg-elev);
+}
+.judge-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--strat-space-3);
+  font-size: var(--strat-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.judge-score {
+  font-size: var(--strat-text-lg);
+  font-weight: var(--strat-weight-semibold);
+}
+.judge-headline {
+  font-size: var(--strat-text-sm);
+  line-height: var(--strat-leading-snug);
+}
+.judge-fixes,
+.judge-dims,
+.judge-notes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-1);
+  font-size: var(--strat-text-sm);
+  line-height: var(--strat-leading-snug);
+}
+/* A fix is a button because it DOES something (selects its phrase in the box),
+   but it must read as a row, not a control. */
+.judge-fix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-1);
+  width: 100%;
+  padding: var(--strat-space-1) 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.judge-fix:hover .judge-fix-quote {
+  text-decoration: underline;
+}
+.judge-fix-quote {
+  font-style: italic;
+}
+.judge-fix-rec {
+  color: var(--strat-muted);
+}
+.judge-detail > summary {
+  cursor: pointer;
+  font-size: var(--strat-text-xs);
+  color: var(--strat-muted);
+  padding: var(--strat-space-1) 0;
+}
+.judge-dim {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--strat-space-4);
+}
+.judge-dim-score {
+  font-variant-numeric: tabular-nums;
+}
+.judge-actions {
+  gap: var(--strat-space-3);
+  padding-top: var(--strat-space-1);
+}
+.judge-note {
+  font-size: var(--strat-text-sm);
+}
+
 /* A3.7 — publish-mode (API | Manual) segmented toggle above the schedule row. */
 .publish-mode {
   display: flex;
@@ -2616,12 +2831,24 @@ button.chip[aria-pressed="true"] {
   color: var(--muted);
 }
 
+/* GT.3 seed comment — same head row as the repliers list, and it reuses
+   `.reply-variants`/`.launch-reply-draft` for the picked variant. */
+.launch-seed {
+  margin-top: 6px;
+}
+
+.launch-seed-head,
 .launch-repliers-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-top: 6px;
+}
+
+.launch-seed-head h4 {
+  margin: 0;
+  font-size: 12px;
 }
 
 .launch-repliers-head h4 {
@@ -4111,4 +4338,16 @@ button.chip[aria-pressed="true"] {
 .coming-soon-knob {
   color: var(--strat-text);
   flex-shrink: 0;
+}
+
+/* HM.4 — Settings → Reply humanizer. The Lists card uses sliders; this one takes
+   typed values (0–1 with two decimals), which read better narrow than
+   full-width, and needs a per-field refusal line the block `.error` box is too
+   heavy for. */
+.hz-chances .field input {
+  max-width: 90px;
+}
+.hz-invalid {
+  color: var(--danger);
+  font-size: 11px;
 }

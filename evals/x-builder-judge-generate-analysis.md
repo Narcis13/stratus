@@ -426,3 +426,59 @@ Adopt, in this order:
 
 Never: auto-judge, judge replies, gate on the score, port the reach coupling, or import their knowledge
 base.
+
+---
+
+## Postscript: what we actually shipped (2026-07-27)
+
+Shipped as **JD.1–JD.8** (plan `plans/2026-07-22-llm-judge.md`, masterplan Wave 6). The judge
+is live: `POST /x/judge` (~$0.003) and `POST /x/judge/apply` (~$0.007) behind the LLM gate, a
+`draft_judgments` table, a Composer panel, and `judgeEffectiveness` in the Playbook. User-facing
+write-ups: `docs/composer-tab.md` §"The judge" and `docs/playbook-tab.md` §"Does the judge
+predict anything?"; the phase entry is `docs/PHASE-HISTORY.md` §"The LLM judge".
+
+**Six of this document's own recommendations were changed on the way in.** Recorded here rather
+than only in the deviation register, because an eval doc whose recommendations were silently
+overruled invites the next reader to re-propose them.
+
+1. **§G2's "exclude machine-drafted posts from the few-shot block" shipped as DILUTION, not
+   exclusion.** At most **2 of 5** anchors may be drafter-authored. A hand-edited machine draft
+   is partly the operator's, and excluding it would throw away their best-measured text; and an
+   account whose whole measured history is drafter-written should get a *shorter* block rather
+   than an empty one. The cap is a cap, not a quota.
+2. **The Verdict's "different provider from the drafter" is NOT forced.** Forcing OpenRouter
+   would 503 for a user with only `XAI_API_KEY` set — a hard failure to mitigate a soft bias.
+   Instead `model` + `provider` are stamped on **every** row, so "a model grading a model" is
+   measurable later rather than silently baked in. The one place it *is* forced is the re-judge
+   inside apply, which is pinned to the original grader: `<=` between a Grok verdict and an
+   OpenRouter one compares two graders, not two drafts.
+3. **§J3 did not upgrade `POST /x/posts/rewrite`.** That route stays the cheap, no-verdict,
+   three-unranked-variants path. The verdict-driven rewrite is a **separate** route with its own
+   registry prompt (`judge-rewrite`), because the two answer different questions and folding them
+   together would make the cheap path pay for a verdict it does not use. Their three-call chain
+   is **two** calls here — the verdict was already paid for and persisted, so storing it bought a
+   call back.
+4. **The rubric schema ships with no numeric bounds.** `minimum`/`maximum` sit on the same strict
+   structured-outputs unsupported list as `minItems`/`maxItems`, so shipping them risks a provider
+   rejection on **every** judge call. The parser enforces 0–100 and the 12/5 caps instead — which
+   is where this document already put the caps.
+5. **The Playbook cell gained an axis this document did not name.** Alongside the four verdict
+   bands it ships an `approved`/`rejected` split, because a 2-way partition clears the n≥20 gate
+   at half the sample — and on a cell fed by an on-demand button, that is the difference between
+   an answer and a decade. The band spread is *highest ÷ lowest gated band, naming the pair*,
+   never top-÷-bottom: it is rarely `post it` vs `do not post`, and a spread that does not say
+   which two bands it compared is not an honest number.
+6. **No provider picker in the panel, despite §J-decision 11's "so the panel exposes it".** The
+   house precedent is the rewrite assist: Settings → AI owns the provider and a second per-call
+   control is a twin knob. Worse, on the apply path the override steers only the *writer* while
+   the grader stays pinned — a control that changes half of what its label implies is worse than
+   no control. The typed API params exist, so adding one later is a UI change alone.
+
+**Still not adopted, and still deliberate** (the "Never" line of the Verdict, unchanged): no
+auto-judge, no judge on replies, nothing sorts/gates/blocks on the score anywhere, no
+judged-quality → reach coupling, no knowledge-base import, no voice-RAG embedder.
+
+**Two items from the Verdict are unbuilt rather than rejected:** §G3 (`scoreDraft` as a drafter
+structural validator with one conditional retry) and §G0 (a `format` parameter on the drafter).
+Both need the static-coach modules, which now exist — they are SC.10/SC.11 in
+`plans/2026-07-22-static-coach.md` and are not scheduled.

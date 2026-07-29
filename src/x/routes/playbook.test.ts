@@ -7,8 +7,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import type { JudgeScores } from '../../shared/judge.ts';
 import {
   accountSnapshots,
+  draftJudgments,
   harvestRows,
   harvestRuns,
   ideas,
@@ -21,12 +23,15 @@ import {
   replyListUses,
   scheduledPosts,
 } from '../db/schema.ts';
+import { judgeTextHash } from '../judge/prompt.ts';
 import { buildIdeaEffectiveness } from '../playbook.ts';
 import { buildPostDraftInput } from '../posts/prompt.ts';
 import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
 import { getSetting, resetSettings, setSettings } from '../settings/registry.ts';
 import {
   loadIdeaRows,
+  loadJudgeRows,
+  loadOriginalPostRows,
   loadPostGuidance,
   loadReplyGuidance,
   loadRosterCoverage,
@@ -38,6 +43,24 @@ app.route('/x', playbook);
 
 const NOW = Date.now();
 const at = (min: number): Date => new Date(NOW - min * 60_000);
+
+/** JD.7 fixture — the cell only reads the stored `verdict`, but the column is
+ *  notNull and typed, so a judgment row needs a whole scores object. */
+const ZERO_SCORES: JudgeScores = {
+  overall: 0,
+  replies: 0,
+  profileClicks: 0,
+  impressions: 0,
+  bookmarkValue: 0,
+  dwellProxy: 0,
+  voiceMatch: 0,
+  negativeRisk: 0,
+  answerEffort: 0,
+  strangerAnswerability: 0,
+  statusDependency: 0,
+  replyVsQuoteOrientation: 0,
+  audienceMatch: null,
+};
 
 async function seedReply(opts: {
   id: string;
@@ -274,6 +297,35 @@ describe('playbook route', () => {
     expect(
       ie.posts.seeded.n + ie.posts.unseeded.n + ie.replies.seeded.n + ie.replies.unseeded.n,
     ).toBe(ie.totalMeasured);
+
+    // SC.5 format + coach-score cells ride along on the same own-originals load
+    // as the media baseline. Both are partitions over the WHOLE corpus (other
+    // test files seed originals too), so the invariants are what's assertable
+    // here — the bucketing itself is pinned in ../playbook.test.ts.
+    const fe = body.formatEffectiveness;
+    expect(fe.cells.reduce((s: number, c: { posted: number }) => s + c.posted, 0)).toBe(
+      fe.totalPosted,
+    );
+    expect(fe.cells.reduce((s: number, c: { n: number }) => s + c.n, 0)).toBe(fe.totalMeasured);
+    const cs = body.coachScoreEffectiveness;
+    expect(cs.cells.map((c: { band: string }) => c.band)).toEqual([
+      'rework',
+      'almost',
+      'ship',
+      'top',
+    ]);
+    expect(cs.cells.reduce((s: number, c: { posted: number }) => s + c.posted, 0)).toBe(
+      cs.totalPosted,
+    );
+    expect(cs.clean.posted + cs.flagged.posted).toBe(cs.totalPosted);
+    expect(cs.clean.n + cs.flagged.n).toBe(cs.totalMeasured);
+    // One loader, three cells — the two axes see exactly the media baseline's rows.
+    expect(cs.totalPosted).toBe(fe.totalPosted);
+    expect(fe.totalMeasured).toBe(body.mediaEffectiveness.totalMeasured);
+    // Nothing is anywhere near n≥20, so neither comparison speaks.
+    expect(cs.spread).toBeNull();
+    expect(cs.spreadBands).toBeNull();
+    expect(cs.fixSpread).toBeNull();
 
     // Nothing clears the default gate on 2 measured rows.
     expect(body.guidance.reply).toBeNull();
@@ -892,4 +944,249 @@ describe('x.gates.minCellN is the default playbook gate', () => {
     expect(body.minN).toBe(minN ?? getSetting<number>('x.gates.minCellN'));
     return body.timelineFunnel.cells;
   }
+});
+
+// SC.5 — the widened own-originals loader (`text` rides along with hasMedia) and
+// the two cells it feeds. Declared LAST on purpose: it inserts posts_published
+// originals, and the media test above asserts exact bucket counts over the same
+// table. Deltas, not absolutes: other files seed originals into the shared
+// in-memory DB, so the assertions compare a before/after of THIS block's rows.
+describe('loadOriginalPostRows + format/coach cells (SC.5)', () => {
+  const WYR = 'sc5_wyr';
+  const TINY = 'sc5_tiny';
+  const WYR_TEXT = 'Would you rather ship fast and break things, or ship slow and sleep well?';
+  const TINY_TEXT = 'ship it';
+  let before = 0;
+
+  beforeAll(async () => {
+    before = (await loadOriginalPostRows()).length;
+    for (const p of [
+      { tweetId: WYR, text: WYR_TEXT, views: 700, clicks: 14 },
+      { tweetId: TINY, text: TINY_TEXT, views: 30, clicks: 0 },
+    ]) {
+      await db
+        .insert(postsPublished)
+        .values({
+          tweetId: p.tweetId,
+          text: p.text,
+          postedAt: at(250),
+          isReply: false,
+          source: 'test',
+          // retired so the daily *billed* metrics pass can never pick these up.
+          retired: true,
+        })
+        .onConflictDoNothing();
+      await db.insert(metricsSnapshots).values({
+        tweetId: p.tweetId,
+        publicMetrics: { impression_count: p.views, like_count: 0, reply_count: 0 },
+        nonPublicMetrics: { user_profile_clicks: p.clicks },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    for (const id of [WYR, TINY]) {
+      await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, id));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, id));
+    }
+  });
+
+  test('the loader carries text and the measured outcome on the same row', async () => {
+    const rows = await loadOriginalPostRows();
+    expect(rows.length).toBe(before + 2);
+    const wyr = rows.find((r) => r.text === WYR_TEXT);
+    expect(wyr?.outcome).toMatchObject({ views: 700, profileVisits: 14 });
+    // hasMedia still rides along — one query feeds all three cells.
+    expect(wyr?.hasMedia).toBeNull();
+  });
+
+  test('GET /x/playbook classifies those rows at read time, no backfill', async () => {
+    const body = (await (await app.request('/x/playbook?minN=1')).json()) as {
+      formatEffectiveness: {
+        cells: Array<{ format: string; posted: number; medianViews: number | null }>;
+      };
+      coachScoreEffectiveness: {
+        cells: Array<{ band: string; posted: number }>;
+        flagged: { posted: number };
+      };
+    };
+    const wyr = body.formatEffectiveness.cells.find((c) => c.format === 'would_you_rather');
+    expect(wyr?.posted).toBeGreaterThanOrEqual(1);
+    // `ship it` is 25/100 — the rework band, and a flagged (fix-carrying) row.
+    expect(
+      body.coachScoreEffectiveness.cells.find((c) => c.band === 'rework')?.posted,
+    ).toBeGreaterThanOrEqual(1);
+    expect(body.coachScoreEffectiveness.flagged.posted).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// JD.7 — the read-time verdict↔post join. Declared LAST for the same reason the
+// SC.5 block above is: it inserts posts_published originals. `draft_judgments`
+// loses its exact-count freedom here (judge.test.ts owns that) — everything
+// below is a before/after delta or a partition invariant, because other files
+// seed originals into the same in-memory DB.
+describe('loadJudgeRows + judgeEffectiveness (JD.7)', () => {
+  const JUDGED = 'jd7_judged';
+  const SPACED = 'jd7_spaced';
+  const EDITED = 'jd7_edited';
+  const REPLY_SURFACE = 'jd7_reply_surface';
+  const JUDGED_TEXT = 'The judge liked this one enough to say post it right now.';
+  // Same words, a double space: normalizeJudgeText collapses it, so this must
+  // still match the stored hash (JD.3 — a whitespace-only edit is not an edit).
+  const SPACED_TEXT = 'A draft stored  with one extra space inside it, judged once.';
+  const EDITED_TEXT = 'This one was judged and then the typo was fixed, so it reads as unjudged.';
+  const REPLY_TEXT = 'A verdict recorded against the reply surface never grades an original.';
+  // The API echoes `&` back HTML-escaped, so the published row spells it
+  // `&amp;` while the judged draft spelled it `&` — the decode inside
+  // normalizeJudgeText is what lets these two meet.
+  const ESCAPED = 'jd7_escaped';
+  const ESCAPED_TEXT = 'Ship fast &amp; iterate, then measure what actually moved.';
+  const ESCAPED_DRAFT = 'Ship fast & iterate, then measure what actually moved.';
+  const judgmentIds: string[] = [];
+  interface JudgeCounts {
+    judged: number;
+    postNow: number;
+    doNotPost: number;
+    unjudged: number;
+    measured: number;
+  }
+  let before: JudgeCounts = { judged: 0, postNow: 0, doNotPost: 0, unjudged: 0, measured: 0 };
+
+  async function judgeCounts(): Promise<JudgeCounts> {
+    const rows = await loadJudgeRows(await loadOriginalPostRows());
+    return {
+      judged: rows.filter((r) => r.verdictBand !== null).length,
+      postNow: rows.filter((r) => r.verdictBand === 'post_now').length,
+      doNotPost: rows.filter((r) => r.verdictBand === 'do_not_post').length,
+      unjudged: rows.filter((r) => r.verdictBand === null).length,
+      measured: rows.filter((r) => r.outcome !== null).length,
+    };
+  }
+
+  async function seedJudgment(
+    text: string,
+    verdict: 'post_now' | 'do_not_post',
+    opts: { surface?: string; ageMin?: number } = {},
+  ): Promise<void> {
+    const id = crypto.randomUUID();
+    const overall = verdict === 'post_now' ? 90 : 20;
+    await db.insert(draftJudgments).values({
+      id,
+      textHash: judgeTextHash(text),
+      text,
+      surface: opts.surface ?? 'post',
+      verdict,
+      overall,
+      // judged_at is what "newest per hash" reads — an explicit stamp, because
+      // the column's default resolves to the same millisecond for a batch.
+      judgedAt: at(opts.ageMin ?? 200),
+      scores: { ...ZERO_SCORES, overall },
+      annotations: [],
+      model: 'test-model',
+      provider: 'grok',
+    });
+    judgmentIds.push(id);
+  }
+
+  beforeAll(async () => {
+    before = await judgeCounts();
+    for (const p of [
+      { tweetId: JUDGED, text: JUDGED_TEXT, views: 900, clicks: 18 },
+      { tweetId: SPACED, text: SPACED_TEXT, views: 400, clicks: 8 },
+      { tweetId: EDITED, text: EDITED_TEXT, views: 200, clicks: 4 },
+      { tweetId: REPLY_SURFACE, text: REPLY_TEXT, views: 100, clicks: 2 },
+      { tweetId: ESCAPED, text: ESCAPED_TEXT, views: 300, clicks: 6 },
+    ]) {
+      await db
+        .insert(postsPublished)
+        .values({
+          tweetId: p.tweetId,
+          text: p.text,
+          postedAt: at(250),
+          isReply: false,
+          source: 'test',
+          // retired so the daily *billed* metrics pass can never pick these up.
+          retired: true,
+        })
+        .onConflictDoNothing();
+      await db.insert(metricsSnapshots).values({
+        tweetId: p.tweetId,
+        publicMetrics: { impression_count: p.views, like_count: 0, reply_count: 0 },
+        nonPublicMetrics: { user_profile_clicks: p.clicks },
+      });
+    }
+    await seedJudgment(JUDGED_TEXT, 'post_now');
+    // Stored WITHOUT the double space; the published row has it.
+    await seedJudgment(SPACED_TEXT.replace('stored  with', 'stored with'), 'post_now');
+    // The verdict describes the pre-edit wording, so it can never match.
+    await seedJudgment(`${EDITED_TEXT} And a trailing sentence that was cut.`, 'do_not_post');
+    await seedJudgment(REPLY_TEXT, 'post_now', { surface: 'reply' });
+    // Judged as drafted (`&`), published as escaped (`&amp;`).
+    await seedJudgment(ESCAPED_DRAFT, 'post_now');
+  });
+
+  afterAll(async () => {
+    for (const id of judgmentIds) {
+      await db.delete(draftJudgments).where(eq(draftJudgments.id, id));
+    }
+    for (const id of [JUDGED, SPACED, EDITED, REPLY_SURFACE, ESCAPED]) {
+      await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, id));
+      await db.delete(postsPublished).where(eq(postsPublished.tweetId, id));
+    }
+  });
+
+  test('the hash join buckets exactly the three matching texts', async () => {
+    const after = await judgeCounts();
+    // JUDGED + SPACED matched (whitespace-insensitive — a double space is not
+    // an edit) and ESCAPED matched through the entity decode; EDITED +
+    // REPLY_SURFACE did not, so they joined the unjudged bucket.
+    expect(after.judged).toBe(before.judged + 3);
+    expect(after.postNow).toBe(before.postNow + 3);
+    expect(after.unjudged).toBe(before.unjudged + 2);
+    expect(after.measured).toBe(before.measured + 5);
+  });
+
+  test('a verdict stored against another surface never grades an original', async () => {
+    // The reply-surface row exists and hashes to a published original's text —
+    // the surface filter is what keeps it out, not the absence of a match.
+    const stored = await db
+      .select({ id: draftJudgments.id })
+      .from(draftJudgments)
+      .where(eq(draftJudgments.textHash, judgeTextHash(REPLY_TEXT)));
+    expect(stored.length).toBe(1);
+    expect((await judgeCounts()).judged).toBe(before.judged + 3);
+  });
+
+  test('the newest judgment per hash wins', async () => {
+    await seedJudgment(JUDGED_TEXT, 'do_not_post', { ageMin: 10 });
+    const after = await judgeCounts();
+    expect(after.doNotPost).toBe(before.doNotPost + 1);
+    expect(after.postNow).toBe(before.postNow + 2);
+    expect(after.judged).toBe(before.judged + 3);
+  });
+
+  test('GET /x/playbook ships the cell, partitioned and gated', async () => {
+    const body = (await (await app.request('/x/playbook?minN=1')).json()) as {
+      judgeEffectiveness: {
+        cells: Array<{ band: string; posted: number; n: number }>;
+        unjudged: { posted: number; n: number };
+        approved: { posted: number };
+        rejected: { posted: number };
+        totalPosted: number;
+        totalMeasured: number;
+      };
+    };
+    const je = body.judgeEffectiveness;
+    expect(je.cells.map((c) => c.band)).toEqual([
+      'do_not_post',
+      'major_rework',
+      'slight_rework',
+      'post_now',
+    ]);
+    const judgedPosted = je.cells.reduce((s, c) => s + c.posted, 0);
+    expect(judgedPosted + je.unjudged.posted).toBe(je.totalPosted);
+    expect(je.cells.reduce((s, c) => s + c.n, 0) + je.unjudged.n).toBe(je.totalMeasured);
+    expect(je.approved.posted + je.rejected.posted).toBe(judgedPosted);
+    expect(judgedPosted).toBeGreaterThanOrEqual(2);
+  });
 });

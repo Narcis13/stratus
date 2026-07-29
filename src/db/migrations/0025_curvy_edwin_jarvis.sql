@@ -1,0 +1,1 @@
+ALTER TABLE `radar_drafts` ADD `curation_score` integer;
