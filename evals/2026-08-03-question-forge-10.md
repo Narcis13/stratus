@@ -147,18 +147,7 @@ How do you sell software to people like that?
 
 ---
 
-### 5 — The forced-brevity challenge · 61 chars
 
-```
-Explain what you do for money to a 10-year-old. One sentence. done
-```
-
-**Skeleton:** the 51,945 peer shape ("sell me your startup in two words"). Lowest answer-cost on this list = highest answer-volume.
-**Presupposition:** that most people can't — and that the ones who can't should worry about it.
-**Why it works:** it's a game, not a debate. Games get replies from people who never argue.
-**Seed reply:** "I teach hospital computers to stop losing things."
-
----
 
 ### 6 — The confessional + age angle · 88 chars
 
@@ -203,21 +192,7 @@ Pick one.
 
 ---
 
-### 9 — The brand poll · 102 chars
 
-```
-Honest answers only. Which one actually earns its subscription?
-
-- ChatGPT
-- Claude
-- Gemini
-- Copilot
-```
-
-**Skeleton:** the 46,004 peer shape (brand comparison) + named options. Naming brands recruits four fandoms into your replies at once.
-**Presupposition:** that most of them don't. "Actually earns" is doing all the work.
-**Why it works:** the cheapest reach on the list — brand partisans arrive unprompted. Weakest on substance, so use it as a mid-week filler rather than a peak slot.
-**Seed reply:** "Claude, and it's not close for me — but I pay for two and I'm not proud of it."
 
 ---
 
