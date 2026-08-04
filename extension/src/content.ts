@@ -64,6 +64,7 @@ import {
 } from './shared/passiveHarvest.ts';
 import { personTierFor } from './shared/radar.ts';
 import type { PersonTier, RadarBand, RadarSighting, RankMap } from './shared/radar.ts';
+import { REPLY_FOCUS_KEY, shouldFocusReply } from './shared/replyFocus.ts';
 import { SERVER_DEFAULTS, SERVER_SETTINGS_KEY, readServerConfig } from './shared/serverSettings.ts';
 import {
   type HoverCardData,
@@ -3595,6 +3596,7 @@ function start(): void {
   initPassiveHarvestSetting();
   initContextCollapsed();
   initBandThresholds();
+  initReplyFocus();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
   observer.observe(document.body, { childList: true, subtree: true });
@@ -3757,6 +3759,87 @@ function findReplyEditor(): HTMLElement | null {
   if (!box) return null;
   if (box.isContentEditable) return box;
   return box.querySelector<HTMLElement>('[contenteditable="true"]');
+}
+
+// ------------------------------------------------ focus-on-arrival (replyFocus)
+//
+// The side panel copies a drafted reply and opens the tweet in a new tab; this
+// end puts the caret in X's composer so the landing keystroke is ⌘V. The
+// request is claimed (key removed) BEFORE the composer is even looked for —
+// at-most-once is the whole point: a request that survived its attempt would
+// steal focus again later, mid-typing, on a page the human is already working.
+//
+// X renders the status page well after document_idle, so a claimed request
+// polls for the composer instead of giving up on the first miss.
+const FOCUS_POLL_MS = 250;
+const FOCUS_POLL_TRIES = 40; // ~10s
+
+let replyFocusPending = false;
+
+/** Caret into X's reply box, at the end of whatever is already there. */
+function focusReplyEditor(): boolean {
+  const editor = findReplyEditor();
+  if (!editor) return false;
+  editor.focus();
+  if (editor.isContentEditable) {
+    const sel = window.getSelection();
+    if (sel) {
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+  return document.activeElement === editor || editor.contains(document.activeElement);
+}
+
+async function pollFocusReplyEditor(): Promise<void> {
+  if (replyFocusPending) return;
+  replyFocusPending = true;
+  try {
+    for (let i = 0; i < FOCUS_POLL_TRIES; i++) {
+      // The human beat us to it (or started typing elsewhere) — never yank the
+      // caret out from under them.
+      if (focusedEditable()) return;
+      if (focusReplyEditor()) return;
+      await sleep(FOCUS_POLL_MS);
+    }
+  } finally {
+    replyFocusPending = false;
+  }
+}
+
+/** Claim a pending focus request for the tweet this page is showing. */
+async function claimReplyFocus(focusedId: string | null): Promise<void> {
+  if (focusedId === null || replyFocusPending) return;
+  let stored: unknown;
+  try {
+    const out = await chrome.storage.local.get(REPLY_FOCUS_KEY);
+    stored = out[REPLY_FOCUS_KEY];
+  } catch {
+    return;
+  }
+  if (!shouldFocusReply(stored, focusedId, Date.now())) return;
+  try {
+    await chrome.storage.local.remove(REPLY_FOCUS_KEY);
+  } catch {
+    // Couldn't claim it → don't act on it; another tab may be about to.
+    return;
+  }
+  await pollFocusReplyEditor();
+}
+
+function initReplyFocus(): void {
+  void claimReplyFocus(focusedTweetIdFromUrl());
+  // The panel can also fire while this tab is already parked on the tweet (a
+  // second angle taken from the same row) — no navigation, so onChanged is the
+  // only signal.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes[REPLY_FOCUS_KEY]) return;
+    if (changes[REPLY_FOCUS_KEY].newValue === undefined) return;
+    void claimReplyFocus(focusedTweetIdFromUrl());
+  });
 }
 
 const AUTOTYPE_SETTING_KEY = 'autoTypeReplyDraft';

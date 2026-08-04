@@ -34,6 +34,7 @@ import {
   rankSightings,
   splitClicked,
 } from '../shared/radar.ts';
+import { requestReplyFocus } from '../shared/replyFocus.ts';
 import { curatedBatchSize, radarBatchSize } from '../shared/serverSettings.ts';
 import type { CurateResponse, HumanizerSettings } from '../shared/types.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
@@ -631,6 +632,10 @@ function RadarRow({
     const taken = jittered?.text ?? text;
     markClicked(s.tweetId);
     confirmDraft(s.tweetId, taken);
+    // The anchor is about to open the tweet in a new tab — tell the content
+    // script on that tab to put the caret in the composer, so the landing
+    // keystroke is the ⌘V and nothing else.
+    void requestReplyFocus(s.tweetId);
     void navigator.clipboard
       .writeText(taken)
       .then(() => {

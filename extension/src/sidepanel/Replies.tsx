@@ -1,4 +1,5 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { requestReplyFocus } from '../shared/replyFocus.ts';
 import { CoachChip } from './CoachChip.tsx';
 import { ReplyListsPanel } from './ReplyLists.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -536,7 +537,15 @@ function DraftEditor({
               <strong>Steer:</strong> {draft.idea}
             </div>
           )}
-          <a className="muted" href={draft.sourceUrl} target="_blank" rel="noreferrer">
+          <a
+            className="muted"
+            href={draft.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            // Same hand-off as the Radar pick: the new tab lands with the caret
+            // already in X's composer.
+            onClick={() => void requestReplyFocus(draft.sourceTweetId)}
+          >
             Open on x.com →
           </a>
         </div>
