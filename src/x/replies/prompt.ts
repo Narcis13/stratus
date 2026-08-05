@@ -72,6 +72,14 @@ export interface PostContext {
    *  boolean, because the two carve-outs are different bets on different sets
    *  and grading them together would hide whichever one is losing. */
   gateBypass?: 'roster' | 'cannon';
+  /** ML.3: the language this draft was actually written in, and which rule
+   *  picked it. Server-RESOLVED, never client-supplied — a body `language` is a
+   *  top-level field the route validates, and parseContext's whitelist keeps
+   *  refusing one inside the context object (§7.16). Stamped before the insert
+   *  so contextSnapshot records exactly what the model saw: an English draft
+   *  leaves both absent, which is also how a pre-ML row reads. */
+  language?: string;
+  languageSource?: 'explicit' | 'roster' | 'detected';
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';

@@ -49,17 +49,20 @@ import {
   parseCurateScores,
   selectCurated,
 } from '../replies/curate.ts';
+import { resolveReplyLanguage, trimToSingleVariant } from '../replies/language.ts';
 import {
   BATCH_REPLY_SCHEMA,
   type PostContext,
   type PostSignals,
   REPLY_VARIANTS_SCHEMA,
   type ReplyVariant,
+  batchReplySchema,
   buildBatchGrokInput,
   buildGrokInput,
   parseBatchReplies,
   parseReplyVariants,
   passesSpecificityGate,
+  replyVariantsSchema,
 } from '../replies/prompt.ts';
 import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
 import { getSetting } from '../settings/registry.ts';
@@ -304,6 +307,28 @@ replies.post('/replies/generate', async (c) => {
   const niche = loadActiveNicheSafe();
   ctx.niche = { slug: niche.slug };
 
+  // ML.3: which language this draft gets written in — explicit body value, else
+  // the cannon roster's pin for this handle, else the post's own script, else
+  // English (src/x/replies/language.ts owns the rule; single and batch call the
+  // same function). Placed HERE on purpose: inside the refuse-before-spend
+  // ladder, after the band gate, before the paid call. A 422'd post must never
+  // pay for a `cannon_targets` read, cheap as it is — §7.4 is about ORDER, not
+  // amount. Stamped into ctx before the insert like niche/relationship, so
+  // contextSnapshot records the language the model was actually given (§7.16).
+  const resolvedLanguage = await resolveReplyLanguage({
+    ...(language !== undefined ? { explicit: language } : {}),
+    targets: [{ handle: ctx.handle, text: ctx.text }],
+  });
+  // `source` is set with `language` or not at all — the pair moves together.
+  if (resolvedLanguage.language !== undefined && resolvedLanguage.source !== undefined) {
+    ctx.language = resolvedLanguage.language;
+    ctx.languageSource = resolvedLanguage.source;
+  }
+  // Decision 7: a language we have a PROFILE for ships ONE `extends` variant.
+  // The profile — not the string — is the gate, because "is this string
+  // English" is not decidable for free text (see language.ts).
+  const singleAngle = resolvedLanguage.profile !== null;
+
   // Relationship block (C3): what the people layer knows about this handle,
   // injected at the variable tail so the prompt stops meeting everyone for the
   // first time. Stamped into ctx BEFORE the insert so contextSnapshot records
@@ -338,7 +363,11 @@ replies.post('/replies/generate', async (c) => {
     template: prompt.body,
     // Server-stamped: the route hands the builder a validated VALUE and the
     // builder owns the sentence — the client's string is never a template.
-    ...(language !== undefined ? { language } : {}),
+    // ML.3: the RESOLVED language (which may be one nobody sent) plus its
+    // profile, so the builder never resolves a second time.
+    ...(resolvedLanguage.language !== undefined
+      ? { language: resolvedLanguage.language, languageProfile: resolvedLanguage.profile }
+      : {}),
   });
 
   // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
@@ -350,7 +379,17 @@ replies.post('/replies/generate', async (c) => {
         ...(provider !== undefined ? { provider } : {}),
         ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         messages,
-        jsonSchema: { name: 'reply_variants', schema: REPLY_VARIANTS_SCHEMA },
+        // ML.3: the narrowed schema makes contrarian/debate UNREPRESENTABLE on
+        // a non-English call (provider-enforced), so the model stops paying
+        // output tokens for variants the trim below would discard. The trim is
+        // still the contract — `maxItems` is a D164b unsupported keyword, so the
+        // COUNT cannot be pinned in the schema the way the angle can.
+        jsonSchema: {
+          name: 'reply_variants',
+          schema: singleAngle
+            ? replyVariantsSchema({ angles: ['extends'] })
+            : REPLY_VARIANTS_SCHEMA,
+        },
         // Sha of the effective prompt body + niche suffix — busts the cached
         // prefix on either a prompt override edit or a niche edit (grok-only).
         promptCacheKey: `${prompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
@@ -371,8 +410,25 @@ replies.post('/replies/generate', async (c) => {
     // already cost-logged by the provider client; we just sum the draft's
     // denormalized costUsd. A second all-generic round ships anyway — the
     // human edits.
+    //
+    // Decision 8 — the gate is SKIPPED, not ported, when a language resolved.
+    // Its three regexes are Latin-alphabet by construction (`/\d/` misses 全角
+    // digits, `/\b(i|my|me|we|our)\b/i` can never match 私 or أنا, and `\b` is
+    // meaningless in a script without spaces), so a Japanese reply fails it
+    // ~always and the regenerate fires on essentially every non-English call —
+    // then falls back to the same variant anyway. With ONE variant there is no
+    // sibling that might pass by accident, so an occasional waste becomes a
+    // systematic one. An English-tuned heuristic applied to Japanese yields
+    // UNKNOWN, not FAIL (§7.11); rewriting the regexes per script would be
+    // inventing a heuristic with nothing to validate it against (the existing
+    // one is eval-validated for English, OVERHAUL-PLAN §7.1). The English path
+    // below is untouched.
+    //
+    // The PARSE-failure retry still fires on both paths: a truncated body is
+    // not the specificity gate, it is not language-correlated, and rescuing an
+    // already-paid call is worth the second one.
     const someSpecific = variants?.some((v) => passesSpecificityGate(v.text)) ?? false;
-    if (variants === null || !someSpecific) {
+    if (variants === null || (!someSpecific && !singleAngle)) {
       const retry = await callLlm();
       costUsd += retry.costUsd;
       const retryVariants = parseReplyVariants(retry.text);
@@ -393,9 +449,19 @@ replies.post('/replies/generate', async (c) => {
     return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
   }
 
+  // ML.3 (decision 7): a non-English draft keeps exactly one variant, the
+  // `extends` one. Applied AFTER parsing and before the primary pick, so the
+  // stored `variants` column and the response carry the same one entry — the
+  // panel's variant tab strip already hides itself on a single-variant draft.
+  if (singleAngle) variants = trimToSingleVariant(variants);
+
   // Primary pick = first variant that clears the gate; the rest ride along in
-  // `variants` for the panel's picker.
-  const primary = variants.find((v) => passesSpecificityGate(v.text)) ?? variants[0];
+  // `variants` for the panel's picker. On the trimmed path the `find` falls
+  // through to `variants[0]`, which is the single variant — the gate has no
+  // vote there either (decision 8).
+  const primary = singleAngle
+    ? variants[0]
+    : (variants.find((v) => passesSpecificityGate(v.text)) ?? variants[0]);
   if (!primary) return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
 
   const [row] = await db
@@ -427,7 +493,17 @@ replies.post('/replies/generate', async (c) => {
   // generate leaves the idea open.
   if (ideaId && row) await consumeIdeaSafe(ideaId, 'reply_drafts', row.id);
 
-  return c.json(row, 201);
+  // ML.3: echo the resolution so the panel renders WHICH language and WHY
+  // without re-deriving the rule client-side (§7.4c — read the server's answer
+  // rather than reproducing it). Both null on an English draft.
+  return c.json(
+    {
+      ...row,
+      language: resolvedLanguage.language ?? null,
+      languageSource: resolvedLanguage.source ?? null,
+    },
+    201,
+  );
 });
 
 // --------------------------------------------------------- batch (Radar §7.2)
@@ -547,6 +623,18 @@ replies.post('/replies/generate-batch', async (c) => {
   const meBrief = (await loadMeContextSafe('reply')) ?? undefined;
   // N0.4: same niche grounding as the single path — single and batch can't drift.
   const niche = loadActiveNicheSafe();
+  // ML.3: one language for the whole CALL, resolved by the same function the
+  // single path uses. All-or-nothing over the set by construction (see
+  // language.ts): the batch prompt has one instruction block, which is why
+  // `Radar.tsx` already only sends a language when the whole draft set agrees —
+  // a mixed-language queue resolves to English rather than to whichever
+  // language the first tweet happened to be in. There is no DB row here to
+  // stamp (the drafts live in radar_drafts), the same shape as CQ.7's niche.
+  const resolvedLanguage = await resolveReplyLanguage({
+    ...(language !== undefined ? { explicit: language } : {}),
+    targets: tweets.map((t) => ({ handle: t.handle, text: t.text })),
+  });
+  const singleAngle = resolvedLanguage.profile !== null;
   // Registry prompt (AI.5): the standalone batch default, DB-overridable like
   // the single-reply key; a per-request systemPromptOverride still beats it.
   const batchPrompt = loadPromptSafe('reply-batch');
@@ -554,7 +642,9 @@ replies.post('/replies/generate-batch', async (c) => {
     replyPersona: niche.replyPersona,
     template: batchPrompt.body,
     ...(meBrief !== undefined ? { meBrief } : {}),
-    ...(language !== undefined ? { language } : {}),
+    ...(resolvedLanguage.language !== undefined
+      ? { language: resolvedLanguage.language, languageProfile: resolvedLanguage.profile }
+      : {}),
   });
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
   // single-reply path (user-accepted, RU.3). Scale with the batch, capped. A
@@ -572,7 +662,12 @@ replies.post('/replies/generate-batch', async (c) => {
         ...(provider !== undefined ? { provider } : {}),
         ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
         messages,
-        jsonSchema: { name: 'batch_replies', schema: BATCH_REPLY_SCHEMA },
+        // ML.3: the batch twin of the single path's narrowing — same reason,
+        // same non-guarantee (the per-tweet trim below is the contract).
+        jsonSchema: {
+          name: 'batch_replies',
+          schema: singleAngle ? batchReplySchema({ angles: ['extends'] }) : BATCH_REPLY_SCHEMA,
+        },
         // Sha of the effective batch body + niche suffix (grok-only) — busts
         // the cached prefix on a prompt override edit or a niche edit.
         promptCacheKey: `${batchPrompt.cacheKey}:${niche.slug}:${niche.updatedAt?.getTime() ?? 0}`,
@@ -601,14 +696,17 @@ replies.post('/replies/generate-batch', async (c) => {
   const out: { tweetId: string; text: string; angle: string; variants: ReplyVariant[] }[] = [];
   for (const r of batch) {
     if (!wanted.has(r.tweetId) || seen.has(r.tweetId)) continue;
-    const primary = r.variants[0];
+    // ML.3 (decision 7): the trim is PER TWEET — one `extends` variant each,
+    // and every tweet still appears. Same helper as the single path.
+    const variants = singleAngle ? trimToSingleVariant(r.variants) : r.variants;
+    const primary = variants[0];
     if (!primary) continue;
     seen.add(r.tweetId);
     out.push({
       tweetId: r.tweetId,
       text: primary.text,
       angle: primary.angle,
-      variants: r.variants,
+      variants,
     });
   }
 
@@ -620,6 +718,10 @@ replies.post('/replies/generate-batch', async (c) => {
     replies: out,
     count: out.length,
     requested: tweets.length,
+    // ML.3: same echo as the single path — the panel reads the answer instead
+    // of re-deriving the rule. Both null on an English batch.
+    language: resolvedLanguage.language ?? null,
+    languageSource: resolvedLanguage.source ?? null,
     costUsd: result.costUsd,
     model: result.model,
     requestId: result.requestId,

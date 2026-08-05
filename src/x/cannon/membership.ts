@@ -44,6 +44,48 @@ export async function isCannonHandle(handle: string): Promise<boolean> {
   return (await loadCannonHandles()).has(h);
 }
 
+/** ML.3: the language pinned on a roster row, `null` when the handle is not on
+ *  the roster or its `language` is blank. One indexed SELECT — `handle` is the
+ *  primary key, so this is a PK lookup, not a scan.
+ *
+ *  Unlike `loadCannonHandles` this deliberately does NOT filter on `active`. A
+ *  benched handle is still a Japanese account: benching means "stop camping",
+ *  not "start replying in English", and the language column answers a question
+ *  about the account rather than about whether we are spending on it. (The band
+ *  gate's carve-out is the opposite call for the opposite reason — there
+ *  `active` IS the decision.)
+ *
+ *  Free text by design (CQ.2, ≤16 chars): a row may read `'ro'`, `'Japanese'`
+ *  or `'日本語'`. Normalizing it into a profile is the resolver's job
+ *  (`src/x/replies/language.ts`), not this lookup's. */
+export async function cannonLanguageFor(handle: string): Promise<string | null> {
+  const h = normalizePersonHandle(handle);
+  if (!h) return null;
+  const [row] = await db
+    .select({ language: cannonTargets.language })
+    .from(cannonTargets)
+    .where(eq(cannonTargets.handle, h))
+    .limit(1);
+  const language = row?.language?.trim() ?? '';
+  return language === '' ? null : language;
+}
+
+/** §7.8, the `isCannonHandleSafe` discipline one column over: a DB hiccup drafts
+ *  in ENGLISH rather than failing a call the user is about to pay for. `null` is
+ *  the safe direction here because it is also the ordinary answer — the resolver
+ *  falls through to script detection, which is pure. */
+export async function cannonLanguageForSafe(handle: string): Promise<string | null> {
+  try {
+    return await cannonLanguageFor(handle);
+  } catch (err) {
+    console.error(
+      'cannon: language lookup failed (the draft falls through to detection):',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
 /** §7.8: a roster-layer failure never fails the path that pays for it. False is
  *  the safe direction — the band gate keeps its refusal default and the caller
  *  gets the same 422 it got before this existed.
