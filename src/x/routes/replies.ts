@@ -24,6 +24,7 @@ import {
   llmErrorPayload,
 } from '../../llm/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
+import { isCannonHandleSafe } from '../cannon/membership.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
 import { isReciprocityHandleSafe } from '../people/reciprocity.ts';
@@ -237,6 +238,21 @@ replies.post('/replies/generate', async (c) => {
       // band still drafted — that is what keeps the exempt drafts a cohort the
       // BAND crosstab can tell apart from a human `override`.
       ctx.gateBypass = 'roster';
+    } else if (await isCannonHandleSafe(ctx.handle)) {
+      // CQ.3: the second carve-out, same shape and same refusal-arm-only
+      // placement. A camped cannon target's quiet post is the whole reason the
+      // roster exists — the arbitrage is the AUTHOR's audience, not this post's
+      // velocity — so the band saying "dead" is not the question being asked.
+      // A DISTINCT stamp from `'roster'` on purpose (§7.4a): the two lanes are
+      // different bets and the crosstab has to be able to grade them apart.
+      //
+      // Sized against the real corpus before shipping (§7.33): the roster is a
+      // hand-curated 15–25 handles, so this covers a bounded, deliberate slice
+      // rather than the whole deliberate-reply flow (which is what sank the
+      // `noticed` floor in reciprocity.ts). If `GET /x/cannon/targets` ever
+      // returns hundreds, this carve-out has become the gate turned off and
+      // `gateBypass: 'cannon'` has become a constant — re-measure it then.
+      ctx.gateBypass = 'cannon';
     } else {
       return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
     }

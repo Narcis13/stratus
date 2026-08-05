@@ -14,14 +14,18 @@
 // Expiry is a lazy status flip (never a delete), applied on every GET: a radar
 // reply to a post that's been dead for 48h is worthless anyway.
 
-import { type SQL, and, desc, eq, inArray, lt, ne } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray, lt, ne } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
 import { radarDrafts, replyDrafts } from '../db/schema.ts';
+import { loadDoctrine } from '../niche/store.ts';
+import { localDayKey } from '../quests.ts';
 import type { BatchTweet, PostContext, PostSignals } from '../replies/prompt.ts';
 import { getSetting } from '../settings/registry.ts';
+import { localDayStart } from './brief.ts';
 import { parseChannelTags } from './channels.ts';
+import { loadCommitmentsWithDebt } from './goals.ts';
 
 export const RADAR_DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -369,6 +373,64 @@ radar.post('/radar/drafts/:tweetId/confirm', async (c) => {
   });
 
   return c.json(created, 201);
+});
+
+// CQ.3 — today's placed-reply count, for the panel's queue header.
+//
+// GET /radar/placed-today?tzOffsetMin= → { dayKey, placed, target }
+//
+// THE POINT OF THIS ROUTE IS THAT IT WRITES NOTHING. `GET /brief` already
+// reports the same number, but it upserts a `streaks` row and lazily flips goal
+// statuses on the way — so it is a once-a-session read, not something a panel
+// may poll. This one is a pure SELECT pair, which is what makes polling it safe.
+// Keep it that way: the day a side-write lands here, the panel's polling starts
+// writing a streak diary out of nothing.
+//
+// `placed` mirrors brief.ts's `postedDraftRows` predicate LITERALLY — status
+// 'posted' with `updatedAt` inside the local day. A posted draft is near-terminal
+// (only → discarded), so `updatedAt` is in effect "when the human pasted it".
+// Two spellings of "a placed reply" is how this counter and the replies quest
+// start disagreeing on the same screen.
+radar.get('/radar/placed-today', async (c) => {
+  const tzStr = c.req.query('tzOffsetMin');
+  let tzOffsetMin = 0;
+  if (tzStr !== undefined) {
+    const n = Number(tzStr);
+    if (!Number.isInteger(n) || Math.abs(n) > 16 * 60) {
+      return c.json({ error: 'invalid_tz_offset_min' }, 400);
+    }
+    tzOffsetMin = n;
+  }
+
+  const now = new Date();
+  const todayStart = localDayStart(now, tzOffsetMin);
+  const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  // The commitment is read through `loadCommitmentsWithDebt`, not re-derived
+  // from the table (GR.9): "which commitment is active" is one owner's answer,
+  // and a second reader of `commitments` is how the header and the quest start
+  // showing different targets on the same day.
+  const [placedRows, commitmentViews] = await Promise.all([
+    db
+      .select({ id: replyDrafts.id })
+      .from(replyDrafts)
+      .where(
+        and(
+          eq(replyDrafts.status, 'posted'),
+          gte(replyDrafts.updatedAt, todayStart),
+          lt(replyDrafts.updatedAt, tomorrowStart),
+        ),
+      ),
+    loadCommitmentsWithDebt(now, tzOffsetMin),
+  ]);
+
+  // GR.8/Decision 10: an ACTIVE daily commitment is a promise I made to myself,
+  // so it outranks the doctrine default. Absent or paused → the niche's reply
+  // band ceiling, which is what the queue is sized against.
+  const repliesCommitment = commitmentViews.find((v) => v.key === 'replies' && v.active);
+  const target = repliesCommitment?.dailyTarget ?? loadDoctrine().replyTargetMax;
+
+  return c.json({ dayKey: localDayKey(now, tzOffsetMin), placed: placedRows.length, target });
 });
 
 function isStatus(v: unknown): v is RadarDraftStatus {

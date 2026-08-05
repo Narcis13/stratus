@@ -14,6 +14,7 @@ import { type SQL, and, asc, desc, eq, inArray, isNotNull, or, sql } from 'drizz
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { type AskLlmResult, askLLM, llmConfigured, llmErrorPayload } from '../../llm/index.ts';
+import { loadCannonHandles } from '../cannon/membership.ts';
 import {
   channels,
   mentions,
@@ -210,6 +211,12 @@ peopleRouter.get('/people/rankmap', async (c) => {
 interface GlanceEntry {
   stage: Stage;
   isTarget: boolean;
+  /** CQ.3: on the camped cannon roster (`cannon_targets.active = 1`). Orthogonal
+   *  to `isTarget` — the 2–10x reply list and the arbitrage roster are different
+   *  sets chosen on different criteria, and a handle can be on either, both, or
+   *  neither. The content script reads this to stamp a `cannon` sighting without
+   *  a second fetch. */
+  isCannon: boolean;
   openLoops: number; // unanswered mentions from this author
   lastOutboundAt: string | null; // my last posted reply to them (ISO)
   lastInboundAt: string | null; // their last mention/reply to me (ISO)
@@ -226,7 +233,7 @@ interface GlanceEntry {
 // (same trap rankmap dodges). Rankmap stays untouched — it feeds the radar tier
 // stamping and is deliberately minimal.
 peopleRouter.get('/people/glance', async (c) => {
-  const [personRows, openLoopRows, targetHandles] = await Promise.all([
+  const [personRows, openLoopRows, targetHandles, cannonHandles] = await Promise.all([
     db
       .select({
         handle: people.handle,
@@ -246,6 +253,7 @@ peopleRouter.get('/people/glance', async (c) => {
       .where(and(eq(mentions.status, 'unanswered'), isNotNull(mentions.authorUsername)))
       .groupBy(sql`lower(${mentions.authorUsername})`),
     loadTargetHandles(),
+    loadCannonHandles(),
   ]);
 
   const targetSet = new Set(targetHandles);
@@ -257,6 +265,7 @@ peopleRouter.get('/people/glance', async (c) => {
     map[p.handle] = {
       stage: p.stage as Stage,
       isTarget: targetSet.has(p.handle),
+      isCannon: cannonHandles.has(p.handle),
       openLoops: openLoops[p.handle] ?? 0,
       lastOutboundAt: p.lastOutboundAt?.toISOString() ?? null,
       lastInboundAt: p.lastInboundAt?.toISOString() ?? null,
@@ -272,6 +281,25 @@ peopleRouter.get('/people/glance', async (c) => {
       map[h] = {
         stage: 'stranger',
         isTarget: true,
+        isCannon: cannonHandles.has(h),
+        openLoops: openLoops[h] ?? 0,
+        lastOutboundAt: null,
+        lastInboundAt: null,
+        followersCount: null,
+      };
+    }
+  }
+  // CQ.3: same backfill for a camped handle with no people row — and the roster
+  // is EXPECTED to be full of those, since camping an account for reach implies
+  // no relationship with it. Without this the timeline chip would only ever
+  // appear on cannon targets that happened to already be in the CRM, which is
+  // the subset the capture arm needs least.
+  for (const h of cannonHandles) {
+    if (!map[h]) {
+      map[h] = {
+        stage: 'stranger',
+        isTarget: targetSet.has(h),
+        isCannon: true,
         openLoops: openLoops[h] ?? 0,
         lastOutboundAt: null,
         lastInboundAt: null,

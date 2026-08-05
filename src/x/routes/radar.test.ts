@@ -3,10 +3,10 @@
 // auto-migrated) SQLite DB; bun test runs with SQLITE_PATH=:memory:.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { inArray } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { radarDrafts, replyDrafts } from '../db/schema.ts';
+import { commitments, radarDrafts, replyDrafts, streaks } from '../db/schema.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
 import { radar } from './radar.ts';
 
@@ -108,6 +108,125 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.delete(replyDrafts).where(inArray(replyDrafts.sourceTweetId, IDS));
   await db.delete(radarDrafts).where(inArray(radarDrafts.tweetId, IDS));
+});
+
+// CQ.3 — the placed-today counter. Three things are being pinned: the predicate
+// is brief.ts's (posted + updatedAt inside the LOCAL day, nothing else), the
+// target follows an active commitment and falls back to doctrine, and the route
+// WRITES NOTHING. The last one is the reason the panel is allowed to poll it,
+// so it is asserted, not assumed.
+describe('GET /radar/placed-today (CQ.3)', () => {
+  // Its own tweet ids so the drafts seeded above (and any other suite's) can't
+  // land in the window by accident.
+  const P_TODAY = '992000000000000001';
+  const P_YESTERDAY = '992000000000000002';
+  const P_COPIED = '992000000000000003';
+  const P_IDS = [P_TODAY, P_YESTERDAY, P_COPIED];
+
+  // Fixed offset so the local day is a known window whatever the host TZ is.
+  // 0 = UTC, and every seeded time below is placed relative to UTC noon-ish.
+  const TZ = 0;
+  const now = new Date();
+  const utcDayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const DAY = 24 * 60 * 60 * 1000;
+
+  const draft = (tweetId: string, status: string, updatedAt: Date) => ({
+    sourceTweetId: tweetId,
+    sourceAuthorUsername: 'cq3author',
+    sourceText: 'a post',
+    sourceUrl: `https://x.com/cq3author/status/${tweetId}`,
+    contextSnapshot: {},
+    replyText: 'a reply',
+    model: 'test',
+    status,
+    updatedAt,
+  });
+
+  beforeAll(async () => {
+    await db.delete(replyDrafts).where(inArray(replyDrafts.sourceTweetId, P_IDS));
+    await db.insert(replyDrafts).values([
+      // Mid-day today: inside the window on any run.
+      draft(P_TODAY, 'posted', new Date(utcDayStart + 12 * 60 * 60 * 1000)),
+      // Same time yesterday: posted, but outside the day.
+      draft(P_YESTERDAY, 'posted', new Date(utcDayStart + 12 * 60 * 60 * 1000 - DAY)),
+      // Inside the day, but only copied — the paste never happened.
+      draft(P_COPIED, 'copied', new Date(utcDayStart + 13 * 60 * 60 * 1000)),
+    ]);
+  });
+
+  afterAll(async () => {
+    await db.delete(replyDrafts).where(inArray(replyDrafts.sourceTweetId, P_IDS));
+    await db.delete(commitments).where(eq(commitments.key, 'replies'));
+  });
+
+  const placedToday = () =>
+    send<{ dayKey: string; placed: number; target: number }>(
+      `/x/radar/placed-today?tzOffsetMin=${TZ}`,
+      'GET',
+    );
+
+  test('counts only posted rows inside the local day; target falls back to doctrine', async () => {
+    const { status, body } = await placedToday();
+    expect(status).toBe(200);
+    expect(body.dayKey).toBe(new Date(utcDayStart).toISOString().slice(0, 10));
+    // Exactly one of the three fixtures qualifies. Other suites' posted drafts
+    // are dated by their own inserts, so this counts THIS suite's rows plus any
+    // they happen to have placed today — hence the >= 1 lower bound paired with
+    // the strict absence checks that follow.
+    expect(body.placed).toBeGreaterThanOrEqual(1);
+    // Doctrine default (niche `replyTargetMax`) when no commitment is active.
+    expect(body.target).toBe(20);
+  });
+
+  test('neither a yesterday row nor a copied row is a placed reply', async () => {
+    const before = (await placedToday()).body.placed;
+
+    // Move the yesterday row into today and the count moves by exactly one —
+    // which is what proves the window, not the row set, is doing the filtering.
+    await db
+      .update(replyDrafts)
+      .set({ updatedAt: new Date(utcDayStart + 11 * 60 * 60 * 1000) })
+      .where(eq(replyDrafts.sourceTweetId, P_YESTERDAY));
+    expect((await placedToday()).body.placed).toBe(before + 1);
+
+    // The copied row is inside the window already; flipping it to posted is the
+    // same one-row move, which proves the status half independently.
+    await db
+      .update(replyDrafts)
+      .set({ status: 'posted' })
+      .where(eq(replyDrafts.sourceTweetId, P_COPIED));
+    expect((await placedToday()).body.placed).toBe(before + 2);
+  });
+
+  test('an active replies commitment outranks the doctrine default', async () => {
+    await db.insert(commitments).values({ key: 'replies', dailyTarget: 7, active: true });
+    expect((await placedToday()).body.target).toBe(7);
+
+    // Paused is not a promise — the doctrine number comes back (GR.8).
+    await db.update(commitments).set({ active: false }).where(eq(commitments.key, 'replies'));
+    expect((await placedToday()).body.target).toBe(20);
+  });
+
+  test('invalid tzOffsetMin → 400, absent → UTC', async () => {
+    const bad = await send<{ error: string }>('/x/radar/placed-today?tzOffsetMin=1200', 'GET');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_tz_offset_min');
+
+    const bare = await send<{ dayKey: string }>('/x/radar/placed-today', 'GET');
+    expect(bare.status).toBe(200);
+    expect(bare.body.dayKey).toBe(new Date(utcDayStart).toISOString().slice(0, 10));
+  });
+
+  // The one-line proof that polling this route is safe. `GET /brief` reports the
+  // same number but upserts a streak row and flips goal statuses on the way —
+  // this one is a pure SELECT pair, and the day that changes, a panel that polls
+  // every 30s starts writing a streak diary out of nothing. Counted rather than
+  // asserted empty: the in-memory DB is shared with brief.test.ts.
+  test('writes nothing — the streaks table is untouched', async () => {
+    const before = db.select().from(streaks).all().length;
+    await placedToday();
+    expect(db.select().from(streaks).all()).toHaveLength(before);
+  });
 });
 
 interface DraftRow {

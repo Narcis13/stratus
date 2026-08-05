@@ -64,8 +64,13 @@ export interface PostContext {
    *  rendered into the prompt: it changes nothing the model sees (the C3
    *  relationship block already carries the person context). It is bookkeeping,
    *  so contextSnapshot can tell a roster-exempt draft apart from a human
-   *  `override` when the band cohorts are compared. */
-  gateBypass?: 'roster';
+   *  `override` when the band cohorts are compared.
+   *
+   *  `'roster'` = the GT.6 reciprocity lane (people I already reply to + the
+   *  2–10x targets); `'cannon'` = the CQ.3 camped roster. Two VALUES, not one
+   *  boolean, because the two carve-outs are different bets on different sets
+   *  and grading them together would hide whichever one is losing. */
+  gateBypass?: 'roster' | 'cannon';
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';

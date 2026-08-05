@@ -1,11 +1,18 @@
 // C1 people layer: dossier/route shape + store idempotency over the real
 // (in-memory, auto-migrated) SQLite DB — bun test runs with SQLITE_PATH=:memory:.
 
-import { beforeAll, describe, expect, test } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { accountSnapshots, mentions, people, personEvents, voiceAuthors } from '../db/schema.ts';
+import {
+  accountSnapshots,
+  cannonTargets,
+  mentions,
+  people,
+  personEvents,
+  voiceAuthors,
+} from '../db/schema.ts';
 import { logPersonEvents } from '../people/store.ts';
 import { buildAngleCrosstab, peopleRouter } from './people.ts';
 
@@ -194,6 +201,7 @@ describe('GET /people/glance (AX.1)', () => {
   type GlanceEntry = {
     stage: string;
     isTarget: boolean;
+    isCannon: boolean;
     openLoops: number;
     lastOutboundAt: string | null;
     lastInboundAt: string | null;
@@ -221,6 +229,14 @@ describe('GET /people/glance (AX.1)', () => {
     ]);
     // In-band voice author with no people row → backfilled as a bare target.
     await db.insert(voiceAuthors).values({ handle: 'glance_target', followersCount: 5000 });
+    // CQ.3: a camped cannon target with no people row (the roster's NORMAL
+    // shape — camping an account for reach implies no relationship), a benched
+    // one that must stay out of the map entirely, and one that is also a person.
+    await db.insert(cannonTargets).values([
+      { handle: 'glancecannon', active: true },
+      { handle: 'glancebench', active: false },
+      { handle: 'glance_person', active: true },
+    ]);
     // One unanswered mention (mixed-case author, to exercise lower()) counts as
     // an open loop; an answered one from the same author does not.
     const now = Date.now();
@@ -265,11 +281,48 @@ describe('GET /people/glance (AX.1)', () => {
     expect(body.map.glance_target).toEqual({
       stage: 'stranger',
       isTarget: true,
+      isCannon: false,
       openLoops: 0,
       lastOutboundAt: null,
       lastInboundAt: null,
       followersCount: null,
     });
+  });
+
+  test('CQ.3: camped cannon handles carry isCannon, benched ones are not in the map', async () => {
+    const { body } = await getJson<{ count: number; map: Record<string, GlanceEntry> }>(
+      '/x/people/glance',
+    );
+
+    // Cannon-only handle: backfilled bare, exactly like a bare target — this is
+    // what lets the content script stamp a `cannon` sighting off one fetch.
+    expect(body.map.glancecannon).toEqual({
+      stage: 'stranger',
+      isTarget: false,
+      isCannon: true,
+      openLoops: 0,
+      lastOutboundAt: null,
+      lastInboundAt: null,
+      followersCount: null,
+    });
+
+    // Both a person and a target: the flag rides along, the STAGE is untouched —
+    // the roster is a reach bet, never a claim about the relationship.
+    expect(body.map.glance_person?.isCannon).toBe(true);
+    expect(body.map.glance_person?.stage).toBe('mutual');
+
+    // The bench is not membership: a benched target that still decorated the
+    // timeline would make benching a no-op that looks like a decision.
+    expect(body.map.glancebench).toBeUndefined();
+  });
+
+  // The DB is shared across suites in one `bun test` process, and the cannon
+  // routes read the WHOLE roster — a leftover fixture here becomes a phantom
+  // target in cannon.test.ts.
+  afterAll(async () => {
+    await db
+      .delete(cannonTargets)
+      .where(inArray(cannonTargets.handle, ['glancecannon', 'glancebench', 'glance_person']));
   });
 });
 
