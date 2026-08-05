@@ -134,9 +134,9 @@ These three are stored locally in the extension, like the connection fields — 
 
 The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
 
-### The fourteen groups
+### The fifteen groups
 
-Today the registry holds **62 knobs in 14 groups**. This is the map — what each group decides, and where you see it change.
+Today the registry holds **66 knobs in 15 groups**. This is the map — what each group decides, and where you see it change.
 
 | Group | Knobs | What it decides | Where the change shows |
 |---|---|---|---|
@@ -149,13 +149,14 @@ Today the registry holds **62 knobs in 14 groups**. This is the map — what eac
 | **Reply band** | 12 | The reply-band **classifier** thresholds — views, replies, freshness, views-per-minute, the too-small floors. | The on-page badge *and* the server's draft gate — same numbers, both sides. |
 | **Stat gates** | 2 | How much data a Playbook cell and a best-time cell need before they read as evidence. | The Playbook's `insufficient data (n=…/N)` cells; the best-time advice. |
 | **Radar** | 2 | How long a radar draft stays clickable, and how many tweets a curated drafting pass keeps (the effective size is the lower of this and the batch reply cap). | The **[Radar](./radar-tab.md)** tab's queue. |
+| **Cannon** | 4 | The arbitrage lane: the **views-per-reply floor** a post (or a roster handle) must clear, the **age cutoff** past which a row leaves the Cannon view, the age past which the displayed age turns **red**, and the Cannon head's own **placed-today stretch** number. All four are **mirrored**. | The **[Radar → Cannon](./radar-tab.md#the-cannon--reply-where-a-reply-gets-read)** view and its roster block — plus the on-page capture arm, which uses the same floor and cutoff to decide what enters the queue. |
 | **Workers** | 4 | The daily-metrics hour, the publisher tick, and the winner re-read floor/cap. | Background only. The first two are `restart` knobs. |
 | **Budgets** | 2 | The soft X daily watchdog and the **hard** image-generation cap. | A refused image generation; the cost log's warnings. |
 | **AI calls** | 6 | Per-surface LLM defaults: reply/drafter/digest token caps, reply temperature and effort, the batch-reply ceiling. | Every AI draft — unless **Settings → AI** overrides them globally. |
 | **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
 | **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
 
-Twenty-eight of the 62 are also **mirrored** to the extension (all of Doctrine and Reply band, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
+Thirty-two of the 66 are also **mirrored** to the extension (all of Doctrine, Reply band and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
 
 ### How a row works
 
@@ -186,6 +187,8 @@ A few numbers you might expect in Tuning deliberately live somewhere else, becau
 
 - **Your reply quota, week reply %, and the 2–10× target-follower window** belong to your **active niche** — edit them under **General → Niche**. Tuning says so at the top of the affected groups.
 - **The Reply band group is a different thing from the reply targets.** Those twelve numbers are the *classifier* thresholds — what counts as hot, warm or skip. They're the same numbers on both sides: the badge stratus draws on a tweet and the gate the server applies before spending on a draft read the identical settings, so the badge can never promise a draft the server then refuses. (Changing one takes effect on the page within a few minutes, or immediately when you reopen the panel.)
+- **The Cannon group is not a second Reply band.** The band classifier decides *hot / warm / skip*; the Cannon floor decides *is there an open slot under this post*. They read the same signals and answer different questions, and neither overrides the other — a `skip`-banded post can be a perfectly good cannon shot. The shipped floor (**120**) is the measured p90 of your own harvest corpus, not a number borrowed from someone else's account; recalibrate it from a replay of that corpus, never by feel.
+- **The 2–10× target-follower window has nothing to do with the cannon roster.** They're separate lists chosen on separate criteria — relationship versus reach — and widening the 2–10× band does not add anyone to the cannon.
 - **AI calls is the lower of two tiers.** Those knobs are the per-surface defaults; whatever you set in **Settings → AI** is a *global* override that wins over them. The blank fields in the AI subtab are what fall back to this group. The AI subtab links straight here.
 
 > A caution worth repeating from the descriptions themselves: the band thresholds and the stat gates ship as **opening guesses**. They're worth recalibrating from measurements — not from a hunch — and the descriptions tell you how much data each one wants first.

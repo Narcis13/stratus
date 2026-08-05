@@ -25,6 +25,8 @@ That's the Radar's whole job:
 | **Band** | The verdict computed for each tweet as you scroll: **hot** ("reply now"), **warm** ("worth watching"), **skip** ("thread's too deep, you'd be buried"). Based on views, reply count, age, how fast it's gaining views, and whether it's "reply-bait". The thresholds live in **Settings → Tuning → Reply band** — the same twelve the on-page border uses. |
 | **manual** | A tweet *you* pinned with the ⊕ button on x.com, regardless of band. "I want to reply to this one, period." |
 | **your circle** | A quiet tweet that got in because of *who posted it*: someone you've replied to before, or someone on your 2–10× target roster. Same rule the reply gate uses, so anything captured this way is also something you can draft a reply to without forcing past the "dead post" warning. |
+| **cannon** | A tweet that got in for **arbitrage**: it was under 30 minutes old and either cleared the views-per-reply floor on sight, or its author is on your camped **cannon roster**. See **The Cannon**, below. |
+| **Cannon score** | `views ÷ (replies + 1)` — how many eyes a post has per reply already under it. A lot of views and almost nobody in the comments means an early reply actually gets read. It deliberately knows nothing about the author's follower count: a 200k account's dead post is worth less than a 2k account's live one, and looking size up would cost $0.010 per handle to measure the wrong axis. |
 | **Angle** | How a reply engages: **extends** (build on the point), **contrarian** (respectfully disagree), **debate** (open a real question). Every draft comes as one of each. |
 | **Tier** | What the people layer knows about the author: **ally**, **mutual**, or **target** (on your 2–10× roster). A warm tweet from an ally beats a hot tweet from a stranger. |
 
@@ -36,15 +38,16 @@ Drafted replies are also saved server-side and rehydrate into the queue the next
 
 ## Filling the queue
 
-Three ways in, all free:
+Four ways in, all free:
 
 1. **Automatically, by browsing.** Any **hot** or **warm** tweet you scroll past on x.com is added. You don't do anything.
 2. **Automatically, because it's your people.** A tweet by someone you've already replied to, or someone on your 2–10× target roster, is added even when the band says skip — as long as it's **less than 24 hours old**. Reach is not the point of those replies; the relationship is. These rows carry a quiet **`your circle`** chip.
-3. **By hand, with ⊕.** Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button. It pushes that tweet into the queue whatever its band — a question you want to answer properly later, a stranger nobody has noticed yet. Pinned tweets get a **`manual`** band chip and rank at the very top.
+3. **Automatically, because it's a cannon shot.** A post **under 30 minutes old** that either clears the views-per-reply floor, or was written by someone on your **cannon roster**, is added even when the band says skip — a three-minute-old post with 40 views bands as nothing, and that is exactly when the slot under it is open. These rows carry a **`cannon`** chip.
+4. **By hand, with ⊕.** Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button. It pushes that tweet into the queue whatever its band — a question you want to answer properly later, a stranger nobody has noticed yet. Pinned tweets get a **`manual`** band chip and rank at the very top.
 
-**Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then band (hot, then warm, then `your circle`), then how fast the tweet is gaining views, then recency.
+**Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then band (hot, then warm, then `your circle` and `cannon`), then how fast the tweet is gaining views, then recency. **The Queue is deliberately not re-sorted by cannon score** — that ordering exists in the Cannon view and nowhere else, because the Queue is the relationship lane and an arbitrage shot must not push an ally off the top of it.
 
-**Under pressure the queue keeps the loud ones.** It holds 100 rows; when it overflows, `your circle` captures are dropped first, then the oldest hot/warm sightings, and a ⊕ pin is dropped last. A talkative circle can't push the day's biggest opportunity out.
+**Under pressure the queue keeps the loud ones.** It holds 100 rows; when it overflows, `your circle` captures are dropped first, then the oldest hot / warm / `cannon` sightings, and a ⊕ pin is dropped last. A talkative circle can't push the day's biggest opportunity out.
 
 **Why 24 hours, and why not everyone you know:** "your circle" means *stage `engaged` or better* — someone you have actually posted a reply to — plus your target roster. It deliberately does **not** mean everyone stratus has a row for: simply hovering someone's name on the timeline files them away, and treating that as a relationship would put most of x.com in this queue.
 
@@ -52,9 +55,9 @@ Three ways in, all free:
 
 ## Header actions
 
-- **Draft replies (N)** — makes **one** Grok call that drafts **three angle variants** (extends / contrarian / debate) for every un-drafted tweet in the queue (**20 at a time by default**). The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded.
-- **Curate & draft (N)** — the same thing, but it grades first. See below. **These two are the only buttons on the tab that spend money.**
-- **Clear** — dismisses everything currently shown in the view you're looking at. Dismissed tweets never re-enter the queue, even though the page keeps re-sighting them while they're on screen.
+- **Draft replies (N)** — makes **one** Grok call that drafts **three angle variants** (extends / contrarian / debate) for every un-drafted tweet in the queue (**20 at a time by default**). The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded. In the **Cannon** view the same button drafts the cannon rows instead.
+- **Curate & draft (N)** — the same thing, but it grades first. See below. **These two are the only buttons on the tab that spend money.** It renders in the **Queue view only** — see *The Cannon*, below, for why.
+- **Clear** — dismisses everything currently shown in the view you're looking at. In the Cannon view that means exactly the rows on screen, never the ones the 30-minute cutoff is hiding. Dismissed tweets never re-enter the queue, even though the page keeps re-sighting them while they're on screen.
 - **⚙** — the batch sizes. Three numbers live in there: the radar's own **draft cap**, the **batch cap the server enforces**, and the **curated batch size**. A plain click sends the *lower of the first two*, so raising one past the other can't buy you a refused click; the third sizes a curated pass and is itself capped by the server's batch cap. What lands on the radar by band isn't here — it's the **Reply band** group in **Settings → Tuning**, the same thresholds the on-page border uses, which is why the border can never promise a draft the server then refuses. (⊕ pins and fresh posts by your circle get in regardless of those thresholds — see the three ways in, above.)
 
 ---
@@ -92,16 +95,91 @@ The rubric itself — what earns a high score, and the exact list of what counts
 
 ---
 
-## The two views
+## The three views
 
 - **Queue** — the not-yet-worked opportunities, split into **Reply ready** (drafts waiting) and **New** (no reply yet). "Draft replies" only ever spends on the **New** group.
+- **Cannon** — the same buffer read for **arbitrage**: only posts where a reply would actually be seen, sorted by score, nothing older than 30 minutes. See below.
 - **Clicked** — tweets whose reply you've already taken. They move here so the queue stays the fresh set.
+
+---
+
+## The Cannon — reply where a reply gets read
+
+The Queue answers *"who should I be talking to?"*. The Cannon answers a different question: **"where is there an open slot right now?"** A post with 200k views and 6 replies is a slot; the same account's post with 200k views and 400 replies is a wall. Reply *placement* is the thing that compounds impressions, and the band classifier can't see it — it's size-agnostic and it doesn't rank by density.
+
+**Cannon score = `views ÷ (replies + 1)`.** That's the whole model. The `+ 1` is the divide-by-zero guard and the source measurement's own formula. Author size is never fetched — it's a $0.010 lookup per handle for an axis that turned out to be nearly uncorrelated with yield.
+
+### What's in the view
+
+A row is in the Cannon if **either** is true:
+
+- its score clears the floor (`x.cannon.scoreMin`, **120** by default — see the note on that number below), **or**
+- it was captured on the cannon arm in the first place (band `cannon`), which also covers roster accounts whose fresh post has too few views to score yet.
+
+So a tweet the classifier already called `hot` shows up here without being re-banded, and a roster account's three-minute-old post shows up before it has any numbers at all. Both, and neither is redundant.
+
+**Rows are sorted by score, highest first** (freshest wins a tie), each leading with a **score chip**. The `why` line shows `views · replies · Nm`, and the age turns **red past 15 minutes** — you're still in time, but not for long.
+
+### The 30-minute rule
+
+**A row whose displayed age passes 30 minutes disappears from this view.** Not dismissed, not deleted: it's still in the Queue under its normal 24-hour TTL, and you can still work it there. The cutoff is a *display* rule, because a stale cannon entry costs a reply slot for a 12-view return — and if it's still on screen, you'll spend one on it.
+
+That's also why the empty state has two spellings, and they mean opposite things:
+
+| You see | It means |
+|---|---|
+| *"Nothing scoring above 120 right now — the cannon queue fills from posts under 30 minutes old."* | There was nothing to shoot at. Browse a roster account's profile or your timeline. |
+| *"N entries aged out past 30 minutes."* | **You missed the window.** They're still in Queue. The fix is browsing closer to when things get posted, not a wider roster. |
+
+Only one of those is a reason to go change the roster. The view never collapses them into one line.
+
+**A session where you didn't have X open produces an empty Cannon view, and that's correct, not a bug** — the capture side only runs while the extension can see the page.
+
+### `placed today N / T`
+
+The head of the Cannon view carries one live counter: how many replies you've **pasted today**, against your target. It's the daily instrument for the whole lane.
+
+Two things worth knowing about it:
+
+- **It counts the whole day's replies from every surface**, not cannon shots specifically. `T` is the same number the replies quest uses — your active `replies` commitment's daily target, or the doctrine's reply ceiling if you haven't set one. Two owners of that number is how a header and a quest start disagreeing on the same screen.
+- **It reads and writes nothing.** `GET /brief` reports the same count but files a streak on the way, which is why the panel may refresh this one freely after a pick and may not poll that one. It updates on mount and after each pick — never on a timer.
+
+### Drafting from the Cannon
+
+**Draft replies (N)** renders here too, over the cannon rows that don't have a draft yet.
+
+**`Curate & draft` is deliberately absent from this view, and it's staying absent.** Curation is a model call that *ranks* a queue — but the cannon score already ranked these rows, from measured numbers, for free. Paying a second model call to re-rank a set a measurement already ordered is exactly the spend that gets refused everywhere else in this codebase.
+
+If every roster handle in the draft set declares the same reply **language**, the batch is drafted in it and the note line says so (`12/12 drafted · $0.0431 · in Japanese`). A mixed or undeclared set gets English and says that too (`· mixed languages — drafted in English`) — one language per call is the honest shape, since the batch prompt has a single instruction block.
+
+### The roster — who you camp
+
+At the foot of the Cannon view sits a collapsed **Roster** block. It's the Sunday review, not part of the daily loop, which is why it's cold and collapsed and never refreshes itself while you're working the queue above it.
+
+Each row is `score · @handle · nN · scored Nd ago`, ranked score-desc with never-scored handles last:
+
+- The **score** here is the *author's* number, not a post's: `median(views) ÷ (median(comments) + 1)` over their **last 30 harvested posts**. It's computed from tweets your harvester already captured — **$0, no X API call, ever.**
+- A handle with **fewer than 8 harvested posts reads `unscored`, never `0`.** "We looked and there wasn't enough" and "this author is worthless" are different facts, and a median over 3 posts is one outlier away from putting a dead account at the top of your roster.
+- **`belowFloor`** rows are tinted as a warning — those are the Sunday drop candidates.
+- **bench / camp** — benching keeps the row and its score but stops capturing their posts, and stops them opening the reply gate. **drop** deletes the target outright (behind a confirm); the harvested posts it was scored from stay, so re-adding and rescoring rebuilds the exact same number.
+- **Rescore ($0)** recomputes every target from the harvest. It's a click, deliberately — no worker, no alarm. The numbers must not move under you mid-review.
+- **+ add handle**, and under it a **Candidates** list: authors already in your harvest, scored the same way, not yet camped. One click adds them.
+
+**The roster is only as good as your harvest.** A target you never harvest scores `unscored` forever. That's the honest failure mode, and it's why the Cannon view's *score-only* membership matters — the view still works with an empty roster.
+
+**Never follow a cannon target.** The cannon is one-way: you're camping them for the audience in their replies, and that's a different relationship from the one the Circles lane builds.
+
+### Two numbers to know about
+
+- **The floor is 120, not 5,000.** The source measurement this lane came from used a 5,000 views-per-reply floor. Replayed over *our own* harvest corpus (1,841 rows, 296 handles, 30 days), only **0.60%** of rows cleared it — a floor that nothing crosses is indistinguishable from a broken feature. The shipped floor is that corpus's measured **p90 (120)**. If your own posting neighbourhood is louder or quieter, the knob is in **Settings → Tuning → Cannon**.
+- **The 2–10× target band was NOT widened for this.** `targetBandMinX/MaxX` stay 2/10. The cannon roster is its own set, chosen for reach rather than relationship, and it deliberately never enters the 2–10× roster — widening that band would unblock nothing here and would quietly exempt every large account you ever saved from the reply gate.
 
 ---
 
 ## A row, part by part
 
-- A **band chip** — `hot`, `warm`, `manual`, or a muted `your circle` (hover it: it explains that the row is here for the person, not the numbers).
+- A **band chip** — `hot`, `warm`, `manual`, a muted `your circle` (hover it: it explains that the row is here for the person, not the numbers), or `cannon`. **Hover `cannon` too:** *"either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast."* A band whose reason isn't visible in the numbers always carries its reason in a tooltip.
+- In the **Cannon view only**, a **score chip** ahead of the band chip — the row's `views ÷ (replies + 1)`.
 - The **author** — click to open their dossier in the People tab.
 - A **tier chip** if they're on your roster (`ally`, `mutual`, `target`) — also a dossier link. This is *why* they outrank a louder stranger.
 - **reply ready** once a draft exists.
@@ -176,10 +254,10 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **Dismiss before you draft.** Drafting is one call for the whole batch, but a bigger batch is a bigger call. Culling the queue first is the cheapest way to spend less — **✕** by hand is free, and **Curate & draft** is the paid version of the same idea for when the queue got away from you.
 - **Curating is cheap; drafting is not.** The scoring call reads text only and answers in a number per tweet — a few tenths of a cent for a whole 40-tweet queue, against a couple of cents for the drafting call it protects. That asymmetry is the entire argument for the button.
 - **The ⊕ is the escape hatch from the band rules.** If the classifier keeps skipping something you'd have replied to, pin it — and if that happens a lot, the thresholds are editable in **Settings → Tuning → Reply band**.
-- **A pinned tweet never pollutes your analytics.** `manual` is queue metadata, not a band verdict: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see. **`your circle` works the same way** — it says who posted it, not how it did.
+- **A pinned tweet never pollutes your analytics.** `manual` is queue metadata, not a band verdict: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see. **`your circle` and `cannon` work the same way** — one says who posted it, the other says the Cannon view wanted it. Three queue-metadata bands now, one rule: none of them ever lands in a Playbook hot/warm cell.
 - **`your circle` rows are the reciprocity lane's other half.** The Today tab counts how many of today's replies went to people who were already yours (*"N replies to your people"*); this is where those replies come from. A quiet post by an ally is worth more to you than a hot post by a stranger, and neither the band nor the reply gate will stop you any more.
 - **Every handle is a link.** Before replying to someone you half-recognize, click through to their dossier and see the history first.
-- **What this tab costs.** Capturing, ranking and rendering the queue: **$0**. The spend is the two drafting buttons: **Draft replies** (one Grok call per click, price shown after) and **Curate & draft** (a cheap scoring call *plus* that same drafting call — two prices, reported as one total). See **[Spend today](./today-tab.md)** on Today for the running meter.
+- **What this tab costs.** Capturing, ranking and rendering the queue: **$0**. The whole Cannon view, the roster, its scores, **Rescore** and the `placed today` counter: **$0 too** — every one of those is SQL over tweets your own browsing already captured, and none of that code can reach the X API. The spend is the two drafting buttons: **Draft replies** (one Grok call per click, price shown after) and **Curate & draft** (a cheap scoring call *plus* that same drafting call — two prices, reported as one total). See **[Spend today](./today-tab.md)** on Today for the running meter.
 
 ---
 
@@ -189,5 +267,5 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **[Replies](./replies-tab.md)** — Reply Master (one tweet, deeper context) and the canned reply lists.
 - **[Playbook](./playbook-tab.md)** — which angles and which situations actually earn views and profile visits.
 - **[On x.com itself](./s6-augmented-ui.md)** — the ⊕ button, the band border, the timeline chips and the context panel.
-- **[Settings → Tuning](./settings-tab.md)** — the Reply band thresholds, the two batch caps and the curated batch size.
+- **[Settings → Tuning](./settings-tab.md)** — the Reply band thresholds, the two batch caps, the curated batch size and the four **Cannon** knobs.
 - **[Settings → Prompts](./settings-tab.md#prompts-editor-the-prompts-subtab)** — `reply curation`, the rubric that decides what counts as filler.

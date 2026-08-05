@@ -379,6 +379,48 @@ a real exchange.
 > comment), because a chip that promises a draft the gate then refuses is the UI.7 badge-vs-gate fork
 > with a new coat. See `docs/replies-tab.md` §"Your people are exempt" and `docs/radar-tab.md`.
 
+> **✓ The cannon lane — a second reply lane, chosen on reach instead of relationship (CQ.1–CQ.8,
+> 2026-08-05).** C3/GT.6 answered *how* a reply reads and *whether* the gate lets you draft; the
+> cannon answers **where the reply slot is**. `plans/2026-08-05-cannon-queue.md`, shipped whole
+> (all 8 tasks, nothing dropped). **$0 new recurring and $0 new per-click** — every route is SQL
+> over rows the DOM harvest already captured, and no X API call was added anywhere.
+>
+> - **A second membership set, `cannon_targets` (migration `0026`)**, deliberately NOT the 2–10×
+>   roster and deliberately not a flag on `voice_authors`. `targetBandMinX/MaxX` stay **2/10**, and
+>   that is a decision with a finding behind it: `classifyBand` is size-agnostic, so those knobs gate
+>   no reply at all — they feed `loadTargetHandles()`, whose consumers are the GT.6 carve-out, the
+>   rankmap tiers, neglected-target nags, roster coverage and the digest. Widening them to "let big
+>   accounts through" would have unblocked nothing and turned a carve-out measured at 14 handles into
+>   *every large account I ever saved*. **Do not "fix" this later by widening the doctrine knob.**
+> - **The scoring is `views / (replies + 1)`** per sighting (`src/shared/cannon.ts`, the
+>   `replyBand.ts` twin, reached from the content IIFE through a shim) and
+>   `median(views) / (median(comments) + 1)` over an author's last 30 harvested posts for the roster
+>   (`src/x/cannon/roster.ts`). Author follower count is never fetched: $0.010 to measure an axis the
+>   source measurement found nearly uncorrelated with yield.
+> - **`src/x/cannon/membership.ts` is the one definition**, the deliberate sibling of
+>   `people/reciprocity.ts` — the split is the point (relationship vs reach, and a handle can be in
+>   both, either or neither). It feeds the band gate's **second** carve-out, stamped
+>   `gateBypass = 'cannon'` — a *different* value from `'roster'`, so the exempted calls stay a cohort
+>   you can tell apart in SQL later (§7.4a). Membership is `active = 1` only; benching really benches.
+> - **`'cannon'` is a band (a capture reason), the score is not.** A cannon-worthy post can classify
+>   `null` (3 minutes old, 40 views) or `skip` (150 replies), so the capture arm needs its own band —
+>   while Cannon-*view* membership is derived from `signals` at read time, so a `hot` row appears there
+>   without being re-banded. Three queue-metadata bands now (`manual`, `roster`, `cannon`) and one
+>   rule: the confirm endpoint coerces all three to `null` in the rebuilt `contextSnapshot.signals`,
+>   so none can ever land in a Playbook hot/warm cell (§7.19).
+> - **The borrowed 5,000 floor did not ship.** §7.33 replayed it over our own corpus (1,841 rows /
+>   296 handles / 30 days): **0.60%** of rows cleared it — under the ~2% bar, i.e. a floor nothing
+>   crosses, which is indistinguishable from a broken feature. The shipped `scoreMin` is that corpus's
+>   measured **p90 = 120**, recorded with its numbers in the `src/shared/cannon.ts` header.
+> - **No Playbook cannon section, on purpose.** The cohort is joinable read-time (`radar_drafts.band
+>   = 'cannon'` → `reply_draft_id` → `reply_drafts.posted_tweet_id` → `metrics_snapshots`) and there
+>   are zero measured cannon replies today. Revisit at ≥20 posted. The daily instrument is
+>   `GET /x/radar/placed-today` (`placed today N / T`, write-free so the panel may refresh it);
+>   the weekly one is views-per-placed-reply from the harvest.
+>
+> See `docs/radar-tab.md` §"The Cannon", `docs/settings-tab.md` (the **Cannon** knob group) and
+> `docs/PHASE-HISTORY.md` for the full entry.
+
 ---
 
 ## Phase C4 — The Playbook (close the learning loop)

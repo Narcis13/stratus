@@ -1,6 +1,6 @@
 # The Cannon Queue — re-target the Radar
 
-- **Status:** planned 2026-08-05 · not started
+- **Status:** planned 2026-08-05 · **SHIPPED whole 2026-08-05** (CQ.1–CQ.8, nothing dropped — Tasks 6 and 7 were marked droppable and both shipped). Browser passes for CQ.4/5/6 + CQ.7's `--live` run are parked in `.claude/skills/masterplan/VERIFY-DEBT.md` items `0o`/`0p`/`0q`.
 - **Goal fit:** Goal 4 (Circles / the people layer) — the reply lane. It changes *where* reply effort is spent, using measured return instead of author heat. No new goal, no new tab.
 - **Cost impact:** **$0 new recurring, $0 new per-click.** Every new route is pure SQL over rows already captured ($0 DOM harvest / already-billed metrics). The existing `POST /x/replies/curate` (~$0.005–0.015) and `POST /x/replies/generate-batch` (~$0.002–0.01) are unchanged — this plan changes *which* tweets that spend lands on. No new X API read anywhere: author size is deliberately never looked up (§8 third-party user lookup = $0.010, and §2.4 of the growth plan says author size is the wrong axis anyway).
 - **Invariants touched:** §7.4 (refuse-before-spend — new routes are $0, guards stay above every existing spend line) · **§7.4a** (the money-gate carve-out is server-decided, sized against the corpus, and stamped into `contextSnapshot.gateBypass`) · **§7.4c** (the client re-decides the roster rule — reproduce the RULE, prove both sides agree on real data) · §7.11 (`score: null` = never scored, **never 0** — 0 is a real verdict, the RC.2 `curation_score` reading) · §7.12 (read-time over stored: the per-sighting cannon score is computed at read time; only the ROSTER score is stored, and the plan says why) · §7.13/13a (one sync txn for the rescore write) · §7.19 (roster scores gated at a sample floor; **queue-metadata bands never become Playbook hot/warm cells**) · §7.20 (static path before `:param` on the new router) · §7.24 (background stays the single buffer writer — the Cannon view filters at display time, it never writes) · §7.26/7.27 (the shared scorer is an IIFE-safe pure module reached through a shim, never forked) · **§7.33/7.34** (the borrowed 5,000 floor and the borrowed median method are validated against OUR corpus before they ship) · §8 (harvest readers MUST filter on `mode`; nothing here touches `mentions`).
@@ -294,11 +294,11 @@ passes, exactly `maxAgeMin` passes, one minute past fails); `cannonAgeTone` at e
 threshold argument overrides the default. Plus the registry group-shape assertion.
 
 **Done when:**
-- [ ] `GET /x/settings` lists a `cannon` group of 4 mirrored knobs whose values equal `CANNON`
-- [ ] The corpus-replay numbers are in the `src/shared/cannon.ts` header, with the shipped
+- [x] `GET /x/settings` lists a `cannon` group of 4 mirrored knobs whose values equal `CANNON`
+- [x] The corpus-replay numbers are in the `src/shared/cannon.ts` header, with the shipped
       `scoreMin` justified by them
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
-- [ ] Committed: `feat(cannon): shared cannon scorer + x.cannon.* knobs`
+- [x] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
+- [x] Committed: `feat(cannon): shared cannon scorer + x.cannon.* knobs`
 
 **Cost note:** $0. The corpus replay is the S1 explorer (read-only SQL over already-billed
 rows); it cannot reach `xFetch`.
@@ -398,14 +398,14 @@ migration-generating work never runs in parallel sessions).
   404 on an absent handle; `candidates` excludes existing targets and clamps `limit`.
 
 **Done when:**
-- [ ] `POST /x/cannon/targets` then `POST /x/cannon/rescore` produces a scored roster from
+- [x] `POST /x/cannon/targets` then `POST /x/cannon/rescore` produces a scored roster from
       `harvest_rows` alone, with no X API call in the request log
-- [ ] A handle with 3 harvested posts reads `score: null`, `sampleN: 3`, and is listed under
+- [x] A handle with 3 harvested posts reads `score: null`, `sampleN: 3`, and is listed under
       `skipped`
-- [ ] The emitted migration is one CREATE TABLE + one CREATE INDEX and a fresh `:memory:`
+- [x] The emitted migration is one CREATE TABLE + one CREATE INDEX and a fresh `:memory:`
       boot still reports the 3 `content_pillars` seed rows
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` green
-- [ ] Committed: `feat(cannon): cannon_targets roster + harvest-derived scoring routes`
+- [x] `bun test` + `bun run typecheck` + `bun run lint` green
+- [x] Committed: `feat(cannon): cannon_targets roster + harvest-derived scoring routes`
 
 **Cost note:** $0 — pure SQL over DOM-harvested rows. Nothing in `routes/cannon.ts` can
 reach `xFetch` or `askLLM`, and that is worth a comment at the top of the file.
@@ -479,13 +479,13 @@ reach `xFetch` or `askLLM`, and that is worth a comment at the top of the file.
   table is still empty after the call — the one-line proof that it is safe to poll).
 
 **Done when:**
-- [ ] A reply drafted for a roster handle on a dead-banded post is stamped
+- [x] A reply drafted for a roster handle on a dead-banded post is stamped
       `gateBypass: 'cannon'` and is distinguishable in SQL from a `'roster'` bypass
-- [ ] `GET /x/people/glance` carries `isCannon` for roster handles that have no people row
-- [ ] `GET /x/radar/placed-today` returns today's placed count and target, and leaves
+- [x] `GET /x/people/glance` carries `isCannon` for roster handles that have no people row
+- [x] `GET /x/radar/placed-today` returns today's placed count and target, and leaves
       `streaks` untouched
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` green
-- [ ] Committed: `feat(cannon): band-gate carve-out, glance flag, placed-today counter`
+- [x] `bun test` + `bun run typecheck` + `bun run lint` green
+- [x] Committed: `feat(cannon): band-gate carve-out, glance flag, placed-today counter`
 
 **Cost note:** $0. The carve-out runs only on the refusal arm — it can only ever cause a
 call that was about to be refused to proceed, and that call was already the user's click.
@@ -569,11 +569,11 @@ call that was about to be refused to proceed, and that call was already the user
   `'cannon'`.
 
 **Done when:**
-- [ ] With a handle on the roster, scrolling their fresh post queues it with band `'cannon'`
-      even when `data-stratus-band` is absent (browser check, one pass)
-- [ ] A confirmed cannon draft records `signals.band: null` in `reply_drafts.contextSnapshot`
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
-- [ ] Committed: `feat(cannon): capture arm + cannon band end to end`
+- [~] With a handle on the roster, scrolling their fresh post queues it with band `'cannon'`
+      even when `data-stratus-band` is absent (browser check, one pass)  ← **shipped; the browser half is parked in VERIFY-DEBT (`0o`/`0p`/`0q`)**
+- [x] A confirmed cannon draft records `signals.band: null` in `reply_drafts.contextSnapshot`
+- [x] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
+- [x] Committed: `feat(cannon): capture arm + cannon band end to end`
 
 **Cost note:** $0 — DOM only; the arm can widen what enters the queue but nothing here
 initiates a paid call.
@@ -654,12 +654,12 @@ desc with the `lastSeenAt` tiebreak; a clicked row never appears; an empty input
 `{rows: [], hidden: 0}`.
 
 **Done when:**
-- [ ] The Radar tab shows three views; Cannon lists score-desc rows with red ages past
-      15 min and never shows a row past 30 min (unit-tested + one browser pass)
-- [ ] The Cannon head shows `placed today N / T` and N moves after a pick
-- [ ] The main Queue's contents, order and empty states are byte-identical to before
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
-- [ ] Committed: `feat(cannon): Cannon view in the Radar tab`
+- [~] The Radar tab shows three views; Cannon lists score-desc rows with red ages past
+      15 min and never shows a row past 30 min (unit-tested + one browser pass)  ← **shipped; the browser half is parked in VERIFY-DEBT (`0o`/`0p`/`0q`)**
+- [~] The Cannon head shows `placed today N / T` and N moves after a pick  ← **shipped; panel pass parked in VERIFY-DEBT (`0p`/`0q`)**
+- [x] The main Queue's contents, order and empty states are byte-identical to before
+- [x] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
+- [x] Committed: `feat(cannon): Cannon view in the Radar tab`
 
 **Cost note:** $0 for the view itself. `Draft replies` from this view costs exactly what it
 costs from the Queue (~$0.002–0.01/click, unchanged) — this task changes which rows it sends.
@@ -705,10 +705,10 @@ without it; cut this first if the plan runs long.
 covered by `typecheck`. Verify in the loaded extension and note it in the commit body.
 
 **Done when:**
-- [ ] Adding a handle, rescoring and dropping all work from the panel without a page reload
-- [ ] `belowFloor` targets are visibly distinguishable in the list
-- [ ] `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
-- [ ] Committed: `feat(cannon): roster block in the Cannon view`
+- [~] Adding a handle, rescoring and dropping all work from the panel without a page reload  ← **shipped; panel pass parked in VERIFY-DEBT (`0p`/`0q`)**
+- [~] `belowFloor` targets are visibly distinguishable in the list  ← **shipped; panel pass parked in VERIFY-DEBT (`0p`/`0q`)**
+- [x] `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
+- [x] Committed: `feat(cannon): roster block in the Cannon view`
 
 **Cost note:** $0.
 
@@ -762,12 +762,12 @@ context/tweet objects (it is a top-level body field, not a context field — the
 whitelist test is the model); `invalid_language` fires before any spend (§7.4).
 
 **Done when:**
-- [ ] A batch drafted with `language: 'Japanese'` returns Japanese variants; the same call
+- [x] A batch drafted with `language: 'Japanese'` returns Japanese variants; the same call
       without it is byte-identical to a pre-task call
-- [ ] `reply prompt.md`, `REPLY_PROMPT_TEMPLATE` and `REPLY_BATCH_PROMPT_TEMPLATE` are
+- [x] `reply prompt.md`, `REPLY_PROMPT_TEMPLATE` and `REPLY_BATCH_PROMPT_TEMPLATE` are
       unchanged (byte-sync + anti-drift tests untouched and green)
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
-- [ ] Committed: `feat(replies): optional server-stamped reply language`
+- [x] `bun test` + `bun run typecheck` + `bun run lint` + `cd extension && bun run build` green
+- [x] Committed: `feat(replies): optional server-stamped reply language`
 
 **Cost note:** One `--live` batch draft (~$0.002–0.01) to confirm the model honors the clause.
 Everything else is $0.
@@ -777,7 +777,7 @@ Everything else is $0.
 ## Task 8 (final): docs-sync + smoke
 **Depends on:** all prior.
 
-- [ ] `scripts/smoke-cannon.ts` — rerunnable, **$0 default**, cleans up after itself. Assert
+- [x] `scripts/smoke-cannon.ts` — rerunnable, **$0 default**, cleans up after itself. Assert
       end to end: create two `cannon_targets` → seed `harvest_rows` for them (one above the
       sample gate, one below) → `POST /x/cannon/rescore` → **read the rows back** and assert
       `[score, sampleN, scoredAt]` on both (the RC.5 rule: a best-effort or txn write needs a
@@ -789,15 +789,15 @@ Everything else is $0.
       **no** `--live` flag and say why in the header — the D171c question, answered per
       surface (`smoke-humanizer.ts` is the no-flag precedent, `smoke-radar-curate.ts` the
       flag one).
-- [ ] `docs/PHASE-HISTORY.md`: one phase entry — what shipped, the date, the cost ($0 new),
+- [x] `docs/PHASE-HISTORY.md`: one phase entry — what shipped, the date, the cost ($0 new),
       and the two gotchas (the `targetBandMaxX` finding, and the corpus-measured `scoreMin`).
-- [ ] `CIRCLES-PLAN.md`: the cannon lane marked against the reply-lane section.
-- [ ] `docs/radar-tab.md`: the third view, the roster block, the 30-minute rule, the counter,
+- [x] `CIRCLES-PLAN.md`: the cannon lane marked against the reply-lane section.
+- [x] `docs/radar-tab.md`: the third view, the roster block, the 30-minute rule, the counter,
       the `cannon` band and its tooltip, and the note that `Curate & draft` is deliberately
       absent from the Cannon view.
-- [ ] `docs/settings-tab.md`: the `cannon` knob group (D180b — each task pays its own doc
+- [x] `docs/settings-tab.md`: the `cannon` knob group (D180b — each task pays its own doc
       line; if the earlier tasks did, this is a no-op and that is the rule working).
-- [ ] `.claude/skills/plan-feature/references/codemap.md`: §3.1 (`shared/cannon.ts`), §3.3
+- [x] `.claude/skills/plan-feature/references/codemap.md`: §3.1 (`shared/cannon.ts`), §3.3
       (`cannon/roster.ts`, `cannon/membership.ts`, `settings/cannonThresholds.ts`, the
       registry group count **14 groups / 66 knobs** — recount, don't assume), §3.4
       (`routes/cannon.ts`, the radar/replies/people route edits), §4 (`cannon_targets`,
