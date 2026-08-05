@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { CANNON } from '../cannon.ts';
 import { BAND } from '../replyBand.ts';
 import {
   SERVER_DEFAULTS,
@@ -35,6 +36,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       bestTimeMinN: 8,
       panelRefreshCap: 1,
       band: BAND,
+      cannon: CANNON,
       doNextCap: 8,
       doNextSnoozeH: 48,
       fansAmberTopN: 25,
@@ -109,6 +111,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'band',
       'batchReplyCap',
       'bestTimeMinN',
+      'cannon',
       'channelPostsShown',
       'curatedCount',
       'doNextCap',

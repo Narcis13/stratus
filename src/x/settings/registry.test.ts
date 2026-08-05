@@ -3,6 +3,7 @@
 // ../routes/settings.test.ts.
 
 import { describe, expect, test } from 'bun:test';
+import { CANNON } from '../../shared/cannon.ts';
 import { BAND } from '../../shared/replyBand.ts';
 import {
   SETTINGS_REGISTRY,
@@ -13,6 +14,7 @@ import {
 } from './registry.ts';
 
 type BandKey = keyof typeof BAND;
+type CannonKey = keyof typeof CANNON;
 
 function def(over: Partial<SettingDef>): SettingDef {
   return {
@@ -128,6 +130,7 @@ describe('registry adapter + grouping', () => {
       'band',
       'gates',
       'radar',
+      'cannon',
       'workers',
       'budgets',
       'ai',
@@ -144,6 +147,7 @@ describe('registry adapter + grouping', () => {
       'Reply band',
       'Stat gates',
       'Radar',
+      'Cannon',
       'Workers',
       'Budgets',
       'AI calls',
@@ -356,6 +360,10 @@ describe('registry adapter + grouping', () => {
       'x.band.tooSmallVpm',
       'x.gates.bestTimeMinN',
       'x.radar.curatedCount',
+      'x.cannon.scoreMin',
+      'x.cannon.maxAgeMin',
+      'x.cannon.redAgeMin',
+      'x.cannon.placedTarget',
       'x.ai.batchReplyCap',
       'x.mentions.panelRefreshCap',
       'x.display.doNextCap',
@@ -387,6 +395,24 @@ describe('registry adapter + grouping', () => {
     // second calibration.
     for (const d of band?.defs ?? []) {
       expect([d.key, d.default]).toEqual([d.key, BAND[d.key.replace('x.band.', '') as BandKey]]);
+    }
+  });
+
+  // Same UI.7 rule one module over: the cannon group must be the WHOLE
+  // CannonThresholds shape, all mirrored (the page's Cannon view and the
+  // server's cannon routes filter with the same four numbers), and the defaults
+  // must BE the module's constant rather than a second calibration — `scoreMin`
+  // is a measured p90 and a retyped copy here could silently disagree with it.
+  test('the cannon group is exactly the scorer shape, every key mirrored', () => {
+    const cannon = settingsByGroup().find((g) => g.id === 'cannon');
+    const suffixes = (cannon?.defs ?? []).map((d) => d.key.replace('x.cannon.', ''));
+    expect(suffixes.slice().sort()).toEqual(Object.keys(CANNON).slice().sort());
+    expect((cannon?.defs ?? []).every((d) => d.scope === 'mirrored')).toBe(true);
+    for (const d of cannon?.defs ?? []) {
+      expect([d.key, d.default]).toEqual([
+        d.key,
+        CANNON[d.key.replace('x.cannon.', '') as CannonKey],
+      ]);
     }
   });
 

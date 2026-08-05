@@ -11,6 +11,7 @@
 
 import * as store from '../../settings/store.ts';
 import type { SettingScope, SettingsRegistry } from '../../settings/store.ts';
+import { CANNON } from '../../shared/cannon.ts';
 
 export type { SettingScope };
 export { SettingsError } from '../../settings/store.ts';
@@ -604,6 +605,65 @@ const RADAR: SettingDef[] = [
   },
 ];
 
+// Cannon — the arbitrage reading of the radar buffer. Every knob is `mirrored`
+// for the UI.7 reason: the page's Cannon view and the server's cannon routes
+// decide eligibility with the same `src/shared/cannon.ts`, so a server-only knob
+// would fork the two. The defaults ARE `CANNON` (never retyped here) — the
+// registry is not a second calibration — and `scoreMin` in particular is a
+// MEASURED number, not the 5,000 the source plan carried: see the corpus replay
+// in the module header before touching it.
+const CANNON_RECAL = 'Recalibrate from a corpus replay (see src/shared/cannon.ts), never by feel.';
+
+const CANNON_KNOBS: SettingDef[] = [
+  {
+    key: 'x.cannon.scoreMin',
+    group: 'cannon',
+    label: 'Cannon score floor',
+    description: `Views per reply a post needs to be worth a reply slot. Shipped at the measured p90 of our own harvest corpus (the borrowed 5,000 cleared only 0.60% of rows and would have kept the view empty). ${CANNON_RECAL}`,
+    type: 'number',
+    default: CANNON.scoreMin,
+    min: 10,
+    max: 100_000,
+    unit: 'v/reply',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.cannon.maxAgeMin',
+    group: 'cannon',
+    label: 'Cannon age cutoff',
+    description: `Minutes past which a post leaves the Cannon view entirely — a stale entry costs a reply slot for a handful of views. An opening guess. ${CANNON_RECAL}`,
+    type: 'number',
+    default: CANNON.maxAgeMin,
+    min: 5,
+    max: 180,
+    unit: 'min',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.cannon.redAgeMin',
+    group: 'cannon',
+    label: 'Cannon age warning',
+    description: `Minutes past which a still-eligible post renders its age red. Keep it below the age cutoff. An opening guess. ${CANNON_RECAL}`,
+    type: 'number',
+    default: CANNON.redAgeMin,
+    min: 1,
+    max: 180,
+    unit: 'min',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.cannon.placedTarget',
+    group: 'cannon',
+    label: 'Cannon placed/day target',
+    description: `The Cannon head's own stretch number for replies placed today — DISPLAY ONLY. The daily replies quest resolves its real target from the niche doctrine, not from this. An opening guess. ${CANNON_RECAL}`,
+    type: 'number',
+    default: CANNON.placedTarget,
+    min: 1,
+    max: 100,
+    scope: 'mirrored',
+  },
+];
+
 // Workers — cadence and the bounded winner re-read. The two cadence knobs are
 // `appliesOn:'restart'`: startXWorkers reads them ONCE to arm its timers
 // (decision 10 — no hot-reloading timers). The winner knobs are read at the
@@ -979,6 +1039,7 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...BAND_KNOBS,
   ...GATES,
   ...RADAR,
+  ...CANNON_KNOBS,
   ...WORKERS,
   ...BUDGETS,
   ...AI,
@@ -997,6 +1058,7 @@ export const GROUP_LABELS: Record<string, string> = {
   band: 'Reply band',
   gates: 'Stat gates',
   radar: 'Radar',
+  cannon: 'Cannon',
   workers: 'Workers',
   budgets: 'Budgets',
   ai: 'AI calls',

@@ -29,7 +29,8 @@
     "../src/shared/postCoach.ts",
     "../src/shared/postFormat.ts",
     "../src/shared/judge.ts",
-    "../src/shared/humanize.ts"
+    "../src/shared/humanize.ts",
+    "../src/shared/cannon.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }

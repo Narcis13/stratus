@@ -15,14 +15,15 @@
 // `GET /x/settings/values?scope=mirrored` before adding one, and add the
 // matching baked fallback in the same edit.
 //
-// The ONE import (UI.7) is `../replyBand.ts`, the shim over the shared
-// classifier: content.ts already inlines that module into the IIFE, and BAND
-// is the canonical owner of the band defaults on BOTH sides of the wire, so
-// re-typing its twelve numbers here would be the second-owner bug this file
-// exists to prevent. The rule this module actually lives by is "nothing that
-// can't be inlined into the content-script IIFE" (§7.26) — no React, no
-// sidepanel module, nothing with its own dependencies.
+// The imports here are shims over shared pure modules — `../replyBand.ts`
+// (UI.7) and `../cannon.ts` — and nothing else: content.ts already inlines both
+// into the IIFE, and BAND/CANNON are the canonical owners of their defaults on
+// BOTH sides of the wire, so re-typing those numbers here would be the
+// second-owner bug this file exists to prevent. The rule this module actually
+// lives by is "nothing that can't be inlined into the content-script IIFE"
+// (§7.26) — no React, no sidepanel module, nothing with its own dependencies.
 
+import { CANNON, type CannonThresholds } from '../cannon.ts';
 import { BAND, type BandThresholds } from '../replyBand.ts';
 
 /** chrome.storage.local key the background writes the flat blob to. */
@@ -48,6 +49,10 @@ export interface ServerConfig {
   /** x.band.* — every threshold the on-page badge classifies with (UI.7). The
    *  server gate reads the same twelve knobs, so one number moves both sides. */
   band: BandThresholds;
+  /** x.cannon.* — every threshold the Cannon view filters and tints with. The
+   *  server's cannon routes read the same four knobs, so one number moves both
+   *  sides; `scoreMin` is a MEASURED floor (see src/shared/cannon.ts). */
+  cannon: CannonThresholds;
   /** x.display.doNextCap — rows the Today "Do next" strip shows before the
    *  overflow line (UI.12). */
   doNextCap: number;
@@ -96,6 +101,7 @@ export const SERVER_DEFAULTS: ServerConfig = {
   bestTimeMinN: 3,
   panelRefreshCap: 4,
   band: BAND,
+  cannon: CANNON,
   doNextCap: 5,
   doNextSnoozeH: 24,
   fansAmberTopN: 10,
@@ -164,6 +170,18 @@ function readBand(blob: ServerSettingsBlob): BandThresholds {
   };
 }
 
+// Same per-key discipline as `readBand`, for the same reason: the page's Cannon
+// view and the server's cannon routes filter on these four, so a corrupt
+// `scoreMin` must not also drop the age cutoff back to baked.
+function readCannon(blob: ServerSettingsBlob): CannonThresholds {
+  return {
+    scoreMin: readNumber(blob, 'x.cannon.scoreMin', CANNON.scoreMin),
+    maxAgeMin: readNumber(blob, 'x.cannon.maxAgeMin', CANNON.maxAgeMin),
+    redAgeMin: readNumber(blob, 'x.cannon.redAgeMin', CANNON.redAgeMin),
+    placedTarget: readNumber(blob, 'x.cannon.placedTarget', CANNON.placedTarget),
+  };
+}
+
 /** Resolve a stored blob (or anything at all) into a usable config. A missing,
  *  malformed or partial blob yields the baked defaults for whatever it can't
  *  supply — reading settings never throws and never returns undefined. */
@@ -181,6 +199,7 @@ export function readServerConfig(raw: unknown): ServerConfig {
       SERVER_DEFAULTS.panelRefreshCap,
     ),
     band: readBand(blob),
+    cannon: readCannon(blob),
     doNextCap: readNumber(blob, 'x.display.doNextCap', SERVER_DEFAULTS.doNextCap),
     doNextSnoozeH: readNumber(blob, 'x.display.doNextSnoozeH', SERVER_DEFAULTS.doNextSnoozeH),
     fansAmberTopN: readNumber(blob, 'x.display.fansAmberTopN', SERVER_DEFAULTS.fansAmberTopN),
