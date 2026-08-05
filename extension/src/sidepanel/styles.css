@@ -1341,6 +1341,102 @@ button.danger:hover:not(:disabled) {
   color: var(--muted);
 }
 
+/* CQ.6 — the roster block at the foot of the Cannon view. Collapsed by default
+   and visually below the queue it governs: it is the Sunday review, not part of
+   the daily loop. */
+.radar-roster {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.radar-roster-summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+.radar-roster-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 6px;
+}
+/* Named "$0" on its face, not just in the title: the two buttons in the section
+   header above both spend money on a click, and nothing else on screen
+   distinguishes the kinds. */
+.radar-roster-rescore {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.radar-roster-floor {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.radar-roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.radar-roster-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+/* Benched: still on the roster, not being captured. Dimmed rather than tinted —
+   the chip already owns the score judgement, and a second color there would
+   read as a verdict about the target. */
+.radar-roster-benched {
+  opacity: 0.55;
+}
+.radar-roster-handle {
+  font-size: 11px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+}
+.radar-roster-meta {
+  margin-right: auto;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.radar-roster-act {
+  font-size: 10px;
+  padding: 1px 7px;
+}
+.radar-roster-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.radar-roster-add input {
+  flex: 1;
+  font-size: 11px;
+}
+.radar-roster-add button {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+.radar-roster-candidates {
+  margin-top: 10px;
+}
+.radar-roster-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
 /* mention inbox (§7.5) — rows share the radar look */
 .inbox-age {
   font-size: 11px;

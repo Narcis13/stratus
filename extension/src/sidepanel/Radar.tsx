@@ -13,7 +13,7 @@
 // tabs *in the card* (RD.2): clicking the one you want copies it, moves the row
 // to Clicked, and opens the tweet — paste, done.
 
-import { type JSX, useEffect, useState } from 'react';
+import { type JSX, useCallback, useEffect, useState } from 'react';
 import { type HumanizeResult, humanize, jitterOdds } from '../humanize.ts';
 import { formatCount } from '../replyBand.ts';
 import type {
@@ -39,11 +39,18 @@ import {
 } from '../shared/radar.ts';
 import { requestReplyFocus } from '../shared/replyFocus.ts';
 import { curatedBatchSize, radarBatchSize } from '../shared/serverSettings.ts';
-import type { CurateResponse, HumanizerSettings, PlacedTodayResponse } from '../shared/types.ts';
+import type {
+  CannonCandidate,
+  CannonTarget,
+  CurateResponse,
+  HumanizerSettings,
+  PlacedTodayResponse,
+} from '../shared/types.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { CoachChip } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
+import { cannonTargetChip } from './chips.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
 import { type SettingsEditor, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
@@ -633,6 +640,11 @@ export function RadarSection({
               ))}
             </ul>
           )}
+          {/* CQ.6 — who you camp, at the foot of the view their posts land in.
+              Collapsed and cold on purpose: it is the Sunday review, not part
+              of the daily loop, and it must never move while the queue above
+              it is being worked. */}
+          <CannonRoster settings={settings} onOpenPerson={onOpenPerson} />
         </>
       ) : view === 'queue' ? (
         queue.length === 0 ? (
@@ -892,6 +904,328 @@ function RadarRow({
         />
       )}
     </li>
+  );
+}
+
+// How many discovery rows the block asks for. Small on purpose: the list is a
+// prompt to camp one more account, not a directory.
+const CANDIDATE_LIMIT = 10;
+
+// The route's own rule (`USERNAME_RE` in src/x/routes/cannon.ts), mirrored so a
+// refusal reads as a sentence under the input instead of a bare 400 — the
+// HumanizerCard discipline. The server stays the authority either way.
+const HANDLE_RE = /^[A-Za-z0-9_]{1,15}$/;
+
+function normalizeHandle(raw: string): string | null {
+  const h = raw.trim().replace(/^@/, '').toLowerCase();
+  return HANDLE_RE.test(h) ? h : null;
+}
+
+// The 400/404 codes these five routes can answer with, spelled out.
+const ROSTER_ERR: Record<string, string> = {
+  invalid_handle: 'A handle is 1–15 letters, numbers or underscores — no @, no dots.',
+  invalid_active: 'The camp/bench switch was refused.',
+  invalid_body: 'The server could not read that. Reload the panel.',
+  empty_patch: 'Nothing changed, so nothing was sent.',
+  not_found: 'Not on the roster any more — reopen the block to refresh it.',
+};
+
+function rosterErr(e: unknown, fallback: string): string {
+  if (e instanceof ApiError) return ROSTER_ERR[e.code] ?? `${e.code} (${e.status})`;
+  return fallback;
+}
+
+/** CQ.6 — the cannon roster: camp, bench, drop, rescore, and the candidates the
+ *  harvest already knows about.
+ *
+ *  EVERY call it makes is $0 (the scores come from `harvest_rows`, never from
+ *  the X API) and the Rescore button says so, because the two buttons in the
+ *  header above it both spend money and nothing on screen would otherwise tell
+ *  the two kinds apart.
+ *
+ *  Cold by construction: it loads on the first expand and then only when the
+ *  human changes something. No polling, no auto-rescore — the weekly review is
+ *  a person sitting down on Sunday, and numbers that moved under them mid-review
+ *  would make the comparison they came for impossible. */
+function CannonRoster({
+  settings,
+  onOpenPerson,
+}: {
+  settings: Settings;
+  onOpenPerson: (handle: string) => void;
+}): JSX.Element {
+  const [loaded, setLoaded] = useState(false);
+  const [floor, setFloor] = useState<number | null>(null);
+  const [targets, setTargets] = useState<CannonTarget[]>([]);
+  const [candidates, setCandidates] = useState<CannonCandidate[]>([]);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Both reads together: a handle leaves the candidate list the moment it joins
+  // the roster, so showing one refreshed against the other stale would offer to
+  // add someone you just added.
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [roster, discovery] = await Promise.all([
+        api.cannon.targets(settings),
+        api.cannon.candidates(settings, { limit: CANDIDATE_LIMIT }),
+      ]);
+      setFloor(roster.floor);
+      setTargets(roster.targets);
+      setCandidates(discovery.candidates);
+      setLoaded(true);
+    } catch (e) {
+      setError(rosterErr(e, 'Failed to load the roster'));
+    }
+  }, [settings]);
+
+  const add = async (raw: string): Promise<void> => {
+    const handle = normalizeHandle(raw);
+    if (handle === null) {
+      setError(ROSTER_ERR.invalid_handle ?? 'That handle is not valid.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const row = await api.cannon.add(settings, { handle });
+      setDraft('');
+      // Fill-only on the server: re-adding someone you already camp keeps their
+      // score, so say which of the two just happened.
+      setNote(
+        row.score === null
+          ? `@${row.handle} camped — unscored until a rescore`
+          : `@${row.handle} camped`,
+      );
+      await load();
+    } catch (e) {
+      setError(rosterErr(e, 'Add failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Bench keeps the row and its score; only `drop` forgets a target.
+  const setActive = async (t: CannonTarget, active: boolean): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const row = await api.cannon.patch(settings, t.handle, { active });
+      setTargets((prev) => prev.map((r) => (r.handle === row.handle ? row : r)));
+    } catch (e) {
+      setError(rosterErr(e, 'Update failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const drop = async (t: CannonTarget): Promise<void> => {
+    if (!confirm(`Drop @${t.handle} from the cannon roster? Bench keeps them and their score.`))
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.cannon.remove(settings, t.handle);
+      setNote(`@${t.handle} dropped`);
+      // Reload rather than splice: a dropped handle is a candidate again.
+      await load();
+    } catch (e) {
+      setError(rosterErr(e, 'Drop failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rescore = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    setNote(null);
+    try {
+      const res = await api.cannon.rescore(settings);
+      // "under sample" is its own count, never folded into `scored`: a handle
+      // the harvest hasn't covered is a reason to go scroll their profile, not
+      // a reason to drop them.
+      setNote(
+        `scored ${res.scored} · ${res.skipped.length} under sample (needs ${res.minSample} of their last ${res.samplePosts} posts)`,
+      );
+      await load();
+    } catch (e) {
+      setError(rosterErr(e, 'Rescore failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const camped = targets.filter((t) => t.active).length;
+  const benched = targets.length - camped;
+
+  return (
+    <details
+      className="radar-roster"
+      onToggle={(e) => {
+        if (e.currentTarget.open && !loaded) void load();
+      }}
+    >
+      <summary className="radar-roster-summary">
+        Roster
+        {loaded ? ` (${camped} camped${benched > 0 ? ` · ${benched} benched` : ''})` : ''}
+      </summary>
+
+      <div className="radar-roster-head">
+        <button
+          type="button"
+          className="radar-roster-rescore"
+          onClick={() => void rescore()}
+          disabled={busy}
+          title="Recompute every target's views-per-reply score from tweets you already harvested. $0 — nothing on this block touches the X API."
+        >
+          {busy ? '…' : 'Rescore ($0)'}
+        </button>
+        {floor !== null && (
+          <span
+            className="radar-roster-floor"
+            title="A target scoring under this is the Sunday drop candidate — the same floor the cannon queue uses."
+          >
+            floor {formatCount(floor)}
+          </span>
+        )}
+      </div>
+
+      {note && <div className="status-line">{note}</div>}
+      {error && <div className="error">{error}</div>}
+
+      {loaded && targets.length === 0 ? (
+        <EmptyState
+          line="Nobody camped yet."
+          hint="Add a handle below, or take one from the candidates your harvest already scored."
+        />
+      ) : (
+        <ul className="radar-roster-list">
+          {targets.map((t) => (
+            <li
+              key={t.handle}
+              className={`radar-roster-row${t.active ? '' : ' radar-roster-benched'}`}
+            >
+              <span
+                className={cannonTargetChip(
+                  t.score === null ? 'unscored' : t.belowFloor ? 'below' : 'scored',
+                )}
+                title={
+                  t.score === null
+                    ? 'Never scored — the harvest has nothing of theirs yet.'
+                    : t.belowFloor
+                      ? 'Under the floor: their posts do not hand you the eyes-per-reply the cannon is for.'
+                      : 'Median views per reply across their sampled posts.'
+                }
+              >
+                {t.score === null ? 'unscored' : formatCount(Math.round(t.score))}
+              </span>
+              <button
+                type="button"
+                className="radar-roster-handle person-link"
+                title={`Open @${t.handle}'s dossier`}
+                onClick={() => onOpenPerson(t.handle)}
+              >
+                @{t.handle}
+              </button>
+              <span className="radar-roster-meta">
+                n{t.sampleN} ·{' '}
+                {t.staleDays === null
+                  ? 'never scored'
+                  : t.staleDays === 0
+                    ? 'scored today'
+                    : `scored ${t.staleDays}d ago`}
+              </span>
+              <button
+                type="button"
+                className="radar-roster-act"
+                onClick={() => void setActive(t, !t.active)}
+                disabled={busy}
+                title={
+                  t.active
+                    ? 'Bench — stop capturing their posts, keep the row and its score'
+                    : 'Camp — capture their fresh posts into the cannon queue again'
+                }
+              >
+                {t.active ? 'bench' : 'camp'}
+              </button>
+              <button
+                type="button"
+                className="radar-roster-act danger"
+                onClick={() => void drop(t)}
+                disabled={busy}
+                title="Drop — forget this target entirely"
+              >
+                drop
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="radar-roster-add">
+        <input
+          value={draft}
+          placeholder="@handle"
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && draft.trim() !== '') void add(draft);
+          }}
+        />
+        <button
+          type="button"
+          onClick={() => void add(draft)}
+          disabled={busy || draft.trim() === ''}
+        >
+          + add handle
+        </button>
+      </div>
+
+      {candidates.length > 0 && (
+        <div className="radar-roster-candidates">
+          <div className="radar-roster-label">
+            Candidates — scored off your harvest, not yet camped
+          </div>
+          <ul className="radar-roster-list">
+            {candidates.map((c) => (
+              <li key={c.handle} className="radar-roster-row">
+                <span
+                  className={cannonTargetChip(
+                    floor !== null && c.score < floor ? 'below' : 'scored',
+                  )}
+                  title="Median views per reply across their harvested posts — the same number the roster is ranked by."
+                >
+                  {formatCount(Math.round(c.score))}
+                </span>
+                <button
+                  type="button"
+                  className="radar-roster-handle person-link"
+                  title={`Open @${c.handle}'s dossier`}
+                  onClick={() => onOpenPerson(c.handle)}
+                >
+                  @{c.handle}
+                </button>
+                <span className="radar-roster-meta">n{c.sampleN}</span>
+                <button
+                  type="button"
+                  className="radar-roster-act"
+                  onClick={() => void add(c.handle)}
+                  disabled={busy}
+                  title="Camp this author"
+                >
+                  + add
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </details>
   );
 }
 

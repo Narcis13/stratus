@@ -91,6 +91,22 @@ export function replyDraftChip(status: ReplyDraftStatus): string {
   }
 }
 
+/** Cannon roster health (CQ.6). Three states, and the split is the same
+ *  judgement the rest of this file makes: `below` warns because it is the only
+ *  one asking the human for a decision (drop them on Sunday), while `unscored`
+ *  is quiet — the harvest hasn't covered them yet, which is a fact about the
+ *  data, not about the target. */
+export function cannonTargetChip(state: 'scored' | 'below' | 'unscored'): string {
+  switch (state) {
+    case 'scored':
+      return chip('ok');
+    case 'below':
+      return chip('warn');
+    case 'unscored':
+      return chip('muted');
+  }
+}
+
 /** Swipe-file author state: enriched from a profile scrape vs seen only through
  *  a saved tweet, and the retired flag that hides them from drafting. */
 export function authorChip(state: 'enriched' | 'tweet-only' | 'retired'): string {

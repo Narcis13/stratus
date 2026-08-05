@@ -26,6 +26,14 @@ import {
   type BriefMonitor,
   type BriefQuests,
   type BriefTweet,
+  type CannonCandidate,
+  type CannonCandidatesResponse,
+  type CannonRescoreResponse,
+  type CannonRescoreSkip,
+  type CannonTarget,
+  type CannonTargetCreateBody,
+  type CannonTargetPatchBody,
+  type CannonTargetsResponse,
   type Channel,
   type ChannelAggregate,
   type ChannelCreateBody,
@@ -265,6 +273,14 @@ export type {
   DmPatchBody,
   DmStatus,
   IcebreakersResponse,
+  CannonCandidate,
+  CannonCandidatesResponse,
+  CannonRescoreResponse,
+  CannonRescoreSkip,
+  CannonTarget,
+  CannonTargetCreateBody,
+  CannonTargetPatchBody,
+  CannonTargetsResponse,
   Channel,
   ChannelAggregate,
   ChannelCreateBody,
@@ -1200,6 +1216,55 @@ export const api = {
     placedToday(s: Settings, opts: { tzOffsetMin?: number } = {}): Promise<PlacedTodayResponse> {
       const tz = opts.tzOffsetMin ?? new Date().getTimezoneOffset();
       return request<PlacedTodayResponse>(s, `/x/radar/placed-today?tzOffsetMin=${tz}`);
+    },
+  },
+
+  // CQ.6 — the cannon roster: who you camp, how they score, who you should be
+  // camping instead. EVERY call here is $0 and that is load-bearing, not a
+  // footnote: the scores are computed from `harvest_rows` (the DOM scrape the
+  // extension already paid nothing for), so `rescore` may be clicked as often
+  // as a human wants to. Nothing in this group may grow a variant that reaches
+  // the X API — measuring an author through a $0.010 lookup would answer a
+  // different question (their size) than the one the roster asks (their yield).
+  cannon: {
+    targets(s: Settings, opts: { active?: boolean } = {}): Promise<CannonTargetsResponse> {
+      const qs = opts.active === undefined ? '' : `?active=${opts.active}`;
+      return request<CannonTargetsResponse>(s, `/x/cannon/targets${qs}`);
+    },
+
+    // Idempotent by design (the route is fill-only): re-adding a handle you
+    // already camp never blanks its score, its sample or its added_at.
+    add(s: Settings, body: CannonTargetCreateBody): Promise<CannonTarget> {
+      return request<CannonTarget>(s, '/x/cannon/targets', { method: 'POST', body });
+    },
+
+    patch(s: Settings, handle: string, body: CannonTargetPatchBody): Promise<CannonTarget> {
+      return request<CannonTarget>(s, `/x/cannon/targets/${encodeURIComponent(handle)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, handle: string): Promise<void> {
+      return request<void>(s, `/x/cannon/targets/${encodeURIComponent(handle)}`, {
+        method: 'DELETE',
+      });
+    },
+
+    // Omit `handles` to rescore the whole roster (the Sunday-review shape).
+    rescore(s: Settings, body: { handles?: string[] } = {}): Promise<CannonRescoreResponse> {
+      return request<CannonRescoreResponse>(s, '/x/cannon/rescore', { method: 'POST', body });
+    },
+
+    candidates(
+      s: Settings,
+      opts: { limit?: number; minSample?: number } = {},
+    ): Promise<CannonCandidatesResponse> {
+      const q = new URLSearchParams();
+      if (opts.limit !== undefined) q.set('limit', String(opts.limit));
+      if (opts.minSample !== undefined) q.set('minSample', String(opts.minSample));
+      const qs = q.toString();
+      return request<CannonCandidatesResponse>(s, `/x/cannon/candidates${qs ? `?${qs}` : ''}`);
     },
   },
 

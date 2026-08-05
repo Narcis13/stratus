@@ -967,6 +967,86 @@ export interface PlacedTodayResponse {
   target: number;
 }
 
+// CQ.2 — the cannon roster (`/x/cannon/*`). Field for field the route's
+// `CannonTargetView`; a hand-synced mirror like every other type in this file,
+// since the extension build can't import `src/x/`.
+//
+// EVERY route behind these types is $0 by construction: the scores are computed
+// from `harvest_rows` (what the DOM scrape already captured), never from a
+// billed lookup. That is why the panel is allowed a Rescore button at all.
+export interface CannonTarget {
+  handle: string;
+  displayName: string | null;
+  language: string | null;
+  score: number | null;
+  medianViews: number | null;
+  medianComments: number | null;
+  sampleN: number;
+  scoredAt: string | null;
+  active: boolean;
+  notes: string | null;
+  addedAt: string;
+  /** Whole days since the last rescore; null when never scored. */
+  staleDays: number | null;
+  /** Under `x.cannon.scoreMin` — the Sunday "drop this one" flag. Never true for
+   *  an unscored handle: absent is not below. */
+  belowFloor: boolean;
+}
+
+export interface CannonTargetsResponse {
+  /** `x.cannon.scoreMin` as it was at read time — the line `belowFloor` is measured against. */
+  floor: number;
+  /** Score desc, nulls last. */
+  targets: CannonTarget[];
+}
+
+export interface CannonTargetCreateBody {
+  handle: string;
+  displayName?: string;
+  language?: string;
+  notes?: string;
+  active?: boolean;
+}
+
+/** Partial — an empty patch is refused (`empty_patch`), not treated as a no-op. */
+export interface CannonTargetPatchBody {
+  active?: boolean;
+  language?: string | null;
+  notes?: string | null;
+  displayName?: string | null;
+}
+
+/** An author already in the harvest corpus who is NOT on the roster, scored the
+ *  way the roster is — "who should I be camping" in the same units. */
+export interface CannonCandidate {
+  handle: string;
+  score: number;
+  medianViews: number;
+  medianComments: number;
+  sampleN: number;
+}
+
+export interface CannonCandidatesResponse {
+  limit: number;
+  minSample: number;
+  candidates: CannonCandidate[];
+}
+
+export interface CannonRescoreSkip {
+  handle: string;
+  sampleN: number;
+  reason: 'insufficient_sample';
+}
+
+export interface CannonRescoreResponse {
+  scored: number;
+  /** Handles the harvest hasn't covered enough of yet — they keep their `scoredAt`. */
+  skipped: CannonRescoreSkip[];
+  /** A POST COUNT, not a day count: the score reads an author's newest N posts. */
+  samplePosts: number;
+  minSample: number;
+}
+
 // -------------------------------------------------------------- mentions
 
 // Mention inbox rows (§7.5) as returned by GET /x/mentions — mirrors the
