@@ -16,6 +16,7 @@ import { articlesRouter } from './routes/articles.ts';
 import { assets } from './routes/assets.ts';
 import { brief } from './routes/brief.ts';
 import { calendar } from './routes/calendar.ts';
+import { cannonRouter } from './routes/cannon.ts';
 import { channelsRouter } from './routes/channels.ts';
 import { coachRouter } from './routes/coach.ts';
 import { conversations } from './routes/conversations.ts';
@@ -90,6 +91,10 @@ export function mountX(app: Hono): void {
   app.route('/x', me);
   app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
+  // CQ.2: the cannon roster. Always mounted, $0 — every route is SQL over the
+  // DOM-harvested rows the voice/harvest surfaces already collected, and nothing
+  // in the file can reach xFetch or askLLM.
+  app.route('/x', cannonRouter);
   app.route('/x', harvest);
   // GR: the following ledger — who I follow / who follows back, from one DOM
   // scrape of my own /following page. Always mounted, $0: nothing in the file

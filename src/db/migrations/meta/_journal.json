@@ -183,6 +183,13 @@
       "when": 1785257589382,
       "tag": "0025_curvy_edwin_jarvis",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1785927643675,
+      "tag": "0026_pink_steve_rogers",
+      "breakpoints": true
     }
   ]
 }

@@ -1083,3 +1083,49 @@ export const draftJudgments = sqliteTable(
   // this index. Nothing queries by date or by band.
   (t) => [index('draft_judgments_text_hash_idx').on(t.textHash)],
 );
+
+// The cannon roster (CQ.2): the 15–25 handles whose fresh posts are worth
+// camping, each carrying a score derived at $0 from posts already in
+// `harvest_rows` — `median(views) / (median(comments) + 1)` over their last ~30.
+// No X API anywhere near this table: author size is a $0.010 lookup measuring
+// the wrong axis (§8), and the whole point is that yield is a property of the
+// post, not of the account.
+//
+// `score` is STORED rather than read-time — a deliberate §7.12 exception. It is
+// a weekly-cadence aggregate over a 30-post window that must stay COMPARABLE
+// across a review session (a number that drifts between two reads of the same
+// list is not a review), and `scored_at` is what makes staleness legible.
+// The per-SIGHTING cannon score stays read-time and is stored nowhere.
+//
+// `score: null` means "never scored" or "scored, sample too thin" — never 0
+// (§7.11); 0 is a real verdict (a post with views and a crowd already under it).
+// `sample_n` + `scored_at` disambiguate: both set with a null score = we looked
+// and there wasn't enough.
+//
+// Deliberately NOT a flag on `voice_authors`: that is the swipe-file roster, and
+// merging the two would force every voice.ts reader to start filtering.
+export const cannonTargets = sqliteTable(
+  'cannon_targets',
+  {
+    handle: text('handle').primaryKey(), // lowercased, no '@'
+    displayName: text('display_name'),
+    // null = English. The arm this handle belongs to, for a multi-language roster.
+    language: text('language'),
+    score: real('score'),
+    medianViews: real('median_views'),
+    medianComments: real('median_comments'),
+    sampleN: integer('sample_n').default(0).notNull(),
+    scoredAt: integer('scored_at', { mode: 'timestamp_ms' }),
+    // 1 = camped, 0 = bench (the roster keeps ~5 bench candidates warm).
+    active: integer('active', { mode: 'boolean' }).default(true).notNull(),
+    notes: text('notes'),
+    addedAt: integer('added_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+    updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  // The review sort: the camped set, worst score first.
+  (t) => [index('cannon_targets_active_score_idx').on(t.active, t.score)],
+);
