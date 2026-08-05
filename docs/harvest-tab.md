@@ -180,6 +180,8 @@ The same tweets are also uploaded into the app. Behind the scenes each harvest i
 
 Re-harvesting the same tweet on different days is intentional and useful — each capture is a new data point, so stratus can watch how a tweet's views and bookmarks grow over time (something the once-a-day API snapshot can't show).
 
+**Foreign-language tweets are stored in their original language.** If you have X's translations turned on, X doesn't show a translation *next to* the tweet — it swaps the tweet's text out and puts the English in its place. Left alone, a harvest would quietly store that English as if the author had written it, and you'd have no way to tell afterwards. So before reading each screenful the harvester clicks **Show original** on every translated tweet it can see, which restores the source text instantly and for free (X keeps the original in the page; nothing is re-fetched). You may notice tweets flicking back to their original language while a harvest runs — that's this, and it's harmless. Your translation setting is untouched, and normal browsing outside a harvest still translates as usual.
+
 **Replies mode does one more clever thing:** when you harvest *your own* replies, stratus tries to match each harvested reply back to the reply **draft** you created in the extension. If it finds the match, it links them — and if a draft was missing its posted-tweet link (because you pasted the reply manually and never marked it done), the harvest **fills that link in for you**. After a harvest, the result line tells you how many drafts it *matched* and how many it *backfilled*. This is how your reply drafts get connected to their real-world performance without any manual bookkeeping.
 
 ---

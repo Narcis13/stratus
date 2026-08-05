@@ -33,6 +33,7 @@ import {
 } from './shared/harvest.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
+import { findShowOriginalButtons, viewerLangOf } from './shared/translation.ts';
 import { handleFromAvatarTestid, parseUserCell } from './shared/userCell.ts';
 
 // ----------------------------------------------------------------- randomness
@@ -204,6 +205,25 @@ export function extractArticle(art: Element): Extracted {
     // Counted on the raw innerText, before line breaks collapse to spaces.
     lineBreaks: (rawText.match(/\n/g) ?? []).length,
   };
+}
+
+// X swaps a tweet's text for a machine translation IN PLACE (shared/translation.ts):
+// read it as-is and a Japanese target lands in the corpus as English, unmarked.
+// Clicking "Show original" restores the same node from X's client-side copy with
+// no network call, so this is a click plus a settle — never a paid read.
+//
+// Run before every sweep, not once per run: the timeline virtualizes, and a
+// recycled article comes back translated. The store overwrites per tweet id on
+// each sweep, so a row can only ever be rewritten with the original, not back.
+const TRANSLATION_SETTLE_MS = 60;
+
+async function revealOriginals(): Promise<void> {
+  const buttons = findShowOriginalButtons(document, viewerLangOf(document));
+  if (buttons.length === 0) return;
+  for (const btn of buttons) btn.click();
+  // Live-verified: the swap lands on the next macrotask. 60ms is the same
+  // settle budget the composer fill uses, with room for a slow frame.
+  await sleep(TRANSLATION_SETTLE_MS);
 }
 
 function groupsOfArticles(): Element[][] {
@@ -799,6 +819,7 @@ async function runHarvest<R>(
       break;
     }
 
+    await revealOriginals();
     harvest(ctx);
     const count = Object.keys(ctx.store).length;
 
@@ -837,6 +858,7 @@ async function runHarvest<R>(
     }
     steps++;
   }
+  await revealOriginals();
   harvest(ctx); // final sweep of whatever is on screen
 
   const rows = Object.values(ctx.store);
