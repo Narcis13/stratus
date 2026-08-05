@@ -30,7 +30,8 @@
     "../src/shared/postFormat.ts",
     "../src/shared/judge.ts",
     "../src/shared/humanize.ts",
-    "../src/shared/cannon.ts"
+    "../src/shared/cannon.ts",
+    "../src/shared/language.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }
