@@ -808,6 +808,12 @@ export type ReplyAngle = 'extends' | 'contrarian' | 'debate';
 export interface ReplyVariant {
   text: string;
   angle: ReplyAngle;
+  /** ML.2: literal English rendering of a non-English reply — a reading aid, not
+   *  a polished translation. `null` on every English draft, and on any variant
+   *  whose gloss the server read leniently and discarded (§7.35). Mirrors
+   *  src/x/replies/prompt.ts. Older drafts persisted before ML.2 have no gloss
+   *  key at all, so read it as possibly-absent at the render site. */
+  gloss: string | null;
 }
 
 export interface ReplyDraft {

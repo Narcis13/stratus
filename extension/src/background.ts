@@ -456,7 +456,9 @@ async function getVariants(
   if (!row) return null;
   const variants: ReplyVariant[] = isReplyVariants(row.variants)
     ? row.variants
-    : [{ text: row.replyText, angle: row.angle as ReplyVariant['angle'] }];
+    : // A flat legacy row carries no gloss (ML.2) — null, not absent, so the
+      // chip renderer reads one shape.
+      [{ text: row.replyText, angle: row.angle as ReplyVariant['angle'], gloss: null }];
   return { variants, draftId: null };
 }
 

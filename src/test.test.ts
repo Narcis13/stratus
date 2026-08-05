@@ -4,6 +4,7 @@ import { db } from './db/client.ts';
 import { beat, heartbeatStatus, registerHeartbeat, unregisterHeartbeat } from './heartbeats.ts';
 import { matchOrigin } from './middleware/cors.ts';
 import type { ActiveTimesGrid } from './shared/activeTimes.ts';
+import { resolveLanguageProfile } from './shared/language.ts';
 import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
 import {
@@ -685,8 +686,8 @@ That is the entire biography you have. Never invent or imply anything else — n
       '{"replies":[{"text":"  one\\n\\ntwo  ","angle":"contrarian"},{"text":"solo","angle":"extends"}]}',
     );
     expect(out).toEqual([
-      { text: 'one\n\ntwo', angle: 'contrarian' },
-      { text: 'solo', angle: 'extends' },
+      { text: 'one\n\ntwo', angle: 'contrarian', gloss: null },
+      { text: 'solo', angle: 'extends', gloss: null },
     ]);
   });
 
@@ -723,13 +724,13 @@ That is the entire biography you have. Never invent or imply anything else — n
 
   test('parseReplyVariants blank-line-separates multi-line replies', () => {
     expect(parseReplyVariants('{"replies":[{"text":"hook\\npunch","angle":"debate"}]}')).toEqual([
-      { text: 'hook\n\npunch', angle: 'debate' },
+      { text: 'hook\n\npunch', angle: 'debate', gloss: null },
     ]);
   });
 
   test('parseReplyVariants coerces unknown angles and rejects garbage', () => {
     expect(parseReplyVariants('{"replies":[{"text":"x","angle":"weird"}]}')).toEqual([
-      { text: 'x', angle: 'extends' },
+      { text: 'x', angle: 'extends', gloss: null },
     ]);
     expect(parseReplyVariants('not json')).toBeNull();
     expect(parseReplyVariants('{"replies":[]}')).toBeNull();
@@ -863,8 +864,8 @@ describe('batch replies (Radar §7.2)', () => {
       {
         tweetId: '111',
         variants: [
-          { text: 'hot take', angle: 'contrarian' },
-          { text: 'x', angle: 'extends' },
+          { text: 'hot take', angle: 'contrarian', gloss: null },
+          { text: 'x', angle: 'extends', gloss: null },
         ],
       },
     ]);
@@ -875,7 +876,9 @@ describe('batch replies (Radar §7.2)', () => {
       parseBatchReplies(
         '{"replies":[{"id":"111","variants":[{"text":"a\\nb\\nc","angle":"extends"}]}]}',
       ),
-    ).toEqual([{ tweetId: '111', variants: [{ text: 'a\n\nb\n\nc', angle: 'extends' }] }]);
+    ).toEqual([
+      { tweetId: '111', variants: [{ text: 'a\n\nb\n\nc', angle: 'extends', gloss: null }] },
+    ]);
   });
 
   test('parseBatchReplies rejects garbage, blank text, and a missing/empty variants array', () => {
@@ -1421,6 +1424,72 @@ describe('CQ.7 reply language clause at the variable tail', () => {
     // anti-drift tests above never move for this feature).
     expect(REPLY_PROMPT_TEMPLATE).not.toContain('Write all variants in');
     expect(REPLY_BATCH_PROMPT_TEMPLATE).not.toContain('Write all variants in');
+  });
+
+  // ML.2 — the profile rider. Everything above is the no-profile contract and
+  // must keep passing unchanged; these add the resolved-profile half.
+  const JA = resolveLanguageProfile('ja');
+  if (!JA) throw new Error('the ja profile must exist');
+  const RICH = renderLanguageClause('Japanese', JA);
+
+  test('no profile renders the CQ.7 sentence byte-for-byte (null and undefined alike)', () => {
+    expect(renderLanguageClause('Japanese', null)).toBe(CLAUSE);
+    expect(renderLanguageClause('Japanese', undefined)).toBe(CLAUSE);
+    // A language string the table does not know still renders the bare sentence
+    // — resolution answering null is what keeps today's behaviour (§7.11).
+    expect(resolveLanguageProfile('klingon')).toBeNull();
+    expect(renderLanguageClause('Klingon', resolveLanguageProfile('klingon'))).toBe(
+      "Write all variants in Klingon. Match the parent's register in that language; do not translate word-for-word from English.",
+    );
+  });
+
+  test('a profile appends the register axis, the budget, and the single-extends narrowing', () => {
+    // The CQ.7 sentence stays the first sentence, byte-identical.
+    expect(RICH.startsWith(CLAUSE)).toBe(true);
+    expect(RICH).toContain(JA.registerAxis);
+    expect(RICH).toContain('under 140 Japanese characters');
+    expect(RICH).toContain('produce only the extends variant');
+    expect(RICH).toContain('gloss');
+    // Still ONE line — it is paid for on every call.
+    expect(RICH.includes('\n')).toBe(false);
+  });
+
+  test('the budget is the profile own number — Arabic keeps the full 280', () => {
+    const ar = resolveLanguageProfile('ar');
+    if (!ar) throw new Error('the ar profile must exist');
+    expect(renderLanguageClause('Arabic', ar)).toContain('under 280 Arabic characters');
+  });
+
+  test('a profile changes the tail content, not the tail ORDER', () => {
+    const warm =
+      buildGrokInput(
+        { ...ctx, relationship: 'REL::block', me: 'ME::block', guidance: 'GUIDE::block' },
+        undefined,
+        undefined,
+        undefined,
+        { language: 'Japanese', languageProfile: JA },
+      )[0]?.content ?? '';
+    expect(warm).toContain(RICH);
+    expect(warm.indexOf(RICH)).toBeGreaterThan(warm.indexOf('ME::block'));
+    expect(warm.indexOf('GUIDE::block')).toBeGreaterThan(warm.indexOf(RICH));
+  });
+
+  test('batch: the profile rides the same single clause, once', () => {
+    const cold = buildBatchGrokInput([t])[0]?.content ?? '';
+    const warm =
+      buildBatchGrokInput([t], undefined, undefined, undefined, undefined, {
+        language: 'Japanese',
+        languageProfile: JA,
+      })[0]?.content ?? '';
+    expect(warm).toBe(`${cold}\n\n${RICH}`);
+    expect(countOccurrences(warm, RICH)).toBe(1);
+  });
+
+  test('JD.1 provenance holds for the rider too — neither literal carries it', () => {
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('produce only the extends variant');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).not.toContain('produce only the extends variant');
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('Register axis:');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).not.toContain('Register axis:');
   });
 
   test('parseContext never copies a client-supplied language (it is a body field)', () => {

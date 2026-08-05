@@ -7,6 +7,7 @@
 // `reply prompt.md` and this literal together so the two stay in sync.
 
 import type { GrokMessage } from '../../grok/index.ts';
+import type { LanguageProfile } from '../../shared/language.ts';
 import type { Band } from '../../shared/replyBand.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { RELATIONSHIP_INSTRUCTION } from '../people/relationship.ts';
@@ -93,15 +94,36 @@ export const UNTRUSTED_CONTEXT_MARKER =
 //
 // ONE line on purpose: it sits at the variable tail, so it varies the cache
 // bucket — a paragraph there is a paragraph paid for on every call.
-export function renderLanguageClause(language: string): string {
-  return `Write all variants in ${language}. Match the parent's register in that language; do not translate word-for-word from English.`;
+//
+// ML.2: when the language RESOLVES to a profile (src/shared/language.ts) the
+// same rendered value carries three more things, still on one line. The first
+// sentence stays byte-identical to the CQ.7 clause, so a language with no
+// profile renders exactly what it rendered before.
+//   * the register axis — the one thing "match the parent's register" cannot
+//     mean generically, because the axis is different per language (です・ます
+//     vs a T–V pronoun vs MSA-vs-dialect);
+//   * the budget in that language's OWN characters (`profile.maxChars`), which
+//     is 140 for weight-2 scripts and the full 280 for Arabic/Cyrillic/Hebrew —
+//     never "halve it because it isn't English";
+//   * the single-angle narrowing, phrased as a SCOPED narrowing ("in this
+//     language, produce only …"), never as "ignore the rule above". The stable
+//     prefix still says three, and a model honors a scoped override far more
+//     reliably than a flat contradiction. It is an optimization only — the trim
+//     in the route is what makes the count a guarantee.
+// Plus the gloss instruction: a literal, word-faithful English rendering whose
+// job is to expose register and nuance, explicitly NOT a polished translation —
+// it is what lets me judge a reply in a language I don't read.
+export function renderLanguageClause(language: string, profile?: LanguageProfile | null): string {
+  const base = `Write all variants in ${language}. Match the parent's register in that language; do not translate word-for-word from English.`;
+  if (!profile) return base;
+  return `${base} Register axis: ${profile.registerAxis} Keep each reply under ${profile.maxChars} ${profile.name} characters. In this language, produce only the extends variant — one entry in replies, no contrarian, no debate. For each variant also return "gloss": a literal, word-faithful English rendering of it that exposes its register and nuance — not a polished translation.`;
 }
 
 // Absent or whitespace-only → the empty string, so the assembled prompt stays
 // byte-identical to a pre-CQ.7 call (the equivalence discipline N.3 set).
-function languageBlock(language?: string): string {
+function languageBlock(language?: string, profile?: LanguageProfile | null): string {
   const trimmed = language?.trim() ?? '';
-  return trimmed === '' ? '' : `\n\n${renderLanguageClause(trimmed)}`;
+  return trimmed === '' ? '' : `\n\n${renderLanguageClause(trimmed, profile)}`;
 }
 
 // N0.4: the "Who I am" body comes from the active niche. Constant per niche, so
@@ -184,27 +206,63 @@ export type ReplyAngle = (typeof REPLY_ANGLES)[number];
 export interface ReplyVariant {
   text: string;
   angle: ReplyAngle;
+  /** ML.2: literal English rendering of a non-English reply, `null` when the
+   *  model returned none (every English call). Read leniently by both parsers
+   *  (§7.35) — a bad gloss costs a convenience, a bad `text` poisons what you
+   *  paste, so only the latter fails the variant. */
+  gloss: string | null;
 }
 
-export const REPLY_VARIANTS_SCHEMA = {
-  type: 'object',
-  properties: {
-    replies: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          text: { type: 'string', description: 'Raw reply text exactly as it appears on X' },
-          angle: { type: 'string', enum: [...REPLY_ANGLES] },
-        },
-        required: ['text', 'angle'],
-        additionalProperties: false,
+/** A gloss is a reading aid under a ≤280-char reply, not prose. Clipped, never
+ *  rejected — see `readGloss`. */
+export const MAX_GLOSS_LENGTH = 400;
+
+// ML.2: the schema is now BUILT, so the non-English path can hand the model an
+// `angle.enum` of exactly `['extends']` — the other two angles become
+// unrepresentable rather than merely discouraged. The COUNT cannot be pinned the
+// same way: `maxItems` is in the D164b unsupported-keyword set (strict
+// structured outputs reject it), which is why the count still needs a
+// server-side trim in the route while the angle does not.
+//
+// `gloss` is `['string','null']` AND in `required`: strict mode has no optional
+// properties, so nullable-and-required is the only shape the provider accepts.
+// `additionalProperties: false` stays. No minLength/maxLength/minItems/maxItems
+// anywhere (D164b) — the schema walk test in curate.test.ts is the model.
+const GLOSS_PROPERTY = {
+  type: ['string', 'null'],
+  description: 'Literal English rendering of this reply; null when it is already English',
+};
+
+function variantItemSchema(angles: readonly ReplyAngle[]) {
+  return {
+    type: 'object',
+    properties: {
+      text: { type: 'string', description: 'Raw reply text exactly as it appears on X' },
+      angle: { type: 'string', enum: [...angles] },
+      gloss: GLOSS_PROPERTY,
+    },
+    required: ['text', 'angle', 'gloss'],
+    additionalProperties: false,
+  };
+}
+
+/** The single-reply schema. Defaults to all three angles, so today's callers get
+ *  a byte-identical schema; `{angles:['extends']}` is the non-English call. */
+export function replyVariantsSchema(opts?: { angles?: readonly ReplyAngle[] }) {
+  return {
+    type: 'object',
+    properties: {
+      replies: {
+        type: 'array',
+        items: variantItemSchema(opts?.angles ?? REPLY_ANGLES),
       },
     },
-  },
-  required: ['replies'],
-  additionalProperties: false,
-} as const;
+    required: ['replies'],
+    additionalProperties: false,
+  };
+}
+
+export const REPLY_VARIANTS_SCHEMA = replyVariantsSchema();
 
 // X reply formatting: a reply with more than one proposition reads better with
 // a blank line between each. The model is inconsistent — it returns multiple
@@ -230,9 +288,25 @@ export function blankLineBetweenPropositions(text: string): string {
     .join('\n\n');
 }
 
+// ML.2, the §7.35 asymmetry made explicit: `text` and `angle` are read STRICTLY
+// because a bad one poisons what I paste, `gloss` LENIENTLY because a bad one
+// costs a convenience on a variant already paid for. Missing, null, non-string
+// or blank → `null` and the variant survives; a long one is clipped, never
+// rejected.
+function readGloss(v: Record<string, unknown>): string | null {
+  if (typeof v.gloss !== 'string') return null;
+  const trimmed = v.gloss.trim();
+  return trimmed === '' ? null : trimmed.slice(0, MAX_GLOSS_LENGTH);
+}
+
 // Strict-mode structured outputs guarantee the shape, but the parse still
 // lives behind a validator: a truncated body (max_output_tokens) or a future
 // non-strict call must degrade to null, never to a malformed draft row.
+//
+// It returns EVERY variant the model sent — the single-`extends` trim is the
+// route's (it needs the resolved language, which the parser has no business
+// knowing), and a parser that silently dropped paid variants would be the wrong
+// place for a product rule.
 export function parseReplyVariants(raw: string): ReplyVariant[] | null {
   let parsed: unknown;
   try {
@@ -252,7 +326,7 @@ export function parseReplyVariants(raw: string): ReplyVariant[] | null {
     const angle = (REPLY_ANGLES as readonly string[]).includes(v.angle as string)
       ? (v.angle as ReplyAngle)
       : 'extends';
-    out.push({ text: blankLineBetweenPropositions(v.text), angle });
+    out.push({ text: blankLineBetweenPropositions(v.text), angle, gloss: readGloss(v) });
   }
   return out;
 }
@@ -401,7 +475,16 @@ export function buildBatchGrokInput(
   // `template` is the registry-loaded prompt (DB override or default) — a
   // per-request `override` (systemPromptOverride) still beats it, matching the
   // explicit > DB > code-default precedence askLLM encodes for params.
-  opts?: { replyPersona?: string; meBrief?: string; template?: string; language?: string },
+  // ML.2: `languageProfile` is the resolved profile for `language` — the route
+  // resolves once and hands it over, so this builder never resolves twice (and
+  // a language with no profile still renders the bare CQ.7 sentence).
+  opts?: {
+    replyPersona?: string;
+    meBrief?: string;
+    template?: string;
+    language?: string;
+    languageProfile?: LanguageProfile | null;
+  },
 ): GrokMessage[] {
   // {{REPLY_PERSONA}} (N0.4) substitutes FIRST — before the posts and idea
   // land — so client-supplied content can never inject an expandable token.
@@ -439,7 +522,7 @@ export function buildBatchGrokInput(
   // instruction block, so a per-post language would need a template change this
   // rendering exists to avoid. `me` is last in this builder, so "after me" is
   // the very tail here (in the single path it sits between `me` and guidance).
-  content += languageBlock(opts?.language);
+  content += languageBlock(opts?.language, opts?.languageProfile);
   return [{ role: 'user', content }];
 }
 
@@ -450,36 +533,36 @@ function renderReplyPillarsBlock(pillars: PillarDef[]): string {
   return `## Content pillars to honor (optional)\nWhere it fits naturally, align this reply's stance with ONE of my content pillars below. Never force it — a reply that fits none is fine.\n\n${renderPillars(pillars)}`;
 }
 
-export const BATCH_REPLY_SCHEMA = {
-  type: 'object',
-  properties: {
-    replies: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', description: 'The post id these variants answer, copied verbatim' },
-          variants: {
-            type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                text: { type: 'string', description: 'Raw reply text exactly as it appears on X' },
-                angle: { type: 'string', enum: [...REPLY_ANGLES] },
-              },
-              required: ['text', 'angle'],
-              additionalProperties: false,
+/** The batch twin of `replyVariantsSchema`, same defaulting rule. */
+export function batchReplySchema(opts?: { angles?: readonly ReplyAngle[] }) {
+  return {
+    type: 'object',
+    properties: {
+      replies: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            id: {
+              type: 'string',
+              description: 'The post id these variants answer, copied verbatim',
+            },
+            variants: {
+              type: 'array',
+              items: variantItemSchema(opts?.angles ?? REPLY_ANGLES),
             },
           },
+          required: ['id', 'variants'],
+          additionalProperties: false,
         },
-        required: ['id', 'variants'],
-        additionalProperties: false,
       },
     },
-  },
-  required: ['replies'],
-  additionalProperties: false,
-} as const;
+    required: ['replies'],
+    additionalProperties: false,
+  };
+}
+
+export const BATCH_REPLY_SCHEMA = batchReplySchema();
 
 // Mirrors parseReplyVariants: strict-mode guarantees the shape, but a truncated
 // body (maxOutputTokens) or a future non-strict call must degrade to null, not
@@ -512,7 +595,7 @@ export function parseBatchReplies(raw: string): BatchReply[] | null {
       const angle = (REPLY_ANGLES as readonly string[]).includes(vv.angle as string)
         ? (vv.angle as ReplyAngle)
         : 'extends';
-      variants.push({ text: blankLineBetweenPropositions(vv.text), angle });
+      variants.push({ text: blankLineBetweenPropositions(vv.text), angle, gloss: readGloss(vv) });
     }
     out.push({ tweetId: id, variants });
   }
@@ -538,7 +621,12 @@ export function buildGrokInput(
   // `template` is the registry-loaded prompt (AI.3, DB override or default) —
   // a per-request `override` (systemPromptOverride) still beats it, matching
   // the explicit > DB > code-default precedence askLLM encodes for params.
-  opts?: { replyPersona?: string; template?: string; language?: string },
+  opts?: {
+    replyPersona?: string;
+    template?: string;
+    language?: string;
+    languageProfile?: LanguageProfile | null;
+  },
 ): GrokMessage[] {
   const template = substituteReplyPersona(
     override && override.trim().length > 0 ? override : (opts?.template ?? REPLY_PROMPT_TEMPLATE),
@@ -571,7 +659,7 @@ export function buildGrokInput(
   // → language → guidance. It rides in opts, not on ctx: the other tail blocks
   // are context the server scraped or derived, this is an instruction the
   // caller asked for (validated in the route, rendered here).
-  content += languageBlock(opts?.language);
+  content += languageBlock(opts?.language, opts?.languageProfile);
   if (pillars && pillars.length > 0) {
     content = `${content}\n\n${renderReplyPillarsBlock(pillars)}`;
   }
