@@ -180,6 +180,27 @@ function fetchPlacedToday(settings: Settings): Promise<PlacedTodayResponse | nul
   });
 }
 
+// CQ.7 — the batch's ONE language, or why there isn't one. `/x/replies/
+// generate-batch` carries a single instruction block, so a set spanning two
+// languages (or one where only some authors declare theirs) is drafted in
+// English and the note says so. `null` = nothing to send AND nothing to
+// announce: English is already the default.
+type LanguagePick = { language: string } | 'mixed' | null;
+
+function sharedCannonLanguage(rows: RadarSighting[], byHandle: Map<string, string>): LanguagePick {
+  if (rows.length === 0) return null;
+  // '' stands for "this author declares none" so the set-size test covers the
+  // partial case too: one declared + one undeclared is still mixed.
+  const seen = new Set(rows.map((s) => byHandle.get(normalizeHandleKey(s.handle)) ?? ''));
+  if (seen.size !== 1) return 'mixed';
+  const only = [...seen][0] ?? '';
+  return only === '' ? null : { language: only };
+}
+
+function normalizeHandleKey(handle: string): string {
+  return handle.replace(/^@/, '').toLowerCase();
+}
+
 /** RD.1 — the Operate tab shell. The Section below carries the heading and the
  *  header actions, so there's no second panel title to keep in sync; the tab
  *  owns the settings editor Today used to hand down. */
@@ -229,6 +250,13 @@ export function RadarSection({
   // lands (or forever, if the server is unreachable) — the counter simply
   // doesn't render then.
   const [placed, setPlaced] = useState<PlacedTodayResponse | null>(null);
+  // CQ.7 — handle → declared reply language, for the Cannon view's draft set.
+  // Its own $0 read rather than a lift out of CannonRoster: that copy is
+  // mutable state the roster editor owns (add/bench/drop refresh it), and this
+  // one only ever answers "what language is this handle's arm?". Empty until it
+  // lands (or forever, on an unreachable server) → every draft is English, the
+  // pre-CQ.7 behaviour.
+  const [cannonLanguages, setCannonLanguages] = useState<Map<string, string>>(new Map());
 
   // C0: ask the background to pull the server's radar_drafts copy — after a
   // browser restart the session buffer is empty but paid-for drafts survive.
@@ -249,6 +277,29 @@ export function RadarSection({
         if (alive) setHumanizer(cfg);
       })
       .catch((err) => console.warn('[stratus] humanizer config load failed', err));
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+
+  // One $0 read per mount (the roster scores come from harvest_rows, never a
+  // billed lookup). Swallowed on failure: no languages means English, not a
+  // broken Radar.
+  useEffect(() => {
+    let alive = true;
+    api.cannon
+      .targets(settings)
+      .then((res) => {
+        if (!alive) return;
+        setCannonLanguages(
+          new Map(
+            res.targets.flatMap((t) =>
+              t.language ? [[normalizeHandleKey(t.handle), t.language] as const] : [],
+            ),
+          ),
+        );
+      })
+      .catch((err) => console.warn('[stratus] cannon languages load failed', err));
     return () => {
       alive = false;
     };
@@ -330,6 +381,7 @@ export function RadarSection({
   const sendBatch = async (
     rows: RadarSighting[],
     scoreById?: Map<string, number>,
+    language?: string,
   ): Promise<BatchOutcome> => {
     // band/signals ride along for the server's radar_drafts copy (C0) — they
     // never reach the Grok prompt. curationScore (RC.2) rides on exactly the
@@ -351,7 +403,12 @@ export function RadarSection({
       };
     });
     try {
-      const res = await api.replies.generateBatch(settings, { tweets });
+      // CQ.7: one language for the call, never a per-tweet field — the server's
+      // whitelist would drop it there, and the prompt has one instruction block.
+      const res = await api.replies.generateBatch(settings, {
+        tweets,
+        ...(language !== undefined ? { language } : {}),
+      });
       if (res.replies.length > 0) {
         const msg: RadarReplies = {
           type: 'stratus/radar-replies',
@@ -373,9 +430,23 @@ export function RadarSection({
     if (rows.length === 0) return;
     setBusy('draft');
     setNote(null);
+    // CQ.7 — Cannon view only: the camped roster is the one place a per-author
+    // language is declared, and the Queue's rows are mostly strangers.
+    const pick = view === 'cannon' ? sharedCannonLanguage(rows, cannonLanguages) : null;
+    const langNote =
+      pick === 'mixed'
+        ? ' · mixed languages — drafted in English'
+        : pick
+          ? ` · in ${pick.language}`
+          : '';
     try {
-      const out = await sendBatch(rows);
-      if (out.ok) setNote(`${out.drafted}/${out.requested} drafted · $${out.cost.toFixed(4)}`);
+      const out = await sendBatch(
+        rows,
+        undefined,
+        pick && pick !== 'mixed' ? pick.language : undefined,
+      );
+      if (out.ok)
+        setNote(`${out.drafted}/${out.requested} drafted · $${out.cost.toFixed(4)}${langNote}`);
       else setNote(out.detail ? `Draft failed: ${out.detail}` : 'Draft failed');
     } finally {
       setBusy(null);

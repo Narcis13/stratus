@@ -886,6 +886,12 @@ export interface BatchReplyGenerateBody {
   idea?: string;
   model?: string;
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  // CQ.7 — draft this batch in a language other than English. ONE per call, not
+  // per tweet: the batch prompt carries a single instruction block, so the panel
+  // only sends it when every row in the set shares one `cannon_targets.language`.
+  // The server validates it (1–40 chars, single-line) and renders the clause —
+  // this string never reaches a prompt template.
+  language?: string;
 }
 
 export interface BatchReplyItem {

@@ -2,7 +2,7 @@
 // Mounted under `/x` by `mountX` in ../index.ts.
 //
 // Routes:
-//   POST   /replies/generate   body: { context, idea?, override?, systemPromptOverride?, model?, reasoningEffort? }
+//   POST   /replies/generate   body: { context, idea?, override?, systemPromptOverride?, model?, reasoningEffort?, language? }
 //   GET    /replies            ?status=&sourceAuthor=&limit=&since=
 //   GET    /replies/outcomes   ?limit=&since=   posted drafts joined to their metrics
 //   GET    /replies/:id
@@ -115,6 +115,30 @@ const ALLOWED_TRANSITIONS: Record<Status, readonly Status[]> = {
   discarded: [],
 };
 
+// CQ.7: the reply-language cap. Long enough for "Brazilian Portuguese", short
+// enough that the clause it lands in stays one line — it rides at the variable
+// tail, so its bytes are paid for on every call.
+const MAX_REPLY_LANGUAGE_LEN = 40;
+
+// CQ.7: unlike `relationship`/`me`/`guidance` (context the server scraped or
+// derived, and therefore server-stamped only, §7.16) a language is a DRAFTING
+// INSTRUCTION — so it may ride in the body. What stays server-side is the
+// rendering: the route validates the value and `renderLanguageClause` builds the
+// sentence around it, so a client string never reaches a template. Single-line
+// because the clause is one line by contract — a newline would smuggle a second
+// instruction into the tail.
+function parseReplyLanguage(value: unknown): { language?: string } | { error: 'invalid_language' } {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'string') return { error: 'invalid_language' };
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.length > MAX_REPLY_LANGUAGE_LEN) {
+    return { error: 'invalid_language' };
+  }
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point.
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return { error: 'invalid_language' };
+  return { language: trimmed };
+}
+
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 // Outcomes feed the BAND recalibration crosstab, which wants the full posted
@@ -137,6 +161,9 @@ interface RawBody {
   // §8.6 opt-in (default off, set by the extension Settings toggle): steer the
   // reply toward one of the active content pillars.
   applyPillars?: unknown;
+  // CQ.7: draft in this language instead of English. A top-level body field, NOT
+  // a context field — parseContext's whitelist keeps refusing it there.
+  language?: unknown;
 }
 
 export const replies = new Hono();
@@ -216,6 +243,13 @@ replies.post('/replies/generate', async (c) => {
       return c.json({ error: 'invalid_apply_pillars' }, 400);
     applyPillars = body.applyPillars;
   }
+
+  // CQ.7: validated up here with the rest of the body — refuse before spend
+  // (§7.4). A bad language is a 400 even on a hot post that would otherwise pay
+  // for a Grok call.
+  const langOrErr = parseReplyLanguage(body.language);
+  if ('error' in langOrErr) return c.json({ error: langOrErr.error }, 400);
+  const language = langOrErr.language;
 
   // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
   // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
@@ -302,6 +336,9 @@ replies.post('/replies/generate', async (c) => {
   const messages = buildGrokInput(ctx, systemOverride, idea, pillarDefs, {
     replyPersona: niche.replyPersona,
     template: prompt.body,
+    // Server-stamped: the route hands the builder a validated VALUE and the
+    // builder owns the sentence — the client's string is never a template.
+    ...(language !== undefined ? { language } : {}),
   });
 
   // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
@@ -412,6 +449,10 @@ interface BatchBody {
   provider?: unknown;
   reasoningEffort?: unknown;
   applyPillars?: unknown;
+  // CQ.7: ONE language for the whole batch — the batch prompt has one
+  // instruction block, and a per-tweet language would need a template change.
+  // Top-level, never a per-tweet field: parseBatchTweets' whitelist refuses it.
+  language?: unknown;
 }
 
 replies.post('/replies/generate-batch', async (c) => {
@@ -474,6 +515,12 @@ replies.post('/replies/generate-batch', async (c) => {
     applyPillars = body.applyPillars;
   }
 
+  // CQ.7: before the relationship lookups and before the call — a bad language
+  // costs nothing (§7.4).
+  const langOrErr = parseReplyLanguage(body.language);
+  if ('error' in langOrErr) return c.json({ error: langOrErr.error }, 400);
+  const language = langOrErr.language;
+
   // Relationship briefs (C3): same block per tweet, capped to 2 lines/person
   // (renderRelationshipBrief) to protect the token budget. One lookup per
   // distinct handle; best-effort.
@@ -507,6 +554,7 @@ replies.post('/replies/generate-batch', async (c) => {
     replyPersona: niche.replyPersona,
     template: batchPrompt.body,
     ...(meBrief !== undefined ? { meBrief } : {}),
+    ...(language !== undefined ? { language } : {}),
   });
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
   // single-reply path (user-accepted, RU.3). Scale with the batch, capped. A

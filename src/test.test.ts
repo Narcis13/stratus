@@ -60,6 +60,7 @@ import {
   parseBatchReplies,
   parseReplyVariants,
   passesSpecificityGate,
+  renderLanguageClause,
 } from './x/replies/prompt.ts';
 import {
   type AnnotatedGap,
@@ -1334,6 +1335,116 @@ describe('ME.3 personal-context injection at the variable tail', () => {
     });
     if ('error' in out) throw new Error(out.error);
     expect('me' in out).toBe(false);
+  });
+});
+
+describe('CQ.7 reply language clause at the variable tail', () => {
+  const ctx: PostContext = {
+    url: 'https://x.com/someone/status/1',
+    tweetId: '1',
+    author: 'Some One',
+    handle: 'someone',
+    text: 'agents are eating SaaS',
+    postedAt: '2026-06-10T08:00:00Z',
+    metrics: { views: 100, replies: 1, reposts: 0, likes: 2 },
+    topComments: [],
+  };
+  const t: BatchTweet = { tweetId: '1', handle: 'someone', author: 'SO', text: 'post one' };
+  const CLAUSE = renderLanguageClause('Japanese');
+
+  test('the clause is ONE line — it rides at the tail and is paid for every call', () => {
+    expect(CLAUSE.includes('\n')).toBe(false);
+    expect(CLAUSE).toContain('Japanese');
+  });
+
+  test('single reply: absent language → byte-identical to a pre-CQ.7 call', () => {
+    // The N.3 equivalence discipline: the cold prompt is the fixture, and every
+    // "absent" spelling must reproduce it byte for byte.
+    const cold = buildGrokInput(ctx)[0]?.content ?? '';
+    expect(buildGrokInput(ctx, undefined, undefined, undefined, {})[0]?.content).toBe(cold);
+    // Whitespace-only counts as absent, the same tolerance every other tail
+    // block extends.
+    expect(
+      buildGrokInput(ctx, undefined, undefined, undefined, { language: '   ' })[0]?.content,
+    ).toBe(cold);
+    expect(cold).not.toContain('Write all variants in');
+  });
+
+  test('single reply: present language appends exactly one line at the tail', () => {
+    const cold = buildGrokInput(ctx)[0]?.content ?? '';
+    const warm =
+      buildGrokInput(ctx, undefined, undefined, undefined, { language: 'Japanese' })[0]?.content ??
+      '';
+    // Purely additive — the cold prompt is an exact prefix, plus one line.
+    expect(warm).toBe(`${cold}\n\n${CLAUSE}`);
+    expect(countOccurrences(warm, CLAUSE)).toBe(1);
+  });
+
+  test('single reply: tail order is relationship → me → language → guidance', () => {
+    const warm =
+      buildGrokInput(
+        { ...ctx, relationship: 'REL::block', me: 'ME::block', guidance: 'GUIDE::block' },
+        undefined,
+        undefined,
+        undefined,
+        { language: 'Japanese' },
+      )[0]?.content ?? '';
+    expect(warm.indexOf(CLAUSE)).toBeGreaterThan(warm.indexOf('ME::block'));
+    expect(warm.indexOf('GUIDE::block')).toBeGreaterThan(warm.indexOf(CLAUSE));
+  });
+
+  test('batch: absent → byte-identical; present → one line at the very tail', () => {
+    const cold = buildBatchGrokInput([t, { ...t, tweetId: '2' }])[0]?.content ?? '';
+    expect(cold).not.toContain('Write all variants in');
+    const warm =
+      buildBatchGrokInput([t, { ...t, tweetId: '2' }], undefined, undefined, undefined, undefined, {
+        language: 'Japanese',
+      })[0]?.content ?? '';
+    expect(warm).toBe(`${cold}\n\n${CLAUSE}`);
+    // Once for the whole batch — the prompt has ONE instruction block.
+    expect(countOccurrences(warm, CLAUSE)).toBe(1);
+    expect(warm.indexOf(CLAUSE)).toBeGreaterThan(warm.indexOf('POST 2'));
+  });
+
+  test('batch: the clause lands after the me brief, which is the batch tail', () => {
+    const warm =
+      buildBatchGrokInput([t], undefined, undefined, undefined, 'GUIDE::block', {
+        meBrief: 'MEBRIEF::block',
+        language: 'Japanese',
+      })[0]?.content ?? '';
+    expect(warm.indexOf(CLAUSE)).toBeGreaterThan(warm.indexOf('MEBRIEF::block'));
+  });
+
+  test('JD.1 provenance: neither byte-synced literal carries the clause', () => {
+    // It rides on the rendered VALUE, so `reply prompt.md`, REPLY_PROMPT_TEMPLATE
+    // and REPLY_BATCH_PROMPT_TEMPLATE stay untouched (their byte-sync and
+    // anti-drift tests above never move for this feature).
+    expect(REPLY_PROMPT_TEMPLATE).not.toContain('Write all variants in');
+    expect(REPLY_BATCH_PROMPT_TEMPLATE).not.toContain('Write all variants in');
+  });
+
+  test('parseContext never copies a client-supplied language (it is a body field)', () => {
+    const out = parseContext({
+      tweetId: '123456',
+      handle: 'someone',
+      author: 'Some One',
+      text: 'a tweet',
+      url: 'https://x.com/someone/status/123456',
+      postedAt: '2026-06-10T08:00:00Z',
+      metrics: { views: 10, replies: 0, reposts: 0, likes: 0 },
+      topComments: [],
+      language: 'Japanese',
+    });
+    if ('error' in out) throw new Error(out.error);
+    expect('language' in out).toBe(false);
+  });
+
+  test('parseBatchTweets never copies a per-tweet language', () => {
+    const out = parseBatchTweets([
+      { tweetId: '111', handle: 'alice', author: 'Alice', text: 'one', language: 'Japanese' },
+    ]);
+    if ('error' in out) throw new Error(out.error);
+    expect(out.tweets[0]).not.toHaveProperty('language');
   });
 });
 
