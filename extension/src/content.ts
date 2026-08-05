@@ -23,6 +23,8 @@
 // action row — one click spends a pick server-side and types it into the reply
 // composer. See the section near the variant chips.
 
+import { isCannonEligible } from './cannon.ts';
+import type { CannonThresholds } from './cannon.ts';
 import { suggestChannels } from './channelSuggest.ts';
 import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
 import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
@@ -34,7 +36,12 @@ import {
   parseHeatColors,
 } from './shared/activeTimes.ts';
 import { parseEarlyReplies } from './shared/earlyReplies.ts';
-import { GLANCE_TTL_MS, buildPersonChips, isReciprocityPerson } from './shared/glance.ts';
+import {
+  GLANCE_TTL_MS,
+  buildPersonChips,
+  isCannonPerson,
+  isReciprocityPerson,
+} from './shared/glance.ts';
 import type { GlanceMap } from './shared/glance.ts';
 import type { HarvestIngestRow } from './shared/harvest.ts';
 import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
@@ -2130,11 +2137,19 @@ function attachCannedButton(article: Element, focusedTweetId: string): void {
 // blank.
 let bandThresholds: BandThresholds = SERVER_DEFAULTS.band;
 
+// CQ.4: the cannon capture arm's four knobs, mirrored the same way and from the
+// same blob — one read and one listener serve both, because a second listener
+// over the same key would be two subscriptions to one fact. Baked
+// SERVER_DEFAULTS.cannon until the first read resolves, same degradation.
+let cannonCfg: CannonThresholds = SERVER_DEFAULTS.cannon;
+
 function initBandThresholds(): void {
   chrome.storage.local
     .get(SERVER_SETTINGS_KEY)
     .then((out) => {
-      bandThresholds = readServerConfig(out[SERVER_SETTINGS_KEY]).band;
+      const cfg = readServerConfig(out[SERVER_SETTINGS_KEY]);
+      bandThresholds = cfg.band;
+      cannonCfg = cfg.cannon;
     })
     .catch(() => {
       /* keep defaults */
@@ -2142,7 +2157,10 @@ function initBandThresholds(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     const change = changes[SERVER_SETTINGS_KEY];
-    if (change) bandThresholds = readServerConfig(change.newValue).band;
+    if (!change) return;
+    const cfg = readServerConfig(change.newValue);
+    bandThresholds = cfg.band;
+    cannonCfg = cfg.cannon;
   });
 }
 
@@ -2195,12 +2213,38 @@ function isRosterSighting(article: Element, sig: TweetSignals, glance: GlanceMap
   return isReciprocityPerson(glance[permalink.username.toLowerCase()]);
 }
 
+// Does a tweet belong in the Cannon queue (CQ.4)? Two independent halves, either
+// one enough:
+//   - the SCORE half (`isCannonEligible`, the shared views-per-reply model) puts
+//     an unknown account's 200k-views/6-replies post in the queue without it
+//     being on any list;
+//   - the ROSTER half (`isCannonPerson`) puts a camped account's three-minute-old
+//     post with 40 views in the queue before the numbers exist to earn it — which
+//     is the whole point of camping.
+// Gate order mirrors isRosterSighting's exactly and for the same reason: applyBand
+// re-runs on every mutation burst, so the free age check comes before the one
+// findPermalink DOM read (the same one applyPersonChips already pays per article).
+function isCannonSighting(article: Element, sig: TweetSignals, glance: GlanceMap): boolean {
+  if (sig.ageMin > cannonCfg.maxAgeMin) return false;
+  const permalink = findPermalink(article);
+  if (!permalink) return false;
+  const entry = glance[permalink.username.toLowerCase()];
+  return isCannonEligible(sig, cannonCfg) || isCannonPerson(entry);
+}
+
 function applyBand(article: HTMLElement, glance: GlanceMap): void {
   const sig = readTweetSignals(article);
   const band = sig ? classifyBand(sig, bandThresholds) : null;
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
   if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
+  // An arbitrage slot the band classifier has no opinion about (CQ.4) — a dense
+  // post by an unknown account, or anything fresh from a camped one. Ahead of the
+  // roster arm because a handle on both lists is in the queue for the reach, and
+  // that is the queue it should be workable from.
+  else if (sig && isCannonSighting(article, sig, glance)) {
+    recordRadarSighting(article, 'cannon', sig);
+  }
   // A quiet post by someone already mine still enters the queue — the border and
   // the dim stay exactly as the classifier called them, this only feeds the
   // Radar (GT.8).

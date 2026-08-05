@@ -46,7 +46,15 @@ export async function isCannonHandle(handle: string): Promise<boolean> {
 
 /** §7.8: a roster-layer failure never fails the path that pays for it. False is
  *  the safe direction — the band gate keeps its refusal default and the caller
- *  gets the same 422 it got before this existed. */
+ *  gets the same 422 it got before this existed.
+ *
+ *  TWIN (§7.4c, CQ.4): the content script asks the same question client-side to
+ *  stamp a `cannon` Radar sighting — `isCannonPerson` in
+ *  `extension/src/shared/glance.ts`. Unlike the reciprocity pair (whose client
+ *  half must REPRODUCE a stage rule over a superset map), that one reproduces
+ *  nothing: it reads `GlanceEntry.isCannon`, which the glance route fills from
+ *  `loadCannonHandles()` above. One definition, carried over the wire — keep it
+ *  that way. Move this file and move that predicate. */
 export async function isCannonHandleSafe(handle: string): Promise<boolean> {
   try {
     return await isCannonHandle(handle);

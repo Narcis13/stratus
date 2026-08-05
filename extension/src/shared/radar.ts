@@ -15,10 +15,16 @@ import type { ReplyVariant } from './types.ts';
 // 'roster' = a fresh post by someone already in my circle, captured despite a
 // null/skip verdict (GT.8) — the reciprocity lane is about who posted it, not
 // how it's doing.
-// Both are queue/UX metadata, not classifier verdicts — neither ever enters the
-// Playbook's hot/warm band cells (their reply_drafts signals keep the real
-// computed band, null when uncomputed; the confirm endpoint coerces both away).
-export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster';
+// 'cannon' = a fresh post that clears the arbitrage bar (CQ.4): either its
+// views-per-reply score is in the top decile (src/shared/cannon.ts) or its
+// author is on the camped cannon roster. Unlike 'roster' this one IS partly a
+// claim about the tweet — but it is the Cannon view's own reading, not the
+// band classifier's, so it stays queue metadata like the other two.
+// All three are queue/UX metadata, not classifier verdicts — none ever enters
+// the Playbook's hot/warm band cells (their reply_drafts signals keep the real
+// computed band, null when uncomputed; the confirm endpoint coerces all three
+// away).
+export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster' | 'cannon';
 
 // How strongly a stored band resists being overwritten by a re-sighting. A
 // human pin outranks everything; a real classifier verdict outranks a roster
@@ -27,6 +33,12 @@ export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster';
 // hot/warm pair. This is also the eviction preference under cap pressure —
 // keep-longest is the same order as deserves-the-slot.
 //
+// 'cannon' sits on the hot/warm rung, NOT the roster one: an arbitrage capture
+// is a real reason to be in the queue (a measured score, or a roster I camp on
+// purpose), so between a cannon and a hot sighting the fresher one wins — the
+// pre-existing behaviour for every hot/warm pair. Only 'roster', which says
+// nothing about the tweet, sits below.
+//
 // The asymmetry matters in both directions: a roster row that catches fire takes
 // the fresher hot/warm verdict (the upgrade), while a tweet that EARNED hot and
 // then went quiet is never demoted to 'roster' on the next scroll past it — vpm
@@ -34,7 +46,7 @@ export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster';
 function bandStickiness(b: RadarBand): number {
   if (b === 'manual') return 2;
   if (b === 'roster') return 0;
-  return 1;
+  return 1; // hot / warm / cannon
 }
 
 // Who the author is, as far as the people layer knows (S0.3). A warm post from
@@ -205,10 +217,15 @@ function tierWeight(t: PersonTier | undefined): number {
 // How loud the tweet itself is. hot > warm > roster: a roster capture (GT.8) is
 // in the queue for who posted it, and the tier comparison above has already had
 // its say about that — so within a tier it sits below a real verdict.
+//
+// 'cannon' weighs 0 here on purpose, unlike its stickiness rung above: the main
+// Queue is the reciprocity lane, ranked tier-first, and an arbitrage capture
+// must not outrank a hot one inside it. The cannon ordering (by score, by age)
+// lives in the Cannon view and nowhere else.
 function bandWeight(b: RadarBand): number {
   if (b === 'hot') return 2;
   if (b === 'warm') return 1;
-  return 0; // roster — and 'manual', which never reaches here against a non-pin
+  return 0; // roster / cannon — and 'manual', which never reaches here against a non-pin
 }
 
 // Queue order: a manual add (the human pinned it, RU.8) tops everything; then
@@ -338,7 +355,11 @@ export function isRadarSighting(v: unknown): v is RadarSighting {
   return (
     typeof r.tweetId === 'string' &&
     typeof r.url === 'string' &&
-    (r.band === 'hot' || r.band === 'warm' || r.band === 'manual' || r.band === 'roster') &&
+    (r.band === 'hot' ||
+      r.band === 'warm' ||
+      r.band === 'manual' ||
+      r.band === 'roster' ||
+      r.band === 'cannon') &&
     typeof r.signals === 'object' &&
     r.signals !== null
   );

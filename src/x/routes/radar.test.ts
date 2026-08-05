@@ -20,8 +20,9 @@ const T_OTHER = '991000000000000003'; // filter-isolation sentinel
 const T_MANUAL = '991000000000000004'; // RU.8: band='manual' + signals
 const T_TTL = '991000000000000005'; // UI.4: 10h-old row for the TTL knob
 const T_ROSTER = '991000000000000006'; // GT.8: band='roster' + signals
+const T_CANNON = '991000000000000007'; // CQ.4: band='cannon' + signals
 const T_UNKNOWN = '991999999999999999'; // no row — 404
-const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL, T_ROSTER];
+const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL, T_ROSTER, T_CANNON];
 
 const PRIMARY_TEXT = 'v1 extends: I shipped mine in 3 days';
 const VARIANTS = [
@@ -100,6 +101,19 @@ beforeAll(async () => {
       band: 'roster',
       signals: { views: 42, replies: 0, ageMin: 30, vpm: 1.4, bait: false },
       replyText: 'roster reply',
+      angle: 'extends',
+    },
+    {
+      // CQ.4: an arbitrage capture — dense post by an account with no
+      // relationship, in the queue for the reply slot rather than the person.
+      tweetId: T_CANNON,
+      url: `https://x.com/frank/status/${T_CANNON}`,
+      handle: 'frank',
+      author: 'Frank',
+      snippet: 'a 200k-view post with almost no replies under it',
+      band: 'cannon',
+      signals: { views: 204_000, replies: 6, ageMin: 9, vpm: 22_666, bait: false },
+      replyText: 'cannon reply',
       angle: 'extends',
     },
   ]);
@@ -403,5 +417,19 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
     expect(body.contextSnapshot.signals).toBeDefined();
     expect(body.contextSnapshot.signals?.band).toBeNull();
     expect(body.contextSnapshot.metrics.views).toBe(42);
+  });
+
+  test("confirm: a 'cannon' band is coerced away while the column keeps it (CQ.4, §7.19)", async () => {
+    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_CANNON}/confirm`, 'POST');
+    expect(status).toBe(201);
+    // Third member of the queue-metadata family, same rule: the snapshot must
+    // not claim a classifier verdict the classifier never gave.
+    expect(body.contextSnapshot.signals).toBeDefined();
+    expect(body.contextSnapshot.signals?.band).toBeNull();
+    expect(body.contextSnapshot.metrics.views).toBe(204_000);
+    // …and the coercion is snapshot-only: the queue must still be able to say
+    // WHY it held this row, so radar_drafts.band is untouched.
+    const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, T_CANNON));
+    expect(row?.band).toBe('cannon');
   });
 });

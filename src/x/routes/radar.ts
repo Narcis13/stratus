@@ -53,9 +53,10 @@ export function radarDraftExpired(
 // may omit all of them.
 export interface RadarBatchTweet extends BatchTweet {
   // 'manual' = a ⊕ pinned tweet (RU.8), 'roster' = a quiet post by someone in my
-  // circle (GT.8) — queue metadata, never classifier verdicts; stored on
-  // radar_drafts.band, coerced away from the reply snapshot.
-  band?: 'hot' | 'warm' | 'manual' | 'roster';
+  // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4) — queue metadata,
+  // never classifier verdicts; stored on radar_drafts.band, coerced away from
+  // the reply snapshot (QUEUE_META_BANDS below).
+  band?: 'hot' | 'warm' | 'manual' | 'roster' | 'cannon';
   signals?: TweetSignals;
   // RC.2: 0–100 reply-payoff score from the curation pass that picked this
   // tweet. Absent = drafted without curation. Storage metadata like band and
@@ -63,13 +64,21 @@ export interface RadarBatchTweet extends BatchTweet {
   curationScore?: number;
 }
 
+// The bands that describe WHY a row is in the queue rather than what the
+// classifier decided about the tweet: a ⊕ pin (RU.8), a circle capture (GT.8),
+// an arbitrage capture (CQ.4). The confirm endpoint coerces every one of them to
+// null in the rebuilt contextSnapshot — a queue-metadata band is not a verdict
+// and must never land in a Playbook hot/warm cell (§7.19). A set rather than a
+// chain of `===`: this family has grown three times now.
+const QUEUE_META_BANDS: ReadonlySet<string> = new Set(['manual', 'roster', 'cannon']);
+
 export interface RadarDraftInsert {
   tweetId: string;
   url: string | null;
   handle: string;
   author: string | null;
   snippet: string;
-  band: 'hot' | 'warm' | 'manual' | 'roster' | null;
+  band: 'hot' | 'warm' | 'manual' | 'roster' | 'cannon' | null;
   signals: TweetSignals | null;
   replyText: string;
   angle: string;
@@ -302,12 +311,11 @@ radar.post('/radar/drafts/:tweetId/confirm', async (c) => {
   // Rebuild a PostContext from what the Radar captured so buildReplyOutcomes
   // (ctx.signals / ctx.metrics) and the Playbook latency/band readers
   // (signals.ageMin) see the same shape a live Reply Master draft has. The
-  // band lives in its own column; the signals JSON never carried it. A 'manual'
-  // add (RU.8) and a 'roster' capture (GT.8) are queue metadata, not classifier
-  // verdicts — both become null in the snapshot so neither ever lands in the
+  // band lives in its own column; the signals JSON never carried it. Queue
+  // metadata bands become null in the snapshot so none of them ever lands in the
   // Playbook's hot/warm band cells (§7.19). Anything else is the real verdict.
   const sig = row.signals as TweetSignals | null;
-  const queueMetaBand = row.band === 'manual' || row.band === 'roster';
+  const queueMetaBand = QUEUE_META_BANDS.has(row.band ?? '');
   const signals: PostSignals | undefined = sig
     ? {
         band: queueMetaBand ? null : (row.band as PostSignals['band']),

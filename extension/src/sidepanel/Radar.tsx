@@ -775,6 +775,7 @@ const BAND_LABEL: Record<RadarSighting['band'], string> = {
   warm: 'warm',
   manual: 'manual',
   roster: 'your circle',
+  cannon: 'cannon',
 };
 const ROSTER_BAND_TITLE =
   'Below the reply band, but in the queue anyway: you have replied to them before, or they are on your 2–10x target roster. Same rule the reply gate uses.';

@@ -1194,6 +1194,14 @@ button.danger:hover:not(:disabled) {
   border: 1px solid color-mix(in srgb, var(--strat-muted) 45%, transparent);
   background: color-mix(in srgb, var(--strat-muted) 10%, transparent);
 }
+/* CQ.4: an arbitrage capture. Reuses the accent the ⊕ pin uses — both are "in
+   the queue for a reason outside the band" — but the Cannon view is where these
+   are meant to be worked, so it stays a plain outline here. */
+.radar-band-cannon {
+  color: var(--strat-accent);
+  border: 1px solid color-mix(in srgb, var(--strat-accent) 40%, transparent);
+  background: transparent;
+}
 .radar-author {
   flex: 1;
   font-size: 11px;

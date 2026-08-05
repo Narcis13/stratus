@@ -202,6 +202,53 @@ describe('mergeSightings', () => {
     expect(merged).toHaveLength(RADAR_CAP);
     expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
   });
+
+  test('cannon and hot share a stickiness rung — the fresher re-sight wins both ways', () => {
+    // CQ.4: unlike 'roster', a cannon capture IS a reason to be here (a measured
+    // score, or a roster camped on purpose), so it behaves like every hot/warm
+    // pair: no upgrade, no downgrade, just the fresher verdict.
+    const cannonThenHot = mergeSightings(
+      [sighting('1', { band: 'cannon' })],
+      [sighting('1', { band: 'hot' })],
+      [],
+    );
+    expect(cannonThenHot[0]?.band).toBe('hot');
+
+    const hotThenCannon = mergeSightings(
+      [sighting('1', { band: 'hot' })],
+      [sighting('1', { band: 'cannon' })],
+      [],
+    );
+    expect(hotThenCannon[0]?.band).toBe('cannon');
+  });
+
+  test('a manual pin still outranks a cannon re-sight', () => {
+    const pinned = sighting('1', { band: 'manual' });
+    expect(mergeSightings([pinned], [sighting('1', { band: 'cannon' })], [])[0]?.band).toBe(
+      'manual',
+    );
+  });
+
+  test('eviction drops a roster capture before a cannon one (CQ.4)', () => {
+    // Both are queue metadata, but only one of them says something about the
+    // tweet. Under cap pressure the roster row is the freshest of the three and
+    // still the one that goes.
+    const roster = sighting('roster-1', {
+      band: 'roster',
+      lastSeenAt: '2026-06-10T23:59:00.000Z',
+    });
+    const cannon = sighting('cannon-1', {
+      band: 'cannon',
+      lastSeenAt: '2026-06-10T00:00:00.000Z',
+    });
+    const warm = Array.from({ length: RADAR_CAP - 1 }, (_, i) =>
+      sighting(`warm-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
+    );
+    const merged = mergeSightings([roster, cannon], warm, []);
+    expect(merged).toHaveLength(RADAR_CAP);
+    expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
+    expect(merged.some((s) => s.tweetId === 'cannon-1')).toBe(true);
+  });
 });
 
 describe('appendDismissed', () => {
@@ -358,6 +405,31 @@ describe('rankSightings', () => {
     ];
     expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['mutual-hot', 'ally-warm']);
   });
+
+  test('a cannon capture (CQ.4) ranks below hot at equal tier, and manual still leads', () => {
+    // The main Queue is the reciprocity lane: an arbitrage capture must not
+    // outrank a real verdict here however dense it is. That ordering lives in
+    // the Cannon view, which reads the same buffer through its own sort.
+    const rows = [
+      sighting('cannon-dense', {
+        band: 'cannon',
+        signals: { views: 200_000, replies: 6, ageMin: 4, vpm: 50_000, bait: false },
+      }),
+      sighting('hot-modest', {
+        band: 'hot',
+        signals: { views: 1200, replies: 5, ageMin: 12, vpm: 100, bait: false },
+      }),
+      sighting('manual-cold', {
+        band: 'manual',
+        signals: { views: 0, replies: 0, ageMin: 3, vpm: 0, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
+      'manual-cold',
+      'hot-modest',
+      'cannon-dense',
+    ]);
+  });
 });
 
 describe('personTierFor', () => {
@@ -506,6 +578,7 @@ describe('isRadarSightings', () => {
     expect(isRadarSightings([sighting('1')])).toBe(true);
     expect(isRadarSightings([sighting('1', { band: 'manual' })])).toBe(true);
     expect(isRadarSightings([sighting('1', { band: 'roster' })])).toBe(true); // GT.8
+    expect(isRadarSightings([sighting('1', { band: 'cannon' })])).toBe(true); // CQ.4
     expect(isRadarSightings([{ ...sighting('1'), band: 'cold' }])).toBe(false);
     expect(isRadarSightings([])).toBe(true);
     expect(isRadarSightings(undefined)).toBe(false);

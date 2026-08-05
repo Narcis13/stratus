@@ -4,6 +4,7 @@ import {
   NEGLECT_DAYS,
   type PersonChip,
   buildPersonChips,
+  isCannonPerson,
   isReciprocityPerson,
 } from './glance.ts';
 
@@ -15,6 +16,7 @@ function entry(over: Partial<GlanceEntry> = {}): GlanceEntry {
   return {
     stage: 'stranger',
     isTarget: false,
+    isCannon: false,
     openLoops: 0,
     lastOutboundAt: null,
     lastInboundAt: null,
@@ -188,5 +190,33 @@ describe('isReciprocityPerson (GT.8 — the Radar roster capture)', () => {
       const hasStageChip = kinds(buildPersonChips(entry({ stage }), NOW)).includes('stage');
       expect(isReciprocityPerson(entry({ stage }))).toBe(hasStageChip);
     }
+  });
+});
+
+describe('isCannonPerson (CQ.4)', () => {
+  test('true only for an entry the server marked camped', () => {
+    expect(isCannonPerson(entry({ isCannon: true }))).toBe(true);
+    expect(isCannonPerson(entry({ isCannon: false }))).toBe(false);
+  });
+
+  test('an unknown handle is not camped', () => {
+    expect(isCannonPerson(undefined)).toBe(false);
+  });
+
+  test('a server too old to send isCannon reads as not camped', () => {
+    // The refusal default: `=== true`, not truthiness, so a payload from before
+    // CQ.3 never opens the capture arm by accident.
+    const legacy = entry();
+    const { isCannon: _dropped, ...rest } = legacy;
+    expect(isCannonPerson(rest as GlanceEntry)).toBe(false);
+  });
+
+  test('the two lanes are independent — cannon is not a stage or a target rule', () => {
+    // A camped account with no relationship is the EXPECTED shape (you camp for
+    // reach, not for a relationship), and a mutual/target is not camped by
+    // implication. If this ever couples, the roster definition has forked.
+    expect(isCannonPerson(entry({ stage: 'stranger', isCannon: true }))).toBe(true);
+    expect(isCannonPerson(entry({ stage: 'ally', isTarget: true }))).toBe(false);
+    expect(isReciprocityPerson(entry({ stage: 'stranger', isCannon: true }))).toBe(false);
   });
 });

@@ -987,6 +987,14 @@ describe('batch replies (Radar §7.2)', () => {
     if ('error' in roster) throw new Error(roster.error);
     expect(roster.tweets[0]?.band).toBe('roster');
 
+    // CQ.4: an arbitrage capture — the third queue-metadata band, same column,
+    // same coercion at confirm time.
+    const cannon = parseBatchTweets([
+      { tweetId: '555', handle: 'erin', text: 'e', band: 'cannon' },
+    ]);
+    if ('error' in cannon) throw new Error(cannon.error);
+    expect(cannon.tweets[0]?.band).toBe('cannon');
+
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
     });

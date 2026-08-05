@@ -13,6 +13,10 @@
 export interface GlanceEntry {
   stage: string;
   isTarget: boolean;
+  /** CQ.3: on the camped cannon roster. Orthogonal to `isTarget` — the 2–10x
+   *  reply list and the arbitrage roster are different sets chosen on different
+   *  criteria, and a handle can be on either, both, or neither. */
+  isCannon: boolean;
   openLoops: number; // unanswered mentions from this author
   lastOutboundAt: string | null; // my last posted reply to them (ISO)
   lastInboundAt: string | null; // their last mention/reply to me (ISO)
@@ -68,6 +72,30 @@ export interface PersonChip {
 export function isReciprocityPerson(entry: GlanceEntry | undefined): boolean {
   if (!entry) return false;
   return entry.isTarget || STAGE_ORDER.indexOf(entry.stage) >= ENGAGED_RANK;
+}
+
+// "Accounts I camp for reach" (CQ.4) — the roster half of the `cannon` capture
+// arm, sitting beside isReciprocityPerson because it answers the same shape of
+// question for the other lane.
+//
+// TWIN (§7.4c): `src/x/cannon/membership.ts::isCannonHandleSafe` is the server
+// side of this, and the band gate's cannon carve-out uses it. Move one, move
+// both.
+//
+// The crucial difference from the reciprocity twin above: there is NO superset
+// trap here, so there is no rule to reproduce. `isCannon` is the server's own
+// answer — `cannon_targets.active = 1`, computed by the same
+// `loadCannonHandles()` the gate calls — carried through the glance map
+// verbatim. Presence in the map means nothing; this one field means everything.
+// So do NOT "harden" this into a stage/target/score predicate later: adding a
+// condition here would fork the roster definition, which is exactly what the
+// single `loadCannonHandles()` exists to prevent.
+//
+// `=== true` rather than truthiness so a server build older than this one
+// (no `isCannon` in its glance payload) reads as "not camped" — the refusal
+// default, the safe direction for a client cache.
+export function isCannonPerson(entry: GlanceEntry | undefined): boolean {
+  return entry?.isCannon === true;
 }
 
 export function buildPersonChips(entry: GlanceEntry, nowMs: number): PersonChip[] {

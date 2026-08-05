@@ -578,6 +578,17 @@ replies.post('/replies/generate-batch', async (c) => {
   });
 });
 
+// Every `band` a batch tweet may claim: the two real classifier verdicts plus
+// the three queue-metadata bands (RU.8 / GT.8 / CQ.4). Mirrors
+// `RadarBatchTweet['band']` — widen both together.
+const ACCEPTED_BATCH_BANDS: ReadonlySet<string> = new Set([
+  'hot',
+  'warm',
+  'manual',
+  'roster',
+  'cannon',
+]);
+
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
 // Optional band/signals (C0) carry the Radar's capture-time verdict — and
 // optional curationScore (RC.2) the curation pass's 0–100 verdict — into
@@ -609,18 +620,19 @@ export function parseBatchTweets(
       return { error: `invalid_tweet_text_${i}` };
     }
 
-    let band: 'hot' | 'warm' | 'manual' | 'roster' | undefined;
+    let band: RadarBatchTweet['band'];
     if (r.band !== undefined && r.band !== null) {
       // 'manual' = a ⊕ add (RU.8), 'roster' = a quiet post by someone in my
-      // circle (GT.8); both are stored on radar_drafts.band as queue metadata,
-      // never classifier verdicts — the confirm endpoint coerces them away from
-      // the reply_drafts contextSnapshot signals. Not re-checked against the
-      // people layer here: the band never reaches Grok and never reaches a
-      // Playbook cell, so a wrong claim costs a label, not money or a number.
-      if (r.band !== 'hot' && r.band !== 'warm' && r.band !== 'manual' && r.band !== 'roster') {
+      // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4); all three are
+      // stored on radar_drafts.band as queue metadata, never classifier verdicts
+      // — the confirm endpoint coerces them away from the reply_drafts
+      // contextSnapshot signals. Not re-checked against the people layer or the
+      // scorer here: the band never reaches Grok and never reaches a Playbook
+      // cell, so a wrong claim costs a label, not money or a number.
+      if (!ACCEPTED_BATCH_BANDS.has(r.band as string)) {
         return { error: `invalid_tweet_band_${i}` };
       }
-      band = r.band;
+      band = r.band as RadarBatchTweet['band'];
     }
 
     let signals: TweetSignals | undefined;
