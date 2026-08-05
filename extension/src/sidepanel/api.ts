@@ -146,6 +146,7 @@ import {
   type PillarDraftResult,
   type PillarUpdateBody,
   type PinnedWatch,
+  type PlacedTodayResponse,
   type Playbook,
   type PlaybookAngleCell,
   type PlaybookCell,
@@ -339,6 +340,7 @@ export type {
   PeopleListOpts,
   PeopleListResponse,
   Person,
+  PlacedTodayResponse,
   Playbook,
   PlaybookAngleCell,
   PlaybookCell,
@@ -1187,6 +1189,17 @@ export const api = {
         method: 'PATCH',
         body,
       });
+    },
+  },
+
+  // CQ.5 — the Radar's own server reads. `placedToday` is the Cannon head's
+  // counter: a pure SELECT pair that writes nothing (unlike GET /brief, which
+  // reports the same number but upserts a streak on the way), which is exactly
+  // why a panel surface is allowed to call it on every pick. $0.
+  radar: {
+    placedToday(s: Settings, opts: { tzOffsetMin?: number } = {}): Promise<PlacedTodayResponse> {
+      const tz = opts.tzOffsetMin ?? new Date().getTimezoneOffset();
+      return request<PlacedTodayResponse>(s, `/x/radar/placed-today?tzOffsetMin=${tz}`);
     },
   },
 

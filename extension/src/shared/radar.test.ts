@@ -7,7 +7,9 @@ import {
   type RadarSighting,
   type RankMap,
   appendDismissed,
+  cannonQueue,
   coerceSightings,
+  displayAgeMin,
   draftRowToSighting,
   groupQueue,
   isRadarSightings,
@@ -511,6 +513,122 @@ describe('groupQueue', () => {
     const { ready, fresh } = groupQueue(queue);
     expect(ready.map((s) => s.tweetId)).toEqual(['ready-1', 'ready-2']);
     expect(fresh.map((s) => s.tweetId)).toEqual(['new-1', 'new-2']);
+  });
+});
+
+describe('cannonQueue (CQ.5)', () => {
+  // Fixed thresholds, so a recalibration of the shipped defaults can never turn
+  // these into a different test (§7.19 — the knobs are an argument on purpose).
+  const T = { scoreMin: 120, maxAgeMin: 30, redAgeMin: 15, placedTarget: 18 };
+  const NOW = Date.parse('2026-08-05T12:00:00.000Z');
+
+  // A sighting whose displayed age is exactly `ageMin` at NOW: captured age
+  // plus time since capture is what the view reads, so both halves are set.
+  function cannonSighting(
+    id: string,
+    over: {
+      views?: number;
+      replies?: number;
+      capturedAgeMin?: number;
+      minsSinceSeen?: number;
+      band?: RadarSighting['band'];
+      clickedAt?: string;
+    } = {},
+  ): RadarSighting {
+    const capturedAgeMin = over.capturedAgeMin ?? 5;
+    const minsSinceSeen = over.minsSinceSeen ?? 0;
+    const seen = new Date(NOW - minsSinceSeen * 60_000).toISOString();
+    return sighting(id, {
+      band: over.band ?? 'hot',
+      signals: {
+        views: over.views ?? 6000,
+        replies: over.replies ?? 4,
+        ageMin: capturedAgeMin,
+        vpm: 100,
+        bait: false,
+      },
+      firstSeenAt: seen,
+      lastSeenAt: seen,
+      ...(over.clickedAt ? { clickedAt: over.clickedAt } : {}),
+    });
+  }
+
+  test('empty input returns an empty queue', () => {
+    expect(cannonQueue([], NOW, T)).toEqual({ rows: [], hidden: 0 });
+  });
+
+  test('drops a row past maxAgeMin and counts it in hidden', () => {
+    // 20 minutes old at capture + 10 minutes on the shelf = exactly 30 → in.
+    const atCutoff = cannonSighting('at-cutoff', { capturedAgeMin: 20, minsSinceSeen: 10 });
+    // One minute more → out, and the queue says so instead of just shrinking.
+    const past = cannonSighting('past', { capturedAgeMin: 20, minsSinceSeen: 11 });
+    const out = cannonQueue([atCutoff, past], NOW, T);
+    expect(out.rows.map((r) => r.s.tweetId)).toEqual(['at-cutoff']);
+    expect(out.hidden).toBe(1);
+  });
+
+  test('a cannon-band row below the score floor is still in (capture reason)', () => {
+    // 300 / (10 + 1) ≈ 27 — nowhere near 120, but content.ts queued it for the
+    // roster, and that reason does not expire when the numbers move.
+    const roster = cannonSighting('camped', { band: 'cannon', views: 300, replies: 10 });
+    const out = cannonQueue([roster], NOW, T);
+    expect(out.rows.map((r) => r.s.tweetId)).toEqual(['camped']);
+    expect(out.hidden).toBe(0);
+  });
+
+  test('a hot row above the floor is included without being re-banded', () => {
+    const hot = cannonSighting('hot-1', { band: 'hot', views: 5000, replies: 3 });
+    const [row] = cannonQueue([hot], NOW, T).rows;
+    expect(row?.s.tweetId).toBe('hot-1');
+    expect(row?.s.band).toBe('hot');
+    expect(row?.score).toBeCloseTo(1250, 5);
+  });
+
+  test('a row under the floor and not cannon-banded never enters', () => {
+    const quiet = cannonSighting('quiet', { band: 'warm', views: 400, replies: 9 });
+    expect(cannonQueue([quiet], NOW, T)).toEqual({ rows: [], hidden: 0 });
+  });
+
+  test('sorted by score desc, ties broken by the fresher sighting', () => {
+    // Same score (1000/(4+1) = 200), different capture times.
+    const older = cannonSighting('older', { views: 1000, replies: 4, minsSinceSeen: 8 });
+    const fresher = cannonSighting('fresher', { views: 1000, replies: 4, minsSinceSeen: 2 });
+    const loudest = cannonSighting('loudest', { views: 9000, replies: 4, minsSinceSeen: 9 });
+    const out = cannonQueue([older, fresher, loudest], NOW, T);
+    expect(out.rows.map((r) => r.s.tweetId)).toEqual(['loudest', 'fresher', 'older']);
+  });
+
+  test('tone flips to red past redAgeMin, not at it', () => {
+    const at = cannonSighting('at', { capturedAgeMin: 15, minsSinceSeen: 0 });
+    const past = cannonSighting('past', { capturedAgeMin: 15, minsSinceSeen: 1 });
+    const out = cannonQueue([at, past], NOW, T);
+    expect(out.rows.find((r) => r.s.tweetId === 'at')?.tone).toBe('ok');
+    expect(out.rows.find((r) => r.s.tweetId === 'past')?.tone).toBe('red');
+  });
+
+  test('a clicked row never appears, and is not counted as aged out', () => {
+    const clicked = cannonSighting('clicked', { clickedAt: '2026-08-05T11:59:00.000Z' });
+    expect(cannonQueue([clicked], NOW, T)).toEqual({ rows: [], hidden: 0 });
+  });
+});
+
+describe('displayAgeMin (CQ.5)', () => {
+  const NOW = Date.parse('2026-08-05T12:00:00.000Z');
+
+  test('capture age plus time on the shelf', () => {
+    const s = sighting('1', {
+      signals: { views: 10, replies: 0, ageMin: 12, vpm: 1, bait: false },
+      lastSeenAt: new Date(NOW - 8 * 60_000).toISOString(),
+    });
+    expect(displayAgeMin(s, NOW)).toBeCloseTo(20, 5);
+  });
+
+  test('an unparseable lastSeenAt falls back to the capture age, never NaN', () => {
+    const s = sighting('1', {
+      signals: { views: 10, replies: 0, ageMin: 12, vpm: 1, bait: false },
+      lastSeenAt: 'not a date',
+    });
+    expect(displayAgeMin(s, NOW)).toBe(12);
   });
 });
 

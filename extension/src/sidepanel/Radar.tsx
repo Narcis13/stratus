@@ -24,10 +24,13 @@ import type {
   RadarReplies,
 } from '../shared/messages.ts';
 import {
+  type CannonRow,
   RADAR_CAP,
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
+  cannonQueue,
   coerceSightings,
+  displayAgeMin,
   groupQueue,
   partitionForCurate,
   pruneStale,
@@ -36,7 +39,7 @@ import {
 } from '../shared/radar.ts';
 import { requestReplyFocus } from '../shared/replyFocus.ts';
 import { curatedBatchSize, radarBatchSize } from '../shared/serverSettings.ts';
-import type { CurateResponse, HumanizerSettings } from '../shared/types.ts';
+import type { CurateResponse, HumanizerSettings, PlacedTodayResponse } from '../shared/types.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { CoachChip } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -159,6 +162,17 @@ function confirmDraft(tweetId: string, text: string): void {
   })();
 }
 
+// CQ.5 — today's placed-reply count for the Cannon head. $0 and write-free (the
+// route is a pure SELECT pair on purpose), which is what makes it callable on
+// every pick. Best-effort like every other side call on this surface: an
+// unreachable server means no counter, never a broken queue.
+function fetchPlacedToday(settings: Settings): Promise<PlacedTodayResponse | null> {
+  return api.radar.placedToday(settings).catch((err) => {
+    console.warn('[stratus] placed-today load failed', err);
+    return null;
+  });
+}
+
 /** RD.1 — the Operate tab shell. The Section below carries the heading and the
  *  header actions, so there's no second panel title to keep in sync; the tab
  *  owns the settings editor Today used to hand down. */
@@ -190,7 +204,11 @@ export function RadarSection({
   const ranked = rankSightings(useRadarSightings());
   const { queue, clicked } = splitClicked(ranked);
   const { ready, fresh } = groupQueue(queue);
-  const [view, setView] = useState<'queue' | 'clicked'>('queue');
+  // CQ.5 — the arbitrage lane, read off the same queue the other two views use:
+  // a third reading, never a third buffer. The 30-minute cutoff lives here and
+  // nowhere else (decision 5) — the rows it hides keep their place in Queue.
+  const cannon = cannonQueue(queue, Date.now(), server.cannon);
+  const [view, setView] = useState<'queue' | 'cannon' | 'clicked'>('queue');
   // RC.4 — ONE in-flight flag for both buttons, not one each: a curate pass and
   // a plain draft over the same rows would double-spend on the overlap, and the
   // curated flow dismisses rows the other one is mid-way through drafting.
@@ -200,6 +218,10 @@ export function RadarSection({
   // "not loaded" — the checkbox is then disabled and every pick is byte-identical
   // to the pre-HM.3 path, because decoration must never block the worked queue.
   const [humanizer, setHumanizer] = useState<HumanizerSettings | null>(null);
+  // CQ.5 — the Cannon head's daily instrument. `null` until the first read
+  // lands (or forever, if the server is unreachable) — the counter simply
+  // doesn't render then.
+  const [placed, setPlaced] = useState<PlacedTodayResponse | null>(null);
 
   // C0: ask the background to pull the server's radar_drafts copy — after a
   // browser restart the session buffer is empty but paid-for drafts survive.
@@ -225,6 +247,40 @@ export function RadarSection({
     };
   }, [settings]);
 
+  // One $0 read per mount, and one more after every pick — never a timer. The
+  // route is cheap enough to poll and deliberately writes nothing, but a panel
+  // that polls a server route is how a surface starts costing something later,
+  // when the route it polls grows a side write. Mount + pick is the whole
+  // trigger set.
+  useEffect(() => {
+    let alive = true;
+    void fetchPlacedToday(settings).then((next) => {
+      if (alive && next) setPlaced(next);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+
+  // A pick creates a `copied` reply draft, not a `posted` one: the row only
+  // counts as placed once the on-page paste flow PATCHes it (RU.7), seconds
+  // later and on another tab. So the refetch fired here is GUARANTEED to be
+  // stale, and a plain overwrite would show +1 and immediately take it back.
+  // The server stays the authority — its number is adopted whole on a new day
+  // and the moment it catches up; within one day the local figure can only ever
+  // be ahead by picks whose paste hasn't landed yet.
+  const onPicked = (): void => {
+    setPlaced((prev) => (prev ? { ...prev, placed: prev.placed + 1 } : prev));
+    void fetchPlacedToday(settings).then((next) => {
+      if (!next) return;
+      setPlaced((prev) =>
+        prev && prev.dayKey === next.dayKey && prev.placed > next.placed
+          ? { ...next, placed: prev.placed }
+          : next,
+      );
+    });
+  };
+
   // The checkbox writes the project-level flag, so it survives a panel reopen
   // and any future surface reads the same switch. Optimistic: flip locally,
   // then PATCH; a refusal puts the old value back and says so in `note`.
@@ -245,6 +301,14 @@ export function RadarSection({
 
   // Draft only freshly-discovered tweets (no reply yet), newest-ranked first.
   const undrafted = fresh.slice(0, radarBatchSize(server));
+  // CQ.5 — the same button in the Cannon view, over the cannon rows instead:
+  // score-desc, un-drafted, capped by the same knob. One click still means one
+  // Grok call at the same price — this only changes which rows it sends.
+  const cannonUndrafted = cannon.rows
+    .filter((r) => !r.s.reply)
+    .map((r) => r.s)
+    .slice(0, radarBatchSize(server));
+  const draftSet = view === 'cannon' ? cannonUndrafted : undrafted;
   // RC.4 — how many survive a curated pass, and therefore whether curating is
   // worth a second call at all: below this size "Draft replies" already covers
   // the whole queue.
@@ -298,12 +362,12 @@ export function RadarSection({
     }
   };
 
-  const draftReplies = async (): Promise<void> => {
-    if (undrafted.length === 0) return;
+  const draftReplies = async (rows: RadarSighting[]): Promise<void> => {
+    if (rows.length === 0) return;
     setBusy('draft');
     setNote(null);
     try {
-      const out = await sendBatch(undrafted);
+      const out = await sendBatch(rows);
       if (out.ok) setNote(`${out.drafted}/${out.requested} drafted · $${out.cost.toFixed(4)}`);
       else setNote(out.detail ? `Draft failed: ${out.detail}` : 'Draft failed');
     } finally {
@@ -410,29 +474,40 @@ export function RadarSection({
     }
   };
 
-  const shown = view === 'queue' ? queue : clicked;
+  // What Clear acts on: whatever the current view is showing. A dismiss is
+  // global by design (the row leaves every view and never re-enters), so in the
+  // Cannon view this clears exactly the rows on screen — not the aged-out ones
+  // it is hiding, which are still workable from Queue.
+  const shown =
+    view === 'queue' ? queue : view === 'cannon' ? cannon.rows.map((r) => r.s) : clicked;
 
   return (
     <Section
       title="Radar"
       actions={
         <>
-          {view === 'queue' && (
+          {view !== 'clicked' && (
             <button
               type="button"
               className="radar-draft"
-              onClick={() => void draftReplies()}
-              disabled={busy !== null || undrafted.length === 0}
+              onClick={() => void draftReplies(draftSet)}
+              disabled={busy !== null || draftSet.length === 0}
               title="One Grok call drafts a reply for each un-drafted tweet"
             >
               {busy === 'draft'
                 ? 'Drafting…'
-                : `Draft replies${undrafted.length ? ` (${undrafted.length})` : ''}`}
+                : `Draft replies${draftSet.length ? ` (${draftSet.length})` : ''}`}
             </button>
           )}
           {/* RC.4 — only once the queue outgrows what a curated pass would keep.
               Below that, plain "Draft replies" already covers every fresh row
-              and curating would be a second call that changes nothing. */}
+              and curating would be a second call that changes nothing.
+
+              Queue-only, and it stays that way (CQ.5): the cannon rows are
+              already ranked by a MEASUREMENT — views per reply, off the numbers
+              the page handed us — and paying a model call to re-rank a set that
+              arithmetic already ordered is exactly the spend §7.4 refuses.
+              Adding it here is the first thing a later reader will reach for. */}
           {view === 'queue' && canCurate && (
             <button
               type="button"
@@ -470,6 +545,17 @@ export function RadarSection({
         >
           Queue{queue.length > 0 ? ` (${queue.length})` : ''}
         </button>
+        {/* CQ.5 — the arbitrage lane. Still the hand-rolled strip RD.1 shipped:
+            migrating it to the SubTabs primitive is a styling rewrite of two
+            existing views and does not belong in the same commit as a new one. */}
+        <button
+          type="button"
+          className={`radar-tab${view === 'cannon' ? ' active' : ''}`}
+          onClick={() => setView('cannon')}
+          title="Fresh posts with a lot of eyes and almost no replies — sorted by views per reply, gone once they age out."
+        >
+          Cannon{cannon.rows.length > 0 ? ` (${cannon.rows.length})` : ''}
+        </button>
         <button
           type="button"
           className={`radar-tab${view === 'clicked' ? ' active' : ''}`}
@@ -504,7 +590,51 @@ export function RadarSection({
 
       {note && <div className="status-line">{note}</div>}
 
-      {view === 'queue' ? (
+      {view === 'cannon' ? (
+        <>
+          {/* The daily instrument. It counts pasted replies (the whole day's,
+              from every surface), not cannon shots — the target is the one the
+              replies commitment/doctrine already owns, so this head and the
+              quest can never show two different numbers. */}
+          {placed && (
+            <div className="radar-cannon-head">
+              <span className="radar-cannon-placed">
+                placed today {placed.placed} / {placed.target}
+              </span>
+            </div>
+          )}
+          {cannon.rows.length === 0 ? (
+            cannon.hidden > 0 ? (
+              // "You missed the window" and "there was nothing to shoot at" are
+              // different facts, and only one of them is a reason to go change
+              // the roster. Never collapse these two into one line.
+              <EmptyState
+                line={`${cannon.hidden} ${cannon.hidden === 1 ? 'entry' : 'entries'} aged out past ${server.cannon.maxAgeMin} minutes.`}
+                hint="They're still in Queue — the cutoff only hides them here. Catching these means browsing closer to when they're posted, not a wider roster."
+              />
+            ) : (
+              <EmptyState
+                line={`Nothing scoring above ${formatCount(server.cannon.scoreMin)} right now — the cannon queue fills from posts under ${server.cannon.maxAgeMin} minutes old.`}
+                hint="Scroll a roster account's profile or your timeline: a fresh post with a lot of views and almost no replies lands here on sight."
+              />
+            )
+          ) : (
+            <ul className="radar-list">
+              {cannon.rows.map((r) => (
+                <RadarRow
+                  key={r.s.tweetId}
+                  s={r.s}
+                  cannon={r}
+                  settings={settings}
+                  onOpenPerson={onOpenPerson}
+                  humanizer={humanizer}
+                  onPicked={onPicked}
+                />
+              ))}
+            </ul>
+          )}
+        </>
+      ) : view === 'queue' ? (
         queue.length === 0 ? (
           <EmptyState
             line="Browse X — hot/warm tweets you scroll past queue up here."
@@ -519,6 +649,7 @@ export function RadarSection({
                 settings={settings}
                 onOpenPerson={onOpenPerson}
                 humanizer={humanizer}
+                onPicked={onPicked}
               />
             )}
             {fresh.length > 0 && (
@@ -528,6 +659,7 @@ export function RadarSection({
                 settings={settings}
                 onOpenPerson={onOpenPerson}
                 humanizer={humanizer}
+                onPicked={onPicked}
               />
             )}
           </>
@@ -546,6 +678,7 @@ export function RadarSection({
               settings={settings}
               onOpenPerson={onOpenPerson}
               humanizer={humanizer}
+              onPicked={onPicked}
             />
           ))}
         </ul>
@@ -560,12 +693,14 @@ function RadarGroup({
   settings,
   onOpenPerson,
   humanizer,
+  onPicked,
 }: {
   label: string;
   rows: RadarSighting[];
   settings: Settings;
   onOpenPerson: (handle: string) => void;
   humanizer: HumanizerSettings | null;
+  onPicked: () => void;
 }): JSX.Element {
   return (
     <>
@@ -578,6 +713,7 @@ function RadarGroup({
             settings={settings}
             onOpenPerson={onOpenPerson}
             humanizer={humanizer}
+            onPicked={onPicked}
           />
         ))}
       </ul>
@@ -590,11 +726,19 @@ function RadarRow({
   settings,
   onOpenPerson,
   humanizer,
+  onPicked,
+  cannon,
 }: {
   s: RadarSighting;
   settings: Settings;
   onOpenPerson: (handle: string) => void;
   humanizer: HumanizerSettings | null;
+  /** CQ.5 — a pick is a placement in flight; the head's counter wants to know. */
+  onPicked: () => void;
+  /** CQ.5 — present only in the Cannon view. The numbers come from the queue
+   *  that decided membership, never recomputed here: the row must not be able
+   *  to print an age the 30-minute cutoff disagrees with. */
+  cannon?: Omit<CannonRow, 's'>;
 }): JSX.Element {
   // HM.3 — what the last click actually did, not just that it happened: the
   // humanizer is invisible otherwise, and "it does nothing" has to be answerable.
@@ -632,6 +776,7 @@ function RadarRow({
     const taken = jittered?.text ?? text;
     markClicked(s.tweetId);
     confirmDraft(s.tweetId, taken);
+    onPicked();
     // The anchor is about to open the tweet in a new tab — tell the content
     // script on that tab to put the caret in the composer, so the landing
     // keystroke is the ⌘V and nothing else.
@@ -648,10 +793,15 @@ function RadarRow({
   return (
     <li className={`radar-row${s.reply ? ' radar-row-replied' : ''}`}>
       <div className="radar-row-head">
-        <span
-          className={`radar-band radar-band-${s.band}`}
-          title={s.band === 'roster' ? ROSTER_BAND_TITLE : undefined}
-        >
+        {cannon && (
+          <span
+            className="radar-cannon-score"
+            title="Views per reply — how many people are reading this post for each reply already under it. The whole arbitrage model; author size is deliberately not in it."
+          >
+            {formatCount(Math.round(cannon.score))}
+          </span>
+        )}
+        <span className={`radar-band radar-band-${s.band}`} title={BAND_TITLE[s.band]}>
           {BAND_LABEL[s.band]}
         </span>
         <button
@@ -687,7 +837,9 @@ function RadarRow({
       <a className="radar-text" href={s.url} target="_blank" rel="noreferrer">
         {s.text || s.url}
       </a>
-      <div className="radar-why">{whyLine(s)}</div>
+      <div className="radar-why">
+        {whyLine(s, cannon?.ageMin ?? displayAgeMin(s, Date.now()), cannon?.tone ?? 'ok')}
+      </div>
       {/* SC.4 — the coach score sits with the CHOICE: on the tabs when there is
           one to make, on the reply itself when the row carries a single draft
           (a pre-variant or CLI row). Never on both, and it never reorders the
@@ -768,8 +920,7 @@ function rowAngles(s: RadarSighting): { angle: string | null; text: string }[] {
 
 // The band chip's face. Only 'roster' needs a translation: the stored value is
 // the cohort key the server records, "your circle" is what it means to a human
-// (GT.8) — and it is the only band whose reason isn't visible in the numbers
-// below it, so it is also the only one carrying a tooltip.
+// (GT.8).
 const BAND_LABEL: Record<RadarSighting['band'], string> = {
   hot: 'hot',
   warm: 'warm',
@@ -777,8 +928,21 @@ const BAND_LABEL: Record<RadarSighting['band'], string> = {
   roster: 'your circle',
   cannon: 'cannon',
 };
-const ROSTER_BAND_TITLE =
-  'Below the reply band, but in the queue anyway: you have replied to them before, or they are on your 2–10x target roster. Same rule the reply gate uses.';
+
+// A band carries a tooltip when its reason ISN'T visible in the numbers under
+// it (the GT.8 rule). Two qualify: a roster capture says nothing about the
+// tweet, and a cannon capture is a claim the band chip alone can't distinguish
+// from the read-time score — the tweet may be here because of who posted it.
+// hot/warm/manual are self-explaining and stay bare.
+const BAND_TITLE: Record<RadarSighting['band'], string | undefined> = {
+  hot: undefined,
+  warm: undefined,
+  manual: undefined,
+  roster:
+    'Below the reply band, but in the queue anyway: you have replied to them before, or they are on your 2–10x target roster. Same rule the reply gate uses.',
+  cannon:
+    'Captured for the cannon: either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast.',
+};
 
 // S0.3 chip tooltip — why this author outranks a louder rando.
 function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
@@ -788,8 +952,17 @@ function tierLabel(tier: NonNullable<RadarSighting['personTier']>): string {
 }
 
 // "1.5k views · 8 replies · 22m · 70/min · bait"
-function whyLine(s: RadarSighting): string {
+//
+// CQ.5 — the age arrives as an argument and so does how it should read. Two
+// reasons, and they are the same reason twice: the Cannon view's cutoff already
+// computed this row's age and the line must not print a different one, and a
+// "too old" TONE is a Cannon judgement, not a fact about the row — so the caller
+// decides it and this function stays two branches, not three.
+function whyLine(s: RadarSighting, ageMin: number, tone: 'ok' | 'red'): JSX.Element {
   const { views, replies, vpm, bait } = s.signals;
+  const age = (
+    <span className={tone === 'red' ? 'radar-age-red' : undefined}>{fmtAge(ageMin)}</span>
+  );
   // A queue-metadata row with no captured metrics — don't render a line of
   // zeros; a cold tweet has nothing to quantify yet. The two bands that get here
   // are the ones that entered the queue for a reason the numbers don't hold: a ⊕
@@ -798,19 +971,23 @@ function whyLine(s: RadarSighting): string {
   // already says why they're here.
   if (views === 0 && replies === 0 && (s.band === 'manual' || s.band === 'roster')) {
     const why = s.band === 'manual' ? 'manually added' : 'someone in your circle';
-    return `${why} · ${fmtAge(displayAgeMin(s))}`;
+    return (
+      <>
+        {`${why} · `}
+        {age}
+      </>
+    );
   }
-  const parts = [`${formatCount(views)} views`, `${replies} replies`, fmtAge(displayAgeMin(s))];
-  if (vpm >= 1) parts.push(`${formatCount(Math.round(vpm))}/min`);
-  if (bait) parts.push('bait');
-  return parts.join(' · ');
-}
-
-// signals.ageMin was measured at lastSeenAt; the tweet keeps aging while it
-// sits in the queue, so show capture age + time since capture.
-function displayAgeMin(s: RadarSighting): number {
-  const sinceSeen = (Date.now() - Date.parse(s.lastSeenAt)) / 60000;
-  return s.signals.ageMin + (Number.isFinite(sinceSeen) ? Math.max(0, sinceSeen) : 0);
+  const tail: string[] = [];
+  if (vpm >= 1) tail.push(`${formatCount(Math.round(vpm))}/min`);
+  if (bait) tail.push('bait');
+  return (
+    <>
+      {`${formatCount(views)} views · ${replies} replies · `}
+      {age}
+      {tail.length > 0 ? ` · ${tail.join(' · ')}` : ''}
+    </>
+  );
 }
 
 function fmtAge(min: number): string {

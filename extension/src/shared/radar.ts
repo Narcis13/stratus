@@ -8,6 +8,7 @@
 // chrome plumbing lives in background.ts (single writer) and
 // sidepanel/Radar.tsx (reader).
 
+import { CANNON, type CannonThresholds, cannonAgeTone, cannonScore } from '../cannon.ts';
 import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyVariant } from './types.ts';
 
@@ -271,6 +272,77 @@ export function groupQueue(queue: RadarSighting[]): {
   const fresh: RadarSighting[] = [];
   for (const s of queue) (s.reply ? ready : fresh).push(s);
   return { ready, fresh };
+}
+
+// How old the tweet is on screen. `signals.ageMin` was measured at lastSeenAt
+// and the tweet keeps aging while the row sits in the queue, so the displayed
+// age is capture age + time since capture. An unparseable `lastSeenAt` falls
+// back to the capture age rather than to NaN — same instinct as pruneStale's.
+//
+// CQ.5 moved this out of Radar.tsx: the Cannon view's 30-minute cutoff and the
+// age it prints have to be one reading. Two functions would eventually let the
+// list show `28m` on a row the filter had already decided was 31 minutes old.
+export function displayAgeMin(s: RadarSighting, nowMs: number): number {
+  const sinceSeen = (nowMs - Date.parse(s.lastSeenAt)) / 60000;
+  return s.signals.ageMin + (Number.isFinite(sinceSeen) ? Math.max(0, sinceSeen) : 0);
+}
+
+// CQ.5 — one row of the Cannon view: the sighting plus the three numbers the
+// membership decision already computed, so the component never recomputes (and
+// never disagrees with) them.
+export interface CannonRow {
+  s: RadarSighting;
+  /** views / (replies + 1), from the shared scorer. */
+  score: number;
+  /** displayAgeMin at the nowMs the queue was built with. */
+  ageMin: number;
+  /** How that age renders — 'red' past `redAgeMin`, still eligible. */
+  tone: 'ok' | 'red';
+}
+
+// The arbitrage lane: fresh posts with a lot of eyes and almost no replies.
+//
+// Membership is two independent halves (decision 4). `band === 'cannon'` is the
+// CAPTURE reason — content.ts queued it because the author is on the camped
+// roster, or because it cleared the floor when it was sighted — and it holds
+// even if the row has since fallen under the floor: the reason it is here is
+// not a number that has to keep being true. The score test is the READ-TIME
+// half, which is what lets a tweet the classifier already called `hot` appear
+// here without being re-banded.
+//
+// The `maxAgeMin` cutoff is display-time filtering and nothing else (decision
+// 5): the row stays in the buffer under its own 24h TTL and keeps its place in
+// the main Queue. `hidden` is what makes that visible — "you missed the window"
+// and "there was nothing to shoot at" are different facts, and only one of them
+// is a reason to go change the roster.
+//
+// Clicked rows are excluded. The caller passes the QUEUE (groupQueue's
+// contract), so this is belt-and-braces — but a clicked row surfacing in a
+// lane whose whole promise is "not worked yet" is the one failure worth a line.
+export function cannonQueue(
+  sightings: RadarSighting[],
+  nowMs: number,
+  t: CannonThresholds = CANNON,
+): { rows: CannonRow[]; hidden: number } {
+  const rows: CannonRow[] = [];
+  let hidden = 0;
+  for (const s of sightings) {
+    if (s.clickedAt) continue;
+    const score = cannonScore(s.signals);
+    if (s.band !== 'cannon' && score < t.scoreMin) continue;
+    const ageMin = displayAgeMin(s, nowMs);
+    if (ageMin > t.maxAgeMin) {
+      hidden += 1;
+      continue;
+    }
+    rows.push({ s, score, ageMin, tone: cannonAgeTone(ageMin, t) });
+  }
+  // Score desc — the whole point of the lane — then the fresher sighting, which
+  // is the tiebreak the rest of the queue uses.
+  rows.sort((a, b) =>
+    a.score !== b.score ? b.score - a.score : b.s.lastSeenAt.localeCompare(a.s.lastSeenAt),
+  );
+  return { rows, hidden };
 }
 
 // RC.4 — how a "Curate & draft" click splits the fresh queue before it spends.

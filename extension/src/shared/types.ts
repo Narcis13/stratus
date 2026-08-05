@@ -957,6 +957,16 @@ export interface ReplyPatchBody {
   postedTweetId?: string | null;
 }
 
+// CQ.3 — GET /x/radar/placed-today, the Cannon head's daily instrument.
+// `placed` counts reply_drafts that reached `posted` (the on-page paste, RU.7)
+// inside the local day; `target` is the active replies commitment or the
+// doctrine ceiling — one owner, so the counter and the quest can't disagree.
+export interface PlacedTodayResponse {
+  dayKey: string;
+  placed: number;
+  target: number;
+}
+
 // -------------------------------------------------------------- mentions
 
 // Mention inbox rows (§7.5) as returned by GET /x/mentions — mirrors the
