@@ -147,11 +147,19 @@ export interface GetUserTweetsOptions {
   sinceId?: string;
   /** Pull `non_public_metrics` and `organic_metrics` (≤30d, owned only). */
   ownedPrivate?: boolean;
+  /** Drop replies server-side (`exclude=replies`). A COST lever, not a filter:
+   *  X bills every result in the response body (invariant #5), so excluding
+   *  replies here is the only way to stop paying $0.001 each for them — dropping
+   *  them in JS after the fact costs exactly the same as keeping them. At
+   *  100+ manual replies/day this is the difference between ~$0.10 and ~$0.005
+   *  a pass. The trade is that those replies never reach `posts_published`. */
+  excludeReplies?: boolean;
 }
 
 /**
  * Cost: $0.001/result if `xUserId` is the authenticated user, $0.005/result otherwise.
- * Replies and retweets are included by default. Hard cap of 3,200 tweets per X.
+ * Replies and retweets are included by default (see `excludeReplies`). Hard cap
+ * of 3,200 tweets per X.
  */
 export async function* getUserTweets(
   token: string,
@@ -166,6 +174,7 @@ export async function* getUserTweets(
       token,
       query: {
         max_results: pageSize,
+        ...(opts.excludeReplies ? { exclude: 'replies' } : {}),
         ...(opts.sinceId ? { since_id: opts.sinceId } : {}),
         ...defaultPostParams(opts.ownedPrivate ? { ownedPrivate: true } : undefined),
         ...(nextToken ? { pagination_token: nextToken } : {}),

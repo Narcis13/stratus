@@ -21,6 +21,20 @@
 //      snapshot pass immediately re-read the very same ids minutes later — every
 //      own tweet was billed TWICE per day. At ~90 tweets/day that second read
 //      was ~$0.09/day of pure duplication (audit, 2026-07-23).
+//
+//      REPLIES ARE OPT-IN (`x.workers.discoveryExcludeReplies`, default ON =
+//      excluded). Under the Cannon the account types 100+ manual replies a day
+//      and the pull bills $0.001 for every one — ~$0.10/pass, growing linearly
+//      with reply volume, for numbers the $0 DOM harvest measures BETTER: it
+//      carries parent views, parent reply count and latency, which the API does
+//      not return at all, and it can be re-run (the once-only snapshot fires ~7h
+//      after posting and undercounts a reply's final views by ~50%). Note the
+//      once-only guarantee protects the DB, not the wallet: a re-pull writes
+//      nothing but X still bills every item in the response body, so a manual
+//      `POST /posts/reconcile` used to cost another ~$0.09 (audit, 2026-08-06).
+//      What goes dark while the knob is on: manually-typed replies never reach
+//      posts_published, so playbook reply angles, people warmth, brief/digest
+//      reply counts and conversations see only what the harvest supplies.
 //   B. Snapshot — the leftovers only: non-retired rows the pull did NOT cover
 //      (anything below the checkpoint — a publisher insert the pull missed, or a
 //      batch a previous run failed on). Batched id lookup (`GET /2/tweets?ids=`,
@@ -83,6 +97,11 @@ export interface RunOptions {
    *  tests and one-off manual runs. */
   winnerRereadMinViews?: number;
   winnerRereadCap?: number;
+  /** Ask X to leave replies out of the discovery pull. Omitted → read from
+   *  `x.workers.discoveryExcludeReplies` at the start of the run, so a PATCH
+   *  binds the next pass (and the next manual reconcile) with no restart.
+   *  Explicit values are for tests and one-off recovery runs. */
+  excludeReplies?: boolean;
 }
 
 export interface RunResult {
@@ -114,6 +133,10 @@ export interface RunResult {
   /** Manual scheduled rows linked to their pasted tweet this run (A3.6). $0 —
    *  pure SQL over already-billed rows. */
   manualLinked: number;
+  /** Whether this run asked X to leave replies out of the discovery pull. Part
+   *  of the result because it is the single biggest lever on what the pass
+   *  costs, and `scanned` is meaningless without knowing which it was. */
+  excludedReplies: boolean;
 }
 
 export const DAILY_METRICS_HEARTBEAT = 'x.dailyMetrics';
@@ -152,6 +175,8 @@ export async function runDailyMetrics(
     mentionsAnswered: 0,
     rereadWinners: 0,
     manualLinked: 0,
+    excludedReplies:
+      runOpts.excludeReplies ?? getSetting<boolean>('x.workers.discoveryExcludeReplies'),
   };
 
   const token = await getValidAccessToken({
@@ -216,7 +241,7 @@ export async function runDailyMetrics(
       `retired=${result.retired} failed=${result.failed} ` +
       `account=${result.accountSnapshotted} mentions=${result.mentionsNew}/${result.mentionsScanned} ` +
       `mentionsAnswered=${result.mentionsAnswered} rereadWinners=${result.rereadWinners} ` +
-      `manualLinked=${result.manualLinked}`,
+      `manualLinked=${result.manualLinked} excludedReplies=${result.excludedReplies}`,
   );
   return result;
 }
@@ -291,6 +316,7 @@ async function discover(
     maxResults,
     ...(sinceId ? { sinceId } : {}),
     ...(ownedPrivate ? { ownedPrivate: true } : {}),
+    ...(result.excludedReplies ? { excludeReplies: true } : {}),
   })) {
     result.scanned++;
     maxSeen = maxTweetId(maxSeen, tweet.id);
@@ -334,6 +360,14 @@ async function discover(
   // never regresses (e.g. a fullScan that returns only older tweets), and an
   // empty pull re-persists the same value so bootstrap freezes the checkpoint
   // below any tweet posted after this pass.
+  //
+  // Under `exclude=replies` the high-water advances only on ORIGINALS, so the
+  // scan window widens across a reply-only stretch. That is deliberate and it is
+  // free (the excluded replies are never in the response body, so never billed);
+  // it also means the checkpoint can sit days below the true timeline top. If the
+  // knob is ever turned back off, the replies posted while it was on are BELOW
+  // the checkpoint and will not be picked up incrementally — recovering them
+  // needs an explicit `fullScan`, at $0.001 each.
   const next = maxTweetId(stored, maxSeen);
   if (next) await saveDiscoveryCheckpoint(next);
 }

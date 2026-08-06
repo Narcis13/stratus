@@ -43,11 +43,21 @@ export function createPostsRouter(deps: DailyMetricsDeps): Hono {
     const fullScan = body?.fullScan === true;
     const maxResults = parseMaxResults(body?.maxResults);
     if (maxResults === 'invalid') return c.json({ error: 'invalid_max_results' }, 400);
+    // Per-call override of `x.workers.discoveryExcludeReplies`. The recovery
+    // path: with the knob on, replies posted since it was flipped sit BELOW the
+    // discovery checkpoint, so pulling them back needs `{fullScan: true,
+    // excludeReplies: false}` — and it needs to be possible without editing a
+    // setting. Absent → the knob decides.
+    if (body?.excludeReplies !== undefined && typeof body.excludeReplies !== 'boolean') {
+      return c.json({ error: 'invalid_exclude_replies' }, 400);
+    }
+    const excludeReplies = body?.excludeReplies as boolean | undefined;
 
     try {
       const result = await runDailyMetrics(deps, {
         fullScan,
         ...(maxResults !== undefined ? { maxResults } : {}),
+        ...(excludeReplies !== undefined ? { excludeReplies } : {}),
       });
       return c.json(result);
     } catch (err) {
@@ -63,6 +73,7 @@ export function createPostsRouter(deps: DailyMetricsDeps): Hono {
 interface Body {
   fullScan?: unknown;
   maxResults?: unknown;
+  excludeReplies?: unknown;
 }
 
 async function readJson<T = Body>(req: Request): Promise<T | null> {

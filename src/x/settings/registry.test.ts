@@ -214,6 +214,7 @@ describe('registry adapter + grouping', () => {
       'x.workers.publisherIntervalSec',
       'x.workers.winnerRereadMinViews',
       'x.workers.winnerRereadCap',
+      'x.workers.discoveryExcludeReplies',
     ]);
 
     // The best-time gate is mirrored — the composer chips gate client-side on

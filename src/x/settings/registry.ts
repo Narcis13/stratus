@@ -727,6 +727,16 @@ const WORKERS: SettingDef[] = [
     max: 10,
     scope: 'server',
   },
+  {
+    key: 'x.workers.discoveryExcludeReplies',
+    group: 'workers',
+    label: 'Discovery skips replies',
+    description:
+      'Adds exclude=replies to the discovery pull. X bills every result it returns (invariant #5), so at Cannon reply volume (100+/day) this is the difference between ~$0.10 and ~$0.005 a pass — and the $0 DOM harvest measures replies BETTER, since it also carries parent views, parent reply count and latency. The trade: manually-typed replies stop reaching posts_published, so every reply-fed surface (playbook reply angles, people warmth, brief/digest reply counts, conversations) only sees what the harvest read layer supplies. Turn OFF to restore the paid path.',
+    type: 'boolean',
+    default: true,
+    scope: 'server',
+  },
 ];
 
 // Budgets (§8) — the two spend ceilings, both read at REQUEST time inside the
