@@ -125,7 +125,7 @@ Above the editor is an **Idea steer** box: *"Idea steer (optional — used on th
 
 ### Generating and the three variants
 
-Every generate returns **three distinct replies** — one per angle — and each is tagged with the **angle** describing its approach:
+Every generate returns **three distinct replies** — one per angle — and each is tagged with the **angle** describing its approach. (A reply in a language other than English returns **one**, on the `extends` angle only — see **[Replying in another language](#replying-in-another-language)** for why.)
 
 | Angle | The reply's approach |
 |---|---|
@@ -141,11 +141,27 @@ The three variants show as **chips** above the reply box, labelled like `V1 · e
 
 Each chip also carries a small **coach score** — the same 0–100 pre-publish check the Composer runs on originals (**[Composer → The coach](./composer-tab.md#the-coach-live-score-and-fix-list)**), graded here as a reply, so it never asks a mid-conversation line for a hook or blank-line spacing. It's computed on your machine: no call, no spend, no wait. **Hover the number** for the score, the worst two things about that variant, and the reminder that it's a floor rather than a target. It changes nothing else — the chips stay in generate order, nothing is pre-picked, and a 62 you'd actually send beats an 84 you wouldn't. The same number rides the angle tabs in Radar, the Conversations drafts, and the Launch Room's first comment. It grades against your niche's vocabulary too — a variant whose specific thing is a word from your channels' keywords counts as concrete without needing a number in it.
 
+### Replying in another language
+
+You reply to a Japanese account the same way you reply to anyone: hit **Reply Master**. The server works out what language the post is in and drafts in that language — **you don't pass anything**.
+
+**How it picks, in order.** (1) You chose one — the language override below, or a Radar batch where every row agreed. (2) The handle is pinned to a language on the **[Cannon roster](./radar-tab.md#the-roster--who-you-camp)**. (3) The post's own script. (4) Otherwise English. A **language chip** above the reply says which language it picked, and its tooltip says *which of those rules fired* — "detected from the post", "pinned on the cannon roster", or "you chose it". If it guessed wrong, one click on **draft in English** redrafts.
+
+Detection reads the **script**, so it can tell Japanese from Chinese from Korean from Arabic from Russian, and a Japanese post quoting an English product name still reads as Japanese. What it can't do is tell Spanish from Portuguese from French — they share the Latin alphabet, so a Latin-script post drafts in English. **If you reply to those accounts regularly, pin the language on the roster**; that's what the pin is for. A benched roster handle keeps its language — benching means "stop camping them", not "start replying to them in English".
+
+**One reply, not three.** A non-English draft comes back as a single `extends` variant. Contrarian and debate exist to pick a fight, and picking a fight in a language you can't read, under an account whose audience you can't read either, is the one reply on X you cannot walk back — you wouldn't know you'd been rude until the quote-tweets arrived. The English lane keeps all three angles.
+
+**A literal English gloss** sits under the reply, muted. It is deliberately *not* a polished translation — it's word-faithful, because a fluent rendering hides exactly the register and politeness mistakes the gloss exists to catch. Read it before you paste. **It is never part of what you copy** — the copy button always yields only the reply itself.
+
+**The register is the part to actually check.** The prompt tells the model which politeness axis that language runs on — です・ます vs 敬語 for Japanese, Modern Standard vs dialect for Arabic, tu vs vous for French — but whether it picked the right one is model judgement, not something stratus can guarantee. The gloss is what makes that judgement visible to you before you paste, not after.
+
+**Right-to-left languages** (Arabic, Hebrew) render the reply and its counter right-to-left; the gloss stays left-to-right, because it's English.
+
 ### Editing the reply
 
 The reply itself sits in a big text box you can freely edit:
 
-- A **character counter** shows how many of X's 280 characters you have left; it turns red if you go over.
+- A **character counter** shows how much of X's 280 you have left — **and it counts the way X counts, not the way a keyboard counts**. X weights most characters at 1 but CJK, Kana, Hangul and emoji at **2**, so a Japanese reply really gets ~140 characters. (Arabic, Hebrew, Cyrillic and Devanagari are weight 1 — they get the full 280, unchanged. "It's not English so halve it" is wrong.) It turns red if you go over.
 - Below the box, small print shows the **Grok model** used, the **cost** of the draft, an **· edited** marker once you've changed the text, and a **· saving…** flicker while your edits are being saved. (Edits are saved automatically as you type — you don't need a save button.)
 - Typing your edit back to exactly the original wording clears the "edited" state.
 
@@ -156,6 +172,8 @@ Not happy with any variant? **Regenerate** runs a fresh set of three. It reuses 
 ### What a draft costs
 
 Drafting runs on Grok (xAI), **not** the X API — so it doesn't touch your X spend. A reply draft is roughly **$0.002–$0.004**: all three variants in one call, plus — occasionally — one automatic re-draft if neither variant is specific enough (stratus quietly asks again for something less generic). The exact cost is shown under the reply box and in the history list.
+
+**A non-English draft costs *less* than an English one**, which is not the direction anyone expects: it's one variant instead of three, and the "not specific enough" re-draft never fires. That check looks for a digit, a first-person word or a named tool — all three are Latin-alphabet tests that a Japanese or Arabic reply fails almost by definition, so applying it there would mean paying for a second draft on essentially every non-English reply and then keeping the first one anyway. An English-tuned check applied to Japanese isn't a failing verdict, it's an inapplicable one, so it simply doesn't run.
 
 ### Advanced: system prompt override
 

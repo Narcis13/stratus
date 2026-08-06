@@ -421,6 +421,54 @@ a real exchange.
 > See `docs/radar-tab.md` §"The Cannon", `docs/settings-tab.md` (the **Cannon** knob group) and
 > `docs/PHASE-HISTORY.md` for the full entry.
 
+> **✓ Multilingual replies — the reply lane in any language (ML.1–ML.6, 2026-08-06).** The cannon
+> lane surfaces accounts by reach, and reach does not stop at the English-speaking internet; this
+> changes *what language* the reply effort is spent in. `plans/2026-08-05-multilingual-replies.md`,
+> shipped whole (all 6 tasks). **No new table, no migration, no new X read, no new LLM call** — and a
+> non-English draft is CHEAPER than the English call it replaces (one variant instead of three, one
+> fewer regenerate), while an English call is byte-identical to before.
+>
+> - **`src/shared/language.ts` is `replyBand.ts`/`cannon.ts`'s third sibling** — dependency-free,
+>   reached from the content IIFE through the shim `extension/src/language.ts`, so the page and the
+>   server can never disagree on how long a Japanese reply may be. It carries `weightedLength`
+>   (twitter-text's rule, over **codepoints**), `detectScript`, `resolveLanguageProfile` and eleven
+>   `LANGUAGE_PROFILES`. **The counter-intuitive fact it exists to record: Arabic, Cyrillic, Hebrew
+>   and Devanagari are weight 1 — 280 real characters, no length change at all — while CJK/Kana/
+>   Hangul are weight 2, i.e. ~140.** "Non-English ⇒ halve the budget" would lose half an Arabic
+>   reply. Adding a language is one table entry; Arabic is the shipped proof.
+> - **Resolution is server-side and lives in one place** (`src/x/replies/language.ts`): explicit body
+>   value → the cannon roster's pin → the post's own script → English. It runs **inside the
+>   refuse-before-spend ladder, after the band gate** (§7.4 is about order, not amount), and both
+>   generate paths call the same function so single and batch cannot fork. The batch resolves per
+>   **call**, not per tweet, and is all-or-nothing over the set — the batch prompt has one
+>   instruction block. `cannonLanguageFor` deliberately ignores `active`: benching means "stop
+>   camping", not "start replying in English".
+> - **One `extends` variant for every non-English language, enforced in three layers** — a narrowed
+>   `angle` enum (provider-enforced), one line in the rendered clause, and a deterministic
+>   server-side trim. The trim is the contract; `maxItems` is a D164b unsupported keyword, so an
+>   array length cannot be capped in a strict schema the way an enum can. Contrarian and debate are
+>   the two angles that go badly wrong in a language you cannot read, and you would not know until
+>   the quote-tweets arrived. English keeps all three.
+> - **Every new instruction rides on a rendered VALUE** (§7.14, CQ.7's discipline one level up):
+>   `reply prompt.md` and both TS literals are untouched and their byte-sync tests never moved. A
+>   resolved-English call renders the pre-plan prompt byte-for-byte.
+> - **A literal English gloss under each variant, parsed leniently** (§7.35's second exemplar): a
+>   missing/null/non-string gloss becomes `null` and the variant *survives*, because a bad gloss
+>   costs a convenience on something already paid for while a bad `text` poisons what you paste.
+> - **The specificity gate is SKIPPED for non-English, not ported.** Its three regexes are
+>   Latin-alphabet by construction, so a Japanese reply fails ~always and `:370`'s regenerate fired
+>   on essentially every non-English call — systematic waste once there is one variant instead of
+>   three. An inapplicable heuristic yields *unknown*, not *fail* (§7.11). Verified live: an Arabic
+>   draft that fails the gate now makes exactly **one** provider call.
+> - **No per-language stat, cell or gate (§7.19).** And one measurement trap this creates, named
+>   rather than measured: every non-English reply is stored `angle: 'extends'` **by construction**,
+>   so the Playbook's angle-effectiveness reading must never treat that as evidence that `extends`
+>   outperforms. Exclude them (or split by language) once they are numerous; revisit at ≥20 replies
+>   placed in any one non-English language.
+>
+> See `docs/replies-tab.md` §"Replying in another language", `docs/radar-tab.md` and
+> `docs/PHASE-HISTORY.md` for the full entry.
+
 ---
 
 ## Phase C4 — The Playbook (close the learning loop)

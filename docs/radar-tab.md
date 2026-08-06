@@ -152,6 +152,10 @@ Two things worth knowing about it:
 
 If every roster handle in the draft set declares the same reply **language**, the batch is drafted in it and the note line says so (`12/12 drafted · $0.0431 · in Japanese`). A mixed or undeclared set gets English and says that too (`· mixed languages — drafted in English`) — one language per call is the honest shape, since the batch prompt has a single instruction block.
 
+**The server can now pick a language nobody declared.** If no roster handle in the set pinned one, it reads the posts' own **script**: when *every* tweet in the batch is in the same language, the whole batch is drafted in it; if they disagree, or if even one is undetectable, the batch goes out in English. That is all-or-nothing on purpose — one instruction block per call means the alternative is 25 replies in a language only the first tweet was written in. An explicit roster pick still wins over detection, and a batch drafted in a detected language says so in the same note line.
+
+**A non-English batch drafts one variant per tweet, on the `extends` angle**, with a literal English **gloss** under it — so a row you can't read still tells you what it says before you copy it. There are no angle tabs on those rows: there's one angle by construction. Full reasoning in **[Replies → Replying in another language](./replies-tab.md#replying-in-another-language)**.
+
 ### The roster — who you camp
 
 At the foot of the Cannon view sits a collapsed **Roster** block. It's the Sunday review, not part of the daily loop, which is why it's cold and collapsed and never refreshes itself while you're working the queue above it.
@@ -186,7 +190,8 @@ Each row is `score · @handle · nN · scored Nd ago`, ranked score-desc with ne
 - **✕** to dismiss the row (done, or not worth it).
 - The **tweet text**, as a link — clicking it just opens the tweet on X.
 - A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
-- **Angle tabs** (once drafted) — `extends` · `contrarian` · `debate`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The score never reorders the tabs.
+- **Angle tabs** (once drafted) — `extends` · `contrarian` · `debate`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The score never reorders the tabs. **A non-English draft has one variant, so no tab strip renders at all** — not an empty one.
+- **A gloss line** under the reply body on a non-English draft: a literal, muted English rendering of what that reply actually says. It is never copied — clicking the body still yields only the reply itself.
 - **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after — or to `copied ✓ · jitter: prefix, typo:swap` / `copied ✓ · no jitter this time` when **Humanize picks** is on (below).
 - A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.
 
