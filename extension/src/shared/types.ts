@@ -801,7 +801,17 @@ export interface PostContext {
   signals?: PostSignals;
   /** Thread context (§7.5 mention inbox): my post the target tweet replies to. */
   parent?: { text: string };
+  /** ML.3: the language this draft was actually written in and which rule picked
+   *  it — SERVER-stamped before the insert (the route's whitelist refuses both
+   *  from a client), so a draft re-read from History still knows. English drafts
+   *  and every pre-ML row leave both absent. Mirrors src/x/replies/prompt.ts. */
+  language?: string;
+  languageSource?: ReplyLanguageSource;
 }
+
+/** Which rule picked the draft's language (src/x/replies/language.ts). The panel
+ *  reads this rather than re-deriving the precedence (§7.4c). */
+export type ReplyLanguageSource = 'explicit' | 'roster' | 'detected';
 
 export type ReplyAngle = 'extends' | 'contrarian' | 'debate';
 
@@ -843,6 +853,15 @@ export interface ReplyDraft {
   updatedAt: string;
 }
 
+/** What POST /x/replies/generate answers with: the persisted row plus ML.3's
+ *  echo of the language resolution. Both `null` on an English draft. The row
+ *  itself is a plain `ReplyDraft` everywhere else (History, PATCH, storage) —
+ *  those paths read the same pair off `contextSnapshot`. */
+export interface ReplyDraftGenerated extends ReplyDraft {
+  language: string | null;
+  languageSource: ReplyLanguageSource | null;
+}
+
 export interface RepliesListOpts {
   status?: ReplyDraftStatus;
   sourceAuthor?: string;
@@ -861,6 +880,12 @@ export interface ReplyGenerateBody {
   systemPromptOverride?: string;
   model?: string;
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
+  // ML.5 — draft this reply in a named language instead of letting the server
+  // resolve one. Top-level, never inside `context` (the route's whitelist drops
+  // it there): it takes the `explicit` branch of the ML.3 precedence, which is
+  // also how the panel's "Draft in English" override redrafts — one existing
+  // concept, no new server field.
+  language?: string;
 }
 
 // Batch reply drafting (Radar §7.2): one Grok call, one reply per queued
@@ -912,6 +937,12 @@ export interface BatchReplyResponse {
   replies: BatchReplyItem[];
   count: number;
   requested: number;
+  // ML.3 — the language the whole batch was drafted in and which rule picked it.
+  // The panel sends one only from the Cannon roster, but the server also
+  // resolves from the roster itself and from the posts' own script, so this can
+  // name a language the panel never sent. Both `null` on an English batch.
+  language: string | null;
+  languageSource: ReplyLanguageSource | null;
   costUsd: number;
   model: string;
   requestId: string | null;

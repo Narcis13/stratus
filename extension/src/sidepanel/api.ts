@@ -179,8 +179,10 @@ import {
   type ReachFit,
   type RepliesListOpts,
   type ReplyDraft,
+  type ReplyDraftGenerated,
   type ReplyDraftStatus,
   type ReplyGenerateBody,
+  type ReplyLanguageSource,
   type ReplyList,
   type ReplyListCreateBody,
   type ReplyListDetail,
@@ -383,8 +385,10 @@ export type {
   PostStatus,
   RepliesListOpts,
   ReplyDraft,
+  ReplyDraftGenerated,
   ReplyDraftStatus,
   ReplyGenerateBody,
+  ReplyLanguageSource,
   ReplyPatchBody,
   HumanizerConfig,
   HumanizerPatchBody,
@@ -1288,9 +1292,12 @@ export const api = {
       return request<{ prompt: string }>(s, '/x/replies/default-prompt');
     },
 
-    generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraft> {
+    // ML.3: the response is the persisted row PLUS the language resolution the
+    // server made (`language`/`languageSource`, both null on an English draft) —
+    // the panel renders WHICH language and WHY without re-deriving the rule.
+    generate(s: Settings, body: ReplyGenerateBody): Promise<ReplyDraftGenerated> {
       // §8.6: the Settings toggle rides along centrally so no call site changes.
-      return request<ReplyDraft>(s, '/x/replies/generate', {
+      return request<ReplyDraftGenerated>(s, '/x/replies/generate', {
         method: 'POST',
         body: { ...body, applyPillars: s.applyPillarsToReplies },
       });

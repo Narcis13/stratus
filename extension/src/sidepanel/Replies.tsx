@@ -1,5 +1,12 @@
 import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { requestReplyFocus } from '../shared/replyFocus.ts';
+import {
+  draftLanguage,
+  glossFor,
+  languageSourceTitle,
+  textDirFor,
+  weightedRemaining,
+} from '../shared/replyLanguage.ts';
 import { CoachChip } from './CoachChip.tsx';
 import { ReplyListsPanel } from './ReplyLists.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -33,7 +40,6 @@ interface Props {
   onOpenPerson: (handle: string) => void;
 }
 
-const TWEET_LIMIT = 280;
 const EDIT_DEBOUNCE_MS = 600;
 const SYSTEM_PROMPT_DEBOUNCE_MS = 600;
 const TWEET_ID_RE = /^\d{1,32}$/;
@@ -380,8 +386,18 @@ function DraftEditor({
     return () => clearTimeout(t);
   }, [text, draft.id, draft.replyText, settings, onChanged]);
 
-  const remaining = TWEET_LIMIT - text.length;
+  // ML.5: X counts a weighted sum over codepoints, not characters — 140 Japanese
+  // characters is a FULL reply. `String.length` said 140 left on one X would
+  // refuse. The `.counter.over` affordance is unchanged; only the number moved.
+  const remaining = weightedRemaining(text);
   const ctx = draft.contextSnapshot;
+  // ML.5: which language this draft is in and why — the server's answer, read
+  // rather than re-derived (§7.4c). `null` on every English draft.
+  const lang = draftLanguage(draft);
+  const dir = textDirFor(lang?.language);
+  // The literal English rendering under a non-English reply (ML.2). Deliberately
+  // outside the copy path: `onCopy` writes `text`, never this.
+  const gloss = glossFor(draft.variants, text);
   const cost = draft.costUsd ? `$${Number(draft.costUsd).toFixed(4)}` : null;
   const isTerminal = draft.status === 'posted' || draft.status === 'discarded';
 
@@ -405,7 +421,10 @@ function DraftEditor({
     }
   };
 
-  const onRegenerate = async (): Promise<void> => {
+  // ML.5: `language` set = the override — one redraft that takes the `explicit`
+  // branch of the server's precedence, which is the same call the Radar's roster
+  // pick makes. No new server concept, and it costs exactly one regenerate.
+  const onRegenerate = async (language?: string): Promise<void> => {
     setBusy('regen');
     setError(null);
     setInfo(null);
@@ -421,6 +440,7 @@ function DraftEditor({
         ...(override ? { systemPromptOverride: override } : {}),
         ...(steer !== '' ? { idea: steer } : {}),
         ...(steer !== '' && ideaId ? { ideaId } : {}),
+        ...(language !== undefined ? { language } : {}),
       });
       await onRegenerated(next);
       if (steer !== '') await onIdeaConsumed();
@@ -502,6 +522,25 @@ function DraftEditor({
           </span>
           <span className="muted">· {relativeTime(draft.createdAt)}</span>
           {isLive && <span className="chip chip-accent">live</span>}
+          {lang && (
+            <>
+              {/* UI.14: an existing tone, never a new colour. `strong` is the
+                  family's neutral emphasis — the language is a property of the
+                  draft, not a status asking the user for anything. */}
+              <span className="chip chip-strong" title={languageSourceTitle(lang.source)}>
+                {lang.language}
+              </span>
+              <button
+                type="button"
+                className="reply-link"
+                title="Redraft this reply in English — one drafting call, same as Regenerate."
+                onClick={() => void onRegenerate('English')}
+                disabled={isTerminal || busy !== null}
+              >
+                {busy === 'regen' ? 'Redrafting…' : 'In English'}
+              </button>
+            </>
+          )}
           <button type="button" className="reply-link" onClick={onClear}>
             Clear
           </button>
@@ -571,7 +610,13 @@ function DraftEditor({
       <label className="field">
         <span>
           Reply
-          <span className={`counter${remaining < 0 ? ' over' : ''}`}>{remaining}</span>
+          {/* The counter follows the reply's direction, but the NUMBER is
+              isolated: in an rtl run the leading minus of an over-budget count
+              reorders to the far side and "-2" reads as "2-". `<bdi>` is exactly
+              the fix, and it leaves the ltr rendering byte-identical. */}
+          <span className={`counter${remaining < 0 ? ' over' : ''}`} dir={dir}>
+            <bdi>{remaining}</bdi>
+          </span>
         </span>
         <textarea
           className="reply-textarea"
@@ -580,7 +625,19 @@ function DraftEditor({
           rows={5}
           disabled={isTerminal}
           spellCheck
+          // ML.5: the TEXT gets the direction, never a container — flipping the
+          // card would mirror the toolbar and the counter's own layout too.
+          dir={dir}
         />
+        {/* The literal English rendering (ML.2), muted and subordinate, and NOT
+            in the copy path: Copy writes the textarea, so what lands on the
+            clipboard is always the target-language reply. Stays ltr — it is
+            English even under an Arabic variant. A null gloss renders nothing. */}
+        {gloss && (
+          <div className="reply-gloss" dir="ltr">
+            {gloss}
+          </div>
+        )}
         <small className="muted">
           {draft.model}
           {cost && <> · {cost}</>}

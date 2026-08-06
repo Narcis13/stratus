@@ -45,6 +45,7 @@ import type {
   CurateResponse,
   HumanizerSettings,
   PlacedTodayResponse,
+  ReplyLanguageSource,
 } from '../shared/types.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { CoachChip } from './CoachChip.tsx';
@@ -72,8 +73,37 @@ const RADAR_KEYS = ['x.display.radarDraftCap', 'x.ai.batchReplyCap', 'x.radar.cu
 // rather than as nested try blocks. `detail` is null when the failure carried
 // no server message.
 type BatchOutcome =
-  | { ok: true; drafted: number; requested: number; cost: number }
+  | {
+      ok: true;
+      drafted: number;
+      requested: number;
+      cost: number;
+      // ML.5 — the language the SERVER settled on, echoed back. Not the same
+      // thing as the one this panel sent: the server also resolves from the
+      // cannon roster itself and from the posts' own script, so this can name a
+      // language no click here chose. `null` = English.
+      language: string | null;
+      languageSource: ReplyLanguageSource | null;
+    }
   | { ok: false; detail: string | null };
+
+// The note's language clause, built from what came BACK. A `null` language is
+// English and says nothing — English is the default and announcing it is noise.
+// The source is worth a word only when the panel didn't pick it: "in Japanese
+// (from the post)" is the honest line for a set the server detected.
+function languageNote(out: {
+  language: string | null;
+  languageSource: ReplyLanguageSource | null;
+}): string {
+  if (!out.language) return '';
+  const how =
+    out.languageSource === 'detected'
+      ? ' (from the posts)'
+      : out.languageSource === 'roster'
+        ? ' (roster)'
+        : '';
+  return ` · in ${out.language}${how}`;
+}
 
 type CurateOutcome = { ok: true; res: CurateResponse } | { ok: false; detail: string | null };
 
@@ -420,7 +450,14 @@ export function RadarSection({
         };
         await chrome.runtime.sendMessage(msg);
       }
-      return { ok: true, drafted: res.replies.length, requested: res.requested, cost: res.costUsd };
+      return {
+        ok: true,
+        drafted: res.replies.length,
+        requested: res.requested,
+        cost: res.costUsd,
+        language: res.language,
+        languageSource: res.languageSource,
+      };
     } catch (e) {
       return { ok: false, detail: e instanceof ApiError ? e.message : null };
     }
@@ -433,21 +470,27 @@ export function RadarSection({
     // CQ.7 — Cannon view only: the camped roster is the one place a per-author
     // language is declared, and the Queue's rows are mostly strangers.
     const pick = view === 'cannon' ? sharedCannonLanguage(rows, cannonLanguages) : null;
-    const langNote =
-      pick === 'mixed'
-        ? ' · mixed languages — drafted in English'
-        : pick
-          ? ` · in ${pick.language}`
-          : '';
     try {
       const out = await sendBatch(
         rows,
         undefined,
         pick && pick !== 'mixed' ? pick.language : undefined,
       );
-      if (out.ok)
-        setNote(`${out.drafted}/${out.requested} drafted · $${out.cost.toFixed(4)}${langNote}`);
-      else setNote(out.detail ? `Draft failed: ${out.detail}` : 'Draft failed');
+      if (out.ok) {
+        // ML.5 — the note reports what came BACK, not what was sent. The server
+        // resolves a language of its own (roster pin, then the posts' script),
+        // so a set this panel called "mixed" can still come back Japanese, and
+        // the old pre-computed clause would have called that English. `mixed`
+        // is still worth saying when the answer really is English: it explains
+        // why a roster of declared languages produced an English batch.
+        const why =
+          out.language === null && pick === 'mixed'
+            ? ' · mixed languages — drafted in English'
+            : '';
+        setNote(
+          `${out.drafted}/${out.requested} drafted · $${out.cost.toFixed(4)}${languageNote(out)}${why}`,
+        );
+      } else setNote(out.detail ? `Draft failed: ${out.detail}` : 'Draft failed');
     } finally {
       setBusy(null);
     }
@@ -537,8 +580,11 @@ export function RadarSection({
       setNote(`${prefix} · drafting…`);
       const out = await sendBatch(set, new Map(res.scored.map((s) => [s.tweetId, s.score])));
       if (out.ok) {
+        // This path never sends a language — and since ML.3 the server can still
+        // resolve one, so the note says which (the same echo the plain button
+        // reads). Silent on English.
         setNote(
-          `${prefix} · drafted ${out.drafted}/${out.requested} · $${(res.costUsd + out.cost).toFixed(4)}`,
+          `${prefix} · drafted ${out.drafted}/${out.requested} · $${(res.costUsd + out.cost).toFixed(4)}${languageNote(out)}`,
         );
       } else {
         // The drops stand: they were dismissed on their own merit, not as a
@@ -951,7 +997,12 @@ function RadarRow({
           title="Copy this angle and open the tweet"
           onClick={() => onPick(picked.text)}
         >
-          {picked.text}
+          {/* ML.5: the row carries no resolved language (the batch's echo is a
+              property of the CALL, not of a sighting that outlives it), so the
+              browser's first-strong-character heuristic is what makes an Arabic
+              draft readable. It picks a direction, never a language — and it
+              sits on the TEXT, so the hint and the gloss below stay ltr. */}
+          <span dir="auto">{picked.text}</span>
           <span className="radar-reply-hint">
             {pickNote ?? 'click → copies + opens the tweet'}
             {angles.length === 1 && (
@@ -962,6 +1013,15 @@ function RadarRow({
             )}
           </span>
         </a>
+      )}
+      {/* The literal English rendering of the picked angle (ML.2), muted and
+          under the pick — and OUTSIDE the anchor, so it is not part of the
+          click that copies. What lands on the clipboard is `picked.text` and
+          nothing else. Absent gloss ⇒ no row at all. */}
+      {picked?.gloss && (
+        <div className="radar-gloss" dir="ltr">
+          {picked.gloss}
+        </div>
       )}
       {s.reply && (
         <ChannelTagPicker
@@ -1316,11 +1376,16 @@ function pickNoteFor(jittered: HumanizeResult | null): string {
 // The angles offered as tabs on a drafted row (RD.2). The full RU.4 set when
 // the batch stored it; a pre-variant / CLI row keeps its single primary with no
 // angle label (one entry never renders a tab strip anyway).
-function rowAngles(s: RadarSighting): { angle: string | null; text: string }[] {
+function rowAngles(
+  s: RadarSighting,
+): { angle: string | null; text: string; gloss: string | null }[] {
   if (s.variants && s.variants.length > 0) {
-    return s.variants.map((v) => ({ angle: v.angle, text: v.text }));
+    // ML.5: `gloss` rides along so the card can show the literal English under a
+    // non-English draft. `?? null` because a row persisted before ML.2 has no
+    // gloss key at all — absent and "the model returned none" render the same.
+    return s.variants.map((v) => ({ angle: v.angle, text: v.text, gloss: v.gloss ?? null }));
   }
-  return s.reply ? [{ angle: null, text: s.reply }] : [];
+  return s.reply ? [{ angle: null, text: s.reply, gloss: null }] : [];
 }
 
 // The band chip's face. Only 'roster' needs a translation: the stored value is

@@ -1655,6 +1655,38 @@ button.danger:hover:not(:disabled) {
   color: white;
 }
 
+/* ML.5 — the literal English gloss under a non-English reply. Deliberately
+   subordinate: smaller, muted, italic and inset behind a rule, so it reads as an
+   annotation on the reply rather than as a second reply you might paste. It is
+   never inside a copy path (Replies copies the textarea, the Radar copies the
+   picked angle), and it is always ltr — the text is English even when the reply
+   above it is Arabic. Both surfaces share the geometry; only the inset side
+   differs, which is why they are one rule and not two. */
+.reply-gloss,
+.radar-gloss {
+  font-size: 11px;
+  line-height: 1.45;
+  font-style: italic;
+  color: var(--muted);
+  white-space: pre-wrap;
+  border-left: 2px solid var(--border);
+  padding-left: 8px;
+  margin-top: 4px;
+}
+.radar-gloss {
+  margin-left: 2px;
+}
+
+/* An RTL reply hangs its own text to the right without flipping the card: `dir`
+   is set on the textarea and its counter only, so the toolbar, the chips and the
+   gloss keep the layout they have in every other language. Right-alignment is
+   the browser's own behaviour for a `dir` textarea — stated here so a later
+   change to `.field` can't silently lose it. The counter is an inline span, so
+   it takes no alignment rule; its `dir` exists for the bidi run alone. */
+.reply-textarea[dir="rtl"] {
+  text-align: right;
+}
+
 .reply-idea .reply-textarea {
   min-height: 44px;
 }
