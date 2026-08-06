@@ -82,6 +82,7 @@ import {
   mergePendingSighting,
   shouldReportSighting,
 } from './shared/sightings.ts';
+import { findShowOriginalButtons, viewerLangOf } from './shared/translation.ts';
 import { buildTweetContextModel } from './shared/tweetContext.ts';
 import type { Dossier, TweetContextModel } from './shared/tweetContext.ts';
 import type {
@@ -1356,6 +1357,35 @@ function parseMetricsLabel(label: string): PostContext['metrics'] {
   return { replies: m.replies, reposts: m.reposts, likes: m.likes, views: m.views };
 }
 
+// TR.1's un-translation, applied to the reply lane. X replaces a foreign
+// tweet's text with its machine translation IN PLACE (shared/translation.ts) —
+// same `tweetText` node, translated innerText, `lang` flipped to the viewer's.
+// Read it as-is and a Japanese post reaches /x/replies/generate as English,
+// unmarked, and the draft answers a translation. Clicking "Show original"
+// restores the same node from X's client-side copy: a click plus a settle, no
+// network call and no billed read.
+//
+// PERF CONTRACT: this is a per-CLICK cost and must stay one. A
+// showOriginalButton lookup on every article of every scan would put a new DOM
+// query on the timeline's hot path (`applyBand` re-runs on every mutation
+// burst) — so this is only ever called for the articles being read for one
+// reply, never from the scan loop. It is also deliberately NOT the harvester's
+// whole-page `revealOriginals()` sweep: that clicks every button on the page,
+// and callers here skip entirely while a hand-run harvest owns the scroll,
+// which already reveals per sweep.
+const TRANSLATION_SETTLE_MS = 60;
+
+async function revealOriginalsFor(articles: Iterable<Element>): Promise<void> {
+  if (isHarvestActive()) return;
+  const viewerLang = viewerLangOf(document);
+  const buttons = [...articles].flatMap((a) => findShowOriginalButtons(a, viewerLang));
+  if (buttons.length === 0) return;
+  for (const btn of buttons) btn.click();
+  // Live-verified in the harvester: the swap lands on the next macrotask; 60ms
+  // is that budget with room for a slow frame.
+  await sleep(TRANSLATION_SETTLE_MS);
+}
+
 function scrapeTopComment(article: Element, focusedTweetId: string): TopComment | null {
   const permalink = findPermalink(article);
   if (!permalink) return null;
@@ -1453,6 +1483,12 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     scheduleReplyReset(btn);
     return;
   }
+
+  // Before any text read: put the originals back on the articles this click is
+  // about to scrape — the focused tweet (its text AND readTweetSignals' bait
+  // read) plus the conversation rows scrapeTopComment pulls from. Scoped to the
+  // status page's own articles, once per click; see revealOriginalsFor.
+  await revealOriginalsFor(document.querySelectorAll('article[data-testid="tweet"]'));
 
   const ctx = scrapePostContext(article, focusedId);
   if (!ctx) {
