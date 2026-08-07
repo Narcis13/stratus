@@ -572,6 +572,29 @@ describe('reply prompt (§7.1)', () => {
     }
   });
 
+  // RC.1 (plans/2026-08-08-reply-craft-overhaul.md, Task 1). 96.5% of the
+  // measured reply impressions came from posts OUTSIDE my lane, so the persona
+  // is background unless the post is in-lane; the humanization rules and the
+  // measured length target ride in the cacheable head. Both defaults carry the
+  // whole block — the AI.5 anti-drift test locks them together, this locks the
+  // content itself so a partial revert is loud.
+  test('RC.1: both defaults carry the persona-scope rule, the humanization block and the 40–90 target', () => {
+    for (const template of [REPLY_PROMPT_TEMPLATE, REPLY_BATCH_PROMPT_TEMPLATE]) {
+      expect(template).toContain('## Who I am — background, not material');
+      expect(template).toContain(
+        '**Most posts I reply to have nothing to do with any of that, and that is the point.**',
+      );
+      expect(template).toContain('## Sounding like a person, not a model');
+      expect(template).toContain('**No em dashes. Not one.**');
+      expect(template).toContain('**Never open a reply with:**');
+      expect(template).toContain('**Length: aim for 40–90 characters. 140 is the ceiling.**');
+      // The 280-char machinery is retired: at 40–90 chars the reply IS the hook
+      // (0 of 180 harvested Cannon replies are multi-line).
+      expect(template).not.toContain('~280 chars');
+      expect(template).not.toContain('The first line is the hook and must stand alone');
+    }
+  });
+
   // N0.4 equivalence guarantee: with the untouched seed niche (all defaults),
   // the assembled prompt must carry the ORIGINAL "Who I am" body byte-exact,
   // in place. The fixture is an independent copy of the pre-extraction text —
@@ -594,8 +617,10 @@ That is the entire biography you have. Never invent or imply anything else — n
 
     const [msg] = buildGrokInput(promptCtx);
     const content = msg?.content ?? '';
+    // RC.1 rescoped the heading and appended the persona-SCOPE rule after the
+    // body; the body itself is still substituted in place, byte-exact.
     expect(content).toContain(
-      `## Who I am (the COMPLETE persona — infer nothing beyond these three facts)\n\n${ORIGINAL_WHO_I_AM_BODY}\n\n---`,
+      `## Who I am — background, not material\n\n${ORIGINAL_WHO_I_AM_BODY}\n\n**Most posts I reply to have nothing to do with any of that`,
     );
     expect(content).not.toContain('{{REPLY_PERSONA}}');
   });
