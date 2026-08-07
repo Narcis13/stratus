@@ -70,6 +70,47 @@ export async function cannonLanguageFor(handle: string): Promise<string | null> 
   return language === '' ? null : language;
 }
 
+/** RC.3: the reply-mode pinned on a roster row, `null` when the handle is not on
+ *  the roster or its `topic` is blank. `cannonLanguageFor`'s twin one column
+ *  over, and the same PK lookup — the two answer different questions about the
+ *  same account (what alphabet vs what room) and are deliberately not merged
+ *  into one read: a caller wanting only the mode should not have to know the
+ *  language column exists.
+ *
+ *  `active` is not filtered here for the same reason as the language pin: a
+ *  benched handle still posts football. Benching means "stop camping", not
+ *  "start drafting in the wrong register".
+ *
+ *  The string is returned raw. Mapping it onto a `ReplyMode` — including
+ *  rejecting a value no longer in the table — is the resolver's job
+ *  (`src/x/replies/mode.ts`). */
+export async function cannonTopicFor(handle: string): Promise<string | null> {
+  const h = normalizePersonHandle(handle);
+  if (!h) return null;
+  const [row] = await db
+    .select({ topic: cannonTargets.topic })
+    .from(cannonTargets)
+    .where(eq(cannonTargets.handle, h))
+    .limit(1);
+  const topic = row?.topic?.trim() ?? '';
+  return topic === '' ? null : topic;
+}
+
+/** §7.8 again: a DB hiccup falls through to keyword detection rather than
+ *  failing a call the user is about to pay for. `null` is the safe direction
+ *  because it is also the ordinary answer — most handles are unpinned. */
+export async function cannonTopicForSafe(handle: string): Promise<string | null> {
+  try {
+    return await cannonTopicFor(handle);
+  } catch (err) {
+    console.error(
+      'cannon: topic lookup failed (the draft falls through to detection):',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}
+
 /** §7.8, the `isCannonHandleSafe` discipline one column over: a DB hiccup drafts
  *  in ENGLISH rather than failing a call the user is about to pay for. `null` is
  *  the safe direction here because it is also the ordinary answer — the resolver

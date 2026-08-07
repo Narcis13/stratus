@@ -1,0 +1,1 @@
+ALTER TABLE `cannon_targets` ADD `topic` text;

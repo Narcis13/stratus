@@ -1111,6 +1111,16 @@ export const cannonTargets = sqliteTable(
     displayName: text('display_name'),
     // null = English. The arm this handle belongs to, for a multi-language roster.
     language: text('language'),
+    // The reply-mode pin (RC.3), `language`'s twin one column over: which ROOM
+    // this handle posts into, so the drafter knows the register before it reads
+    // a word. Null = unpinned, which is the ordinary state — the resolver falls
+    // through to keyword detection and then to `general` (§7.11), never to a
+    // guess. Cheap and exact because the Cannon doctrine is *camp a roster*:
+    // @fabrizioromano is always football, @9to5mac is always Apple news, so a
+    // pin typed once is correct forever. Stored as a `ReplyMode` id
+    // (`src/shared/replyMode.ts`); routes/cannon.ts validates through
+    // `resolveModeId` on write, so an alias ('football') lands as its id.
+    topic: text('topic'),
     score: real('score'),
     medianViews: real('median_views'),
     medianComments: real('median_comments'),

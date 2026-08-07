@@ -1021,6 +1021,11 @@ export interface CannonTarget {
   handle: string;
   displayName: string | null;
   language: string | null;
+  /** RC.3 — the reply-mode pin: which ROOM this handle posts into, so the
+   *  drafter knows the register before it reads a word. Always a canonical
+   *  `ReplyModeId` (the route validates on write) or null = unpinned, which
+   *  falls through to detection. */
+  topic: string | null;
   score: number | null;
   medianViews: number | null;
   medianComments: number | null;
@@ -1047,6 +1052,10 @@ export interface CannonTargetCreateBody {
   handle: string;
   displayName?: string;
   language?: string;
+  /** A `ReplyModeId` or any alias the table knows ('football' → 'banter');
+   *  anything else is a 400 (`invalid_topic`), because a pin the resolver
+   *  cannot read is a silent no-op. */
+  topic?: string;
   notes?: string;
   active?: boolean;
 }
@@ -1055,6 +1064,8 @@ export interface CannonTargetCreateBody {
 export interface CannonTargetPatchBody {
   active?: boolean;
   language?: string | null;
+  /** null or '' clears the pin. */
+  topic?: string | null;
   notes?: string | null;
   displayName?: string | null;
 }

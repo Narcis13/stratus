@@ -10,9 +10,9 @@
 //
 // Routes:
 //   GET    /cannon/targets?active=            → { floor, targets: [...] }  score desc, nulls last
-//   POST   /cannon/targets                    { handle, displayName?, language?, notes?, active? } → 201
+//   POST   /cannon/targets                    { handle, displayName?, language?, topic?, notes?, active? } → 201
 //   GET    /cannon/candidates?limit=&minSample= → { limit, minSample, candidates }
-//   PATCH  /cannon/targets/:handle            partial { active?, language?, notes?, displayName? }
+//   PATCH  /cannon/targets/:handle            partial { active?, language?, topic?, notes?, displayName? }
 //   DELETE /cannon/targets/:handle            → 204
 //   POST   /cannon/rescore                    { handles? } → { scored, skipped, samplePosts, minSample }
 //
@@ -29,6 +29,7 @@
 import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import { resolveModeId } from '../../shared/replyMode.ts';
 import {
   type AuthorPost,
   CANNON_MIN_SAMPLE,
@@ -41,6 +42,7 @@ import { getSetting } from '../settings/registry.ts';
 
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
 const MAX_LANGUAGE_LEN = 16;
+const MAX_TOPIC_LEN = 32;
 const MAX_NOTES_LEN = 2000;
 const MAX_DISPLAY_NAME_LEN = 120;
 const MAX_RESCORE_HANDLES = 200;
@@ -60,6 +62,9 @@ export interface CannonTargetView {
   handle: string;
   displayName: string | null;
   language: string | null;
+  /** The reply-mode pin (RC.3), always a canonical `ReplyMode` id or null —
+   *  writes go through `resolveModeId`, so 'football' is stored as 'banter'. */
+  topic: string | null;
   score: number | null;
   medianViews: number | null;
   medianComments: number | null;
@@ -114,6 +119,9 @@ cannonRouter.post('/cannon/targets', async (c) => {
   const language = parseText(b.language, MAX_LANGUAGE_LEN);
   if (language === 'invalid') return c.json({ error: 'invalid_language' }, 400);
 
+  const topic = parseTopic(b.topic);
+  if (topic === 'invalid') return c.json({ error: 'invalid_topic' }, 400);
+
   const notes = parseText(b.notes, MAX_NOTES_LEN);
   if (notes === 'invalid') return c.json({ error: 'invalid_notes' }, 400);
 
@@ -129,6 +137,7 @@ cannonRouter.post('/cannon/targets', async (c) => {
         handle,
         displayName,
         language,
+        topic,
         notes,
         ...(typeof b.active === 'boolean' ? { active: b.active } : {}),
       })
@@ -147,6 +156,7 @@ cannonRouter.post('/cannon/targets', async (c) => {
   const set: Partial<typeof cannonTargets.$inferInsert> = {};
   if (displayName !== null && existing.displayName === null) set.displayName = displayName;
   if (language !== null && existing.language === null) set.language = language;
+  if (topic !== null && existing.topic === null) set.topic = topic;
   if (notes !== null && existing.notes === null) set.notes = notes;
   if (typeof b.active === 'boolean' && b.active !== existing.active) set.active = b.active;
 
@@ -243,6 +253,11 @@ cannonRouter.patch('/cannon/targets/:handle', async (c) => {
     const language = parseText(b.language, MAX_LANGUAGE_LEN);
     if (language === 'invalid') return c.json({ error: 'invalid_language' }, 400);
     updates.language = language;
+  }
+  if (b.topic !== undefined) {
+    const topic = parseTopic(b.topic);
+    if (topic === 'invalid') return c.json({ error: 'invalid_topic' }, 400);
+    updates.topic = topic;
   }
   if (b.notes !== undefined) {
     const notes = parseText(b.notes, MAX_NOTES_LEN);
@@ -415,6 +430,7 @@ function toView(row: TargetRow, floor: number, now: number): CannonTargetView {
     handle: row.handle,
     displayName: row.displayName,
     language: row.language,
+    topic: row.topic,
     score: row.score,
     medianViews: row.medianViews,
     medianComments: row.medianComments,
@@ -471,6 +487,23 @@ function parseText(value: unknown, maxLen: number): string | null | 'invalid' {
   if (trimmed === '') return null;
   if (trimmed.length > maxLen) return 'invalid';
   return trimmed;
+}
+
+/** The reply-mode pin (RC.3). Deliberately NOT free text, unlike `language`:
+ *  the language pin is normalized at read time by the profile table and an
+ *  unrecognized value still names a language usefully, while an unrecognized
+ *  `topic` is a silent no-op — the resolver drops it and the operator sees a
+ *  pin that does nothing. So it is validated on write and STORED CANONICAL:
+ *  'football' and 'Hot Take' land as 'banter' and 'hot-take', which is what
+ *  makes `WHERE topic = 'banter'` answerable later.
+ *
+ *  Null/''/absent clears the pin — clearing has to stay possible, and an empty
+ *  string is not a mode. */
+function parseTopic(value: unknown): string | null | 'invalid' {
+  const text = parseText(value, MAX_TOPIC_LEN);
+  if (text === 'invalid' || text === null) return text;
+  const mode = resolveModeId(text);
+  return mode ? mode.id : 'invalid';
 }
 
 /** Absent → the default; out of range → clamped; anything that isn't a positive

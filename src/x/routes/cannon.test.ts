@@ -41,6 +41,7 @@ interface TargetView {
   handle: string;
   displayName: string | null;
   language: string | null;
+  topic: string | null;
   notes: string | null;
   score: number | null;
   medianViews: number | null;
@@ -192,6 +193,36 @@ describe('cannon targets CRUD', () => {
       (await send<{ error: string }>('/x/cannon/targets/cq2absent', 'PATCH', { active: true })).body
         .error,
     ).toBe('not_found');
+  });
+
+  // RC.3 — the reply-mode pin. Unlike `language` it is a closed vocabulary,
+  // because an unreadable pin is a silent no-op rather than a usable string.
+  test('topic: an alias is stored canonical, a non-mode is a 400, null clears it', async () => {
+    const created = await addTarget({ handle: 'rc3pin', topic: 'football' });
+    expect(created.topic).toBe('banter');
+
+    const patched = await send<TargetView>('/x/cannon/targets/rc3pin', 'PATCH', {
+      topic: 'Hot Take',
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.body.topic).toBe('hot-take');
+
+    const bad = await send<{ error: string }>('/x/cannon/targets/rc3pin', 'PATCH', {
+      topic: 'shitposting',
+    });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_topic');
+    expect(
+      (
+        await send<{ error: string }>('/x/cannon/targets', 'POST', {
+          handle: 'rc3bad',
+          topic: 'shitposting',
+        })
+      ).body.error,
+    ).toBe('invalid_topic');
+
+    const cleared = await send<TargetView>('/x/cannon/targets/rc3pin', 'PATCH', { topic: null });
+    expect(cleared.body.topic).toBeNull();
   });
 });
 
