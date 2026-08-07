@@ -134,12 +134,13 @@ These three are stored locally in the extension, like the connection fields — 
 
 The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
 
-### The fifteen groups
+### The sixteen groups
 
-Today the registry holds **66 knobs in 15 groups**. This is the map — what each group decides, and where you see it change.
+Today the registry holds **68 knobs in 16 groups**. This is the map — what each group decides, and where you see it change.
 
 | Group | Knobs | What it decides | Where the change shows |
 |---|---|---|---|
+| **Identity** | 1 | **My X handle** (without the @) — the one thing the server can't work out for itself, since it only ever sees your numeric account id. | Own-activity reads. Leave it blank and they answer empty rather than guessing at someone else's rows. |
 | **Doctrine** | 3 | The cadence ladder: the 3/day and 4/day anchor hours, and how many filled slots switches you from one to the other. | Today's gaps, the Composer's slot suggestions, the Calendar's ghost anchors. |
 | **Quests** | 4 | The daily bar: originals target, how many neglected targets count, the neglect window, the launch-room attendance window. | Today's quest checklist and the streak. |
 | **People** | 3 | The CRM stage ladder's promotion windows (mutual, ally, ally window). | Stages on People, and every stage-aware draft. |
@@ -156,7 +157,7 @@ Today the registry holds **66 knobs in 15 groups**. This is the map — what eac
 | **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
 | **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
 
-Thirty-two of the 66 are also **mirrored** to the extension (all of Doctrine, Reply band and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
+Thirty-three of the 68 are also **mirrored** to the extension (Identity, all of Doctrine, Reply band and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number.
 
 ### How a row works
 

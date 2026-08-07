@@ -121,6 +121,7 @@ describe('registry adapter + grouping', () => {
   test('settingsByGroup returns every group in GROUP_LABELS order, each labelled', () => {
     const groups = settingsByGroup();
     expect(groups.map((g) => g.id)).toEqual([
+      'identity',
       'doctrine',
       'quests',
       'people',
@@ -138,6 +139,7 @@ describe('registry adapter + grouping', () => {
       'display',
     ]);
     expect(groups.map((g) => g.label)).toEqual([
+      'Identity',
       'Doctrine',
       'Quests',
       'People',
@@ -172,6 +174,22 @@ describe('registry adapter + grouping', () => {
     // Every def belongs to exactly one group (no orphans).
     const grouped = groups.reduce((n, g) => n + g.defs.length, 0);
     expect(grouped).toBe(SETTINGS_REGISTRY.length);
+  });
+
+  // The identity group is the "who am I" group and renders first. Its single
+  // knob is deliberately validated no harder than `not_a_string`: the handle
+  // shape is already owned by the ingest parser, and a second owner here would
+  // mean a refused save — worse than a typo the user can see and fix.
+  test('the identity group is exactly the self handle, mirrored and unvalidated', () => {
+    const identity = settingsByGroup().find((g) => g.id === 'identity');
+    expect(identity?.defs.map((d) => d.key)).toEqual(['x.identity.selfHandle']);
+    expect(settingsRegistry.get('x.identity.selfHandle')?.scope).toBe('mirrored');
+    // Unset is the shipped default and a legal value — it means "answer empty",
+    // not "not configured yet, so guess".
+    expect(settingsRegistry.get('x.identity.selfHandle')?.default).toBe('');
+    expect(settingsRegistry.validate('x.identity.selfHandle', '')).toBeNull();
+    expect(settingsRegistry.validate('x.identity.selfHandle', 'narcis13')).toBeNull();
+    expect(settingsRegistry.validate('x.identity.selfHandle', 13)).toBe('not_a_string');
   });
 
   test('UI.3 groups carry their knobs; the niche-owned band multipliers stay out', () => {
@@ -343,6 +361,7 @@ describe('registry adapter + grouping', () => {
   test('the mirrored scope is exactly the keys the extension mirrors', () => {
     const mirrored = SETTINGS_REGISTRY.filter((d) => d.scope === 'mirrored').map((d) => d.key);
     expect(mirrored).toEqual([
+      'x.identity.selfHandle',
       'x.doctrine.anchors3',
       'x.doctrine.anchors4',
       'x.doctrine.ladderSwitchAt',

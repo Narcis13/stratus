@@ -63,6 +63,24 @@ function envNumberDefault(name: string, fallback: number, min: number, max: numb
   return n;
 }
 
+// Identity — who the account IS. First group in the render order because every
+// other knob tunes a decision, while this one names the subject those decisions
+// are about. Exactly one knob today; it exists because the server genuinely has
+// no other way to learn the handle (SELF_X_USER_ID is a numeric id and
+// account_snapshots stores no username).
+const IDENTITY: SettingDef[] = [
+  {
+    key: 'x.identity.selfHandle',
+    group: 'identity',
+    label: 'My X handle',
+    description:
+      'Your X handle without the @. The server has no other way to know it (`SELF_X_USER_ID` is a numeric id). Unset means every own-activity read answers empty rather than guessing.',
+    type: 'string',
+    default: '',
+    scope: 'mirrored',
+  },
+];
+
 // Doctrine — the cadence ladder (OVERHAUL-PLAN §9). Only the anchor hours and the
 // ladder switch-point live here. The reply band (min/max), the week reply-ratio,
 // and the 2–10x band multipliers are owned by the ACTIVE NICHE (niches.doctrine,
@@ -1040,6 +1058,7 @@ const DISPLAY: SettingDef[] = [
 ];
 
 export const SETTINGS_REGISTRY: SettingDef[] = [
+  ...IDENTITY,
   ...DOCTRINE,
   ...QUESTS,
   ...PEOPLE,
@@ -1059,6 +1078,7 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
 
 /** Human labels for each group id, in the order they should render. */
 export const GROUP_LABELS: Record<string, string> = {
+  identity: 'Identity',
   doctrine: 'Doctrine',
   quests: 'Quests',
   people: 'People',
