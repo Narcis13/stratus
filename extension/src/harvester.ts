@@ -257,9 +257,21 @@ function dayWindow(offsetDays: number): DayWindow {
   return { startMs, endMs: startMs + 86_400_000 };
 }
 
+// 'recent' is a rolling 48h window, NOT a calendar day: the own-reply read layer
+// buckets by UTC day, so a local-midnight window clips hours off every UTC day
+// outside UTC+0. 48h covers two whole UTC days from any timezone; the overlap
+// costs nothing because the read layer keeps the latest row per tweet. Fixed on
+// purpose (decision 6) — a tunable would reintroduce the clipping it fixes.
+const RECENT_WINDOW_MS = 48 * 60 * 60 * 1000;
+
 function scopeWindow(scope: HarvestScope): DayWindow | null {
   if (scope === 'today') return dayWindow(0);
   if (scope === 'yesterday') return dayWindow(1);
+  // endMs unbounded, same shape as 'since-last' — a tweet timestamped slightly
+  // ahead of the local clock must not be dropped.
+  if (scope === 'recent') {
+    return { startMs: Date.now() - RECENT_WINDOW_MS, endMs: Number.POSITIVE_INFINITY };
+  }
   return null;
 }
 

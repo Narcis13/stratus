@@ -19,6 +19,7 @@ import {
   readActiveContext,
   startHarvest,
 } from './harvestClient.ts';
+import { useServerSettings } from './serverSettingsHook.ts';
 import type { Settings } from './storage.ts';
 import { Section } from './ui/Section.tsx';
 import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
@@ -46,6 +47,10 @@ const SCOPES: SubTab<HarvestScope>[] = [
   // handle+mode. First run scrapes like All, then each run picks up where the
   // previous one ended.
   { id: 'since-last', label: 'Since last' },
+  // Rolling 48h. Today/Yesterday are local calendar days — right for someone
+  // else's profile, wrong for my own corpus, which the Playbook buckets by UTC
+  // day. 48h covers two whole UTC days from any timezone.
+  { id: 'recent', label: 'Last 48h' },
 ];
 
 // UI.15: three mutually-exclusive short values were a `<select>` while the two
@@ -128,6 +133,11 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
   const [formLoaded, setFormLoaded] = useState(false);
   const [sendToStratus, setSendToStratus] = useState(true);
 
+  // The mirrored `x.identity.selfHandle` — the only source the "My replies"
+  // preset prefills from. Blank means unset, and the preset then stays disabled
+  // rather than harvesting whichever profile happens to be open (§7.11).
+  const selfHandle = useServerSettings().selfHandle.trim().replace(/^@/, '');
+
   useEffect(() => {
     void chrome.storage.local.get(SEND_TO_STRATUS_KEY).then((out) => {
       if (out[SEND_TO_STRATUS_KEY] === false) setSendToStratus(false);
@@ -159,6 +169,21 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
   const toggleSendToStratus = (next: boolean): void => {
     setSendToStratus(next);
     void chrome.storage.local.set({ [SEND_TO_STRATUS_KEY]: next });
+  };
+
+  // The daily own-corpus harvest, set up in one click. It fills the form and
+  // stops there — it never STARTS a run: the harvester owns the page scroll, and
+  // a scroll kicked off by pressing a preset button is a surprise, not a feature.
+  const applyMyReplies = (): void => {
+    // Without this the next context refresh would overwrite the handle with
+    // whatever profile the active tab is on.
+    setTouched(true);
+    setHandle(selfHandle);
+    setMode('replies');
+    setScope('recent');
+    // The point of the preset is rows reaching the DB for the Playbook's
+    // own-reply tables; a CSV-only run looks identical and measures nothing.
+    if (!sendToStratus) toggleSendToStratus(true);
   };
 
   // Today's ambient capture (HV.1/HV.2). null = not loaded or the read failed —
@@ -305,6 +330,15 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
       </div>
 
       <p className="status-line">{detection}</p>
+
+      <div className="row">
+        <button type="button" disabled={running || selfHandle === ''} onClick={applyMyReplies}>
+          My replies (48h)
+        </button>
+        {selfHandle === '' && (
+          <span className="muted">Set your handle in Settings → Identity to use this.</span>
+        )}
+      </div>
 
       <label className="field">
         <span>Handle</span>

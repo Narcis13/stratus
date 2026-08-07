@@ -28,6 +28,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
         'x.display.channelPostsShown': 20,
         'x.display.voiceListLimit': 250,
         'x.display.repliesListLimit': 300,
+        'x.identity.selfHandle': 'narcis13',
       }),
     ).toEqual({
       anchors3: [8, 14, 19],
@@ -48,6 +49,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       channelPostsShown: 20,
       voiceListLimit: 250,
       repliesListLimit: 300,
+      selfHandle: 'narcis13',
     });
   });
 
@@ -123,8 +125,19 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'panelRefreshCap',
       'radarDraftCap',
       'repliesListLimit',
+      'selfHandle',
       'voiceListLimit',
     ]);
+  });
+
+  // The one string knob in the blob. Blank is the real "unset" value the
+  // Harvest preset keys off, so a non-string must fall back to blank rather
+  // than reaching a consumer as a handle.
+  test('the self handle reads through, and anything unstringy falls back to blank', () => {
+    expect(readServerConfig({ 'x.identity.selfHandle': 'narcis13' }).selfHandle).toBe('narcis13');
+    expect(readServerConfig({ 'x.identity.selfHandle': '' }).selfHandle).toBe('');
+    expect(readServerConfig({ 'x.identity.selfHandle': 13 }).selfHandle).toBe('');
+    expect(readServerConfig({}).selfHandle).toBe('');
   });
 });
 

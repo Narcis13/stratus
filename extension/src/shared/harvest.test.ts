@@ -5,6 +5,7 @@ import {
   harvestTargetUrl,
   isAtTarget,
   isFollowingPath,
+  isHarvestScope,
   parseHarvestForm,
   passesMinViews,
   passiveRowsToday,
@@ -79,6 +80,44 @@ describe('parseHarvestForm (HV.3)', () => {
 
   test('following mode round-trips (GR.2)', () => {
     expect(parseHarvestForm({ mode: 'following' }).mode).toBe('following');
+  });
+
+  test('the recent scope round-trips', () => {
+    const form: HarvestForm = {
+      mode: 'replies',
+      scope: 'recent',
+      pace: 'human',
+      maxStr: '',
+      minViewsStr: '',
+      downloadCsv: true,
+    };
+    expect(parseHarvestForm(form)).toEqual(form);
+  });
+
+  // A form written before 'recent' existed must still restore its own scope —
+  // widening the union may not invalidate a stored value.
+  test('the pre-existing scopes still parse', () => {
+    for (const scope of ['all', 'today', 'yesterday', 'since-last'] as const) {
+      expect(parseHarvestForm({ scope }).scope).toBe(scope);
+    }
+  });
+});
+
+describe('isHarvestScope', () => {
+  test('accepts every scope the panel can set', () => {
+    expect(isHarvestScope('recent')).toBe(true);
+    expect(isHarvestScope('all')).toBe(true);
+    expect(isHarvestScope('today')).toBe(true);
+    expect(isHarvestScope('yesterday')).toBe(true);
+    expect(isHarvestScope('since-last')).toBe(true);
+  });
+
+  test('rejects anything else', () => {
+    expect(isHarvestScope('passive')).toBe(false);
+    expect(isHarvestScope('last-48h')).toBe(false);
+    expect(isHarvestScope('')).toBe(false);
+    expect(isHarvestScope(undefined)).toBe(false);
+    expect(isHarvestScope(48)).toBe(false);
   });
 });
 

@@ -39,7 +39,10 @@ const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const MODES = ['posts', 'replies'] as const;
-const SCOPES = ['all', 'today', 'yesterday', 'since-last'] as const;
+// `scope` is free text in the column; this whitelist is the only gate. 'recent'
+// is the extension's rolling 48h window (the own-reply corpus is bucketed by UTC
+// day downstream, which a local calendar day clips).
+const SCOPES = ['all', 'today', 'yesterday', 'since-last', 'recent'] as const;
 type Mode = (typeof MODES)[number];
 type Scope = (typeof SCOPES)[number];
 

@@ -14,7 +14,12 @@ export type HarvestMode = 'posts' | 'replies' | 'following';
 // 'since-last' (§9.4) is the per-handle incremental cursor: keep only items
 // newer than the newest item of the previous completed run for this
 // handle+mode (chrome.storage.local); behaves like 'all' on the first run.
-export type HarvestScope = 'all' | 'today' | 'yesterday' | 'since-last';
+// 'recent' is a rolling 48h window. It exists for the OWN corpus: the read
+// layer buckets by UTC day, so a local-calendar-day scope clips hours off every
+// UTC day outside UTC+0 (three of them on UTC+3). 48h covers two UTC days whole
+// and the overlap is free — harvest_rows is deliberately un-deduped and the
+// read layer reduces to the latest row per tweet.
+export type HarvestScope = 'all' | 'today' | 'yesterday' | 'since-last' | 'recent';
 export type HarvestPace = 'slow' | 'human' | 'fast';
 
 export interface HarvestOptions {
@@ -125,8 +130,8 @@ function isHarvestMode(v: unknown): v is HarvestMode {
   return v === 'posts' || v === 'replies' || v === 'following';
 }
 
-function isHarvestScope(v: unknown): v is HarvestScope {
-  return v === 'all' || v === 'today' || v === 'yesterday' || v === 'since-last';
+export function isHarvestScope(v: unknown): v is HarvestScope {
+  return v === 'all' || v === 'today' || v === 'yesterday' || v === 'since-last' || v === 'recent';
 }
 
 function isHarvestPace(v: unknown): v is HarvestPace {

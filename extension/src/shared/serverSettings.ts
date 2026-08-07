@@ -92,6 +92,10 @@ export interface ServerConfig {
   /** x.display.repliesListLimit — reply drafts the Replies tab loads into its
    *  History list. Local rows, so also a scroll budget (UI.15). */
   repliesListLimit: number;
+  /** x.identity.selfHandle — my X handle, no @. Mirrored so the Harvest tab's
+   *  "My replies" preset can prefill it. Blank means unset: every consumer must
+   *  degrade to "ask the user", never guess a handle (§7.11). */
+  selfHandle: string;
 }
 
 export const SERVER_DEFAULTS: ServerConfig = {
@@ -113,6 +117,7 @@ export const SERVER_DEFAULTS: ServerConfig = {
   channelPostsShown: 8,
   voiceListLimit: 100,
   repliesListLimit: 100,
+  selfHandle: '',
 };
 
 /** The batch size a "Draft replies" click may actually ask for: the display cap,
@@ -140,6 +145,11 @@ export function curatedBatchSize(cfg: ServerConfig): number {
 function readNumber(blob: ServerSettingsBlob, key: string, fallback: number): number {
   const v = blob[key];
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+function readString(blob: ServerSettingsBlob, key: string, fallback: string): string {
+  const v = blob[key];
+  return typeof v === 'string' ? v : fallback;
 }
 
 function readHours(blob: ServerSettingsBlob, key: string, fallback: number[]): number[] {
@@ -223,5 +233,6 @@ export function readServerConfig(raw: unknown): ServerConfig {
       'x.display.repliesListLimit',
       SERVER_DEFAULTS.repliesListLimit,
     ),
+    selfHandle: readString(blob, 'x.identity.selfHandle', SERVER_DEFAULTS.selfHandle),
   };
 }

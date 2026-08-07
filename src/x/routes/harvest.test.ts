@@ -245,14 +245,51 @@ describe('POST /x/harvest/passive', () => {
 });
 
 describe('POST /x/harvest/runs', () => {
-  test('still refuses to create a timeline run (passive runs are server-only)', async () => {
+  const created: string[] = [];
+
+  async function createRun(body: unknown): Promise<{ status: number; body: { error?: string } }> {
     const res = await app.request('/x/harvest/runs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ handle: KEEP_HANDLE, mode: 'timeline', scope: 'all' }),
+      body: JSON.stringify(body),
     });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_mode');
+    const parsed = (await res.json()) as { id?: string; error?: string };
+    if (parsed.id) created.push(parsed.id);
+    return { status: res.status, body: parsed };
+  }
+
+  afterAll(async () => {
+    if (created.length > 0) await db.delete(harvestRuns).where(inArray(harvestRuns.id, created));
+  });
+
+  test('still refuses to create a timeline run (passive runs are server-only)', async () => {
+    const { status, body } = await createRun({
+      handle: KEEP_HANDLE,
+      mode: 'timeline',
+      scope: 'all',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe('invalid_mode');
+  });
+
+  // The extension's rolling 48h window. `scope` is free text in the column, so
+  // this whitelist is the only thing standing between the preset and a 400.
+  test('accepts the recent scope', async () => {
+    const { status } = await createRun({ handle: KEEP_HANDLE, mode: 'replies', scope: 'recent' });
+    expect(status).toBe(201);
+    const [run] = await db
+      .select()
+      .from(harvestRuns)
+      .where(eq(harvestRuns.id, created[created.length - 1] ?? ''));
+    expect(run?.scope).toBe('recent');
+  });
+
+  test('still refuses a scope outside the whitelist', async () => {
+    for (const scope of ['last-48h', 'passive', '', 48]) {
+      const { status, body } = await createRun({ handle: KEEP_HANDLE, mode: 'replies', scope });
+      expect(status).toBe(400);
+      expect(body.error).toBe('invalid_scope');
+    }
   });
 });
 
