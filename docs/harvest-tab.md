@@ -33,6 +33,14 @@ At the top of the tab you'll see a one-line **detection message** telling you wh
 
 The **Re-detect** button (top-right) re-checks the active tab if you switch tabs and the message looks stale.
 
+### My replies (48h)
+
+One button under the detection line, and the only preset on this tab. It fills the form for the harvest you'll run most often — **your** handle, mode **Replies**, scope **Last 48h**, **Send to stratus** on — and then stops. It never starts the scrape: the harvester drives the page scroll, and a scroll that begins because you pressed a preset is a surprise, not a feature. Press **Harvest** yourself when you're ready.
+
+Run it once or twice a day and the whole own-reply read layer fills in: the **[Playbook](./playbook-tab.md#my-replies--harvested)** tab's four *My replies — harvested* tables, and the harvested views-per-reply line on **[Today](./today-tab.md)**. Running it twice in one day is fine and doesn't double anything — repeated captures of the same reply are stored deliberately (that's how you get the view curve), and every reader counts each reply once, at its freshest numbers.
+
+The button is disabled until your handle is set in **Settings → Identity**, with the reason spelled out next to it. The server only ever sees your numeric account id, so without that setting it can't tell which harvested rows are yours — and it answers empty rather than guessing.
+
 ---
 
 ## The controls
@@ -50,11 +58,12 @@ Three pills — pick what to collect:
 - **Following** — not tweets at all: the list of accounts **you** follow, and whether each one follows you back. This feeds the People tab's unfollow queue; see **[Following mode](#following-mode--one-scrape-both-directions)** below.
 
 ### Date range (scope)
-How far back to collect. Four pills:
+How far back to collect. Five pills:
 
 - **All** — the whole timeline, scrolling down until it reaches the bottom (or your Max rows cap). Use this the first time you study an account.
 - **Today** — only tweets from *today* (your local calendar day). The scroll stops automatically once it has scrolled past midnight.
 - **Yesterday** — only tweets from *yesterday* (your local calendar day).
+- **Last 48h** — a **rolling** 48-hour window, not a calendar day. Use this one on **your own** account. Everything stratus computes from your replies is bucketed by **UTC** day, and a local calendar day doesn't line up with a UTC one — outside UTC+0 a "Yesterday" scrape clips hours off every UTC day (three of them at UTC+3). 48 hours covers two whole UTC days from any timezone, and the overlap with your previous run costs nothing: re-capturing a reply is the point, and every stratus reader keeps only its freshest capture. Fixed at 48h on purpose — a tunable would bring back the clipping it exists to fix.
 - **Since last** — *incremental catch-up.* Collects only tweets **newer than the last time you finished harvesting this same handle in this same mode.** The very first time you use "Since last" on an account there's nothing to compare against, so it behaves exactly like **All** and does a full scrape; every run after that just picks up the new tweets since the previous finish. This is the efficient way to keep a running record without re-scraping everything each time. (Read the important caveat under **Tips** below — the "silent-skip trap".)
 
 ### Pace
