@@ -1190,3 +1190,183 @@ describe('loadJudgeRows + judgeEffectiveness (JD.7)', () => {
     expect(judgedPosted).toBeGreaterThanOrEqual(2);
   });
 });
+
+// The latest-per-tweet own-reply loader. Rows are seeded DIRECTLY under this
+// suite's own run (a multi-capture history of the same tweet id is the whole
+// point and POST /harvest/passive's recapture gate would refuse to build it),
+// and everything — rows, run, and the identity knob — is undone in afterAll:
+// the in-memory DB is shared and a stray mode='timeline' row moves the HV.5
+// funnel. Kept LAST in the file for that reason.
+describe('loadOwnReplyPerformance (latest-per-tweet)', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000f4';
+  const SELF = 'ownreply_me';
+  const PARENT = 'ownreply_parent';
+  const DAY = 24 * 60;
+
+  interface Cell {
+    n: number;
+    totalViews: number;
+    avgYield: number | null;
+    sharePct: number;
+    sufficient: boolean;
+  }
+  interface Perf {
+    totalMeasured: number;
+    totalViews: number;
+    viewsPerReply: number | null;
+    bands: Array<Cell & { band: string }>;
+    latency: Array<Cell & { bucket: string }>;
+    crowding: Array<Cell & { bucket: string }>;
+    arms: Array<Cell & { arm: string }>;
+  }
+
+  async function perf(query = '?minN=1'): Promise<Perf> {
+    const res = await app.request(`/x/playbook${query}`);
+    expect(res.status).toBe(200);
+    return ((await res.json()) as { ownReplyPerformance: Perf }).ownReplyPerformance;
+  }
+
+  beforeAll(async () => {
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: SELF, mode: 'replies', scope: 'recent' })
+      .onConflictDoNothing();
+    const row = (o: {
+      tweetId: string;
+      handle?: string;
+      mode?: string;
+      views: number;
+      tweetTime: Date;
+      capturedAt: Date;
+      origViews?: number;
+    }) => ({
+      runId: RUN_ID,
+      tweetId: o.tweetId,
+      handle: o.handle ?? SELF,
+      mode: o.mode ?? 'replies',
+      text: 'shipped mine last week',
+      views: o.views,
+      likes: 2,
+      comments: 1,
+      tweetTime: o.tweetTime,
+      capturedAt: o.capturedAt,
+      origTweetId: `${o.tweetId}_parent`,
+      origHandle: PARENT,
+      origText: 'a plain statement about shipping',
+      // 30 min before I replied → the 15-60m latency bucket.
+      origTime: new Date(o.tweetTime.getTime() - 30 * 60_000),
+      origComments: 5,
+      origViews: o.origViews ?? 5_000,
+    });
+    await db.insert(harvestRows).values([
+      // own_a captured twice, second capture higher: 250 must win, not 350.
+      row({ tweetId: 'own_a', views: 100, tweetTime: at(600), capturedAt: at(500) }),
+      row({ tweetId: 'own_a', views: 250, tweetTime: at(600), capturedAt: at(60) }),
+      row({
+        tweetId: 'own_b',
+        views: 50,
+        tweetTime: at(400),
+        capturedAt: at(60),
+        origViews: 300_000,
+      }),
+      // Posted 30 days ago — outside the 14-day default window.
+      row({ tweetId: 'own_old', views: 9_999, tweetTime: at(30 * DAY), capturedAt: at(60) }),
+      // My handle, but the ambient corpus (§8): mode is the only discriminator.
+      row({
+        tweetId: 'own_tl',
+        mode: 'timeline',
+        views: 7_777,
+        tweetTime: at(300),
+        capturedAt: at(60),
+      }),
+      // Someone else's reply, harvested in the same run.
+      row({
+        tweetId: 'own_them',
+        handle: 'ownreply_other',
+        views: 8_888,
+        tweetTime: at(300),
+        capturedAt: at(60),
+      }),
+    ]);
+    setSettings({ 'x.identity.selfHandle': SELF });
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+    resetSettings({ keys: ['x.identity.selfHandle'] });
+  });
+
+  test('a re-captured reply counts once, at its LATEST view count', async () => {
+    const p = await perf();
+    expect(p.totalMeasured).toBe(2); // own_a (twice) + own_b
+    expect(p.totalViews).toBe(300); // 250 (not 100, and not 350) + 50
+    expect(p.viewsPerReply).toBe(150);
+    // The dedup holds inside every cell, not just the headline.
+    expect(p.bands.reduce((s, c) => s + c.totalViews, 0)).toBe(300);
+    expect(p.latency.reduce((s, c) => s + c.n, 0)).toBe(2);
+    expect(p.crowding.reduce((s, c) => s + c.n, 0)).toBe(2);
+    expect(p.arms.reduce((s, c) => s + c.n, 0)).toBe(2);
+    const band = p.bands.find((c) => c.band === '1k-10k');
+    expect(band?.n).toBe(1);
+    expect(band?.totalViews).toBe(250);
+  });
+
+  test('the excluded rows are excluded for the right reasons', async () => {
+    const p = await perf();
+    // mode='timeline' (7,777 views) and another handle (8,888) are both in the
+    // window and would each be visible in the total if their filter were gone.
+    expect(p.totalViews).toBe(300);
+    // own_old (9,999) is only excluded by the tweet_time window — widen it and
+    // it appears, which is what proves the filter rather than a typo'd fixture.
+    const wide = await perf('?minN=1&ownReplyDays=60');
+    expect(wide.totalMeasured).toBe(3);
+    expect(wide.totalViews).toBe(300 + 9_999);
+  });
+
+  test('the cells land in the §2.2–§2.4 buckets', async () => {
+    const p = await perf();
+    expect(p.bands.map((c) => c.band)).toEqual(['1k-10k', '200k+']);
+    expect(p.latency.map((c) => c.bucket)).toEqual(['15-60m']);
+    expect(p.crowding.map((c) => c.bucket)).toEqual(['<10']);
+    expect(p.arms.map((c) => c.arm)).toEqual(['off-roster-en']);
+    expect(p.bands.reduce((s, c) => s + c.sharePct, 0)).toBe(100);
+  });
+
+  test('the default gate nulls the averages a 2-row window cannot support', async () => {
+    const p = await perf('');
+    expect(p.totalMeasured).toBe(2);
+    expect(p.viewsPerReply).toBeNull();
+    expect(p.bands.every((c) => c.avgYield === null && !c.sufficient)).toBe(true);
+  });
+
+  test('a handle typed with the @ still matches the stored rows', async () => {
+    setSettings({ 'x.identity.selfHandle': `@${SELF.toUpperCase()}` });
+    expect((await perf()).totalMeasured).toBe(2);
+    setSettings({ 'x.identity.selfHandle': SELF });
+  });
+
+  test('an unset handle answers empty rather than guessing one', async () => {
+    resetSettings({ keys: ['x.identity.selfHandle'] });
+    const p = await perf();
+    expect(p).toEqual({
+      totalMeasured: 0,
+      totalViews: 0,
+      viewsPerReply: null,
+      bands: [],
+      latency: [],
+      crowding: [],
+      arms: [],
+    });
+    setSettings({ 'x.identity.selfHandle': SELF });
+  });
+
+  test('?ownReplyDays outside [1, 90] is a 400, not a clamp', async () => {
+    for (const q of ['0', '91', '-1', '3.5', 'week']) {
+      const res = await app.request(`/x/playbook?ownReplyDays=${q}`);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: 'invalid_own_reply_days' });
+    }
+    expect((await app.request('/x/playbook?ownReplyDays=90')).status).toBe(200);
+  });
+});

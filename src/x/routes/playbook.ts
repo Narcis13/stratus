@@ -28,6 +28,7 @@ import { type JudgeVerdictLabel, isJudgeVerdictLabel } from '../../shared/judge.
 import { BAND, type BandThresholds } from '../../shared/replyBand.ts';
 import {
   accountSnapshots,
+  cannonTargets,
   draftJudgments,
   harvestRows,
   ideas,
@@ -53,6 +54,8 @@ import {
   type MediaRow,
   type ModelRow,
   type OriginalPostRow,
+  type OwnReplyPerformance,
+  type OwnReplyRow,
   type PillarRegisterRow,
   type ReplyOrigin,
   type RosterCoverage,
@@ -69,6 +72,7 @@ import {
   buildMeEffectiveness,
   buildMediaEffectiveness,
   buildModelEffectiveness,
+  buildOwnReplyPerformance,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildRosterCoverage,
@@ -498,6 +502,125 @@ export async function loadTimelineFunnel(
   );
 }
 
+// ------------------------------ own harvested replies (latest-per-tweet)
+
+/** The §2.2 baseline window, matching the reference corpus table in
+ *  `x-growth-plan-v3.md` §1. An opening guess — but a cheap one to revise,
+ *  because it is a query param: a different window is a URL, not a deploy. */
+const OWN_REPLY_WINDOW_DAYS = 14;
+const MIN_OWN_REPLY_DAYS = 1;
+const MAX_OWN_REPLY_DAYS = 90;
+/** The user's hand-run reply harvests — NOT the ambient timeline corpus
+ *  (`PASSIVE_HARVEST_MODE` above). §8: every `harvest_rows` reader carries a
+ *  `mode` filter or the two corpora silently mix into one number. */
+const OWN_REPLY_HARVEST_MODE = 'replies';
+
+/** `harvest_rows.handle` is stored lowercased and @-stripped (`normalizeHandle`
+ *  in routes/harvest.ts); `x.identity.selfHandle` is free text the user typed.
+ *  Normalize before comparing or a leading '@' silently answers empty. */
+function normalizeSelfHandle(raw: string | null | undefined): string {
+  return (raw ?? '').trim().replace(/^@+/, '').toLowerCase();
+}
+
+/** `x.identity.selfHandle`, normalized, read from the settings store at REQUEST
+ *  time (the money-knob discipline generalized — a handle edited in Settings
+ *  must move this list on the very next read, not after a restart). */
+export function configuredSelfHandle(): string {
+  return normalizeSelfHandle(getSetting<string>('x.identity.selfHandle'));
+}
+
+/**
+ * My own harvested replies posted since `sinceMs`, ONE ROW PER TWEET — the
+ * freshest capture of each.
+ *
+ * `max(captured_at)` with bare columns is SQLite's documented latest-row-per-
+ * group form (with exactly one min/max aggregate, every bare column comes from
+ * the matching input row). **The direction is deliberately the OPPOSITE of
+ * `loadTimelineFunnel`'s `min(captured_at)`, and both are correct over the same
+ * table:** that one wants the band a tweet carried at FIRST sighting, because
+ * it measures the decision I faced; this one wants the LATEST view count,
+ * because it measures the outcome I earned. Do NOT unify them behind a shared
+ * helper with a direction flag — a flag is exactly how someone later passes the
+ * wrong one (decision 4).
+ *
+ * The dedup is not an optimization. `harvest_rows` stores every capture of the
+ * same tweet on purpose (that IS the longitudinal curve), so a consumer that
+ * forgets to reduce doubles every total the second time a day is harvested.
+ *
+ * The window is on `tweet_time` (when I posted), never `captured_at` — else a
+ * fresh harvest of old replies re-dates them into the window. A reply whose DOM
+ * carried no time therefore drops out entirely: it cannot be placed in or out
+ * of the window, and guessing either way would be a fabricated denominator.
+ *
+ * $0: nothing on this path can reach xFetch.
+ */
+export async function latestOwnReplyRows(
+  selfHandle: string,
+  sinceMs: number,
+): Promise<OwnReplyRow[]> {
+  const handle = normalizeSelfHandle(selfHandle);
+  if (handle === '') return [];
+  const rows = await db
+    .select({
+      tweetId: harvestRows.tweetId,
+      capturedAt: sql<number>`max(${harvestRows.capturedAt})`,
+      views: harvestRows.views,
+      likes: harvestRows.likes,
+      comments: harvestRows.comments,
+      tweetTime: harvestRows.tweetTime,
+      origHandle: harvestRows.origHandle,
+      origText: harvestRows.origText,
+      origViews: harvestRows.origViews,
+      origComments: harvestRows.origComments,
+      origTime: harvestRows.origTime,
+    })
+    .from(harvestRows)
+    .where(
+      and(
+        eq(harvestRows.mode, OWN_REPLY_HARVEST_MODE),
+        eq(harvestRows.handle, handle),
+        gte(harvestRows.tweetTime, new Date(sinceMs)),
+      ),
+    )
+    .groupBy(harvestRows.tweetId);
+
+  return rows.map((r) => ({
+    tweetId: r.tweetId,
+    views: r.views,
+    likes: r.likes,
+    comments: r.comments,
+    tweetTimeMs: r.tweetTime === null ? null : r.tweetTime.getTime(),
+    parentHandle: r.origHandle,
+    parentText: r.origText,
+    parentViews: r.origViews,
+    parentComments: r.origComments,
+    parentTimeMs: r.origTime === null ? null : r.origTime.getTime(),
+  }));
+}
+
+/** The four §2.2–§2.4 tables over my own harvested replies. Two SELECTs, both
+ *  $0 — the rows were scraped for free and the roster is nine local rows. */
+export async function loadOwnReplyPerformance(
+  minN = DEFAULT_MIN_CELL_N,
+  windowDays = OWN_REPLY_WINDOW_DAYS,
+): Promise<OwnReplyPerformance> {
+  const selfHandle = configuredSelfHandle();
+  // §7.11 — an unset handle means the server does not know who I am, which is a
+  // different fact from "no replies". Answer the empty shape BEFORE querying:
+  // there is no handle to guess, and someone else's corpus is not an answer.
+  if (selfHandle === '') return buildOwnReplyPerformance([], new Map(), minN);
+
+  const rows = await latestOwnReplyRows(selfHandle, Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  // Arm attribution is derived at read time from the CURRENT roster (decision:
+  // no stored arm column — it would go stale the moment a handle is camped).
+  // `language` null = English, per the cannon_targets schema.
+  const roster = await db
+    .select({ handle: cannonTargets.handle, language: cannonTargets.language })
+    .from(cannonTargets);
+
+  return buildOwnReplyPerformance(rows, new Map(roster.map((r) => [r.handle, r.language])), minN);
+}
+
 // ---------------------------------------------------- batch vs single rows
 
 async function loadOriginRows(): Promise<{
@@ -635,6 +758,19 @@ playbook.get('/playbook', async (c) => {
     minN = n;
   }
 
+  // The harvested own-reply window, 14 days by default. Out of range is a 400
+  // rather than a clamp: `?ownReplyDays=91` is a question about a window this
+  // read cannot answer, and silently answering a different one is worse.
+  let ownReplyDays = OWN_REPLY_WINDOW_DAYS;
+  const ownReplyDaysStr = c.req.query('ownReplyDays');
+  if (ownReplyDaysStr !== undefined) {
+    const n = Number(ownReplyDaysStr);
+    if (!Number.isInteger(n) || n < MIN_OWN_REPLY_DAYS || n > MAX_OWN_REPLY_DAYS) {
+      return c.json({ error: 'invalid_own_reply_days' }, 400);
+    }
+    ownReplyDays = n;
+  }
+
   const replyRows = await loadReplyRows();
   const followers = await loadFollowersByHandle([...new Set(replyRows.map((r) => r.handle))]);
   const angleRows = toAngleRows(replyRows, followers);
@@ -689,6 +825,10 @@ playbook.get('/playbook', async (c) => {
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
     timelineFunnel: await loadTimelineFunnel(minN, bandThresholdsFromSettings()),
+    // Age-at-POST over every harvested reply — a different instrument from
+    // `latencyEffectiveness` above (age-at-DRAFT over reply_drafts), never one
+    // number (decision 5).
+    ownReplyPerformance: await loadOwnReplyPerformance(minN, ownReplyDays),
     rosterCoverage: await loadRosterCoverage(
       new Date(Date.now() - ROSTER_WINDOW_MS),
       new Date(),
