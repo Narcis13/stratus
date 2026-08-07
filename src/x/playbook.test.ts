@@ -10,6 +10,7 @@ import {
   type MeasuredOutcome,
   type ModelRow,
   type OriginalPostRow,
+  type OwnReplyRow,
   type ScoredReply,
   type TimelineBand,
   type TimelineSeenRow,
@@ -25,6 +26,7 @@ import {
   buildMeEffectiveness,
   buildMediaEffectiveness,
   buildModelEffectiveness,
+  buildOwnReplyPerformance,
   buildPillarRegisterScorecard,
   buildRelationshipLift,
   buildRosterCoverage,
@@ -36,6 +38,10 @@ import {
   latencyBucket,
   median,
   normalizeReplyText,
+  ownReplyArm,
+  ownReplyBand,
+  ownReplyCrowdBucket,
+  ownReplyLatencyBucket,
   resolveAgeMin,
   scoreReplyOutcome,
   topAngles,
@@ -1078,5 +1084,232 @@ describe('topStructures', () => {
     expect(line).toContain("'stat hook'");
     expect(line).toContain('1.0k views');
     expect(line).toContain("'before/after'");
+  });
+});
+
+describe('own reply performance (growth plan §2.2-§2.4)', () => {
+  const NOW = 1_800_000_000_000;
+  let seq = 0;
+  const reply = (o: Partial<OwnReplyRow> = {}): OwnReplyRow => ({
+    tweetId: `r${seq++}`,
+    views: 100,
+    likes: 1,
+    comments: 0,
+    tweetTimeMs: NOW,
+    parentHandle: 'someone',
+    parentText: 'a plain english post about shipping software',
+    parentViews: 5_000,
+    parentComments: 5,
+    parentTimeMs: NOW - 5 * 60_000,
+    ...o,
+  });
+  const noRoster = new Map<string, string | null>();
+
+  test('parent-view band edges, both sides', () => {
+    expect(ownReplyBand(999)).toBe('<1k');
+    expect(ownReplyBand(1_000)).toBe('1k-10k');
+    expect(ownReplyBand(9_999)).toBe('1k-10k');
+    expect(ownReplyBand(10_000)).toBe('10k-50k');
+    expect(ownReplyBand(49_999)).toBe('10k-50k');
+    expect(ownReplyBand(50_000)).toBe('50k-200k');
+    expect(ownReplyBand(199_999)).toBe('50k-200k');
+    expect(ownReplyBand(200_000)).toBe('200k+');
+    expect(ownReplyBand(0)).toBe('<1k');
+    expect(ownReplyBand(null)).toBe('unknown');
+  });
+
+  test('latency edges, both sides, and either missing timestamp is unknown', () => {
+    const at = (min: number) => ownReplyLatencyBucket(NOW + min * 60_000, NOW);
+    expect(at(14)).toBe('<15m');
+    expect(at(15)).toBe('15-60m');
+    expect(at(59)).toBe('15-60m');
+    expect(at(60)).toBe('1-6h');
+    expect(at(359)).toBe('1-6h');
+    expect(at(360)).toBe('6-24h');
+    expect(at(1_439)).toBe('6-24h');
+    expect(at(1_440)).toBe('>24h');
+    // Relative-time scrape noise, not a reply sent into the past.
+    expect(at(-3)).toBe('<15m');
+    expect(ownReplyLatencyBucket(null, NOW)).toBe('unknown');
+    expect(ownReplyLatencyBucket(NOW, null)).toBe('unknown');
+  });
+
+  test('crowding edges, both sides', () => {
+    expect(ownReplyCrowdBucket(9)).toBe('<10');
+    expect(ownReplyCrowdBucket(10)).toBe('10-50');
+    expect(ownReplyCrowdBucket(49)).toBe('10-50');
+    expect(ownReplyCrowdBucket(50)).toBe('50-200');
+    expect(ownReplyCrowdBucket(199)).toBe('50-200');
+    expect(ownReplyCrowdBucket(200)).toBe('200+');
+    expect(ownReplyCrowdBucket(0)).toBe('<10');
+    expect(ownReplyCrowdBucket(null)).toBe('unknown');
+  });
+
+  test('arms: roster language splits A from the English lanes, script splits the rest', () => {
+    // Keys normalized, as the builder hands them over.
+    const roster = new Map<string, string | null>([
+      ['hiiragi2280', 'ja'],
+      ['aktweets', null], // cannon_targets stores null for English
+    ]);
+    expect(ownReplyArm('hiiragi2280', 'こんにちは、いい記事ですね', roster)).toBe('roster-ja');
+    // Roster membership wins over the parent's script — the arm is the lane I
+    // chose to camp, not the language of one post.
+    expect(ownReplyArm('@Hiiragi2280', 'an english aside', roster)).toBe('roster-ja');
+    expect(ownReplyArm('aktweets', 'an english post', roster)).toBe('roster-en');
+    expect(ownReplyArm('someone_else', '半導体の歴史について', roster)).toBe('off-roster-nonlatin');
+    expect(ownReplyArm('someone_else', 'restoring that rubylith mask', roster)).toBe(
+      'off-roster-en',
+    );
+    // No handle = the scrape missed the parent, which is not "off roster".
+    expect(ownReplyArm(null, 'restoring that rubylith mask', roster)).toBe('unknown');
+    expect(ownReplyArm('  ', 'text', roster)).toBe('unknown');
+    expect(ownReplyArm('someone_else', '   ', roster)).toBe('unknown');
+    expect(ownReplyArm('someone_else', null, roster)).toBe('unknown');
+  });
+
+  test('the builder normalizes raw roster keys once, so @Handle rows still match', () => {
+    const r = buildOwnReplyPerformance(
+      [reply({ parentHandle: 'Hiiragi2280' }), reply({ parentHandle: '@nobody_camped' })],
+      new Map([['@Hiiragi2280 ', 'Japanese']]),
+      1,
+    );
+    expect(r.arms.map((c) => c.arm)).toEqual(['roster-ja', 'off-roster-en']);
+  });
+
+  test('a null parent lands in unknown on every axis, never in a neighbour', () => {
+    const rows = [
+      reply({ parentViews: null, parentComments: null, parentTimeMs: null, parentHandle: null }),
+    ];
+    const r = buildOwnReplyPerformance(rows, noRoster, 1);
+    expect(r.bands.map((c) => c.band)).toEqual(['unknown']);
+    expect(r.latency.map((c) => c.bucket)).toEqual(['unknown']);
+    expect(r.crowding.map((c) => c.bucket)).toEqual(['unknown']);
+    expect(r.arms.map((c) => c.arm)).toEqual(['unknown']);
+    // An unknown-band cell knows its own yield but has no parent views to average.
+    expect(r.bands[0]?.avgYield).toBe(100);
+    expect(r.bands[0]?.avgParentViews).toBeNull();
+  });
+
+  test('gate: 19 replies report n with null averages, 20 report them', () => {
+    const rows = Array.from({ length: 19 }, () => reply({ views: 200, parentViews: 300 }));
+    const thin = buildOwnReplyPerformance(rows, noRoster, 20);
+    expect(thin.totalMeasured).toBe(19);
+    expect(thin.totalViews).toBe(3_800);
+    expect(thin.viewsPerReply).toBeNull();
+    expect(thin.bands[0]).toMatchObject({
+      band: '<1k',
+      n: 19,
+      totalViews: 3_800,
+      avgYield: null,
+      avgParentViews: null,
+      sharePct: 100,
+      sufficient: false,
+    });
+
+    const full = buildOwnReplyPerformance(
+      [...rows, reply({ views: 200, parentViews: 300 })],
+      noRoster,
+      20,
+    );
+    expect(full.viewsPerReply).toBe(200);
+    expect(full.bands[0]).toMatchObject({
+      n: 20,
+      avgYield: 200,
+      avgParentViews: 300,
+      sufficient: true,
+    });
+  });
+
+  test('sharePct is computed over ALL views, so it still sums to 100 under the gate', () => {
+    const rows = [
+      ...Array.from({ length: 20 }, () => reply({ views: 50, parentViews: 500 })),
+      ...Array.from({ length: 3 }, () => reply({ views: 1_000, parentViews: 300_000 })),
+    ];
+    const r = buildOwnReplyPerformance(rows, noRoster, 20);
+    const thinCell = r.bands.find((c) => c.band === '200k+');
+    expect(thinCell).toMatchObject({ n: 3, totalViews: 3_000, avgYield: null, sufficient: false });
+    expect(thinCell?.sharePct).toBe(75);
+    expect(r.bands.reduce((s, c) => s + c.sharePct, 0)).toBeCloseTo(100, 1);
+  });
+
+  test('the same tweet captured twice counts once, latest capture wins', () => {
+    const first = reply({ tweetId: 'dup', views: 40 });
+    const later = { ...first, views: 90 };
+    const r = buildOwnReplyPerformance([first, later], noRoster, 1);
+    expect(r.totalMeasured).toBe(1);
+    expect(r.totalViews).toBe(90);
+    expect(r.viewsPerReply).toBe(90);
+  });
+
+  test('empty input returns the empty shape', () => {
+    const r = buildOwnReplyPerformance([], noRoster);
+    expect(r).toEqual({
+      totalMeasured: 0,
+      totalViews: 0,
+      viewsPerReply: null,
+      bands: [],
+      latency: [],
+      crowding: [],
+      arms: [],
+    });
+  });
+
+  test('the §2.2 reference corpus reproduces its published table', () => {
+    // The 1,000-reply @thespacerr harvest, band by band: n, total views and the
+    // parent-view band they sit in. Rows are synthesized to the published totals
+    // so the builder's arithmetic is checked against numbers computed elsewhere.
+    const corpus = [
+      { band: '<1k', n: 774, total: 47_141, parentViews: 500, avgYield: 61, sharePct: 9.9 },
+      { band: '1k-10k', n: 63, total: 17_166, parentViews: 5_000, avgYield: 272, sharePct: 3.6 },
+      { band: '10k-50k', n: 54, total: 31_327, parentViews: 20_000, avgYield: 580, sharePct: 6.6 },
+      {
+        band: '50k-200k',
+        n: 58,
+        total: 110_610,
+        parentViews: 100_000,
+        avgYield: 1_907,
+        sharePct: 23.2,
+      },
+      {
+        band: '200k+',
+        n: 51,
+        total: 269_803,
+        parentViews: 300_000,
+        avgYield: 5_290,
+        sharePct: 56.7,
+      },
+    ] as const;
+
+    const rows: OwnReplyRow[] = [];
+    for (const c of corpus) {
+      const base = Math.floor(c.total / c.n);
+      for (let i = 0; i < c.n; i++) {
+        rows.push(
+          reply({
+            views: i === 0 ? c.total - base * (c.n - 1) : base,
+            parentViews: c.parentViews,
+          }),
+        );
+      }
+    }
+
+    const r = buildOwnReplyPerformance(rows, noRoster);
+    expect(r.totalMeasured).toBe(1_000);
+    expect(r.totalViews).toBe(476_047);
+    expect(r.viewsPerReply).toBe(476.05);
+    expect(r.bands.map((c) => c.band)).toEqual(['<1k', '1k-10k', '10k-50k', '50k-200k', '200k+']);
+    for (const expected of corpus) {
+      const cell = r.bands.find((c) => c.band === expected.band);
+      expect(cell?.n).toBe(expected.n);
+      expect(cell?.totalViews).toBe(expected.total);
+      expect(cell?.sufficient).toBe(true);
+      expect(Math.round(cell?.avgYield ?? 0)).toBe(expected.avgYield);
+      expect(cell?.avgParentViews).toBe(expected.parentViews);
+      expect(Math.round((cell?.sharePct ?? 0) * 10) / 10).toBe(expected.sharePct);
+    }
+    // 10.9% of the replies carrying 79.9% of the impressions — the finding.
+    const top = r.bands.filter((c) => c.band === '50k-200k' || c.band === '200k+');
+    expect(top.reduce((s, c) => s + c.n, 0)).toBe(109);
+    expect(top.reduce((s, c) => s + c.sharePct, 0)).toBeCloseTo(79.9, 1);
   });
 });

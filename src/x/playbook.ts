@@ -8,6 +8,7 @@
 // calls these; fixtures drive the tests.
 
 import { JUDGE_VERDICT_ORDER, type JudgeVerdictLabel, deriveApproved } from '../shared/judge.ts';
+import { detectScript, resolveLanguageProfile } from '../shared/language.ts';
 import { type CoachBand, type CoachLexicon, scoreDraft } from '../shared/postCoach.ts';
 import { POST_FORMATS, type PostFormat, classifyFormat } from '../shared/postFormat.ts';
 import {
@@ -1255,6 +1256,301 @@ export function buildJudgeEffectiveness(
     approvedProfileVisitsSpread: approvedGated
       ? ratio(approvedCell.medianProfileVisits, rejectedCell.medianProfileVisits)
       : null,
+  };
+}
+
+// ----------------------- 16. my own harvested replies (growth plan §2.2–§2.4)
+
+/** One of MY replies as the free DOM harvest saw it, already reduced to one row
+ *  per tweet by the loader (latest capture wins — the freshest view count).
+ *
+ *  `views` is never null: a reply whose numbers didn't parse is not a row at
+ *  all. Every `parent*` field IS nullable, and a null there means the SCRAPE
+ *  MISSED THE PARENT — a different fact from "small parent" (§7.11), which is
+ *  why each axis carries its own `unknown` bucket rather than folding nulls
+ *  into the bottom one. */
+export interface OwnReplyRow {
+  tweetId: string;
+  views: number;
+  likes: number;
+  comments: number;
+  /** When I posted the reply (epoch ms); null when the DOM carried no time. */
+  tweetTimeMs: number | null;
+  parentHandle: string | null;
+  /** The parent's text — the arm axis needs it for `detectScript`. */
+  parentText: string | null;
+  parentViews: number | null;
+  parentComments: number | null;
+  parentTimeMs: number | null;
+}
+
+/** Bucket edges on all four axes are taken VERBATIM from `x-growth-plan-v3.md`
+ *  §2.2/§2.3/§2.4 so my tables read against the same rows as the 1,000-reply
+ *  reference corpus. They deliberately do NOT match `AUTHOR_SIZE_BUCKETS`: that
+ *  axis bands an author's FOLLOWERS, this one bands a single POST's views, and
+ *  the measurement that produced these cuts found 200k+ carrying 56.7% of all
+ *  yield — a ceiling of `100k+` would hide the entire finding. */
+export const OWN_REPLY_BANDS = [
+  '<1k',
+  '1k-10k',
+  '10k-50k',
+  '50k-200k',
+  '200k+',
+  'unknown',
+] as const;
+export type OwnReplyBand = (typeof OWN_REPLY_BANDS)[number];
+
+export function ownReplyBand(parentViews: number | null): OwnReplyBand {
+  if (parentViews === null || !Number.isFinite(parentViews)) return 'unknown';
+  if (parentViews < 1_000) return '<1k';
+  if (parentViews < 10_000) return '1k-10k';
+  if (parentViews < 50_000) return '10k-50k';
+  if (parentViews < 200_000) return '50k-200k';
+  return '200k+';
+}
+
+/** Age of the parent when I replied. Distinct from `LATENCY_BUCKETS` (§8) on
+ *  purpose: that axis measures age-at-DRAFT over `reply_drafts`, this one
+ *  age-at-POST over every harvested reply, and §2.3 splits `>6h` into
+ *  `6-24h`/`>24h` because those two rows behave nothing alike (yield 12 vs 6 on
+ *  parents averaging 139k vs 82 views). Two instruments, never one number. */
+export const OWN_REPLY_LATENCY_BUCKETS = [
+  '<15m',
+  '15-60m',
+  '1-6h',
+  '6-24h',
+  '>24h',
+  'unknown',
+] as const;
+export type OwnReplyLatencyBucket = (typeof OWN_REPLY_LATENCY_BUCKETS)[number];
+
+export function ownReplyLatencyBucket(
+  tweetTimeMs: number | null,
+  parentTimeMs: number | null,
+): OwnReplyLatencyBucket {
+  if (tweetTimeMs === null || parentTimeMs === null) return 'unknown';
+  if (!Number.isFinite(tweetTimeMs) || !Number.isFinite(parentTimeMs)) return 'unknown';
+  // Clamped like resolveAgeMin: X renders relative times, so a reply can read
+  // a minute "before" its parent. Negative age is scrape noise, not a reply
+  // sent into the past — it belongs in the fastest bucket, not in unknown.
+  const min = Math.max(0, (tweetTimeMs - parentTimeMs) / 60_000);
+  if (min < 15) return '<15m';
+  if (min < 60) return '15-60m';
+  if (min < 360) return '1-6h';
+  if (min < 1_440) return '6-24h';
+  return '>24h';
+}
+
+/** How many replies were already on the parent — §2.4's "real discovery": reach
+ *  per existing reply, not reach, is the variable. */
+export const OWN_REPLY_CROWD_BUCKETS = ['<10', '10-50', '50-200', '200+', 'unknown'] as const;
+export type OwnReplyCrowdBucket = (typeof OWN_REPLY_CROWD_BUCKETS)[number];
+
+export function ownReplyCrowdBucket(parentComments: number | null): OwnReplyCrowdBucket {
+  if (parentComments === null || !Number.isFinite(parentComments)) return 'unknown';
+  if (parentComments < 10) return '<10';
+  if (parentComments < 50) return '10-50';
+  if (parentComments < 200) return '50-200';
+  return '200+';
+}
+
+/** The §8 two-week experiment's arms, read off rows that were already free.
+ *  Arm attribution is POST-HOC and derived, never stamped: 0 of the first 98
+ *  harvested replies matched a `reply_drafts` row (all hand-typed outside the
+ *  pipeline), so the drafting path cannot supply it and never will. */
+export const OWN_REPLY_ARMS = [
+  'roster-ja',
+  'roster-en',
+  'off-roster-nonlatin',
+  'off-roster-en',
+  'unknown',
+] as const;
+export type OwnReplyArm = (typeof OWN_REPLY_ARMS)[number];
+
+function normalizeHandle(handle: string | null): string | null {
+  if (handle === null) return null;
+  const h = handle.trim().replace(/^@+/, '').toLowerCase();
+  return h === '' ? null : h;
+}
+
+/**
+ * Which experiment arm a reply landed in. `rosterByHandle` maps a camped handle
+ * to `cannon_targets.language` (null there = English, per the schema); its keys
+ * must already be normalized — `buildOwnReplyPerformance` normalizes the map it
+ * is handed once, rather than per row.
+ *
+ * A null handle is `unknown`, never `off-roster-*`: "off roster" is a claim
+ * about a handle we would have had to see (§7.11). Past that, `detectScript`
+ * answering null means Latin-or-unvoteable, which folds into the English arm —
+ * the arm axis only asks "is this the Japanese lane or an English one", and
+ * Latin script cannot separate es/pt/fr anyway.
+ */
+export function ownReplyArm(
+  parentHandle: string | null,
+  parentText: string | null,
+  rosterByHandle: Map<string, string | null>,
+): OwnReplyArm {
+  const handle = normalizeHandle(parentHandle);
+  if (handle === null) return 'unknown';
+  if (rosterByHandle.has(handle)) {
+    return resolveLanguageProfile(rosterByHandle.get(handle) ?? null)?.code === 'ja'
+      ? 'roster-ja'
+      : 'roster-en';
+  }
+  const text = parentText?.trim() ?? '';
+  if (text === '') return 'unknown';
+  return detectScript(text) === null ? 'off-roster-en' : 'off-roster-nonlatin';
+}
+
+/** One row of any of the four tables. An insufficient cell still reports its
+ *  counts and NULLS its averages — the `OutcomeCell` discipline, restated here
+ *  because this family averages (the §2.2 corpus is quoted as means) where the
+ *  rest of the file takes medians. */
+export interface OwnReplyCell {
+  /** Replies in the cell. Every harvested reply is measured, so this is both
+   *  the volume and the gate's sample. */
+  n: number;
+  totalViews: number;
+  /** Mean views per reply — the ladder number, per cell. Null under the gate. */
+  avgYield: number | null;
+  /** Mean views on the parents in this cell; null under the gate, and also when
+   *  no row in the cell knew its parent's view count. */
+  avgParentViews: number | null;
+  /** Share of ALL harvested reply views in the window, including the views in
+   *  cells that failed the gate — a share computed over gated cells only would
+   *  not sum to 100, and this column exists to be summed by eye. */
+  sharePct: number;
+  sufficient: boolean;
+}
+
+export interface OwnReplyBandCell extends OwnReplyCell {
+  band: OwnReplyBand;
+}
+export interface OwnReplyLatencyCell extends OwnReplyCell {
+  bucket: OwnReplyLatencyBucket;
+}
+export interface OwnReplyCrowdCell extends OwnReplyCell {
+  bucket: OwnReplyCrowdBucket;
+}
+export interface OwnReplyArmCell extends OwnReplyCell {
+  arm: OwnReplyArm;
+}
+
+export interface OwnReplyPerformance {
+  /** Distinct replies in the window. */
+  totalMeasured: number;
+  totalViews: number;
+  /** The one number the §8 two-week test tracks daily. Null under the gate. */
+  viewsPerReply: number | null;
+  /** One cell per non-empty bucket, in canonical (not most-sampled) order. */
+  bands: OwnReplyBandCell[];
+  latency: OwnReplyLatencyCell[];
+  crowding: OwnReplyCrowdCell[];
+  arms: OwnReplyArmCell[];
+}
+
+function ownReplyCell(rows: OwnReplyRow[], totalViews: number, minN: number): OwnReplyCell {
+  const cellViews = rows.reduce((sum, r) => sum + r.views, 0);
+  const sufficient = rows.length >= minN;
+  const parentViews = rows
+    .map((r) => r.parentViews)
+    .filter((v): v is number => v !== null && Number.isFinite(v));
+  const avgParent = mean(parentViews);
+  return {
+    n: rows.length,
+    totalViews: cellViews,
+    avgYield: sufficient ? round2(mean(rows.map((r) => r.views)) ?? 0) : null,
+    avgParentViews: sufficient && avgParent !== null ? round2(avgParent) : null,
+    sharePct: totalViews > 0 ? round2((cellViews / totalViews) * 100) : 0,
+    sufficient,
+  };
+}
+
+function ownReplyCells<K extends string>(
+  order: readonly K[],
+  rows: OwnReplyRow[],
+  keyOf: (row: OwnReplyRow) => K,
+  totalViews: number,
+  minN: number,
+): Array<OwnReplyCell & { key: K }> {
+  const byKey = new Map<K, OwnReplyRow[]>();
+  for (const r of rows) {
+    const k = keyOf(r);
+    const list = byKey.get(k) ?? [];
+    list.push(r);
+    byKey.set(k, list);
+  }
+  return order.flatMap((k) => {
+    const inCell = byKey.get(k);
+    return inCell === undefined ? [] : [{ key: k, ...ownReplyCell(inCell, totalViews, minN) }];
+  });
+}
+
+/**
+ * The four §2.2–§2.4 tables over my own harvested replies.
+ *
+ * Pure: no DB, no clock — the caller supplies the window and the roster.
+ *
+ * Rows are deduped by `tweetId` here as well as in the loader's SQL, LATEST
+ * wins. `harvest_rows` stores every capture of the same tweet on purpose (that
+ * IS the longitudinal curve), so any consumer that forgets to reduce silently
+ * doubles every total the second time a day is harvested. The direction is the
+ * opposite of `buildTimelineFunnel`'s earliest-wins and both are correct: that
+ * one wants the band at first sighting, this one wants the freshest view count.
+ */
+export function buildOwnReplyPerformance(
+  rows: OwnReplyRow[],
+  rosterByHandle: Map<string, string | null>,
+  minN = DEFAULT_MIN_CELL_N,
+): OwnReplyPerformance {
+  const latestByTweet = new Map<string, OwnReplyRow>();
+  for (const r of rows) latestByTweet.set(r.tweetId, r);
+  const deduped = [...latestByTweet.values()];
+
+  const roster = new Map<string, string | null>();
+  for (const [handle, language] of rosterByHandle) {
+    const key = normalizeHandle(handle);
+    if (key !== null) roster.set(key, language);
+  }
+
+  const totalViews = deduped.reduce((sum, r) => sum + r.views, 0);
+  const bands = ownReplyCells(
+    OWN_REPLY_BANDS,
+    deduped,
+    (r) => ownReplyBand(r.parentViews),
+    totalViews,
+    minN,
+  ).map(({ key, ...cell }) => ({ band: key, ...cell }));
+  const latency = ownReplyCells(
+    OWN_REPLY_LATENCY_BUCKETS,
+    deduped,
+    (r) => ownReplyLatencyBucket(r.tweetTimeMs, r.parentTimeMs),
+    totalViews,
+    minN,
+  ).map(({ key, ...cell }) => ({ bucket: key, ...cell }));
+  const crowding = ownReplyCells(
+    OWN_REPLY_CROWD_BUCKETS,
+    deduped,
+    (r) => ownReplyCrowdBucket(r.parentComments),
+    totalViews,
+    minN,
+  ).map(({ key, ...cell }) => ({ bucket: key, ...cell }));
+  const arms = ownReplyCells(
+    OWN_REPLY_ARMS,
+    deduped,
+    (r) => ownReplyArm(r.parentHandle, r.parentText, roster),
+    totalViews,
+    minN,
+  ).map(({ key, ...cell }) => ({ arm: key, ...cell }));
+
+  return {
+    totalMeasured: deduped.length,
+    totalViews,
+    viewsPerReply: deduped.length >= minN ? round2(totalViews / deduped.length) : null,
+    bands,
+    latency,
+    crowding,
+    arms,
   };
 }
 
