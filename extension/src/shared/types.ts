@@ -1462,6 +1462,16 @@ export interface Brief {
     replyPct: number | null;
     targetReplyPct: number;
   };
+  // The last COMPLETE local day of harvested own replies. null when the self
+  // handle is unset or nothing was harvested in the window; optional because a
+  // deployed server may predate the fact. Absent/null renders nothing — a `0.0`
+  // here would read as a catastrophic day, not as "not harvested yet".
+  harvestedReplies?: {
+    day: string;
+    n: number;
+    totalViews: number;
+    viewsPerReply: number;
+  } | null;
   spend: {
     from: string;
     to: string;

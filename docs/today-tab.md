@@ -289,6 +289,7 @@ One thing it deliberately doesn't do: thread tails don't count as a posting burs
 
 - A **progress bar** and label like **7 / 10–20 today** — replies you've posted today against the daily target range. The bar turns green once you hit the minimum.
 - A **week line**: *"Week: 42 replies · 12 posts — 78% replies (target 70%)."* This is where you see whether your reply-to-post mix matches the 70/30 doctrine over the week.
+- A **harvested line**, when you've harvested your own replies (**Harvest → my replies**): *"Harvested 2026-08-06: 98 replies · 61.6 views/reply."* The last **complete** day only — today's replies are still accruing views, so including them would read as a collapse every morning — and counting each reply once at its freshest capture, however many times you've harvested it. Unlike the Playbook's tables this number is **not** gated at n≥20: it's one day's raw arithmetic over everything you posted, compared against nothing, and the point is watching it move day to day. Nothing renders at all when your handle is unset (**Settings → Identity**) or nothing was harvested in the last 14 days — an absent number is not a zero.
 
 ### 15. Yesterday
 

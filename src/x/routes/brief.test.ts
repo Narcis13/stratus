@@ -8,6 +8,8 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
   commitments,
+  harvestRows,
+  harvestRuns,
   meGoals,
   mentions,
   people,
@@ -99,8 +101,16 @@ interface MilestoneWatchBody {
   followers: number;
 }
 
+interface HarvestedRepliesBlock {
+  day: string;
+  n: number;
+  totalViews: number;
+  viewsPerReply: number;
+}
+
 interface BriefBody {
   account: { conversion: { d7: ConversionWindow; d28: ConversionWindow } };
+  harvestedReplies: HarvestedRepliesBlock | null;
   pinnedWatch: PinnedWatchBody;
   milestoneWatch: MilestoneWatchBody | null;
   monitor: MonitorBlock;
@@ -557,6 +567,96 @@ describe('brief reciprocity quest (GT.7)', () => {
     } finally {
       await db.delete(people).where(eq(people.handle, HANDLE));
       await db.delete(replyDrafts).where(eq(replyDrafts.sourceTweetId, DRAFT_SOURCE_ID));
+    }
+  });
+});
+
+// The last-complete-day harvested-replies fact. Rows are seeded directly (a
+// multi-capture history of one tweet id is the point, and POST /harvest/passive's
+// recapture gate would refuse to build it) under a handle no other suite uses, so
+// the latest-per-tweet dedup is what's being measured and not another file's corpus.
+describe('brief harvested replies (last complete day)', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000b6';
+  const SELF = 'brief_harvest_me';
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  // tzOffsetMin=0 on every getBrief() call, so the local day IS the UTC day.
+  const now = new Date();
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const yesterdayKey = new Date(todayStart.getTime() - DAY_MS).toISOString().slice(0, 10);
+  // Noon of each day — far enough from either boundary that no clock skew can
+  // re-date a fixture into the neighbouring day.
+  const noon = (daysBack: number) =>
+    new Date(todayStart.getTime() - daysBack * DAY_MS + 12 * 3600_000);
+
+  const row = (o: { tweetId: string; views: number; tweetTime: Date; capturedAt: Date }) => ({
+    runId: RUN_ID,
+    tweetId: o.tweetId,
+    handle: SELF,
+    mode: 'replies',
+    text: 'a reply of mine',
+    views: o.views,
+    likes: 1,
+    comments: 0,
+    tweetTime: o.tweetTime,
+    capturedAt: o.capturedAt,
+  });
+
+  beforeAll(async () => {
+    setSettings({ 'x.identity.selfHandle': SELF });
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: SELF, mode: 'replies', scope: 'recent' })
+      .onConflictDoNothing();
+    await db.insert(harvestRows).values([
+      // Yesterday: two replies, the first captured twice — 300 must win over 100,
+      // and the day must total 350 rather than 450.
+      row({ tweetId: 'bh_a', views: 100, tweetTime: noon(1), capturedAt: noon(1) }),
+      row({ tweetId: 'bh_a', views: 300, tweetTime: noon(1), capturedAt: now }),
+      row({ tweetId: 'bh_b', views: 50, tweetTime: noon(1), capturedAt: now }),
+      // An older day with a wildly different average — the fact must report the
+      // LAST harvested day, not a window-wide mean.
+      row({ tweetId: 'bh_old', views: 9_000, tweetTime: noon(3), capturedAt: now }),
+      // Posted today: still accruing views, so it must not become "the last day".
+      row({
+        tweetId: 'bh_today',
+        views: 1,
+        tweetTime: new Date(todayStart.getTime() + 60_000),
+        capturedAt: now,
+      }),
+    ]);
+  });
+
+  afterAll(async () => {
+    resetSettings({ group: 'identity' });
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+  });
+
+  test('the seeded day yields n, totalViews and the right average', async () => {
+    const body = await getBrief();
+    expect(body.harvestedReplies).toEqual({
+      day: yesterdayKey,
+      n: 2,
+      totalViews: 350,
+      viewsPerReply: 175,
+    });
+  });
+
+  test('no rows for the handle ⇒ null, never a zero', async () => {
+    setSettings({ 'x.identity.selfHandle': 'brief_harvest_nobody' });
+    try {
+      expect(await getBrief().then((b) => b.harvestedReplies)).toBeNull();
+    } finally {
+      setSettings({ 'x.identity.selfHandle': SELF });
+    }
+  });
+
+  test('an unset self handle ⇒ null (the server does not guess whose replies)', async () => {
+    resetSettings({ group: 'identity' });
+    try {
+      expect(await getBrief().then((b) => b.harvestedReplies)).toBeNull();
+    } finally {
+      setSettings({ 'x.identity.selfHandle': SELF });
     }
   });
 });

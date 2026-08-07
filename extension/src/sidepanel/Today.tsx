@@ -609,6 +609,7 @@ function TodayPlan({ brief }: { brief: Brief }): JSX.Element {
 function ReplyQuota({ brief }: { brief: Brief }): JSX.Element {
   const { postedToday, target } = brief.replyQuota;
   const { posts, replies, replyPct, targetReplyPct } = brief.week;
+  const harvested = brief.harvestedReplies ?? null;
   const pct = Math.min(100, (postedToday / target.min) * 100);
   return (
     <Section title="Replies">
@@ -627,6 +628,12 @@ function ReplyQuota({ brief }: { brief: Brief }): JSX.Element {
         Week: <strong>{replies}</strong> replies · <strong>{posts}</strong> posts
         {replyPct !== null && ` — ${replyPct}% replies (target ${targetReplyPct}%)`}
       </div>
+      {harvested !== null && (
+        <div className="status-line">
+          Harvested {harvested.day}: <strong>{harvested.n}</strong> replies ·{' '}
+          <strong>{harvested.viewsPerReply.toFixed(1)}</strong> views/reply
+        </div>
+      )}
     </Section>
   );
 }

@@ -47,6 +47,7 @@ import {
   loadBestTimeCells,
 } from './metrics.ts';
 import { loadMonitorInputs } from './monitor.ts';
+import { configuredSelfHandle, latestOwnReplyRows } from './playbook.ts';
 import { targetBand } from './voice.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -439,6 +440,70 @@ export function buildMilestoneWatch(
   return { milestone, crossedOn: crossing.snapshotAt, followers: crossing.followers };
 }
 
+// ------------------------------------------------- harvested replies (day)
+
+export interface HarvestedRepliesDay {
+  /** YYYY-MM-DD in the viewer's local clock. */
+  day: string;
+  n: number;
+  totalViews: number;
+  viewsPerReply: number;
+}
+
+/** How far back to look for the last day I harvested my own replies. Matches the
+ *  Playbook's own-reply window — past it, the number is not "yesterday's", and a
+ *  fortnight-old average masquerading as today's is worse than nothing. */
+const HARVESTED_LOOKBACK_DAYS = 14;
+
+/**
+ * Views-per-reply for the most recent COMPLETE local day I harvested — the one
+ * number that moves when reply quality moves.
+ *
+ * Rows come from `latestOwnReplyRows` (routes/playbook.ts), not a second
+ * aggregate: exactly one place knows the `max(captured_at)` latest-per-tweet
+ * rule, so the Playbook tables and this line can never disagree about how many
+ * replies a day contained.
+ *
+ * **Deliberately NOT gated at n≥20 (§7.19).** That gate exists for comparative
+ * cells — a band/latency bucket claiming one arm beats another on four rows. This
+ * is one day's raw arithmetic over every reply I posted that day, reported as
+ * itself, compared against nothing; watching it move day to day IS the feature.
+ * Do not "fix" it into a gate.
+ *
+ * `null` — never `0` — when the self handle is unset or no complete day inside
+ * the window has rows: `0.0 views/reply` reads as a catastrophic day rather than
+ * as "you haven't harvested yet". $0: pure SQL over DOM-scraped rows.
+ */
+async function loadHarvestedRepliesDay(
+  todayStart: Date,
+  tzOffsetMin: number,
+): Promise<HarvestedRepliesDay | null> {
+  const selfHandle = configuredSelfHandle();
+  if (selfHandle === '') return null;
+
+  const rows = await latestOwnReplyRows(
+    selfHandle,
+    todayStart.getTime() - HARVESTED_LOOKBACK_DAYS * DAY_MS,
+  );
+
+  // Today is excluded: its replies are still accruing views, so its average is
+  // always artificially low and would read as a collapse every morning.
+  const perDay = new Map<string, { n: number; totalViews: number }>();
+  for (const r of rows) {
+    if (r.tweetTimeMs === null || r.tweetTimeMs >= todayStart.getTime()) continue;
+    const day = localDayKey(new Date(r.tweetTimeMs), tzOffsetMin);
+    const cell = perDay.get(day) ?? { n: 0, totalViews: 0 };
+    cell.n += 1;
+    cell.totalViews += r.views;
+    perDay.set(day, cell);
+  }
+  if (perDay.size === 0) return null;
+
+  const day = [...perDay.keys()].sort().at(-1) as string;
+  const { n, totalViews } = perDay.get(day) as { n: number; totalViews: number };
+  return { day, n, totalViews, viewsPerReply: Math.round((totalViews / n) * 10) / 10 };
+}
+
 // ------------------------------------------------------------------ route
 
 brief.get('/brief', async (c) => {
@@ -499,6 +564,7 @@ brief.get('/brief', async (c) => {
     commitmentViews,
     goalViews,
     audienceRows,
+    harvestedReplies,
   ] = await Promise.all([
     db
       .select({
@@ -613,6 +679,7 @@ brief.get('/brief', async (c) => {
       .from(audienceActivity)
       .orderBy(desc(audienceActivity.capturedAt), desc(audienceActivity.id))
       .limit(1),
+    loadHarvestedRepliesDay(todayStart, tzOffsetMin),
   ]);
 
   const tweetIds = published.map((p) => p.tweetId);
@@ -979,6 +1046,9 @@ brief.get('/brief', async (c) => {
       replyPct: weekTotal === 0 ? null : Math.round((weekReplies / weekTotal) * 100),
       targetReplyPct: doctrine.weekReplyTargetPct,
     },
+    // The last complete local day of harvested own replies. null (not 0) when
+    // the handle is unset or nothing was harvested — the card renders nothing.
+    harvestedReplies,
     spend: {
       from: utcDayStart,
       to: utcDayEnd,
