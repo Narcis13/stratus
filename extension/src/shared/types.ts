@@ -2083,6 +2083,69 @@ export interface PlaybookRosterCoverage {
   band: { min: number; max: number } | null;
 }
 
+// ---------------------------------------------- own harvested replies (§2.2)
+// The server-side mirror of `src/x/playbook.ts`'s own-reply family. Read off
+// `harvest_rows` — the $0 DOM scrape — so it measures EVERY reply I posted, not
+// only the ones stratus drafted. That is what makes it a different instrument
+// from `latencyEffectiveness` (age at DRAFT over `reply_drafts`) and why the
+// two are never one number.
+//
+// `unknown` is a real bucket on all four axes, never folded into a neighbour:
+// it means the scrape missed the parent, which is a different fact from "small
+// parent" / "replied late".
+export type OwnReplyBand = '<1k' | '1k-10k' | '10k-50k' | '50k-200k' | '200k+' | 'unknown';
+export type OwnReplyLatencyBucket = '<15m' | '15-60m' | '1-6h' | '6-24h' | '>24h' | 'unknown';
+export type OwnReplyCrowdBucket = '<10' | '10-50' | '50-200' | '200+' | 'unknown';
+export type OwnReplyArm =
+  | 'roster-ja'
+  | 'roster-en'
+  | 'off-roster-nonlatin'
+  | 'off-roster-en'
+  | 'unknown';
+
+// This family AVERAGES where the rest of the Playbook takes medians (the §2.2
+// reference corpus is quoted as means), so it has its own cell shape rather
+// than reusing `PlaybookCell` — an `avgYield` rendered by `ResultCell` would be
+// labelled "med".
+export interface OwnReplyCell {
+  n: number;
+  totalViews: number;
+  /** Mean views per reply in the cell. Null under the gate. */
+  avgYield: number | null;
+  /** Mean views on the parents. Null under the gate, and when no row knew. */
+  avgParentViews: number | null;
+  /** Share of ALL harvested reply views in the window — including views inside
+   *  cells that failed the gate, so the column sums to 100 by eye. */
+  sharePct: number;
+  sufficient: boolean;
+}
+
+export interface OwnReplyBandCell extends OwnReplyCell {
+  band: OwnReplyBand;
+}
+export interface OwnReplyLatencyCell extends OwnReplyCell {
+  bucket: OwnReplyLatencyBucket;
+}
+export interface OwnReplyCrowdCell extends OwnReplyCell {
+  bucket: OwnReplyCrowdBucket;
+}
+export interface OwnReplyArmCell extends OwnReplyCell {
+  arm: OwnReplyArm;
+}
+
+export interface OwnReplyPerformance {
+  /** Distinct replies in the window — deduped latest-capture-wins, so
+   *  harvesting the same day twice does not double it. */
+  totalMeasured: number;
+  totalViews: number;
+  /** The one number the §8 two-week test tracks daily. Null under the gate. */
+  viewsPerReply: number | null;
+  bands: OwnReplyBandCell[];
+  latency: OwnReplyLatencyCell[];
+  crowding: OwnReplyCrowdCell[];
+  arms: OwnReplyArmCell[];
+}
+
 export interface Playbook {
   minN: number;
   angleEffectiveness: {
@@ -2200,6 +2263,10 @@ export interface Playbook {
     cells: PlaybookModelCell[];
     totalMeasured: number;
   };
+  // My own harvested replies (§2.2–§2.4), 14-day window on when I POSTED them.
+  // Sourced from the $0 harvest, deduped latest-capture-wins, so it covers
+  // hand-typed replies the drafts-based sections above can never see.
+  ownReplyPerformance: OwnReplyPerformance;
   // Timeline opportunity-capture funnel (HV.5): of the tweets the algorithm
   // actually put in front of me (the passive home-timeline corpus), how many did
   // I reply to, per band at first sighting. Rate is null under the per-cell gate.

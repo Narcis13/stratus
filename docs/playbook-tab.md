@@ -280,6 +280,35 @@ The table shows each bucket's **posted** count and result. Below it, once both t
 
 This is a deliberately consequential number: it's the one that either **justifies** all the machinery stratus builds to help you reply fast (the Radar queue, the Launch Room), or tells you that speed isn't buying you much and your effort belongs elsewhere.
 
+### My replies — harvested
+
+**Question it answers:** *Across **every** reply I posted — including the ones I typed straight into x.com — which kind of tweet is actually paying me back in views?*
+
+This is the only section built from the **harvest** rather than from stratus's own drafts. The Harvest tab scrapes your replies off the page for **$0** (no API, no charge), so this table sees your whole reply habit, not just the replies stratus drafted for you. That makes it a completely different instrument from **Reply latency** directly above it — and the word *harvested* in the title is there so you never read the two as one number:
+
+| | Reply latency (above) | My replies — harvested |
+|---|---|---|
+| Corpus | replies stratus drafted | every reply the harvest scraped |
+| Clock starts | when you opened the draft | when the **parent tweet** was posted |
+| Source | `reply_drafts` + the metrics pass | the free DOM scrape |
+
+**The headline line** is the number to watch: `61.6 views/reply · 98 replies · 6.0k views, last 14 days`. That single figure — **views per reply** — is the one the two-week reply experiment tracks day to day. Under the gate it reads `— views/reply (n=12/20)` instead of a figure built on a dozen replies.
+
+**The four tables.** Each one slices the same replies a different way, and every row shows **replies** (how many), **share** (that slice's share of all your harvested reply views), **views/reply** (the average yield), and **parent** (the average view count of the tweets you replied to):
+
+- **parent size** — how big the tweet was when you replied: `<1k`, `1k-10k`, `10k-50k`, `50k-200k`, `200k+`. This is the "should I be camping bigger accounts?" table.
+- **age at post** — how old the parent was at the moment you posted: `<15m`, `15-60m`, `1-6h`, `6-24h`, `>24h`. The speed question, measured over *all* your replies.
+- **replies already there** — how crowded the thread was: `<10`, `10-50`, `50-200`, `200+`. Reach per existing reply, not raw reach, is often the real variable.
+- **experiment arm** — `roster-ja` / `roster-en` (the parent's author is camped on your Radar → Cannon roster, split by language) and `off-roster-nonlatin` / `off-roster-en` (everyone else, split by the script the parent was written in).
+
+**Averages here, medians everywhere else.** This family reports means, because the reference numbers it is meant to be compared against are quoted as means. A cell below the gate keeps its counts and share but replaces the average with `insufficient data (n=…/20)` — marked, never hidden, because a missing row would read as "no data" when the truth is "not enough yet".
+
+**"unknown" is a real row, not a leftover.** It means the scrape didn't capture the parent's numbers — a different fact from "the parent was small" or "you replied late". Watch its share: a sudden jump means X changed its markup and the scraper is missing fields, not that your behaviour changed.
+
+**Two caveats worth knowing.** The `roster-*` arms only fill for handles you've actually camped in Radar → Cannon, so `roster-ja` stays empty until Japanese targets are on the roster. And foreign-language replies harvested before the un-translation fix stored X's *machine translation* of the parent, so their script read can be wrong — they age out of the 14-day window on their own; nothing to repair.
+
+**If it's empty:** harvest your own replies from the Harvest tab (your handle, mode `replies`) and set your handle in **Settings → Identity**. Without that handle the server has no way to know which harvested rows are yours, so it answers empty rather than guessing.
+
 ### Roster coverage — last 7 days
 
 **Question it answers:** *Over the last week, are my replies actually landing on the right-sized accounts — the "2–10x my size" sweet spot the strategy calls for?*

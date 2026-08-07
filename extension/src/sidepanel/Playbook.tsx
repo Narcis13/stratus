@@ -14,6 +14,8 @@ import { FORMAT_LABELS } from '../postFormat.ts';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
+  type OwnReplyCell,
+  type OwnReplyPerformance,
   type Playbook,
   type PlaybookAngleCell,
   type PlaybookCell,
@@ -52,6 +54,7 @@ const SLICE_KEYS: ReadonlyArray<keyof Playbook> = [
   'judgeEffectiveness',
   'ideaEffectiveness',
   'latencyEffectiveness',
+  'ownReplyPerformance',
   'modelEffectiveness',
   'timelineFunnel',
   'rosterCoverage',
@@ -487,6 +490,10 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 </div>
               )}
             </Section>
+          ))}
+
+          {slice(data.ownReplyPerformance, 'My replies — harvested', () => (
+            <OwnReplySection p={data.ownReplyPerformance} minN={data.minN} />
           ))}
 
           {slice(data.modelEffectiveness, 'Model effectiveness', () => (
@@ -1056,6 +1063,122 @@ function RosterCoverageSection({
         </>
       )}
     </Section>
+  );
+}
+
+// §2.2–§2.4 — my own replies as the harvest scraped them, which is a different
+// corpus from every drafts-based section above: it covers replies I hand-typed
+// on x.com, and its clock runs from when the PARENT was posted, not from when a
+// draft was opened. The title says "harvested" for exactly that reason — the
+// "Reply latency" section directly above measures age-at-draft over
+// `reply_drafts` and the two must never be read as one number.
+//
+// The headline is `viewsPerReply` because that is the single number the §8
+// two-week test tracks daily; it renders `—` under the gate rather than a
+// figure built on a handful of replies.
+function OwnReplySection({ p, minN }: { p: OwnReplyPerformance; minN: number }): JSX.Element {
+  return (
+    <Section title={`My replies — harvested (${p.totalMeasured} measured)`}>
+      {p.totalMeasured === 0 ? (
+        <EmptyState
+          line="No harvested replies yet."
+          hint="Harvest your own replies from the Harvest tab (your handle, mode: replies) — it's a $0 DOM scrape. It also needs your handle in Settings → Identity, without which the server has no way to know which rows are yours."
+        />
+      ) : (
+        <>
+          <div className="status-line">
+            {p.viewsPerReply === null ? (
+              <span className="pb-gated">
+                — views/reply (n={p.totalMeasured}/{minN})
+              </span>
+            ) : (
+              `${fmtN(p.viewsPerReply)} views/reply`
+            )}
+            {` · ${p.totalMeasured} replies · ${fmtN(p.totalViews)} views, last 14 days`}
+          </div>
+          <OwnReplyTable
+            label="parent size"
+            cells={p.bands.map((c) => ({ ...c, key: c.band }))}
+            minN={minN}
+          />
+          <OwnReplyTable
+            label="age at post"
+            cells={p.latency.map((c) => ({ ...c, key: c.bucket }))}
+            minN={minN}
+          />
+          <OwnReplyTable
+            label="replies already there"
+            cells={p.crowding.map((c) => ({ ...c, key: c.bucket }))}
+            minN={minN}
+          />
+          <OwnReplyTable
+            label="experiment arm"
+            cells={p.arms.map((c) => ({ ...c, key: c.arm }))}
+            minN={minN}
+          />
+          <div className="muted pb-note">
+            Averages, not medians — these read against the §2.2 reference corpus, which is quoted as
+            means. A cell keeps its counts but stops quoting an average below n≥{minN}. "unknown"
+            means the scrape missed the parent, never "small": a jump in its share is a scraper
+            regression, not a change in your behaviour.
+          </div>
+          <div className="muted pb-note">
+            The roster arms only fill for handles camped in Radar → Cannon, so "roster-ja" stays
+            empty until Japanese targets are on the roster. Foreign-language rows captured before
+            the un-translation fix stored X's machine translation, so their script read can be wrong
+            — they age out of the 14-day window on their own.
+          </div>
+        </>
+      )}
+    </Section>
+  );
+}
+
+/** One own-reply axis. Five columns, and an insufficient cell is MARKED rather
+ *  than dropped — a missing row reads as "no data", a different claim from "not
+ *  enough yet". Its own component rather than `ResultCell` because this family
+ *  averages: rendering `avgYield` through a cell labelled "med" would mislabel
+ *  the number. */
+function OwnReplyTable({
+  label,
+  cells,
+  minN,
+}: {
+  label: string;
+  cells: Array<OwnReplyCell & { key: string }>;
+  minN: number;
+}): JSX.Element {
+  return (
+    <table className="pb-table">
+      <thead>
+        <tr>
+          <th>{label}</th>
+          <th>replies</th>
+          <th>share</th>
+          <th>views/reply</th>
+          <th>parent</th>
+        </tr>
+      </thead>
+      <tbody>
+        {cells.map((c) => (
+          <tr key={c.key} className={c.key === 'unknown' ? 'pb-thin' : ''}>
+            <td>{c.key}</td>
+            <td>{c.n}</td>
+            <td>{fmtPct2(c.sharePct)}</td>
+            <td>
+              {c.avgYield === null ? (
+                <span className="pb-gated">
+                  insufficient data (n={c.n}/{minN})
+                </span>
+              ) : (
+                fmtN(c.avgYield)
+              )}
+            </td>
+            <td>{fmtN(c.avgParentViews)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
