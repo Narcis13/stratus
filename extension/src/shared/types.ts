@@ -6,6 +6,7 @@ import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
+import type { ReplyAngle } from '../replyMode.ts';
 
 export type PostStatus =
   | 'draft'
@@ -813,7 +814,13 @@ export interface PostContext {
  *  reads this rather than re-deriving the precedence (§7.4c). */
 export type ReplyLanguageSource = 'explicit' | 'roster' | 'detected';
 
-export type ReplyAngle = 'extends' | 'contrarian' | 'debate';
+/** RC.4: five angles, not three — `observation` (one specific noticed detail, no
+ *  argument) and `question` (one the OP would want to answer) joined the
+ *  original three, because `contrarian`/`debate` under a funeral post or a cat
+ *  video are a report risk. Re-exported from the shared taxonomy rather than
+ *  spelled out here: a second copy of the union is how the panel starts
+ *  rejecting an angle the server just started sending. */
+export type { ReplyAngle };
 
 export interface ReplyVariant {
   text: string;

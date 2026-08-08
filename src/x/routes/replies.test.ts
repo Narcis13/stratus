@@ -19,7 +19,7 @@ import { classifyBand } from '../../shared/replyBand.ts';
 import { cannonTargets, radarDrafts } from '../db/schema.ts';
 import { MAX_CURATE_TWEETS } from '../replies/curate.ts';
 import { resolveReplyLanguage } from '../replies/language.ts';
-import type { PostContext } from '../replies/prompt.ts';
+import { type PostContext, REPLY_ANGLES } from '../replies/prompt.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
 import { curateKeepTarget, gateSignalsFor, replies } from './replies.ts';
 
@@ -644,7 +644,7 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(row.languageSource).toBeNull();
     // Untouched English path: no variant clears the gate, so one regenerate.
     expect(calls).toHaveLength(2);
-    expect(calls[0]?.angles).toEqual(['extends', 'contrarian', 'debate']);
+    expect(calls[0]?.angles).toEqual([...REPLY_ANGLES]);
   });
 
   test('an explicit body language outranks the post script, and English keeps all three', async () => {
@@ -658,7 +658,7 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(row.languageSource).toBe('explicit');
     // English has no profile by construction — three angles, gate as always.
     expect(row.variants).toHaveLength(3);
-    expect(calls[0]?.angles).toEqual(['extends', 'contrarian', 'debate']);
+    expect(calls[0]?.angles).toEqual([...REPLY_ANGLES]);
   });
 
   // §7.4 is about ORDER, not amount: a refused post pays for nothing at all —
@@ -714,7 +714,10 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(calls[0]?.angles).toEqual(['extends']);
   });
 
-  test('a mixed-language batch drafts in English — all three angles, unnarrowed schema', async () => {
+  // RC.4: the assertion is "unnarrowed", i.e. the WHOLE vocabulary, which is why
+  // it reads `REPLY_ANGLES` rather than a literal — the union grew to five here
+  // and will grow again before it shrinks.
+  test('a mixed-language batch drafts in English — the unnarrowed schema', async () => {
     const perTweet = JSON.stringify({
       replies: [
         { id: '1000000', variants: JSON.parse(THREE_ENGLISH).replies },
@@ -736,7 +739,7 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     };
     expect(body.language).toBeNull();
     expect(body.replies[0]?.variants).toHaveLength(3);
-    expect(calls[0]?.angles).toEqual(['extends', 'contrarian', 'debate']);
+    expect(calls[0]?.angles).toEqual([...REPLY_ANGLES]);
   });
 });
 

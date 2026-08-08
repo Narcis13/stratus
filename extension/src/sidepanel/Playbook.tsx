@@ -11,6 +11,7 @@ import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 import { JUDGE_VERDICT_LABEL } from '../judge.ts';
 import { COACH_BAND_LABEL } from '../postCoach.ts';
 import { FORMAT_LABELS } from '../postFormat.ts';
+import { ANGLE_VOCABULARY_WIDENED_AT } from '../replyMode.ts';
 import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
@@ -222,6 +223,17 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                   <AngleTable cells={b.cells} minN={data.minN} />
                 </details>
               ))}
+              {/* RC.4 — the boundary marker. Rendered here rather than buried in
+                  a comment because the discontinuity is invisible in the numbers:
+                  a young `observation` cell looks like a losing angle when it is
+                  only a new one. */}
+              <div className="muted pb-note">
+                <strong>Hard boundary at {ANGLE_VOCABULARY_WIDENED_AT}:</strong> the angle set went
+                from three to five (observation, question added). Replies drafted before that date
+                could not carry the new angles, so they are recorded as extends — these cells mix
+                two populations. Compare within a side of the boundary, never across it, and read a
+                thin observation/question cell as young, not as losing.
+              </div>
             </Section>
           ))}
 

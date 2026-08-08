@@ -74,6 +74,21 @@ export type ReplyModeId = 'expertise' | 'hot-take' | 'news' | 'wholesome' | 'ban
 export const REPLY_ANGLES = ['extends', 'contrarian', 'debate', 'observation', 'question'] as const;
 export type ReplyAngle = (typeof REPLY_ANGLES)[number];
 
+/**
+ * The day the vocabulary above went from three angles to five (RC.4) — a HARD
+ * boundary for every angle crosstab, and the reason it is a constant rather than
+ * a sentence in a comment: the Playbook renders it.
+ *
+ * Before this date `observation` and `question` were unrepresentable, so every
+ * reply that would have been one was drafted as `extends` (or as a `contrarian`
+ * under a post that had no argument to take). An `extends` cell spanning the
+ * boundary is therefore two different populations averaged together, and the
+ * post-boundary angles start at n=0 by construction — the same trap ML.6 flagged
+ * for the language cells, second instance. Split by date; never compare across
+ * it, and never read a young `observation` cell as "the new angle is losing".
+ */
+export const ANGLE_VOCABULARY_WIDENED_AT = '2026-08-08';
+
 export interface ReplyMode {
   id: ReplyModeId;
   /** Extra spellings a caller (a panel override, an LLM's classification, a

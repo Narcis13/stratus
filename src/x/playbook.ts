@@ -80,6 +80,17 @@ function fmt(n: number): string {
 }
 
 // -------------------------------------------------- 1. angle effectiveness
+//
+// RC.4 WARNING, and it applies to every cell this section produces: the angle
+// vocabulary widened from three to five on `ANGLE_VOCABULARY_WIDENED_AT`
+// (`src/shared/replyMode.ts`). Rows on either side of that date are NOT one
+// population — `observation`/`question` were unrepresentable before it, so the
+// replies that would have carried them were drafted (and are recorded) as
+// `extends`. The aggregation below deliberately does not filter by date: a
+// silent cut would hide the discontinuity instead of naming it, and the Playbook
+// panel renders the boundary next to the table so the reader sees it. Take the
+// split by hand — over `posts_published.posted_at` — before quoting any angle
+// number that spans it.
 
 export const AUTHOR_SIZE_BUCKETS = ['<1k', '1k-10k', '10k-100k', '100k+', 'unknown'] as const;
 export type AuthorSizeBucket = (typeof AUTHOR_SIZE_BUCKETS)[number];

@@ -349,8 +349,16 @@ export const replyDrafts = sqliteTable(
 
     replyText: text('reply_text').notNull(),
     replyTextEdited: text('reply_text_edited'),
-    // All variants from the structured three-variant call ({text, angle}[]);
+    // Every variant the structured call returned ({text, angle, gloss}[]);
     // replyText holds the primary pick. Null on pre-7.1 rows.
+    //
+    // RC.4: `angle` is one of FIVE now (`src/shared/replyMode.ts`), and the
+    // COUNT is no longer three either — a mode narrows the schema enum to its
+    // own angle set (banter offers two). Both are free here: the column is JSON
+    // and the angle vocabulary has never been a CHECK constraint, so widening
+    // it needs no migration. What it does need is the §7.19 warning attached to
+    // every reader: an `observation` row and a pre-RC `extends` row are not
+    // comparable, because before this commit `observation` was unrepresentable.
     variants: text('variants', { mode: 'json' }),
     // The optional human steer sent with the generate call (often Romanian).
     idea: text('idea'),
@@ -407,10 +415,19 @@ export const radarDrafts = sqliteTable(
     band: text('band'),
     signals: text('signals', { mode: 'json' }),
     replyText: text('reply_text').notNull(),
+    // One of the five `src/shared/replyMode.ts` angles since RC.4 (three before
+    // it). Plain text, never an enum — see the `variants` note below.
     angle: text('angle').notNull(),
-    // All 3 angle variants (RU.2) — replyText stays the primary (variants[0]),
-    // so rank/rehydrate/old rows keep working. Null on pre-RU rows and CLI
-    // callers that never supplied variants.
+    // Every angle variant of this draft (RU.2) — replyText/angle stay the
+    // primary (variants[0]), so rank/rehydrate/old rows keep working. Null on
+    // pre-RU rows and CLI callers that never supplied variants.
+    //
+    // `angle` stays a bare `string` here on purpose, unlike the strict union the
+    // drafting path uses: this is the STORAGE shape, it holds rows written
+    // before `observation`/`question` existed and rows a CLI caller supplied, so
+    // reading it as the current union would be a claim the column cannot keep.
+    // The looseness is the same tolerance `variantChips.isReplyVariants` extends
+    // at the message boundary.
     variants: text('variants', { mode: 'json' }).$type<{ text: string; angle: string }[]>(),
     // The Grok model that drafted these (RU.2) — copied onto the confirmed
     // reply_drafts row (whose `model` is NOT NULL). Null on pre-RU rows.

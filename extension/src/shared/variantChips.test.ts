@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { ReplyVariant } from './types.ts';
 import { isReplyVariants, variantChipPreview } from './variantChips.ts';
 
 describe('variantChipPreview', () => {
@@ -34,6 +35,20 @@ describe('isReplyVariants', () => {
 
   test('tolerates an unknown angle string (looser-client-cache)', () => {
     expect(isReplyVariants([{ text: 'a', angle: 'future-angle' }])).toBe(true);
+  });
+
+  // RC.4: the two new angles arrive over the same message channel as the old
+  // three, and `ReplyAngle` is now re-exported from the shared taxonomy instead
+  // of being spelled out here. The annotation below documents that; it does NOT
+  // prove it, because tsconfig.app.json excludes `*.test.ts` from the project —
+  // the type is checked at the panel's real consumers (radar.ts, messages.ts).
+  test('accepts the RC.4 angles, typed as the shared union', () => {
+    const variants: ReplyVariant[] = [
+      { text: 'the ear twitch at 0:04', angle: 'observation', gloss: null },
+      { text: 'which one did you keep?', angle: 'question', gloss: null },
+    ];
+    expect(isReplyVariants(variants)).toBe(true);
+    expect(variants.map((v) => v.angle)).toEqual(['observation', 'question']);
   });
 
   test('rejects an empty array, junk, and malformed entries', () => {

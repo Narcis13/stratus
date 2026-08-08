@@ -19,6 +19,12 @@ export function variantChipPreview(text: string, max = 60): string {
 // loose string so a server that grows an angle isn't rejected — the same
 // looser-client-cache tolerance as GlanceEntry.stage). An empty array reads as
 // "no variants to show", so it fails the guard.
+//
+// RC.4 is what that looseness was for: `observation` and `question` joined the
+// union server-side, and a panel running an older build keeps rendering them
+// because this guard never enumerated the angles. Do not tighten it to the
+// union — the whole point is that a deployed server may be ahead of the
+// unpacked extension, and the chip only needs a string to print.
 export function isReplyVariants(v: unknown): v is ReplyVariant[] {
   if (!Array.isArray(v) || v.length === 0) return false;
   return v.every((x) => {

@@ -9,6 +9,7 @@
 import type { GrokMessage } from '../../grok/index.ts';
 import type { LanguageProfile } from '../../shared/language.ts';
 import type { Band } from '../../shared/replyBand.ts';
+import { REPLY_ANGLES, type ReplyAngle } from '../../shared/replyMode.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { RELATIONSHIP_INSTRUCTION } from '../people/relationship.ts';
 import { type PillarDef, renderPillars } from '../posts/pillars.ts';
@@ -253,8 +254,16 @@ Return JSON of the shape \`{"replies": [{"text": "…", "angle": "…"}, {"text"
 // Grok structured-outputs schema for the three-variant reply (OVERHAUL-PLAN
 // §7.1). Passed via askGrok's jsonSchema option (`text.format` on the
 // Responses API); the prompt's Output section states the same shape in prose.
-export const REPLY_ANGLES = ['extends', 'contrarian', 'debate'] as const;
-export type ReplyAngle = (typeof REPLY_ANGLES)[number];
+//
+// RC.4: the union moved to `src/shared/replyMode.ts` and grew to FIVE —
+// `observation` and `question` join the original three, because `contrarian`
+// and `debate` under a funeral post or a cat video are a report risk and they
+// forfeit the strongest ranking signal there is (the OP replying to you).
+// Re-exported from here so every existing importer keeps its path, but the
+// canonical home is the shared module: the mode table's `angles` field and this
+// schema's `enum` must be the same vocabulary or a mode could narrow to an angle
+// the schema cannot represent.
+export { REPLY_ANGLES, type ReplyAngle };
 
 export interface ReplyVariant {
   text: string;
@@ -271,7 +280,7 @@ export interface ReplyVariant {
 export const MAX_GLOSS_LENGTH = 400;
 
 // ML.2: the schema is now BUILT, so the non-English path can hand the model an
-// `angle.enum` of exactly `['extends']` — the other two angles become
+// `angle.enum` of exactly `['extends']` — the other angles become
 // unrepresentable rather than merely discouraged. The COUNT cannot be pinned the
 // same way: `maxItems` is in the D164b unsupported-keyword set (strict
 // structured outputs reject it), which is why the count still needs a
@@ -299,8 +308,11 @@ function variantItemSchema(angles: readonly ReplyAngle[]) {
   };
 }
 
-/** The single-reply schema. Defaults to all three angles, so today's callers get
- *  a byte-identical schema; `{angles:['extends']}` is the non-English call. */
+/** The single-reply schema. Defaults to the whole angle vocabulary — five since
+ *  RC.4 — so a caller that resolves nothing keeps every angle available;
+ *  `{angles:['extends']}` is the non-English call and `{angles: mode.angles}`
+ *  (RC.5) is the per-mode narrowing, which is how `contrarian` becomes
+ *  unrepresentable under a grief post rather than merely discouraged. */
 export function replyVariantsSchema(opts?: { angles?: readonly ReplyAngle[] }) {
   return {
     type: 'object',

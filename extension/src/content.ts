@@ -1624,7 +1624,8 @@ function attachReplyMasterButton(article: Element, focusedTweetId: string): void
 // -------------------------------------------------- on-page variant chips (RU.7)
 //
 // When a radar-drafted tweet's status page is open, inject a strip of angle
-// chips (extends / contrarian / debate) next to its action row. Clicking a chip
+// chips next to its action row — whichever angles the draft actually carries
+// (five exist since RC.4, and a post's mode may narrow the set to two). Clicking a chip
 // copies that variant and marks the draft posted — the radar reply becomes a
 // measured reply_drafts row. Posting stays manual (§7.28): the chip only puts
 // the text on the clipboard; the human pastes it and hits Reply.

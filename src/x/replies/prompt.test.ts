@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { REPLY_MODES, REPLY_ANGLES as SHARED_REPLY_ANGLES } from '../../shared/replyMode.ts';
 import {
   BATCH_REPLY_SCHEMA,
   MAX_GLOSS_LENGTH,
@@ -57,6 +58,54 @@ describe('ML.2 reply schemas', () => {
     expect(replyVariantsSchema()).toEqual(REPLY_VARIANTS_SCHEMA);
     expect(batchReplySchema()).toEqual(BATCH_REPLY_SCHEMA);
     expect(variantItemOf(REPLY_VARIANTS_SCHEMA).properties.angle.enum).toEqual([...REPLY_ANGLES]);
+  });
+
+  // RC.4 (plans/2026-08-08-reply-craft-overhaul.md, Task 4). The angle union is
+  // ONE list, owned by src/shared/replyMode.ts, because the mode table narrows
+  // the schema to `mode.angles` — a second copy here could offer an angle the
+  // schema cannot represent, and the call would fail in strict mode.
+  test('RC.4: the vocabulary is the shared one, five wide, and both schemas carry it', () => {
+    expect([...REPLY_ANGLES]).toEqual([...SHARED_REPLY_ANGLES]);
+    expect([...REPLY_ANGLES]).toEqual([
+      'extends',
+      'contrarian',
+      'debate',
+      'observation',
+      'question',
+    ]);
+    expect(variantItemOf(REPLY_VARIANTS_SCHEMA).properties.angle.enum).toEqual([...REPLY_ANGLES]);
+    expect(batchVariantItemOf(BATCH_REPLY_SCHEMA).properties.angle.enum).toEqual([...REPLY_ANGLES]);
+  });
+
+  test('RC.4: every mode narrows to a representable set, and stays strict-clean', () => {
+    for (const mode of REPLY_MODES) {
+      const single = replyVariantsSchema({ angles: mode.angles });
+      const batch = batchReplySchema({ angles: mode.angles });
+      expect(walkUnsupported(single)).toEqual([]);
+      expect(walkUnsupported(batch)).toEqual([]);
+      expect(variantItemOf(single).properties.angle.enum).toEqual([...mode.angles]);
+      expect(batchVariantItemOf(batch).properties.angle.enum).toEqual([...mode.angles]);
+    }
+    // The one that matters: a grief post cannot be handed `contrarian` at all.
+    const wholesome = REPLY_MODES.find((m) => m.id === 'wholesome');
+    expect(
+      variantItemOf(replyVariantsSchema({ angles: wholesome?.angles ?? [] })).properties.angle.enum,
+    ).not.toContain('contrarian');
+  });
+
+  test('RC.4: the parsers keep the new angles instead of coercing them to extends', () => {
+    expect(
+      parseReplyVariants(
+        '{"replies":[{"text":"the ear twitch at 0:04","angle":"observation","gloss":null},{"text":"which take did you keep?","angle":"question","gloss":null}]}',
+      )?.map((v) => v.angle),
+    ).toEqual(['observation', 'question']);
+    expect(
+      parseBatchReplies(
+        '{"replies":[{"id":"111","variants":[{"text":"a","angle":"observation","gloss":null},{"text":"b","angle":"nonsense","gloss":null}]}]}',
+      )?.[0]?.variants.map((v) => v.angle),
+      // An unknown angle still falls back to `extends` — widening the union
+      // widened what is KNOWN, it did not loosen the parser.
+    ).toEqual(['observation', 'extends']);
   });
 
   test('angles:[extends] makes contrarian and debate UNREPRESENTABLE', () => {

@@ -8,8 +8,10 @@
 // live-updating one, so it stopped renting space in a page that reloads a brief.
 //
 // "Draft replies" makes ONE Grok call (POST /x/replies/generate-batch) for the
-// queued tweets and attaches all three angle variants to each through the
-// background (the buffer's single writer). A drafted row shows those angles as
+// queued tweets and attaches every angle variant it returns to each through the
+// background (the buffer's single writer) — the vocabulary is five wide since
+// RC.4 and a post's mode may narrow it, so the tab strip is built from what the
+// row actually carries, never from a fixed set. A drafted row shows those angles as
 // tabs *in the card* (RD.2): clicking the one you want copies it, moves the row
 // to Clicked, and opens the tweet — paste, done.
 

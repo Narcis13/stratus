@@ -79,7 +79,9 @@ export interface RadarSighting {
   // by the background after a "Draft replies" run. Survives re-sightings so a
   // drafted reply isn't wiped when the content script re-reports the tweet.
   reply?: string;
-  // All 3 angle variants (RU.4) from the batch draft — extends/contrarian/debate.
+  // Every angle variant (RU.4) from the batch draft. Since RC.4 the angle set is
+  // five wide and a batch may return fewer than three of them — the post's mode
+  // narrows it — so never assume a length here.
   // `reply` stays the primary (variants[0].text); the full set rides for the
   // on-page variant chips (Task 7). Survives re-sightings like `reply`.
   variants?: ReplyVariant[];
