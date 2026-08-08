@@ -395,6 +395,30 @@ replies.post('/replies/generate', async (c) => {
   ctx.mode = resolvedMode.mode.id;
   ctx.modeSource = resolvedMode.source;
 
+  // RC.7: the specificity gate speaks for exactly ONE room, and this is where
+  // that is decided — once, for both of its uses below (the regenerate and the
+  // primary pick), so the two cannot disagree about whether the gate has a vote.
+  //
+  // `passesSpecificityGate` passes on a digit, a first-person marker, or a
+  // hardcoded list of MY lane's tools (claude code|grok|cursor|mcp|turbo
+  // pascal|…|postgres|anaf|excel|git|sql). That is a description of an
+  // `expertise` reply and of nothing else. Under `wholesome`/`banter`/`news`
+  // the winning shape carries none of the three — "The little ear twitch at
+  // 0:04" only passes by the accident of a timestamp — so the gate fails
+  // ~always there: it burns a second paid call and then ships a failing variant
+  // anyway. Worse, it is a standing PRESSURE toward the very contamination RC.1
+  // exists to remove, since naming a dev tool is one of three cheap ways to
+  // pass under any post at all.
+  //
+  // So it is SKIPPED, not rewritten — the same shape and the same reasoning as
+  // ML.3's non-English skip one line up: an English-tuned, lane-tuned heuristic
+  // applied to a room it was never validated against yields UNKNOWN, not FAIL
+  // (§7.11), and inventing per-mode specificity regexes with nothing to
+  // validate them against is how the plan says not to do this (decision 7). The
+  // `expertise` path — the one the gate was eval-validated for (OVERHAUL-PLAN
+  // §7.1) — is untouched.
+  const gateApplies = !singleAngle && resolvedMode.mode.personaUse === 'full';
+
   // RC.6: my measured winners FOR THAT ROOM — the positive counterweight to
   // RC.1's negative rules, and $0 (a `harvest_rows` read plus the same pure
   // detection the resolution above already ran). Same slot in the ladder, after
@@ -501,6 +525,11 @@ replies.post('/replies/generate', async (c) => {
     // denormalized costUsd. A second all-generic round ships anyway — the
     // human edits.
     //
+    // Whether the gate has a vote at all is `gateApplies`, decided up in the
+    // ladder: ML.3's decision 8 (a resolved language) and RC.7's persona scope
+    // (a room whose `personaUse` is not `full`) both turn it off, for the same
+    // reason spelled out there. The notes below are why decision 8 does.
+    //
     // Decision 8 — the gate is SKIPPED, not ported, when a language resolved.
     // Its three regexes are Latin-alphabet by construction (`/\d/` misses 全角
     // digits, `/\b(i|my|me|we|our)\b/i` can never match 私 or أنا, and `\b` is
@@ -517,8 +546,9 @@ replies.post('/replies/generate', async (c) => {
     // The PARSE-failure retry still fires on both paths: a truncated body is
     // not the specificity gate, it is not language-correlated, and rescuing an
     // already-paid call is worth the second one.
-    const someSpecific = variants?.some((v) => passesSpecificityGate(v.text)) ?? false;
-    if (variants === null || (!someSpecific && !singleAngle)) {
+    const gateFailed =
+      gateApplies && !(variants?.some((v) => passesSpecificityGate(v.text)) ?? false);
+    if (variants === null || gateFailed) {
       const retry = await callLlm();
       costUsd += retry.costUsd;
       const retryVariants = parseReplyVariants(retry.text);
@@ -552,12 +582,15 @@ replies.post('/replies/generate', async (c) => {
     : trimToModeAngles(variants, resolvedMode.mode);
 
   // Primary pick = first variant that clears the gate; the rest ride along in
-  // `variants` for the panel's picker. On the trimmed path the `find` falls
-  // through to `variants[0]`, which is the single variant — the gate has no
-  // vote there either (decision 8).
-  const primary = singleAngle
-    ? variants[0]
-    : (variants.find((v) => passesSpecificityGate(v.text)) ?? variants[0]);
+  // `variants` for the panel's picker. Where the gate has no vote (decision 8's
+  // resolved language, RC.7's non-`full` room) the primary is `variants[0]`,
+  // which is the mode's PRIMARY angle by construction — the model returns them
+  // in the order the narrowed schema names them, and `mode.angles` is ordered
+  // first-is-the-pick. Letting a lane-tuned regex reorder a wholesome reply's
+  // variants would be the gate voting after being told it has no vote.
+  const primary = gateApplies
+    ? (variants.find((v) => passesSpecificityGate(v.text)) ?? variants[0])
+    : variants[0];
   if (!primary) return c.json({ error: 'grok_parse_error', requestId: result.requestId }, 502);
 
   const [row] = await db

@@ -630,9 +630,14 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
   // RC.5 moved the English side of this: the language trim is still
   // language-gated, but the ROOM now narrows the same call. This post detects to
   // nothing, so it is `general` — three angles, `debate` not among them — and
-  // the `debate` variant the stub returns is trimmed away. The COST assertion,
-  // which is what this test is really for, is unchanged: two calls.
-  test('the same gate-failing response in English keeps what the room allows and still costs two calls', async () => {
+  // the `debate` variant the stub returns is trimmed away.
+  //
+  // RC.7 moved the COST assertion this test was originally written for: `general`
+  // is `personaUse: 'stance'`, so the gate has no vote here either and the
+  // regenerate does not fire. One call, not two. The two-call English path now
+  // needs an `expertise` post — asserted in the RC.7 block below, which is where
+  // the pair (gate alive / gate skipped) is read side by side.
+  test('the same gate-failing response in a `stance` room keeps what the room allows, and costs ONE call', async () => {
     const { out, calls } = await withStubbedGrok(THREE_ENGLISH, () =>
       generate({
         context: post('ml3en', 'Shipping the rewrite without a type system is a losing game.'),
@@ -652,8 +657,9 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(row.modeSource).toBe('fallback');
     // Two of the stub's three angles are in `general`; the `debate` one is not.
     expect(row.variants.map((v) => v.angle)).toEqual(['extends', 'contrarian']);
-    // Untouched English path: no variant clears the gate, so one regenerate.
-    expect(calls).toHaveLength(2);
+    // RC.7: every variant fails the lane-tuned gate and NOTHING is regenerated,
+    // because the gate does not speak for a `stance` room.
+    expect(calls).toHaveLength(1);
     expect(calls[0]?.angles).toEqual([...GENERAL_MODE.angles]);
   });
 
@@ -877,6 +883,109 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
       expect(prompt.split('The rooms in this batch:').length - 1).toBe(1);
       // ONE schema for a mixed queue ⇒ the union of the two rooms' angles.
       expect(calls[0]?.angles).toEqual(['extends', 'observation', 'question']);
+    });
+  });
+
+  // RC.7 route consequences, in the same harness for the same reason: the stub's
+  // CALL COUNT is the cost assertion, and it is the only way to see a regenerate
+  // that would otherwise be invisible from the response.
+  //
+  // The gate passes on a digit, a first-person marker or one of MY lane's tools,
+  // which describes an `expertise` reply and nothing else. Both halves are
+  // asserted here as a pair: alive under `personaUse: 'full'`, silent everywhere
+  // else — no regenerate AND no vote in the primary pick.
+  describe("the specificity gate's persona scope (RC.7)", () => {
+    const EXPERTISE = REPLY_MODES.find((m) => m.id === 'expertise');
+    if (!EXPERTISE) throw new Error('the expertise room must exist');
+
+    // Detects `expertise` on two strong markers (typescript, codebase).
+    const DEV = 'Rewrote the whole thing in TypeScript and the codebase halved';
+    // Detects `wholesome` on two strong markers (grandmother, passed away).
+    const GRIEF = 'My grandmother passed away last night. She taught me to draw.';
+
+    // Every variant fails the gate: no digit, no first-person marker, no tool.
+    const ALL_GENERIC = JSON.stringify({
+      replies: [
+        { text: 'the abstraction leaks the second you cache it', angle: 'extends', gloss: null },
+        { text: 'Backwards. The eval breaks first.', angle: 'contrarian', gloss: null },
+      ],
+    });
+
+    test('an `expertise` room keeps the gate: an all-generic response burns the regenerate', async () => {
+      const { out, calls } = await withStubbedGrok(ALL_GENERIC, () =>
+        generate({ context: post('rc7dev', DEV) }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as { mode: string; modeSource: string };
+      expect(row.mode).toBe('expertise');
+      expect(row.modeSource).toBe('detected');
+      // The eval-validated path (OVERHAUL-PLAN §7.1) is exactly what RC.7 left
+      // alone — this is the two-call case, and the only one left.
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.angles).toEqual([...EXPERTISE.angles]);
+    });
+
+    test('a non-`full` room skips it: the same all-generic response costs ONE call', async () => {
+      const { out, calls } = await withStubbedGrok(ALL_GENERIC, () =>
+        generate({ context: post('rc7grief', GRIEF) }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as { mode: string; modeSource: string; variants: unknown[] };
+      expect(row.mode).toBe('wholesome');
+      expect(row.modeSource).toBe('detected');
+      // `contrarian` is not a wholesome angle, so one of the two is trimmed —
+      // the trim is RC.5's and it is unaffected by the gate being off.
+      expect(row.variants).toHaveLength(1);
+      // THE assertion: a wholesome reply carries none of the three things the
+      // gate looks for, so before RC.7 this response bought a second paid call
+      // and then shipped a failing variant anyway.
+      expect(calls).toHaveLength(1);
+    });
+
+    test('a skipped gate has no vote in the primary pick either', async () => {
+      // variants[0] fails the gate; variants[1] passes it on a timestamp.
+      const DETAIL_SECOND = JSON.stringify({
+        replies: [
+          { text: 'the ear twitch right as she looks up', angle: 'observation', gloss: null },
+          { text: '0:04 is the whole video', angle: 'extends', gloss: null },
+        ],
+      });
+      const { out, calls } = await withStubbedGrok(DETAIL_SECOND, () =>
+        generate({ context: post('rc7pick', GRIEF) }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as { mode: string; replyText: string; variants: { angle: string }[] };
+      expect(row.mode).toBe('wholesome');
+      // Both angles are wholesome's, so the trim keeps the model's order — and
+      // the primary is variants[0], the room's PRIMARY angle. A lane-tuned regex
+      // promoting the one with a digit in it would be the gate voting after
+      // being told it has none.
+      expect(row.variants.map((v) => v.angle)).toEqual(['observation', 'extends']);
+      expect(row.replyText).toBe('the ear twitch right as she looks up');
+      expect(calls).toHaveLength(1);
+    });
+
+    test('under `expertise` the gate still picks the primary, not the first variant', async () => {
+      const SPECIFIC_SECOND = JSON.stringify({
+        replies: [
+          { text: 'the abstraction leaks the second you cache it', angle: 'extends', gloss: null },
+          {
+            text: 'Postgres does that with a partial index and 4 lines',
+            angle: 'contrarian',
+            gloss: null,
+          },
+        ],
+      });
+      const { out, calls } = await withStubbedGrok(SPECIFIC_SECOND, () =>
+        generate({ context: post('rc7full', DEV) }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as { mode: string; replyText: string; variants: unknown[] };
+      expect(row.mode).toBe('expertise');
+      expect(row.replyText).toBe('Postgres does that with a partial index and 4 lines');
+      // One variant clears the gate, so there is nothing to regenerate.
+      expect(row.variants).toHaveLength(2);
+      expect(calls).toHaveLength(1);
     });
   });
 });
