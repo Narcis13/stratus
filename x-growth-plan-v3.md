@@ -580,7 +580,6 @@ a Cannon session you didn't run. Revisit Sept 15 if you are ahead of pace.
 
 **2.3× on day one — the targeting thesis is directionally confirmed on your own account.** But
 read the detail, because it is the whole plan in miniature:
-
 | Reply | Views |
 |---|---|
 | **@Tom_A_Lynch — "Restoring that rubylith mask could reveal the exact first 8080 logic traces."** | **1,160** |
