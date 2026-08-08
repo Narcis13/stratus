@@ -785,10 +785,16 @@ replies.post('/replies/generate-batch', async (c) => {
   // Cannon queue is deliberately heterogeneous, so a set-wide answer would hand
   // 24 posts the register of whichever one voted loudest. Aligned by index with
   // `tweets`; stamped onto the tweet the way the C3 relationship brief is, and
-  // never accepted from the client (parseBatchTweets has no such field).
+  // the resolved mode itself is never accepted from the client — only RC.8's
+  // `curatedMode` HINT is, one rung down the precedence, where an unrecognized
+  // value costs the rung and nothing else.
   const resolvedModes = await resolveReplyMode({
     ...(modeOverride !== undefined ? { explicit: modeOverride } : {}),
-    targets: tweets.map((t) => ({ handle: t.handle, text: t.text })),
+    targets: tweets.map((t) => ({
+      handle: t.handle,
+      text: t.text,
+      ...(t.curatedMode !== undefined ? { curated: t.curatedMode } : {}),
+    })),
   });
   for (const [i, t] of tweets.entries()) {
     const r = resolvedModes[i];
@@ -937,7 +943,9 @@ const ACCEPTED_BATCH_BANDS: ReadonlySet<string> = new Set([
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
 // Optional band/signals (C0) carry the Radar's capture-time verdict — and
 // optional curationScore (RC.2) the curation pass's 0–100 verdict — into
-// `radar_drafts`; none of the three reaches the Grok prompt. `maxTweets` is
+// `radar_drafts`; none of the three reaches the Grok prompt. Optional
+// curatedMode (RC.8) is the exception in kind — the same pass's room label,
+// which the route feeds to `resolveReplyMode` instead of storing. `maxTweets` is
 // defaulted to today's constant (Decision 6) so every existing caller and test
 // stays valid; the route passes `x.ai.batchReplyCap`.
 export function parseBatchTweets(
@@ -1001,6 +1009,20 @@ export function parseBatchTweets(
       curationScore = n;
     }
 
+    // RC.8: the room the curation pass named for this post, handed back so the
+    // resolver can use a classification already paid for. Only the SHAPE is
+    // refused here — an unrecognized room is not: `resolveModeId` answers null
+    // for it and the resolution falls through to the roster pin and then to
+    // detection (§7.11), which is a strictly better outcome than 400ing a
+    // 25-post batch the user is waiting behind over one label. The vocabulary
+    // check lives in exactly one place and this is not it (§7.16).
+    let curatedMode: string | undefined;
+    if (r.curatedMode !== undefined && r.curatedMode !== null) {
+      if (typeof r.curatedMode !== 'string') return { error: `invalid_tweet_curated_mode_${i}` };
+      const m = r.curatedMode.trim();
+      if (m !== '') curatedMode = m;
+    }
+
     seen.add(tweetId);
     const author =
       typeof r.author === 'string' && r.author.trim() !== '' ? r.author.trim() : handleRaw;
@@ -1016,6 +1038,7 @@ export function parseBatchTweets(
       // `!== undefined`, not truthiness like band/signals above: 0 is a valid
       // score and would be dropped by a `? :` test.
       ...(curationScore !== undefined ? { curationScore } : {}),
+      ...(curatedMode !== undefined ? { curatedMode } : {}),
     });
   }
   return { tweets };

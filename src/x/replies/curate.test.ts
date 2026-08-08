@@ -6,6 +6,7 @@
 
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { db } from '../../db/client.ts';
+import { REPLY_MODES } from '../../shared/replyMode.ts';
 import { promptOverrides } from '../db/schema.ts';
 import { loadPrompt, loadPromptSafe, validatePromptBody } from '../prompts/registry.ts';
 import {
@@ -26,7 +27,7 @@ const tweets = [
 ];
 
 function score(over: Partial<CurateScore> & { tweetId: string }): CurateScore {
-  return { score: 50, lowValue: false, reason: '', ...over };
+  return { score: 50, lowValue: false, mode: null, reason: '', ...over };
 }
 
 describe('CURATE_PROMPT_TEMPLATE + buildCurateInput', () => {
@@ -40,6 +41,37 @@ describe('CURATE_PROMPT_TEMPLATE + buildCurateInput', () => {
     // Scoring, not drafting: the queue's paid call is the one AFTER this.
     expect(CURATE_PROMPT_TEMPLATE).toContain('lowValue');
     expect(MAX_CURATE_TWEETS).toBe(100);
+  });
+
+  // RC.8 — the rubric flip. The old wording rewarded "sits in or near my lane"
+  // and punished "far outside my lane, so any reply I write comes out generic",
+  // which is why this pass dropped exactly what pays: 96.5% of the 2026-08-06→07
+  // reply impressions came from off-lane posts. Asserted as ABSENCE of the lane
+  // criterion, because that is the defect — a rubric that scores topic at all
+  // re-creates it however it is phrased.
+  test('the rubric scores the hook, not the lane', () => {
+    expect(CURATE_PROMPT_TEMPLATE).not.toContain('in or near my lane');
+    expect(CURATE_PROMPT_TEMPLATE).not.toContain('Far outside my lane');
+    expect(CURATE_PROMPT_TEMPLATE).toContain('is there a concrete hook a reply can grab');
+    expect(CURATE_PROMPT_TEMPLATE).toContain('Topic is not a criterion here.');
+    // The one negative worth adding: the post every honest reply has to invent.
+    expect(CURATE_PROMPT_TEMPLATE).toContain('Unanswerable without making something up');
+    // The lowValue list survives intact — it was always right.
+    expect(CURATE_PROMPT_TEMPLATE).toContain('Connection invites');
+    expect(CURATE_PROMPT_TEMPLATE).toContain('Follow trains and engagement pods');
+    expect(CURATE_PROMPT_TEMPLATE).toContain('Giveaways, airdrops, contests');
+  });
+
+  // The prompt has to offer every room the schema accepts, or the model is being
+  // graded on a vocabulary it was never shown. Driven off REPLY_MODES so a
+  // seventh mode fails here rather than silently going unoffered.
+  test('every room in the table is described in the prompt and offered by the schema', () => {
+    const ids = REPLY_MODES.map((m) => m.id);
+    for (const id of ids) expect(CURATE_PROMPT_TEMPLATE).toContain(`\`${id}\``);
+    expect(CURATE_SCHEMA.properties.scores.items.properties.mode.enum).toEqual(ids);
+    // The escape hatch is named in the prompt, not just present in the list:
+    // an honest `general` beats a guessed room (§7.11).
+    expect(CURATE_PROMPT_TEMPLATE).toContain('genuinely cannot tell');
   });
 
   test('renders the trust label once, then the numbered queue, at the tail', () => {
@@ -97,24 +129,48 @@ describe('CURATE_PROMPT_TEMPLATE + buildCurateInput', () => {
       return found;
     };
     expect(walk(CURATE_SCHEMA)).toEqual([]);
+    // `mode` is required like the rest — strict mode has no optional properties,
+    // and the "I could not tell" answer is a value (`general`), not an omission.
     expect(CURATE_SCHEMA.properties.scores.items.required).toEqual([
       'id',
       'score',
       'lowValue',
+      'mode',
       'reason',
     ]);
   });
 });
 
 describe('parseCurateScores', () => {
-  test('happy path maps id→tweetId and trims the reason', () => {
+  test('happy path maps id→tweetId, keeps the room, and trims the reason', () => {
     const out = parseCurateScores(
-      '{"scores":[{"id":"1","score":88,"lowValue":false,"reason":"  concrete number  "},{"id":"2","score":4,"lowValue":true,"reason":"connection invite"}]}',
+      '{"scores":[{"id":"1","score":88,"lowValue":false,"mode":"expertise","reason":"  concrete number  "},{"id":"2","score":4,"lowValue":true,"mode":"general","reason":"connection invite"}]}',
     );
     expect(out).toEqual([
-      { tweetId: '1', score: 88, lowValue: false, reason: 'concrete number' },
-      { tweetId: '2', score: 4, lowValue: true, reason: 'connection invite' },
+      { tweetId: '1', score: 88, lowValue: false, mode: 'expertise', reason: 'concrete number' },
+      { tweetId: '2', score: 4, lowValue: true, mode: 'general', reason: 'connection invite' },
     ]);
+  });
+
+  // RC.8 — `mode` is a HINT with two resolver rules still underneath it, so it
+  // is read on the LENIENT side of §7.35: every one of these keeps the row.
+  test('the room folds through resolveModeId, and anything unrecognized is null', () => {
+    const read = (mode: string) =>
+      parseCurateScores(`{"scores":[{"id":"a","score":50,"lowValue":false,"mode":${mode}}]}`)?.[0]
+        ?.mode;
+    // Case, spacing and separators fold onto the id; an alias lands on its room.
+    expect(read('"Hot Take"')).toBe('hot-take');
+    expect(read('"hot_take"')).toBe('hot-take');
+    expect(read('"football"')).toBe('banter');
+    // An invented room, an empty one, a non-string, an absent one: null, and the
+    // resolver falls through to the roster pin and then to detection.
+    expect(read('"sports-banter"')).toBeNull();
+    expect(read('""')).toBeNull();
+    expect(read('7')).toBeNull();
+    expect(read('null')).toBeNull();
+    expect(
+      parseCurateScores('{"scores":[{"id":"a","score":50,"lowValue":false}]}')?.[0]?.mode,
+    ).toBe(null);
   });
 
   test('an out-of-range score clamps to 0–100 rather than failing the batch', () => {
@@ -161,7 +217,7 @@ describe('parseCurateScores', () => {
 
   test('a missing reason is tolerated — it is display metadata', () => {
     expect(parseCurateScores('{"scores":[{"id":"a","score":50,"lowValue":false}]}')).toEqual([
-      { tweetId: 'a', score: 50, lowValue: false, reason: '' },
+      { tweetId: 'a', score: 50, lowValue: false, mode: null, reason: '' },
     ]);
   });
 });

@@ -935,6 +935,12 @@ export interface BatchReplyTweet {
   // Omitted (not 0) when this draft didn't come through a curated pass — the
   // column's whole value dies if "graded 0" and "never graded" collapse.
   curationScore?: number;
+  // RC.8 — the room the curation pass named for this post, handed straight back
+  // so the drafter reuses a classification already paid for. Unlike the three
+  // fields above it is not storage: the server feeds it to its mode resolver,
+  // one rung above the `cannon_targets.topic` pin. Omitted on an uncurated draft
+  // and on a row the scorer gave no recognized room.
+  curatedMode?: ReplyModeId;
 }
 
 export interface BatchReplyGenerateBody {
@@ -1007,6 +1013,11 @@ export interface CurateScoredItem {
   score: number;
   /** Filler not worth a reply at any score — always dropped. */
   lowValue: boolean;
+  /** RC.8 — the room the scorer put this post in, riding back on a call already
+   *  paid for. Sent on to the drafting call as `curatedMode`, where it is the
+   *  second rung of the server's mode precedence. `null` when the scorer named
+   *  no room the server recognized: a hint, never a verdict. */
+  mode: ReplyModeId | null;
   /** One sentence naming what decided the score. Not rendered in v1. */
   reason: string;
 }

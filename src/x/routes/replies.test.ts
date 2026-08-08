@@ -884,6 +884,52 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
       // ONE schema for a mixed queue ⇒ the union of the two rooms' angles.
       expect(calls[0]?.angles).toEqual(['extends', 'observation', 'question']);
     });
+
+    // RC.8 — the free rider arrives. The curate pass read this post to grade it,
+    // so its room rides back on the drafting call and outranks detection: it saw
+    // the post, and detection is a keyword vote over the same text that it beat
+    // by being an actual read. Nothing is spent to use it.
+    test('a curated room outranks detection, per post, and an invented one falls through', async () => {
+      const perTweet = JSON.stringify({
+        replies: [
+          { id: '1000000', variants: JSON.parse(MIXED_ANGLES).replies },
+          { id: '1000001', variants: JSON.parse(MIXED_ANGLES).replies },
+        ],
+      });
+      const { out, calls } = await withStubbedGrok(perTweet, () =>
+        batch({
+          tweets: [
+            // Detection says `banter`; the scorer read it and said `hot-take`.
+            { ...tweet(0), text: FOOTBALL, curatedMode: 'Hot Take' },
+            // An invented room is not a 400 and not a guess — the post's own
+            // evidence decides instead (§7.11).
+            { ...tweet(1), text: FOOTBALL, curatedMode: 'sports-banter' },
+          ],
+        }),
+      );
+      expect(out.status).toBe(200);
+      const body = out.body as { replies: { mode: string; modeSource: string }[] };
+      expect(body.replies.map((r) => r.mode)).toEqual(['hot-take', 'banter']);
+      expect(body.replies.map((r) => r.modeSource)).toEqual(['curated', 'detected']);
+      const prompt = calls[0]?.prompt ?? '';
+      expect(prompt).toContain('MODE: hot-take');
+      expect(prompt).toContain('MODE: banter');
+      // Still one paid call — the classification was bought by the pass before.
+      expect(calls).toHaveLength(1);
+    });
+
+    test('an explicit call-wide mode still outranks the curated room', async () => {
+      const perTweet = JSON.stringify({
+        replies: [{ id: '1000000', variants: JSON.parse(MIXED_ANGLES).replies }],
+      });
+      const { out } = await withStubbedGrok(perTweet, () =>
+        batch({ tweets: [{ ...tweet(0), text: FOOTBALL, curatedMode: 'hot-take' }], mode: 'news' }),
+      );
+      expect(out.status).toBe(200);
+      const body = out.body as { replies: { mode: string; modeSource: string }[] };
+      expect(body.replies[0]?.mode).toBe('news');
+      expect(body.replies[0]?.modeSource).toBe('explicit');
+    });
   });
 
   // RC.7 route consequences, in the same harness for the same reason: the stub's

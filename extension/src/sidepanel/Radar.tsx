@@ -45,6 +45,7 @@ import type {
   CannonCandidate,
   CannonTarget,
   CurateResponse,
+  CurateScoredItem,
   HumanizerSettings,
   PlacedTodayResponse,
   ReplyLanguageSource,
@@ -426,14 +427,19 @@ export function RadarSection({
   // only ever describe half of it. Never throws; failure is a return value.
   const sendBatch = async (
     rows: RadarSighting[],
-    scoreById?: Map<string, number>,
+    // RC.8: the whole curate verdict per id, not just its score — the same pass
+    // now also names the room, and passing two parallel maps is how the two
+    // halves of one verdict start disagreeing about which tweet they describe.
+    curatedById?: Map<string, CurateScoredItem>,
     language?: string,
   ): Promise<BatchOutcome> => {
     // band/signals ride along for the server's radar_drafts copy (C0) — they
     // never reach the Grok prompt. curationScore (RC.2) rides on exactly the
     // same terms: stored as measurement metadata, invisible to the prompt.
+    // curatedMode (RC.8) is the one that does more than ride: the server resolves
+    // this post's room from it, above its own roster pin.
     const tweets: BatchReplyTweet[] = rows.map((s) => {
-      const score = scoreById?.get(s.tweetId);
+      const graded = curatedById?.get(s.tweetId);
       return {
         tweetId: s.tweetId,
         handle: s.handle,
@@ -442,10 +448,14 @@ export function RadarSection({
         url: s.url,
         band: s.band,
         signals: s.signals,
-        // `!== undefined`, never a truthiness test: a ⊕ pin carries no score at
-        // all, and a scored-0 tweet is a real verdict the column must keep —
-        // collapsing the two is what makes the column worthless (D177b).
-        ...(score !== undefined ? { curationScore: score } : {}),
+        // The verdict OBJECT is the presence test, never its score: a ⊕ pin
+        // carries no verdict at all, and a scored-0 tweet is a real verdict the
+        // column must keep — collapsing the two is what makes the column
+        // worthless (D177b).
+        ...(graded ? { curationScore: graded.score } : {}),
+        // `mode` is nullable on the wire (the scorer named no room we know), and
+        // absent is what the server's optional field means — so no null here.
+        ...(graded?.mode ? { curatedMode: graded.mode } : {}),
       };
     });
     try {
@@ -600,7 +610,7 @@ export function RadarSection({
       // taken through the same `onPick`, which humanizes at pick time. A second
       // call site would double-jitter the same text.
       setNote(`${prefix} · drafting…`);
-      const out = await sendBatch(set, new Map(res.scored.map((s) => [s.tweetId, s.score])));
+      const out = await sendBatch(set, new Map(res.scored.map((s) => [s.tweetId, s])));
       if (out.ok) {
         // This path never sends a language — and since ML.3 the server can still
         // resolve one, so the note says which (the same echo the plain button

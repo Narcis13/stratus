@@ -196,7 +196,7 @@ export const PROMPT_SPECS: Record<PromptKey, PromptSpec> = {
   'reply-curate': {
     name: 'Reply curation',
     description:
-      'The queue-scoring prompt behind POST /x/replies/curate — grades every fresh Radar tweet 0–100 for reply payoff and flags filler as low-value, so the paid batch draft spends on the best of the queue instead of the newest. Scoring only; it never writes a reply.',
+      'The queue-scoring prompt behind POST /x/replies/curate — grades every fresh Radar tweet 0–100 for reply payoff, flags filler as low-value, and names the room each post is in, so the paid batch draft spends on the best of the queue instead of the newest and drafts each one in the right register. Scoring and labelling only; it never writes a reply. Since RC.8 it grades the concrete hook a reply can grab, deliberately blind to whether the post is in my lane.',
     defaultBody: CURATE_PROMPT_TEMPLATE,
     required: ['{{POSTS}}'],
     optional: ['{{REPLY_PERSONA}}'],

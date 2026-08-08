@@ -62,6 +62,14 @@ export interface RadarBatchTweet extends BatchTweet {
   // tweet. Absent = drafted without curation. Storage metadata like band and
   // signals — it never reaches the Grok prompt (renderBatchTweet ignores it).
   curationScore?: number;
+  // RC.8: the room the SAME curation pass named for this post, riding back on a
+  // call already paid for. The odd one out in this block — band, signals and
+  // curationScore are storage metadata that stop at `radar_drafts`, while this
+  // is an INPUT: `resolveReplyMode` reads it as the second rung of its
+  // precedence, above the roster pin (it read the post; the pin only knows the
+  // account). Still never rendered directly — `BatchTweet.mode` is what reaches
+  // the prompt, and only the resolver writes that.
+  curatedMode?: string;
 }
 
 // The bands that describe WHY a row is in the queue rather than what the

@@ -1063,6 +1063,37 @@ describe('batch replies (Radar §7.2)', () => {
       ).toEqual({ error: 'invalid_tweet_curation_score_0' });
     }
   });
+
+  // RC.8: the same curated pass's ROOM comes back with the score — and unlike
+  // curationScore it is an input, not storage. The strictness is deliberately
+  // asymmetric with the score above: a bad NUMBER is a caller off-contract and
+  // 400s, an unrecognized ROOM does not, because `resolveModeId` answers null
+  // for it and the resolution falls through to the pin and then to detection
+  // (§7.11). 400ing a 25-post batch the user is waiting behind over one label
+  // would be the worse trade every time.
+  test('parseBatchTweets carries curatedMode through (RC.8), refusing shape but not vocabulary', () => {
+    const ok = parseBatchTweets([
+      { tweetId: '111', handle: 'alice', text: 'a', curatedMode: 'wholesome' },
+      { tweetId: '222', handle: 'bob', text: 'b' },
+      // Not normalized here — one place owns the vocabulary, and it is the
+      // resolver (§7.16). Whitespace-only is the same as absent.
+      { tweetId: '333', handle: 'carol', text: 'c', curatedMode: ' Hot Take ' },
+      { tweetId: '444', handle: 'dave', text: 'd', curatedMode: 'sports-banter' },
+      { tweetId: '555', handle: 'erin', text: 'e', curatedMode: '   ' },
+      { tweetId: '666', handle: 'fred', text: 'f', curatedMode: null },
+    ]);
+    if ('error' in ok) throw new Error(ok.error);
+    expect(ok.tweets[0]?.curatedMode).toBe('wholesome');
+    expect('curatedMode' in (ok.tweets[1] ?? {})).toBe(false);
+    expect(ok.tweets[2]?.curatedMode).toBe('Hot Take');
+    expect(ok.tweets[3]?.curatedMode).toBe('sports-banter');
+    expect('curatedMode' in (ok.tweets[4] ?? {})).toBe(false);
+    expect('curatedMode' in (ok.tweets[5] ?? {})).toBe(false);
+
+    expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', curatedMode: 3 }])).toEqual({
+      error: 'invalid_tweet_curated_mode_0',
+    });
+  });
 });
 
 describe('radar drafts (C0)', () => {

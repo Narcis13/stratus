@@ -271,11 +271,22 @@ console.log('3. parseCurateScores → selectCurated at the live keep target');
   // high-scoring piece of filler, a real 0, a tie, an id nobody asked about
   // (the ⊕ pin — the model volunteering a verdict on a tweet it never saw is
   // exactly what anchoring exists for), a duplicate, and one id left ungraded.
+  // RC.8: `mode` rides here too, and it is on the LENIENT side of the parse —
+  // A carries a real room, B an invented one, C an alias, and the rest none at
+  // all. Every row survives: the room is a hint into `resolveReplyMode`, which
+  // still has the roster pin and detection underneath it, so a bad label may
+  // never cost a queue row on a call that has already been billed.
   const raw = JSON.stringify({
     scores: [
-      { id: 'A', score: 91, lowValue: false, reason: 'concrete p99 number to argue with' },
-      { id: 'B', score: 0, lowValue: false, reason: 'nothing to add' },
-      { id: 'C', score: 77, lowValue: false, reason: 'unsettled claim in my lane' },
+      {
+        id: 'A',
+        score: 91,
+        lowValue: false,
+        mode: 'expertise',
+        reason: 'concrete p99 number to argue with',
+      },
+      { id: 'B', score: 0, lowValue: false, mode: 'sports-banter', reason: 'nothing to add' },
+      { id: 'C', score: 77, lowValue: false, mode: 'Hot Take', reason: 'unsettled claim' },
       { id: 'D', score: 88, lowValue: true, reason: 'big account, but it is a follow train' },
       { id: 'E', score: 64, lowValue: false, reason: 'decent question' },
       { id: 'F', score: 64, lowValue: false, reason: 'decent question' },
@@ -288,6 +299,16 @@ console.log('3. parseCurateScores → selectCurated at the live keep target');
   const scores = parseCurateScores(raw);
   if (scores === null) fail('parseCurateScores rejected a well-formed payload');
   if (scores.length !== 9) fail(`parseCurateScores returned ${scores.length} rows, want 9`);
+
+  // First occurrence wins, like `selectCurated`'s own map — the payload's
+  // duplicate 'A' is a second verdict that must not answer for the first.
+  const room = new Map<string, string | null>();
+  for (const s of scores) if (!room.has(s.tweetId)) room.set(s.tweetId, s.mode);
+  if (room.get('A') !== 'expertise') fail(`A's room came back as ${room.get('A')}`);
+  if (room.get('B') !== null) fail('an invented room was accepted instead of degrading to null');
+  if (room.get('C') !== 'hot-take') fail(`an alias did not fold onto its id: ${room.get('C')}`);
+  if (room.get('E') !== null) fail('a missing room did not degrade to null');
+  ok('rooms: a real one kept, an alias folded, an invented and a missing one → null (no row lost)');
 
   const sel = selectCurated(scores, wanted, curateKeepTarget());
   // Best-first, and the E/F tie keeps the PANEL's order (the sort is stable on
@@ -462,7 +483,13 @@ if (LIVE) {
   const r = await post('/x/replies/curate', { tweets: liveTweets });
   if (r.status !== 200) fail(`curate returned ${r.status}: ${JSON.stringify(r.body)}`);
   const res = r.body as {
-    scored: Array<{ tweetId: string; score: number; lowValue: boolean; reason: string }>;
+    scored: Array<{
+      tweetId: string;
+      score: number;
+      lowValue: boolean;
+      mode: string | null;
+      reason: string;
+    }>;
     keep: string[];
     drop: string[];
     unscored: string[];
@@ -492,7 +519,19 @@ if (LIVE) {
   for (const s of res.scored) {
     const who = label.get(s.tweetId) ?? s.tweetId;
     const flag = s.lowValue ? 'lowValue' : '        ';
-    console.log(`     @${who}  ${String(s.score).padStart(3)}  ${flag}  ${s.reason}`);
+    console.log(
+      `     @${who}  ${String(s.score).padStart(3)}  ${flag}  [${s.mode ?? '—'}]  ${s.reason}`,
+    );
+  }
+  // RC.8, and only a live call can claim it: the provider accepted the widened
+  // schema and answered inside the room vocabulary. A `null` here is the parser
+  // refusing a room it does not know — the drafting call still works (it falls
+  // through to the pin, then detection), so this is reported, not asserted.
+  const unroomed = res.scored.filter((s) => s.mode === null).map((s) => s.tweetId);
+  if (unroomed.length > 0) {
+    console.log(`     note: no recognized room came back for ${unroomed.join(', ')}.`);
+  } else {
+    ok('every graded post came back with a room the resolver recognizes');
   }
   // Calibration, not a contract: whether the rubric fires on obvious filler is
   // model judgment, and an opening-guess category list is exactly the thing a
