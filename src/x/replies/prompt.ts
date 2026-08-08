@@ -19,6 +19,10 @@ import {
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { RELATIONSHIP_INSTRUCTION } from '../people/relationship.ts';
 import { type PillarDef, renderPillars } from '../posts/pillars.ts';
+// Type-only (RC.6): `./winners.ts` reads the DB and imports `./mode.ts`, which
+// imports a type back from here — erased at build, no runtime cycle, the same
+// shape mode.ts already uses for `ReplyVariant`.
+import type { ReplyWinner } from './winners.ts';
 
 // Band verdict + the exact classifier inputs, frozen at capture time by the
 // extension (src/shared/replyBand.ts). Optional in the request: older
@@ -97,6 +101,15 @@ export interface PostContext {
    *  mode-less CLI call leaves. */
   mode?: ReplyModeId;
   modeSource?: 'explicit' | 'curated' | 'roster' | 'detected' | 'fallback';
+  /** RC.6: how many measured winners this draft was shown. A COUNT, not the
+   *  texts — the texts are already rows in `harvest_rows`, and copying them into
+   *  every draft's snapshot would store the corpus once per draft. Server-
+   *  stamped like `mode`, refused inside `context` by the same whitelist.
+   *  Absent = the draft saw none, which is also how every pre-RC.6 row reads;
+   *  the two are the same fact (no few-shot), so nothing is lost by folding them.
+   *  It exists so the before/after split ME.5 draws for the me-brief is
+   *  available for the few-shot too. */
+  winners?: number;
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
@@ -227,6 +240,44 @@ export function renderModeClause(mode: ReplyMode, opts?: { narrowAngles?: boolea
 // every other tail block keeps.
 function modeBlock(mode?: ReplyMode, narrowAngles = true): string {
   return mode ? `\n\n${renderModeClause(mode, { narrowAngles })}` : '';
+}
+
+// ------------------------------------------------------------- RC.6 winners
+//
+// The measured few-shot. `renderModeClause`'s neighbour in every respect: a
+// per-call VALUE at the variable tail (the selection is per ROOM, so it cannot
+// sit in the cacheable prefix), prose that is OURS, and one renderer shared by
+// the single and batch paths so the two cannot describe the same winners
+// differently. Selection lives in `./winners.ts`; this file only renders.
+//
+// It is the POSITIVE counterweight to RC.1's twenty negative rules, and the plan
+// is explicit that it matters more than it looks: if yield falls after RC.1, the
+// answer is this block, not more rules.
+const WINNERS_NOTE =
+  "**Replies of mine that actually worked**, with the views each one earned. This is the only ground truth in this prompt about how I really write — match the voice, the length and the punctuation habits. Never reuse their words, and never take a winner from one room as a template for another room's reply.";
+
+/** Grouped by room, in the order the rooms were handed over (queue order in the
+ *  batch, so this reads in the order the mode legend does), yield-sorted inside
+ *  each group by the loader. */
+export function renderReplyWinnersBlock(winners: readonly ReplyWinner[]): string {
+  const byMode = new Map<ReplyModeId, ReplyWinner[]>();
+  for (const w of winners) {
+    const group = byMode.get(w.mode) ?? [];
+    group.push(w);
+    byMode.set(w.mode, group);
+  }
+  const blocks = [...byMode.entries()].map(([id, group]) => {
+    const lines = group.map((w, i) => `${i + 1}. [${w.views} views] ${w.text}`);
+    return `\`${id}\`\n${lines.join('\n')}`;
+  });
+  return `${WINNERS_NOTE}\n\n${blocks.join('\n\n')}`;
+}
+
+// Absent/empty → the empty string: a fresh DB, an unset self-handle or a room
+// with nothing measured in it all assemble byte-identically to a pre-RC.6
+// prompt. The same equivalence discipline every other tail block keeps.
+function winnersBlock(winners?: readonly ReplyWinner[]): string {
+  return winners && winners.length > 0 ? `\n\n${renderReplyWinnersBlock(winners)}` : '';
 }
 
 // N0.4: the "Who I am" body comes from the active niche. Constant per niche, so
@@ -728,6 +779,9 @@ export function buildBatchGrokInput(
     template?: string;
     language?: string;
     languageProfile?: LanguageProfile | null;
+    /** RC.6: the measured few-shot for the rooms in THIS queue, already grouped
+     *  and selected by `loadReplyWinners`. */
+    winners?: readonly ReplyWinner[];
   },
 ): GrokMessage[] {
   // {{REPLY_PERSONA}} (N0.4) substitutes FIRST — before the posts and idea
@@ -770,6 +824,11 @@ export function buildBatchGrokInput(
   if (modes.length > 0) {
     content += `\n\n${renderBatchModeNote(modes, { narrowAngles: !opts?.languageProfile })}`;
   }
+  // RC.6: the measured few-shot, right after the legend that names the rooms it
+  // is grouped by — the examples are useless until the model knows what
+  // `wholesome` means, and reading the two together is how "match this voice"
+  // lands on the right posts.
+  content += winnersBlock(opts?.winners);
   // CQ.7: one language clause for the whole batch — the batch prompt has ONE
   // instruction block, so a per-post language would need a template change this
   // rendering exists to avoid. `me` is last in this builder, so "after me" is
@@ -881,6 +940,8 @@ export function buildGrokInput(
     /** RC.5: the resolved room for THIS post. The route resolves once and hands
      *  it over, the same shape `languageProfile` rides in. */
     mode?: ReplyMode;
+    /** RC.6: my measured winners for that room, selected by `loadReplyWinners`. */
+    winners?: readonly ReplyWinner[];
   },
 ): GrokMessage[] {
   const template = substituteReplyPersona(
@@ -911,12 +972,17 @@ export function buildGrokInput(
     content = `${content}\n\n${ctx.me}`;
   }
   // RC.5: the mode clause, right after `me` and before the language clause —
-  // tail order relationship → me → mode → language → guidance. Same opts
-  // channel and same reasoning as the language clause: an instruction the
+  // tail order relationship → me → mode → winners → language → guidance. Same
+  // opts channel and same reasoning as the language clause: an instruction the
   // server resolved, rendered here, never interpolated into a template.
   content += modeBlock(opts?.mode, !opts?.languageProfile);
-  // CQ.7: the language clause, right after the mode — tail order relationship →
-  // me → mode → language → guidance. It rides in opts, not on ctx: the other
+  // RC.6: the measured few-shot for that room, immediately after the clause that
+  // names it — tail order is now relationship → me → mode → winners → language →
+  // guidance. Same opts channel: the server selected them, this renders them.
+  content += winnersBlock(opts?.winners);
+  // CQ.7: the language clause, after the mode and its winners — tail order
+  // relationship → me → mode → winners → language → guidance. It rides in opts,
+  // not on ctx: the other
   // tail blocks are context the server scraped or derived, this is an
   // instruction the caller asked for (validated in the route, rendered here).
   content += languageBlock(opts?.language, opts?.languageProfile);

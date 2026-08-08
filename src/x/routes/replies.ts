@@ -64,6 +64,7 @@ import {
   passesSpecificityGate,
   replyVariantsSchema,
 } from '../replies/prompt.ts';
+import { loadReplyWinnersSafe } from '../replies/winners.ts';
 import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
 import { getSetting } from '../settings/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
@@ -394,6 +395,19 @@ replies.post('/replies/generate', async (c) => {
   ctx.mode = resolvedMode.mode.id;
   ctx.modeSource = resolvedMode.source;
 
+  // RC.6: my measured winners FOR THAT ROOM — the positive counterweight to
+  // RC.1's negative rules, and $0 (a `harvest_rows` read plus the same pure
+  // detection the resolution above already ran). Same slot in the ladder, after
+  // the band gate. Language-scoped: a resolved profile only takes winners
+  // written in that language, and the English path only takes ones no script
+  // detector can place. Best-effort — an empty pool is the ordinary state.
+  const winners = await loadReplyWinnersSafe([resolvedMode.mode.id], {
+    profile: resolvedLanguage.profile,
+  });
+  // Stamped like `me`: contextSnapshot records whether this draft saw a few-shot
+  // and how many, so the before/after split stays readable once the rows land.
+  if (winners.length > 0) ctx.winners = winners.length;
+
   // Relationship block (C3): what the people layer knows about this handle,
   // injected at the variable tail so the prompt stops meeting everyone for the
   // first time. Stamped into ctx BEFORE the insert so contextSnapshot records
@@ -436,6 +450,9 @@ replies.post('/replies/generate', async (c) => {
     // RC.5: the resolved room. Always present on this path — every post is in
     // some room, and `general` is an answer, not an absence.
     mode: resolvedMode.mode,
+    // RC.6: the few-shot for that room. Empty → the prompt assembles exactly as
+    // it did before, so a fresh DB costs nothing and changes nothing.
+    winners,
   });
 
   // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
@@ -745,6 +762,14 @@ replies.post('/replies/generate-batch', async (c) => {
     if (r) t.mode = r.mode;
   }
   const modeByTweetId = new Map(tweets.map((t, i) => [t.tweetId, resolvedModes[i]]));
+  // RC.6: one few-shot pass for the DISTINCT rooms in the queue, in queue order
+  // so the block reads in the same order the legend does. Distinct, not per
+  // tweet: a 25-post queue camped on football would otherwise pay for the same
+  // five `banter` winners 25 times. $0, same slot in the ladder as the single
+  // path, best-effort.
+  const winners = await loadReplyWinnersSafe([...new Set(resolvedModes.map((r) => r.mode.id))], {
+    profile: resolvedLanguage.profile,
+  });
   // Registry prompt (AI.5): the standalone batch default, DB-overridable like
   // the single-reply key; a per-request systemPromptOverride still beats it.
   const batchPrompt = loadPromptSafe('reply-batch');
@@ -755,6 +780,7 @@ replies.post('/replies/generate-batch', async (c) => {
     ...(resolvedLanguage.language !== undefined
       ? { language: resolvedLanguage.language, languageProfile: resolvedLanguage.profile }
       : {}),
+    winners,
   });
   // 3 variants/post × ~280 chars ≈ 270 tokens + JSON overhead; ×3 output vs the
   // single-reply path (user-accepted, RU.3). Scale with the batch, capped. A

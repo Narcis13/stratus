@@ -1282,6 +1282,9 @@ export function buildJudgeEffectiveness(
  *  into the bottom one. */
 export interface OwnReplyRow {
   tweetId: string;
+  /** The reply's own text, verbatim from the DOM harvest. RC.6 reads it as the
+   *  measured few-shot pool; the §2.2–§2.4 crosstabs below ignore it. */
+  text: string;
   views: number;
   likes: number;
   comments: number;

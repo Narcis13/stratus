@@ -564,6 +564,9 @@ export async function latestOwnReplyRows(
     .select({
       tweetId: harvestRows.tweetId,
       capturedAt: sql<number>`max(${harvestRows.capturedAt})`,
+      // RC.6: the reply text rides on the same latest-per-tweet row the metrics
+      // do — a second query for it would be a second dedup to get wrong.
+      text: harvestRows.text,
       views: harvestRows.views,
       likes: harvestRows.likes,
       comments: harvestRows.comments,
@@ -586,6 +589,7 @@ export async function latestOwnReplyRows(
 
   return rows.map((r) => ({
     tweetId: r.tweetId,
+    text: r.text,
     views: r.views,
     likes: r.likes,
     comments: r.comments,

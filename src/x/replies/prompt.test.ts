@@ -10,19 +10,23 @@ import {
   BATCH_REPLY_SCHEMA,
   type BatchTweet,
   MAX_GLOSS_LENGTH,
+  type PostContext,
   REPLY_ANGLES,
   REPLY_BATCH_PROMPT_TEMPLATE,
   REPLY_PROMPT_TEMPLATE,
   REPLY_VARIANTS_SCHEMA,
   batchReplySchema,
   buildBatchGrokInput,
+  buildGrokInput,
   parseBatchReplies,
   parseReplyVariants,
   renderBatchModeNote,
   renderBatchTweet,
   renderModeClause,
+  renderReplyWinnersBlock,
   replyVariantsSchema,
 } from './prompt.ts';
+import type { ReplyWinner } from './winners.ts';
 
 // The D164b walk: strict structured outputs reject these keywords outright, and
 // a schema that carries one fails the call rather than degrading. Same walk
@@ -292,6 +296,96 @@ describe('RC.5 mode rendering', () => {
       expect(template).not.toContain("This post's room is");
       expect(template).not.toContain('The rooms in this batch:');
       expect(template).not.toContain('In this room produce');
+    }
+  });
+});
+
+// RC.6 — the measured few-shot, RENDERED. Selection is winners.test.ts's job;
+// what is asserted here is the shape, the placement and (again) that neither
+// byte-synced literal moved for it.
+describe('RC.6 winners rendering', () => {
+  const w = (mode: ReplyModeId, text: string, views: number): ReplyWinner => ({
+    mode,
+    text,
+    views,
+  });
+  const WINNERS: ReplyWinner[] = [
+    w('hot-take', 'IMO buying flowers once still beats forgetting tha request entirely', 19_088),
+    w('hot-take', "Five years apart isn't predatory.", 2_248),
+    w('wholesome', 'the ear twitch at 0:04', 311),
+  ];
+  const t: BatchTweet = { tweetId: '1', handle: 'someone', author: 'SO', text: 'post one' };
+  const ctx: PostContext = {
+    url: 'https://x.com/someone/status/1',
+    tweetId: '1',
+    author: 'SO',
+    handle: 'someone',
+    text: 'post one',
+    postedAt: new Date().toISOString(),
+    metrics: { views: 10, replies: 1, reposts: 0, likes: 2 },
+    topComments: [],
+  };
+
+  test('every winner carries the yield it actually earned, grouped by room', () => {
+    const block = renderReplyWinnersBlock(WINNERS);
+    expect(block).toContain('`hot-take`\n1. [19088 views] IMO buying flowers');
+    expect(block).toContain('`wholesome`\n1. [311 views] the ear twitch at 0:04');
+    // Each room named once, in the order handed over.
+    expect(block.indexOf('`hot-take`')).toBeLessThan(block.indexOf('`wholesome`'));
+    expect(block.split('`hot-take`').length - 1).toBe(1);
+  });
+
+  test('the note says match the voice and never reuse the words', () => {
+    const block = renderReplyWinnersBlock(WINNERS);
+    expect(block).toContain('Never reuse their words');
+    expect(block).toContain("never take a winner from one room as a template for another room's");
+  });
+
+  test('single: no winners → byte-identical to the pre-RC.6 prompt', () => {
+    const cold = buildGrokInput(ctx)[0]?.content ?? '';
+    expect(buildGrokInput(ctx, undefined, undefined, undefined, { winners: [] })[0]?.content).toBe(
+      cold,
+    );
+  });
+
+  test('single: the block lands AFTER the mode clause and BEFORE the language clause', () => {
+    const mode = REPLY_MODES.find((m) => m.id === 'hot-take');
+    if (!mode) throw new Error('hot-take must exist in the table');
+    const content =
+      buildGrokInput(ctx, undefined, undefined, undefined, {
+        mode,
+        winners: WINNERS,
+        language: 'Japanese',
+        languageProfile: { code: 'ja' } as never,
+      })[0]?.content ?? '';
+    const at = (s: string) => content.indexOf(s);
+    expect(at("This post's room is")).toBeLessThan(at('Replies of mine that actually worked'));
+    expect(at('Replies of mine that actually worked')).toBeLessThan(
+      at('Write all variants in Japanese'),
+    );
+  });
+
+  test('batch: the block lands after the legend that names its rooms', () => {
+    const content =
+      buildBatchGrokInput(
+        [{ ...t, mode: GENERAL_MODE }],
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { winners: WINNERS },
+      )[0]?.content ?? '';
+    expect(content.indexOf('The rooms in this batch:')).toBeLessThan(
+      content.indexOf('Replies of mine that actually worked'),
+    );
+    // One block for the whole batch, not one per post.
+    expect(content.split('Replies of mine that actually worked').length - 1).toBe(1);
+  });
+
+  test('provenance: neither byte-synced literal carries the winners prose', () => {
+    for (const template of [REPLY_PROMPT_TEMPLATE, REPLY_BATCH_PROMPT_TEMPLATE]) {
+      expect(template).not.toContain('Replies of mine that actually worked');
+      expect(template).not.toContain('{{REPLY_WINNERS}}');
     }
   });
 });

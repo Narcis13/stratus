@@ -1092,6 +1092,7 @@ describe('own reply performance (growth plan §2.2-§2.4)', () => {
   let seq = 0;
   const reply = (o: Partial<OwnReplyRow> = {}): OwnReplyRow => ({
     tweetId: `r${seq++}`,
+    text: 'a reply of mine',
     views: 100,
     likes: 1,
     comments: 0,
