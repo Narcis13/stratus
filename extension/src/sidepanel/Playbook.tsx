@@ -16,6 +16,7 @@ import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type OwnReplyCell,
+  type OwnReplyContamination,
   type OwnReplyPerformance,
   type Playbook,
   type PlaybookAngleCell,
@@ -1128,11 +1129,40 @@ function OwnReplySection({ p, minN }: { p: OwnReplyPerformance; minN: number }):
             cells={p.arms.map((c) => ({ ...c, key: c.arm }))}
             minN={minN}
           />
+          {/* RC.9's three axes rode into an EXISTING slice, so `slice()` above
+              cannot see them missing: against a server older than this build
+              they arrive as `undefined`, and an empty table beats taking the
+              tab down (the same defence `ResultCell` documents). */}
+          <OwnReplyTable
+            label="room"
+            cells={(p.modes ?? []).map((c) => ({ ...c, key: c.mode }))}
+            minN={minN}
+          />
+          <OwnReplyTable
+            label="opening"
+            cells={(p.openings ?? []).map((c) => ({ ...c, key: c.opening }))}
+            minN={minN}
+          />
+          <OwnReplyTable
+            label="opening × room"
+            cells={(p.openingsByMode ?? []).map((c) => ({ ...c, key: `${c.mode} · ${c.opening}` }))}
+            minN={minN}
+          />
+          <ContaminationLine c={p.contamination} minN={minN} />
           <div className="muted pb-note">
             Averages, not medians — these read against the §2.2 reference corpus, which is quoted as
             means. A cell keeps its counts but stops quoting an average below n≥{minN}. "unknown"
             means the scrape missed the parent, never "small": a jump in its share is a scraper
             regression, not a change in your behaviour.
+          </div>
+          <div className="muted pb-note">
+            "capture" is basis points of the parent's views — read it BESIDE views/reply, never
+            instead of it. Raw yield rewards a row for the parents it happened to land under: the
+            stance-marker opening class led on yield by 20× purely because its parents averaged 8×
+            the corpus, and on capture the opening classes did not separate at all. The room is
+            attributed at read time from the Cannon pin first, then keyword detection — pin a handle
+            in Radar → Cannon and this table re-reads history; "unknown" means neither answered, and
+            those rows are deliberately outside the contamination rate.
           </div>
           <div className="muted pb-note">
             The roster arms only fill for handles camped in Radar → Cannon, so "roster-ja" stays
@@ -1168,12 +1198,13 @@ function OwnReplyTable({
           <th>replies</th>
           <th>share</th>
           <th>views/reply</th>
+          <th>capture</th>
           <th>parent</th>
         </tr>
       </thead>
       <tbody>
         {cells.map((c) => (
-          <tr key={c.key} className={c.key === 'unknown' ? 'pb-thin' : ''}>
+          <tr key={c.key} className={c.key.includes('unknown') ? 'pb-thin' : ''}>
             <td>{c.key}</td>
             <td>{c.n}</td>
             <td>{fmtPct2(c.sharePct)}</td>
@@ -1186,11 +1217,44 @@ function OwnReplyTable({
                 fmtN(c.avgYield)
               )}
             </td>
+            {/* `undefined` here is an older server, `null` is the gate. */}
+            <td>
+              {c.captureBp === null || c.captureBp === undefined ? '—' : `${fmtN(c.captureBp)} bp`}
+            </td>
             <td>{fmtN(c.avgParentViews)}</td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** RC.9's headline: how often an off-lane reply bridged back to the lane. One
+ *  line rather than a table — it is a single rate, and the comparison that
+ *  matters (contaminated vs clean yield) fits beside it. */
+function ContaminationLine({
+  c,
+  minN,
+}: {
+  c: OwnReplyContamination | undefined;
+  minN: number;
+}): JSX.Element {
+  if (c === undefined || c === null) return <div className="status-line pb-gated">—</div>;
+  return (
+    <div className="status-line">
+      {c.pct === null ? (
+        <span className="pb-gated">
+          — lane contamination (n={c.n}/{minN})
+        </span>
+      ) : (
+        `${fmtPct2(c.pct)} lane contamination · ${c.contaminated}/${c.n} off-lane replies reached for the lane`
+      )}
+      {c.avgYieldContaminated !== null || c.avgYieldClean !== null
+        ? ` · ${c.avgYieldContaminated === null ? '—' : fmtN(c.avgYieldContaminated)} views when it did, ${
+            c.avgYieldClean === null ? '—' : fmtN(c.avgYieldClean)
+          } when it didn't`
+        : ''}
+    </div>
   );
 }
 

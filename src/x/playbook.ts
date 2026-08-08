@@ -18,6 +18,14 @@ import {
   classifyBand,
   textLooksLikeReplyBait,
 } from '../shared/replyBand.ts';
+import {
+  REPLY_MODES,
+  type ReplyMode,
+  type ReplyModeId,
+  containsLaneNoun,
+  detectReplyMode,
+  resolveModeId,
+} from '../shared/replyMode.ts';
 
 /** Default per-cell minimum sample before a stat is allowed to claim anything.
  *  Same spirit as the BAND ≥100 rule, scaled to per-cell granularity. */
@@ -1416,6 +1424,176 @@ export function ownReplyArm(
   return detectScript(text) === null ? 'off-roster-en' : 'off-roster-nonlatin';
 }
 
+// ------------------------------------------------------- RC.9: the mode axis
+//
+// Which ROOM each reply was written into, attributed at READ time from the
+// CURRENT roster and the current taxonomy — `ownReplyArm`'s precedent, and the
+// reason is the same: a stored column on `harvest_rows` would go stale the
+// moment a handle is pinned, and every row harvested before 2026-08-08 predates
+// the taxonomy entirely.
+//
+// The precedence is `resolveReplyMode`'s minus the two rules that do not exist
+// at read time (no panel override on a reply I already posted, no curate pass on
+// a parent I never queued): pin, then detection, then unknown. Deliberately NOT
+// `general`: `resolveReplyMode`'s `fallback` means "nothing answered", and
+// folding that into the neutral room would let an unresolvable parent vote in a
+// cell that claims a register was chosen (§7.11). `winners.ts` drops the same
+// rows for the same reason.
+
+/** Attribution keys for the mode axis, in table order. `unknown` is the honest
+ *  seventh: no pin, and nothing the detector could score. */
+export type OwnReplyModeKey = ReplyModeId | 'unknown';
+export const OWN_REPLY_MODES: readonly OwnReplyModeKey[] = [
+  ...REPLY_MODES.map((m) => m.id),
+  'unknown',
+];
+
+/** The room a harvested reply was written into, or null when nothing answered.
+ *  `topicByHandle` maps a camped handle to `cannon_targets.topic`; its keys must
+ *  already be normalized (the builder normalizes the map it is handed, once). */
+export function ownReplyMode(
+  parentHandle: string | null,
+  parentText: string | null,
+  topicByHandle: Map<string, string | null>,
+): ReplyMode | null {
+  const handle = normalizeHandle(parentHandle);
+  // The pin outranks detection here exactly as it does in the resolver: a camped
+  // handle is the same room for weeks, and a pin is both free and exact.
+  const pinned = handle === null ? null : resolveModeId(topicByHandle.get(handle) ?? null);
+  if (pinned) return pinned;
+  const text = parentText?.trim() ?? '';
+  if (text === '') return null;
+  return detectReplyMode(text);
+}
+
+// ------------------------------------------------ RC.9: the opening-word axis
+//
+// WHY THIS DIMENSION EXISTS, and it is the whole point of it: at n=182 the
+// opening-word question is UNANSWERABLE, because parent size swamps it. The
+// stance-marker group led on raw yield by 20× (1,831 vs 91) while landing under
+// parents averaging 154,792 views against the corpus's 18,569 — and on capture
+// rate the four classes do not separate at all (2,309–3,845 bp), with the best
+// RAW group scoring the WORST capture. The opening rules in `replyMode.ts`'s
+// `moves` therefore shipped as GUESSES argued from scanning mechanics (§7.19),
+// and this crosstab is what retires them: once the mode is stamped, the cells can
+// be read within a band, and every cell quotes capture beside yield so nobody
+// re-derives the 20× that was never there. Do not quote the 1,831 anywhere.
+
+export const OWN_REPLY_OPENINGS = [
+  'stance-marker',
+  'i-my',
+  'subordinate',
+  'determiner',
+  'content-word',
+  'unknown',
+] as const;
+export type OwnReplyOpening = (typeof OWN_REPLY_OPENINGS)[number];
+
+// Opening guesses, all three lists (§7.19). The stance markers are the four the
+// corpus scan used plus the rest of the family; the subordinators and
+// determiners are the two shapes the RC.1 opening bans name.
+const STANCE_MARKER_OPENERS = new Set([
+  'imo',
+  'imho',
+  'ngl',
+  'tbh',
+  'idk',
+  'honestly',
+  'lol',
+  'lmao',
+  'lmfao',
+  'haha',
+  'yep',
+  'yup',
+  'yeah',
+  'yea',
+  'yes',
+  'nah',
+  'nope',
+  'ok',
+  'okay',
+  'fr',
+  'frfr',
+  'facts',
+  'true',
+  'agreed',
+  'exactly',
+  'same',
+  'wow',
+  'damn',
+  'oof',
+  'hmm',
+  'huh',
+  'oh',
+  'ah',
+  'wait',
+]);
+const SELF_OPENERS = new Set(['i', 'im', 'ive', 'id', 'ill', 'my', 'me', 'mine', 'myself']);
+const SUBORDINATE_OPENERS = new Set([
+  'while',
+  'although',
+  'though',
+  'if',
+  'when',
+  'whenever',
+  'since',
+  'because',
+  'given',
+  'unless',
+  'until',
+  'after',
+  'before',
+  'whereas',
+  // "As someone who…" is the credentialing open the expertise `moves` line
+  // bans by name, and it is a subordinate clause besides.
+  'as',
+]);
+// `a`/`an` are deliberately absent: the ban is on determiner + ABSTRACTION
+// ("The reality of…", "This kind of…"), and "a partial index does…" is a
+// concrete content opener that happens to start with an article.
+const DETERMINER_OPENERS = new Set([
+  'the',
+  'this',
+  'that',
+  'these',
+  'those',
+  'it',
+  'its',
+  'there',
+  'they',
+  'them',
+  'such',
+  'which',
+  'what',
+]);
+
+/**
+ * Which opening class a reply's first word falls in.
+ *
+ * A NON-LATIN opener answers `unknown`, never `content-word`. This taxonomy is
+ * English scanning mechanics — a Japanese reply opening 「いや」 is a stance
+ * marker and opening 「猫」 is a content word, and nothing here can tell them
+ * apart. An English-tuned heuristic applied to a language it was never validated
+ * against yields unknown, not a class (§7.11, the same call ML.3 made for the
+ * specificity gate). It costs the crosstab the Japanese rows; inventing a class
+ * for them would cost it the truth.
+ */
+export function ownReplyOpening(text: string): OwnReplyOpening {
+  // Leading quotes, brackets, emoji and @-mentions are not the opening WORD.
+  const first = text
+    .trim()
+    .replace(/^[^\p{L}\p{N}]+/u, '')
+    .match(/^[\p{L}\p{N}'’]+/u)?.[0];
+  if (first === undefined) return 'unknown';
+  const word = first.replace(/['’]/g, '').toLowerCase();
+  if (word === '' || !/^[a-z0-9]/.test(word)) return 'unknown';
+  if (STANCE_MARKER_OPENERS.has(word)) return 'stance-marker';
+  if (SELF_OPENERS.has(word)) return 'i-my';
+  if (SUBORDINATE_OPENERS.has(word)) return 'subordinate';
+  if (DETERMINER_OPENERS.has(word)) return 'determiner';
+  return 'content-word';
+}
+
 /** One row of any of the four tables. An insufficient cell still reports its
  *  counts and NULLS its averages — the `OutcomeCell` discipline, restated here
  *  because this family averages (the §2.2 corpus is quoted as means) where the
@@ -1430,6 +1608,22 @@ export interface OwnReplyCell {
   /** Mean views on the parents in this cell; null under the gate, and also when
    *  no row in the cell knew its parent's view count. */
   avgParentViews: number | null;
+  /**
+   * RC.9 — mean capture in basis points: of the parent's views, how many ten-
+   * thousandths my reply took. Null under the gate, and when no row in the cell
+   * knew its parent's view count.
+   *
+   * It rides beside `avgYield` in EVERY cell because raw yield is what made the
+   * stance-marker opening group look 20× better than it is: yield rewards a cell
+   * for the parents it happened to land under, capture asks what the reply did
+   * with them. Two numbers, never one — a cell that leads on both has actually
+   * found something.
+   *
+   * A MEAN of per-reply ratios, not a ratio of the sums: the latter is decided
+   * by whichever row had the biggest parent, which is the exact confound this
+   * column exists to remove.
+   */
+  captureBp: number | null;
   /** Share of ALL harvested reply views in the window, including the views in
    *  cells that failed the gate — a share computed over gated cells only would
    *  not sum to 100, and this column exists to be summed by eye. */
@@ -1449,6 +1643,44 @@ export interface OwnReplyCrowdCell extends OwnReplyCell {
 export interface OwnReplyArmCell extends OwnReplyCell {
   arm: OwnReplyArm;
 }
+export interface OwnReplyModeCell extends OwnReplyCell {
+  mode: OwnReplyModeKey;
+}
+export interface OwnReplyOpeningCell extends OwnReplyCell {
+  opening: OwnReplyOpening;
+}
+/** The opening × mode crosstab: one cell per non-empty PAIR. Thin by
+ *  construction for months — that is the honest state of the question, not a
+ *  defect (see the axis header). */
+export interface OwnReplyOpeningModeCell extends OwnReplyOpeningCell {
+  mode: OwnReplyModeKey;
+}
+
+/**
+ * RC.9 — how often a reply written into a room where the persona is BACKGROUND
+ * reached for my lane anyway. The defect the whole overhaul exists to kill,
+ * as one number.
+ *
+ * Denominator: replies whose parent resolved to a room with
+ * `personaUse !== 'full'`. Unknown-mode rows are OUT of it — "I could not tell
+ * which room this was" is not evidence that the persona was off-limits (§7.11) —
+ * which makes this rate strictly smaller-sample and strictly more honest than
+ * the 2026-08-07 baseline it is compared against (19 of 182 = 10.4%, those 19
+ * averaging 27 views, computed over the whole corpus by hand).
+ */
+export interface OwnReplyContamination {
+  /** Replies in a persona-is-background room. The gate's sample. */
+  n: number;
+  contaminated: number;
+  /** Percent of `n`. Null under the gate. */
+  pct: number | null;
+  /** The comparison that matters: contaminated replies averaged 27 views on the
+   *  baseline day against a corpus average of 183. Each side gated on its OWN
+   *  count — a 3-row "clean" average is not a rebuttal. */
+  avgYieldContaminated: number | null;
+  avgYieldClean: number | null;
+  sufficient: boolean;
+}
 
 export interface OwnReplyPerformance {
   /** Distinct replies in the window. */
@@ -1456,11 +1688,30 @@ export interface OwnReplyPerformance {
   totalViews: number;
   /** The one number the §8 two-week test tracks daily. Null under the gate. */
   viewsPerReply: number | null;
+  /** Corpus-wide mean capture in basis points — `OwnReplyCell.captureBp` over
+   *  every measured reply. The denominator that makes a cell's capture readable. */
+  captureBp: number | null;
   /** One cell per non-empty bucket, in canonical (not most-sampled) order. */
   bands: OwnReplyBandCell[];
   latency: OwnReplyLatencyCell[];
   crowding: OwnReplyCrowdCell[];
   arms: OwnReplyArmCell[];
+  modes: OwnReplyModeCell[];
+  openings: OwnReplyOpeningCell[];
+  openingsByMode: OwnReplyOpeningModeCell[];
+  contamination: OwnReplyContamination;
+}
+
+/** Mean capture in basis points over the rows that knew their parent's views.
+ *  A parent of 0 views is excluded rather than treated as infinite capture. */
+function meanCaptureBp(rows: OwnReplyRow[]): number | null {
+  const ratios = rows.flatMap((r) =>
+    r.parentViews !== null && Number.isFinite(r.parentViews) && r.parentViews > 0
+      ? [(r.views / r.parentViews) * 10_000]
+      : [],
+  );
+  const m = mean(ratios);
+  return m === null ? null : round2(m);
 }
 
 function ownReplyCell(rows: OwnReplyRow[], totalViews: number, minN: number): OwnReplyCell {
@@ -1470,11 +1721,13 @@ function ownReplyCell(rows: OwnReplyRow[], totalViews: number, minN: number): Ow
     .map((r) => r.parentViews)
     .filter((v): v is number => v !== null && Number.isFinite(v));
   const avgParent = mean(parentViews);
+  const capture = meanCaptureBp(rows);
   return {
     n: rows.length,
     totalViews: cellViews,
     avgYield: sufficient ? round2(mean(rows.map((r) => r.views)) ?? 0) : null,
     avgParentViews: sufficient && avgParent !== null ? round2(avgParent) : null,
+    captureBp: sufficient ? capture : null,
     sharePct: totalViews > 0 ? round2((cellViews / totalViews) * 100) : 0,
     sufficient,
   };
@@ -1500,8 +1753,20 @@ function ownReplyCells<K extends string>(
   });
 }
 
+/** The roster row this family reads, per camped handle. Both columns are
+ *  attribution inputs and neither is stored on the reply: `language` splits the
+ *  §8 arms, `topic` is RC.3's mode pin. One map rather than two, so a caller
+ *  cannot hand over a roster that is half fresh. */
+export interface OwnReplyRosterEntry {
+  /** `cannon_targets.language`; null = English, per the schema. */
+  language: string | null;
+  /** `cannon_targets.topic`; null = unpinned, and detection decides. */
+  topic: string | null;
+}
+
 /**
- * The four §2.2–§2.4 tables over my own harvested replies.
+ * The §2.2–§2.4 tables over my own harvested replies, plus RC.9's three:
+ * room, opening class (crossed with room) and the contamination rate.
  *
  * Pure: no DB, no clock — the caller supplies the window and the roster.
  *
@@ -1514,7 +1779,7 @@ function ownReplyCells<K extends string>(
  */
 export function buildOwnReplyPerformance(
   rows: OwnReplyRow[],
-  rosterByHandle: Map<string, string | null>,
+  rosterByHandle: Map<string, OwnReplyRosterEntry>,
   minN = DEFAULT_MIN_CELL_N,
 ): OwnReplyPerformance {
   const latestByTweet = new Map<string, OwnReplyRow>();
@@ -1522,10 +1787,20 @@ export function buildOwnReplyPerformance(
   const deduped = [...latestByTweet.values()];
 
   const roster = new Map<string, string | null>();
-  for (const [handle, language] of rosterByHandle) {
+  const topics = new Map<string, string | null>();
+  for (const [handle, entry] of rosterByHandle) {
     const key = normalizeHandle(handle);
-    if (key !== null) roster.set(key, language);
+    if (key === null) continue;
+    roster.set(key, entry.language);
+    topics.set(key, entry.topic);
   }
+
+  // Resolved once per row: the mode axis, the contamination rate and the
+  // opening crosstab all read it, and three call sites of `ownReplyMode` is
+  // three chances for them to disagree about which room a reply was in.
+  const modeOf = new Map<OwnReplyRow, ReplyMode | null>();
+  for (const r of deduped) modeOf.set(r, ownReplyMode(r.parentHandle, r.parentText, topics));
+  const modeKey = (r: OwnReplyRow): OwnReplyModeKey => modeOf.get(r)?.id ?? 'unknown';
 
   const totalViews = deduped.reduce((sum, r) => sum + r.views, 0);
   const bands = ownReplyCells(
@@ -1556,15 +1831,68 @@ export function buildOwnReplyPerformance(
     totalViews,
     minN,
   ).map(({ key, ...cell }) => ({ arm: key, ...cell }));
+  const modes = ownReplyCells(OWN_REPLY_MODES, deduped, modeKey, totalViews, minN).map(
+    ({ key, ...cell }) => ({ mode: key, ...cell }),
+  );
+  const openings = ownReplyCells(
+    OWN_REPLY_OPENINGS,
+    deduped,
+    (r) => ownReplyOpening(r.text),
+    totalViews,
+    minN,
+  ).map(({ key, ...cell }) => ({ opening: key, ...cell }));
+
+  // The crossed set. The pair list carries its own components so the cells never
+  // have to be re-parsed out of a composite key.
+  const pairs = OWN_REPLY_MODES.flatMap((mode) =>
+    OWN_REPLY_OPENINGS.map((opening) => ({ mode, opening, key: `${mode}|${opening}` as const })),
+  );
+  const crossed = new Map(
+    ownReplyCells(
+      pairs.map((p) => p.key),
+      deduped,
+      (r) => `${modeKey(r)}|${ownReplyOpening(r.text)}` as const,
+      totalViews,
+      minN,
+    ).map((c) => [c.key, c]),
+  );
+  const openingsByMode = pairs.flatMap((p) => {
+    const cell = crossed.get(p.key);
+    if (cell === undefined) return [];
+    const { key: _key, ...rest } = cell;
+    return [{ mode: p.mode, opening: p.opening, ...rest }];
+  });
+
+  // Contamination: lane nouns where the room said the persona is background.
+  const background = deduped.filter((r) => {
+    const m = modeOf.get(r) ?? null;
+    return m !== null && m.personaUse !== 'full';
+  });
+  const contaminated = background.filter((r) => containsLaneNoun(r.text));
+  const clean = background.filter((r) => !containsLaneNoun(r.text));
 
   return {
     totalMeasured: deduped.length,
     totalViews,
     viewsPerReply: deduped.length >= minN ? round2(totalViews / deduped.length) : null,
+    captureBp: deduped.length >= minN ? meanCaptureBp(deduped) : null,
     bands,
     latency,
     crowding,
     arms,
+    modes,
+    openings,
+    openingsByMode,
+    contamination: {
+      n: background.length,
+      contaminated: contaminated.length,
+      pct:
+        background.length >= minN ? round2((contaminated.length / background.length) * 100) : null,
+      avgYieldContaminated:
+        contaminated.length >= minN ? round2(mean(contaminated.map((r) => r.views)) ?? 0) : null,
+      avgYieldClean: clean.length >= minN ? round2(mean(clean.map((r) => r.views)) ?? 0) : null,
+      sufficient: background.length >= minN,
+    },
   };
 }
 

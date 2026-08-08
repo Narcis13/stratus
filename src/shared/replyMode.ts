@@ -689,6 +689,66 @@ export function detectReplyMode(text: string): ReplyMode | null {
   return byId(leader);
 }
 
+// ---------------------------------------------------------------------------
+// Lane nouns — the vocabulary the persona-scope rule bans
+// ---------------------------------------------------------------------------
+
+/**
+ * The nouns that mark a reply as having bridged the post back to my lane.
+ *
+ * The first eight are the ones `PERSONA_USE_INSTRUCTION.stance` names VERBATIM
+ * in the prompt ("no lane nouns (code, ship, build, SaaS, solopreneur, AI,
+ * marketing, startup)"), plus the inflections a model actually writes — the list
+ * exists so RC.9 can measure the rule that RC.1 wrote, and a measurement over a
+ * wider vocabulary than the rule states would score replies against a rule
+ * nobody was given.
+ *
+ * The CJK entries are the same eight in the corpus's second language: the
+ * highest-yield segment is Japanese, and 「AIやマーケティングの継続にも」 under an
+ * adjustment-disorder post is exactly the contamination this measures. Without
+ * them the contamination rate would read cleanest on the rows most worth
+ * watching. `AI` needs no entry — it is ASCII in Japanese text too.
+ */
+export const LANE_NOUNS: readonly string[] = [
+  'code',
+  'codebase',
+  'coding',
+  'ship',
+  'shipping',
+  'shipped',
+  'build',
+  'building',
+  'built',
+  'saas',
+  'solopreneur',
+  'ai',
+  'marketing',
+  'startup',
+  'コード',
+  'プログラミング',
+  'エンジニア',
+  'マーケティング',
+  'スタートアップ',
+  '起業',
+];
+
+const LANE_NOUN_PATTERNS: readonly RegExp[] = LANE_NOUNS.map(markerPattern);
+
+/**
+ * Does this reply reach for my lane?
+ *
+ * A CEILING, not a count: "they build a life together" under a relationship post
+ * scores as contamination and a human reading the row would not. That direction
+ * is deliberate — an over-count reads as "check these replies", an under-count
+ * reads as "the rule is working". Same matcher as detection, so a marker with a
+ * hyphen or an odd space behaves identically in both.
+ */
+export function containsLaneNoun(text: string): boolean {
+  if (!text) return false;
+  const haystack = normalizeForMatch(text);
+  return LANE_NOUN_PATTERNS.some((re) => re.test(haystack));
+}
+
 /** Lowercase and strip ALL whitespace, so `'  Hot Take '` and `'hot-take'` both
  *  normalize toward a table key. Hyphens and underscores go too — a roster pin
  *  typed by hand and an LLM's `hot_take` have to land on the same row. */

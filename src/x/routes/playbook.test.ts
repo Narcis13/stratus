@@ -10,6 +10,7 @@ import { db } from '../../db/client.ts';
 import type { JudgeScores } from '../../shared/judge.ts';
 import {
   accountSnapshots,
+  cannonTargets,
   draftJudgments,
   harvestRows,
   harvestRuns,
@@ -1207,6 +1208,7 @@ describe('loadOwnReplyPerformance (latest-per-tweet)', () => {
     n: number;
     totalViews: number;
     avgYield: number | null;
+    captureBp: number | null;
     sharePct: number;
     sufficient: boolean;
   }
@@ -1214,10 +1216,22 @@ describe('loadOwnReplyPerformance (latest-per-tweet)', () => {
     totalMeasured: number;
     totalViews: number;
     viewsPerReply: number | null;
+    captureBp: number | null;
     bands: Array<Cell & { band: string }>;
     latency: Array<Cell & { bucket: string }>;
     crowding: Array<Cell & { bucket: string }>;
     arms: Array<Cell & { arm: string }>;
+    modes: Array<Cell & { mode: string }>;
+    openings: Array<Cell & { opening: string }>;
+    openingsByMode: Array<Cell & { mode: string; opening: string }>;
+    contamination: {
+      n: number;
+      contaminated: number;
+      pct: number | null;
+      avgYieldContaminated: number | null;
+      avgYieldClean: number | null;
+      sufficient: boolean;
+    };
   }
 
   async function perf(query = '?minN=1'): Promise<Perf> {
@@ -1353,12 +1367,54 @@ describe('loadOwnReplyPerformance (latest-per-tweet)', () => {
       totalMeasured: 0,
       totalViews: 0,
       viewsPerReply: null,
+      captureBp: null,
       bands: [],
       latency: [],
       crowding: [],
       arms: [],
+      modes: [],
+      openings: [],
+      openingsByMode: [],
+      contamination: {
+        n: 0,
+        contaminated: 0,
+        pct: null,
+        avgYieldContaminated: null,
+        avgYieldClean: null,
+        sufficient: false,
+      },
     });
     setSettings({ 'x.identity.selfHandle': SELF });
+  });
+
+  // RC.9 — the one thing only the route can prove: `cannon_targets.topic` is on
+  // the roster SELECT and reaches the mode axis. Everything else about the room,
+  // opening and contamination cells is fixture-tested in ../playbook.test.ts.
+  test('the roster pin reaches the room axis, and the contamination rate with it', async () => {
+    // Unpinned: the parent text ("a plain statement about shipping") scores one
+    // weak marker, under the floor — unknown, and unknown is OUT of the
+    // contamination denominator even though both replies say "shipped".
+    const before = await perf();
+    expect(before.modes.map((c) => c.mode)).toEqual(['unknown']);
+    expect(before.openings.map((c) => c.opening)).toEqual(['content-word']);
+    expect(before.contamination).toMatchObject({ n: 0, contaminated: 0, pct: null });
+
+    await db.insert(cannonTargets).values({ handle: PARENT, topic: 'football' });
+    try {
+      const p = await perf();
+      // 'football' is an alias; the pin lands as its id and the room is one where
+      // the persona is background, so both replies are now measurable.
+      expect(p.modes.map((c) => c.mode)).toEqual(['banter']);
+      expect(p.openingsByMode.map((c) => `${c.mode}|${c.opening}`)).toEqual([
+        'banter|content-word',
+      ]);
+      expect(p.contamination).toMatchObject({ n: 2, contaminated: 2, pct: 100 });
+      // Capture rides beside yield in every cell: 250/5,000 and 50/300,000.
+      expect(p.captureBp).toBe(250.83);
+      expect(p.modes[0]?.captureBp).toBe(250.83);
+    } finally {
+      await db.delete(cannonTargets).where(eq(cannonTargets.handle, PARENT));
+    }
   });
 
   test('?ownReplyDays outside [1, 90] is a 400, not a clamp', async () => {

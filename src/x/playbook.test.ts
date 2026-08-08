@@ -10,6 +10,7 @@ import {
   type MeasuredOutcome,
   type ModelRow,
   type OriginalPostRow,
+  type OwnReplyRosterEntry,
   type OwnReplyRow,
   type ScoredReply,
   type TimelineBand,
@@ -42,6 +43,8 @@ import {
   ownReplyBand,
   ownReplyCrowdBucket,
   ownReplyLatencyBucket,
+  ownReplyMode,
+  ownReplyOpening,
   resolveAgeMin,
   scoreReplyOutcome,
   topAngles,
@@ -1104,7 +1107,13 @@ describe('own reply performance (growth plan §2.2-§2.4)', () => {
     parentTimeMs: NOW - 5 * 60_000,
     ...o,
   });
-  const noRoster = new Map<string, string | null>();
+  const noRoster = new Map<string, OwnReplyRosterEntry>();
+  /** A camped handle as the loader hands it over: language for the arm axis,
+   *  topic for RC.9's mode pin. */
+  const camped = (language: string | null, topic: string | null = null): OwnReplyRosterEntry => ({
+    language,
+    topic,
+  });
 
   test('parent-view band edges, both sides', () => {
     expect(ownReplyBand(999)).toBe('<1k');
@@ -1171,7 +1180,7 @@ describe('own reply performance (growth plan §2.2-§2.4)', () => {
   test('the builder normalizes raw roster keys once, so @Handle rows still match', () => {
     const r = buildOwnReplyPerformance(
       [reply({ parentHandle: 'Hiiragi2280' }), reply({ parentHandle: '@nobody_camped' })],
-      new Map([['@Hiiragi2280 ', 'Japanese']]),
+      new Map([['@Hiiragi2280 ', camped('Japanese')]]),
       1,
     );
     expect(r.arms.map((c) => c.arm)).toEqual(['roster-ja', 'off-roster-en']);
@@ -1189,6 +1198,110 @@ describe('own reply performance (growth plan §2.2-§2.4)', () => {
     // An unknown-band cell knows its own yield but has no parent views to average.
     expect(r.bands[0]?.avgYield).toBe(100);
     expect(r.bands[0]?.avgParentViews).toBeNull();
+  });
+
+  test('mode: the roster pin outranks detection, and neither answering is unknown', () => {
+    const pins = new Map<string, string | null>([['fabrizioromano', 'football']]);
+    // The pin wins even though the text detects as `expertise` — a camped handle
+    // is the same room for weeks, and an alias resolves to its row.
+    expect(ownReplyMode('@FabrizioRomano', 'shipping software and startup code', pins)?.id).toBe(
+      'banter',
+    );
+    expect(ownReplyMode('someone', 'my grandmother passed away this morning', pins)?.id).toBe(
+      'wholesome',
+    );
+    // A pin the table does not recognize falls THROUGH to detection (§7.11),
+    // rather than silently drafting in a near neighbour.
+    expect(
+      ownReplyMode('nonsense', 'arsenal were offside all game lol', new Map([['nonsense', 'zzz']]))
+        ?.id,
+    ).toBe('banter');
+    // Nothing to go on: no pin, and nothing the detector could score.
+    expect(ownReplyMode('someone', 'ok', pins)).toBeNull();
+    expect(ownReplyMode(null, '   ', pins)).toBeNull();
+  });
+
+  test('opening classes, and a non-Latin opener is unknown rather than a class', () => {
+    expect(ownReplyOpening('IMO buying flowers once still beats forgetting')).toBe('stance-marker');
+    expect(ownReplyOpening("I've tracked this for years")).toBe('i-my');
+    expect(ownReplyOpening('While the numbers say otherwise')).toBe('subordinate');
+    expect(ownReplyOpening('As someone who has coded 30 years')).toBe('subordinate');
+    expect(ownReplyOpening('The reality of shipping daily')).toBe('determiner');
+    expect(ownReplyOpening('Postgres does this in 4 lines')).toBe('content-word');
+    // Leading punctuation is not the opening word.
+    expect(ownReplyOpening('"lol same energy')).toBe('stance-marker');
+    // English scanning mechanics cannot read a Japanese opener — unknown, never
+    // a guessed class.
+    expect(ownReplyOpening('猫のしっぽが好き')).toBe('unknown');
+    expect(ownReplyOpening('   ')).toBe('unknown');
+  });
+
+  test('contamination counts lane nouns only where the persona is background', () => {
+    const wholesome = 'my grandmother passed away this morning';
+    const rows = [
+      // Two off-lane replies that bridged back to the lane, and one that did not.
+      reply({ parentText: wholesome, text: 'still building something out of that', views: 27 }),
+      reply({ parentText: wholesome, text: 'AIやマーケティングの継続にも必要', views: 27 }),
+      reply({ parentText: wholesome, text: 'the photo on the left', views: 1_000 }),
+      // An in-lane parent: `personaUse: 'full'`, so lane nouns are the material
+      // and this row is not in the denominator at all.
+      reply({ parentText: 'my saas mrr just crossed 4k', text: 'ship it and see', views: 10 }),
+    ];
+    const r = buildOwnReplyPerformance(rows, noRoster, 1);
+    expect(r.modes.map((c) => c.mode)).toEqual(['expertise', 'wholesome']);
+    expect(r.contamination).toMatchObject({
+      n: 3,
+      contaminated: 2,
+      pct: 66.67,
+      avgYieldContaminated: 27,
+      avgYieldClean: 1_000,
+      sufficient: true,
+    });
+  });
+
+  test('contamination: an unresolvable room is out of the denominator, not clean', () => {
+    const rows = [
+      reply({ parentText: 'ok', parentHandle: 'someone', text: 'building things again' }),
+    ];
+    const r = buildOwnReplyPerformance(rows, noRoster, 1);
+    expect(r.modes.map((c) => c.mode)).toEqual(['unknown']);
+    expect(r.contamination).toMatchObject({ n: 0, contaminated: 0, pct: null, sufficient: false });
+  });
+
+  test('capture is a mean of per-reply ratios, so one huge parent cannot decide it', () => {
+    const rows = [
+      reply({ views: 10, parentViews: 100 }), // 1,000 bp
+      reply({ views: 100, parentViews: 100_000 }), // 10 bp
+    ];
+    const r = buildOwnReplyPerformance(rows, noRoster, 1);
+    // Ratio of the sums would be 110/100,100 = 11 bp — the confound this column
+    // exists to remove.
+    expect(r.captureBp).toBe(505);
+    // A parent whose views never scraped contributes nothing rather than a zero.
+    const unknownParent = buildOwnReplyPerformance([reply({ parentViews: null })], noRoster, 1);
+    expect(unknownParent.captureBp).toBeNull();
+    expect(unknownParent.bands[0]?.captureBp).toBeNull();
+  });
+
+  test('opening × mode: only non-empty pairs, in canonical order, each gated', () => {
+    const rows = [
+      reply({ parentText: 'my grandmother passed away', text: 'the photo on the left' }),
+      reply({ parentText: 'arsenal were offside all game lol', text: 'lol same' }),
+    ];
+    const r = buildOwnReplyPerformance(rows, noRoster, 2);
+    expect(r.openings.map((c) => c.opening)).toEqual(['stance-marker', 'determiner']);
+    expect(r.openingsByMode.map((c) => `${c.mode}|${c.opening}`)).toEqual([
+      'wholesome|determiner',
+      'banter|stance-marker',
+    ]);
+    // Each crossed cell holds one row, under a gate of two: counts survive, the
+    // claims do not.
+    for (const c of r.openingsByMode) {
+      expect(c.n).toBe(1);
+      expect(c.avgYield).toBeNull();
+      expect(c.captureBp).toBeNull();
+      expect(c.sufficient).toBe(false);
+    }
   });
 
   test('gate: 19 replies report n with null averages, 20 report them', () => {
@@ -1248,10 +1361,22 @@ describe('own reply performance (growth plan §2.2-§2.4)', () => {
       totalMeasured: 0,
       totalViews: 0,
       viewsPerReply: null,
+      captureBp: null,
       bands: [],
       latency: [],
       crowding: [],
       arms: [],
+      modes: [],
+      openings: [],
+      openingsByMode: [],
+      contamination: {
+        n: 0,
+        contaminated: 0,
+        pct: null,
+        avgYieldContaminated: null,
+        avgYieldClean: null,
+        sufficient: false,
+      },
     });
   });
 

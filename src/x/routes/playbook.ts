@@ -602,8 +602,10 @@ export async function latestOwnReplyRows(
   }));
 }
 
-/** The four §2.2–§2.4 tables over my own harvested replies. Two SELECTs, both
- *  $0 — the rows were scraped for free and the roster is nine local rows. */
+/** The §2.2–§2.4 tables over my own harvested replies, plus RC.9's room /
+ *  opening / contamination axes. Still two SELECTs, both $0 — the rows were
+ *  scraped for free and the roster is nine local rows, one of which now also
+ *  carries the mode pin. */
 export async function loadOwnReplyPerformance(
   minN = DEFAULT_MIN_CELL_N,
   windowDays = OWN_REPLY_WINDOW_DAYS,
@@ -615,14 +617,24 @@ export async function loadOwnReplyPerformance(
   if (selfHandle === '') return buildOwnReplyPerformance([], new Map(), minN);
 
   const rows = await latestOwnReplyRows(selfHandle, Date.now() - windowDays * 24 * 60 * 60 * 1000);
-  // Arm attribution is derived at read time from the CURRENT roster (decision:
-  // no stored arm column — it would go stale the moment a handle is camped).
-  // `language` null = English, per the cannon_targets schema.
+  // Arm AND mode attribution are derived at read time from the CURRENT roster
+  // (decision: no stored column — either would go stale the moment a handle is
+  // camped or re-pinned). `language` null = English, `topic` null = unpinned,
+  // per the cannon_targets schema. RC.9 rides on the same SELECT: one more
+  // column off nine local rows is not a second query.
   const roster = await db
-    .select({ handle: cannonTargets.handle, language: cannonTargets.language })
+    .select({
+      handle: cannonTargets.handle,
+      language: cannonTargets.language,
+      topic: cannonTargets.topic,
+    })
     .from(cannonTargets);
 
-  return buildOwnReplyPerformance(rows, new Map(roster.map((r) => [r.handle, r.language])), minN);
+  return buildOwnReplyPerformance(
+    rows,
+    new Map(roster.map((r) => [r.handle, { language: r.language, topic: r.topic }])),
+    minN,
+  );
 }
 
 // ---------------------------------------------------- batch vs single rows

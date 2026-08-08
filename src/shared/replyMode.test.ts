@@ -5,6 +5,7 @@ import {
   REPLY_ANGLES,
   REPLY_MODES,
   type ReplyModeId,
+  containsLaneNoun,
   detectReplyMode,
   resolveModeId,
 } from './replyMode.ts';
@@ -458,5 +459,41 @@ describe('REPLY_MODES', () => {
   test('the opening bans are prose, present, and cover the four measured classes', () => {
     expect(OPENING_BANS.length).toBe(4);
     for (const b of OPENING_BANS) expect(b.trim().length).toBeGreaterThan(0);
+  });
+});
+
+describe('containsLaneNoun (RC.9 contamination)', () => {
+  test('the eight nouns the persona-scope rule names, and their inflections', () => {
+    expect(containsLaneNoun('still building something out of that')).toBe(true);
+    expect(containsLaneNoun('shipped it on a Sunday')).toBe(true);
+    expect(containsLaneNoun('Private airport security means more code for booking flows')).toBe(
+      true,
+    );
+    expect(containsLaneNoun('every solopreneur says this')).toBe(true);
+    expect(containsLaneNoun('SaaS pricing again')).toBe(true);
+    expect(containsLaneNoun('a startup problem')).toBe(true);
+    expect(containsLaneNoun('marketing is downstream of the product')).toBe(true);
+  });
+
+  test('the corpus’s second language counts too — AI stays ASCII inside it', () => {
+    // The 116-view Japanese reply that bridged an adjustment-disorder post back
+    // to the lane. Without the CJK entries the rate would read cleanest on the
+    // rows most worth watching.
+    expect(containsLaneNoun('治らなくてもいいやの開き直り。AIやマーケティングの継続にも')).toBe(
+      true,
+    );
+    expect(containsLaneNoun('エンジニアの朝は早い')).toBe(true);
+    expect(containsLaneNoun('猫のしっぽが好き')).toBe(false);
+  });
+
+  test('an off-lane reply is clean, and a lane noun inside a longer word is not a hit', () => {
+    expect(containsLaneNoun('IMO buying flowers once still beats forgetting tha request')).toBe(
+      false,
+    );
+    expect(containsLaneNoun('The ear twitch at 0:04')).toBe(false);
+    expect(containsLaneNoun('')).toBe(false);
+    // Word boundaries: `ai` must not fire on "again", `build` not on "rebuild".
+    expect(containsLaneNoun('again and again')).toBe(false);
+    expect(containsLaneNoun('the rebuilt stadium')).toBe(false);
   });
 });

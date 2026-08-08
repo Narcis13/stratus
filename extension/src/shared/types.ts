@@ -2179,6 +2179,12 @@ export interface OwnReplyCell {
   avgYield: number | null;
   /** Mean views on the parents. Null under the gate, and when no row knew. */
   avgParentViews: number | null;
+  /** RC.9 — mean capture in basis points (of the parent's views, how many ten-
+   *  thousandths my reply took), a MEAN of per-reply ratios. It rides beside
+   *  `avgYield` in every cell because raw yield rewards a cell for the parents it
+   *  landed under: the stance-marker opening class led on yield by 20× purely
+   *  because its parents averaged 8× the corpus. Null under the gate. */
+  captureBp: number | null;
   /** Share of ALL harvested reply views in the window — including views inside
    *  cells that failed the gate, so the column sums to 100 by eye. */
   sharePct: number;
@@ -2198,6 +2204,42 @@ export interface OwnReplyArmCell extends OwnReplyCell {
   arm: OwnReplyArm;
 }
 
+// RC.9 — the three axes the reply-craft overhaul is measured by. The room is
+// attributed at READ time (roster pin, then keyword detection, then `unknown`),
+// so re-pinning a handle in Radar → Cannon re-reads history rather than
+// mislabelling it forever.
+export type OwnReplyModeKey = ReplyModeId | 'unknown';
+export type OwnReplyOpening =
+  | 'stance-marker'
+  | 'i-my'
+  | 'subordinate'
+  | 'determiner'
+  | 'content-word'
+  | 'unknown';
+
+export interface OwnReplyModeCell extends OwnReplyCell {
+  mode: OwnReplyModeKey;
+}
+export interface OwnReplyOpeningCell extends OwnReplyCell {
+  opening: OwnReplyOpening;
+}
+export interface OwnReplyOpeningModeCell extends OwnReplyOpeningCell {
+  mode: OwnReplyModeKey;
+}
+
+/** How often a reply written into a room where the persona is BACKGROUND
+ *  reached for the lane anyway — the defect the overhaul exists to kill, as one
+ *  number. Rows whose room never resolved are OUT of `n`: "I could not tell
+ *  which room this was" is not evidence the persona was off-limits. */
+export interface OwnReplyContamination {
+  n: number;
+  contaminated: number;
+  pct: number | null;
+  avgYieldContaminated: number | null;
+  avgYieldClean: number | null;
+  sufficient: boolean;
+}
+
 export interface OwnReplyPerformance {
   /** Distinct replies in the window — deduped latest-capture-wins, so
    *  harvesting the same day twice does not double it. */
@@ -2205,10 +2247,17 @@ export interface OwnReplyPerformance {
   totalViews: number;
   /** The one number the §8 two-week test tracks daily. Null under the gate. */
   viewsPerReply: number | null;
+  /** Corpus-wide mean capture in bp — the denominator that makes a cell's
+   *  capture readable. Null under the gate. */
+  captureBp: number | null;
   bands: OwnReplyBandCell[];
   latency: OwnReplyLatencyCell[];
   crowding: OwnReplyCrowdCell[];
   arms: OwnReplyArmCell[];
+  modes: OwnReplyModeCell[];
+  openings: OwnReplyOpeningCell[];
+  openingsByMode: OwnReplyOpeningModeCell[];
+  contamination: OwnReplyContamination;
 }
 
 export interface Playbook {
