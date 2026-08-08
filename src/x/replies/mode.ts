@@ -50,6 +50,7 @@ import {
   resolveModeId,
 } from '../../shared/replyMode.ts';
 import { cannonTopicForSafe } from '../cannon/membership.ts';
+import type { ReplyVariant } from './prompt.ts';
 
 /** One post the mode has to be resolved for. The batch passes its whole queue. */
 export interface ReplyModeTarget {
@@ -127,4 +128,29 @@ export async function resolveReplyMode(input: {
     out.push({ mode: GENERAL_MODE, source: 'fallback' });
   }
   return out;
+}
+
+/**
+ * RC.5 — keep only the variants whose angle the room actually allows.
+ *
+ * `trimToSingleVariant`'s twin (ML.3's decision-7 guarantee) and the same
+ * division of labour: the narrowed schema (`angles: mode.angles`) is the
+ * optimization — it stops the model paying output tokens for a `contrarian`
+ * under a funeral post — and THIS is the contract, because a non-strict
+ * provider, an older response, or `parseReplyVariants`' coercion of an
+ * unrecognized angle to `'extends'` can all land an angle the room excludes.
+ * One helper, called per tweet by both routes, so the two cannot fork.
+ *
+ * An empty result returns the input untouched rather than nothing: money is
+ * already spent, and a paid draft in the wrong ANGLE column is still a reply I
+ * can read and edit, while zero variants is a wasted call. Same asymmetry §7.35
+ * draws for the gloss — degrade the label, never the payload.
+ */
+export function trimToModeAngles(
+  variants: readonly ReplyVariant[],
+  mode: ReplyMode,
+): ReplyVariant[] {
+  const allowed = new Set<string>(mode.angles);
+  const kept = variants.filter((v) => allowed.has(v.angle));
+  return kept.length > 0 ? kept : [...variants];
 }

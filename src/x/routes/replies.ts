@@ -24,6 +24,7 @@ import {
   llmErrorPayload,
 } from '../../llm/index.ts';
 import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
+import { GENERAL_MODE, REPLY_ANGLES, type ReplyAngle } from '../../shared/replyMode.ts';
 import { isCannonHandleSafe } from '../cannon/membership.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
@@ -50,11 +51,10 @@ import {
   selectCurated,
 } from '../replies/curate.ts';
 import { resolveReplyLanguage, trimToSingleVariant } from '../replies/language.ts';
+import { type ResolvedReplyMode, resolveReplyMode, trimToModeAngles } from '../replies/mode.ts';
 import {
-  BATCH_REPLY_SCHEMA,
   type PostContext,
   type PostSignals,
-  REPLY_VARIANTS_SCHEMA,
   type ReplyVariant,
   batchReplySchema,
   buildBatchGrokInput,
@@ -142,6 +142,40 @@ function parseReplyLanguage(value: unknown): { language?: string } | { error: 'i
   return { language: trimmed };
 }
 
+// RC.5: the mode override, same terms as the language one — a DRAFTING
+// INSTRUCTION may ride in the body; the rendering never does. Deliberately NOT
+// validated against the mode table: an unrecognized value falls THROUGH to the
+// rest of the precedence (the curate call, the roster pin, detection) rather
+// than 400ing or guessing a near neighbour (§7.11 — resolveModeId is where that
+// rule lives). What is rejected here is a value that could not be an id at all:
+// a non-string, an empty one, an overlong one, or one carrying control
+// characters.
+const MAX_REPLY_MODE_LEN = 40;
+
+function parseReplyModeOverride(value: unknown): { mode?: string } | { error: 'invalid_mode' } {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'string') return { error: 'invalid_mode' };
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed.length > MAX_REPLY_MODE_LEN) return { error: 'invalid_mode' };
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting them is the point.
+  if (/[\u0000-\u001f\u007f]/.test(trimmed)) return { error: 'invalid_mode' };
+  return { mode: trimmed };
+}
+
+// RC.5: the union of every room's angles, in REPLY_ANGLES order — what a
+// heterogeneous batch narrows its ONE schema to. Per-post narrowing is not
+// expressible in a single structured-output schema, so the schema carries the
+// union (still a real narrowing: a football-and-grief batch never offers
+// `debate`) and the per-tweet `trimToModeAngles` is what holds each post to its
+// own room. Empty in, whole vocabulary out — a mode-less batch is the pre-RC.5
+// call and must stay byte- and schema-identical to it.
+function unionAngles(modes: readonly ResolvedReplyMode[]): readonly ReplyAngle[] {
+  const allowed = new Set<ReplyAngle>();
+  for (const m of modes) for (const a of m.mode.angles) allowed.add(a);
+  const union = REPLY_ANGLES.filter((a) => allowed.has(a));
+  return union.length > 0 ? union : REPLY_ANGLES;
+}
+
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 // Outcomes feed the BAND recalibration crosstab, which wants the full posted
@@ -167,6 +201,11 @@ interface RawBody {
   // CQ.7: draft in this language instead of English. A top-level body field, NOT
   // a context field — parseContext's whitelist keeps refusing it there.
   language?: unknown;
+  // RC.5: draft this post as a named room, skipping the rest of the precedence.
+  // Top-level for the same reason `language` is, and refused inside `context`
+  // by the same whitelist: the panel's override and an operator's curl are the
+  // callers, and the room the SERVER resolved is what gets stamped otherwise.
+  mode?: unknown;
 }
 
 export const replies = new Hono();
@@ -254,6 +293,12 @@ replies.post('/replies/generate', async (c) => {
   if ('error' in langOrErr) return c.json({ error: langOrErr.error }, 400);
   const language = langOrErr.language;
 
+  // RC.5: validated up here with the language, and for the same reason — a
+  // malformed override is a 400 before anything is spent (§7.4).
+  const modeOrErr = parseReplyModeOverride(body.mode);
+  if ('error' in modeOrErr) return c.json({ error: modeOrErr.error }, 400);
+  const modeOverride = modeOrErr.mode;
+
   // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
   // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
   // escape hatch (the extension arms it on a second deliberate click).
@@ -329,6 +374,26 @@ replies.post('/replies/generate', async (c) => {
   // English" is not decidable for free text (see language.ts).
   const singleAngle = resolvedLanguage.profile !== null;
 
+  // RC.5: which ROOM this post is — an explicit override, else the roster pin
+  // (`cannon_targets.topic`), else keyword detection, else `general`
+  // (src/x/replies/mode.ts owns the rule; single and batch call the same
+  // function over the same shape, so the two cannot fork). Same slot in the
+  // refuse-before-spend ladder as the language: after the band gate, before the
+  // paid call, $0 either way. The `?? ` can't fire — one target in, one
+  // resolution out — but a mode is not something to leave `undefined` on a path
+  // that stamps it into the row.
+  const resolvedMode: ResolvedReplyMode = (
+    await resolveReplyMode({
+      ...(modeOverride !== undefined ? { explicit: modeOverride } : {}),
+      targets: [{ handle: ctx.handle, text: ctx.text }],
+    })
+  )[0] ?? { mode: GENERAL_MODE, source: 'fallback' };
+  // Stamped before the insert, like `language`/`niche`: contextSnapshot records
+  // the room the model was actually given, which is what Task 9's per-mode
+  // crosstab reads instead of re-resolving against a table that has since moved.
+  ctx.mode = resolvedMode.mode.id;
+  ctx.modeSource = resolvedMode.source;
+
   // Relationship block (C3): what the people layer knows about this handle,
   // injected at the variable tail so the prompt stops meeting everyone for the
   // first time. Stamped into ctx BEFORE the insert so contextSnapshot records
@@ -368,6 +433,9 @@ replies.post('/replies/generate', async (c) => {
     ...(resolvedLanguage.language !== undefined
       ? { language: resolvedLanguage.language, languageProfile: resolvedLanguage.profile }
       : {}),
+    // RC.5: the resolved room. Always present on this path — every post is in
+    // some room, and `general` is an answer, not an absence.
+    mode: resolvedMode.mode,
   });
 
   // AI.5: askLLM dispatches grok vs openrouter (opts > DB AI settings > the
@@ -384,11 +452,16 @@ replies.post('/replies/generate', async (c) => {
         // output tokens for variants the trim below would discard. The trim is
         // still the contract — `maxItems` is a D164b unsupported keyword, so the
         // COUNT cannot be pinned in the schema the way the angle can.
+        // RC.5: on an English call the room narrows the same way — `contrarian`
+        // under a grief post becomes unrepresentable rather than merely
+        // discouraged. A resolved LANGUAGE still wins outright (decision 7 is
+        // one variant, and the mode clause dropped its own angle sentence to
+        // match); `trimToModeAngles` below is the contract either way.
         jsonSchema: {
           name: 'reply_variants',
-          schema: singleAngle
-            ? replyVariantsSchema({ angles: ['extends'] })
-            : REPLY_VARIANTS_SCHEMA,
+          schema: replyVariantsSchema({
+            angles: singleAngle ? ['extends'] : resolvedMode.mode.angles,
+          }),
         },
         // Sha of the effective prompt body + niche suffix — busts the cached
         // prefix on either a prompt override edit or a niche edit (grok-only).
@@ -453,7 +526,13 @@ replies.post('/replies/generate', async (c) => {
   // `extends` one. Applied AFTER parsing and before the primary pick, so the
   // stored `variants` column and the response carry the same one entry — the
   // panel's variant tab strip already hides itself on a single-variant draft.
-  if (singleAngle) variants = trimToSingleVariant(variants);
+  // RC.5: otherwise the room's angle set is the contract — a strict schema
+  // already made the excluded angles unrepresentable, but a non-strict provider
+  // and parseReplyVariants' coercion of an unknown angle to `extends` can both
+  // land one anyway.
+  variants = singleAngle
+    ? trimToSingleVariant(variants)
+    : trimToModeAngles(variants, resolvedMode.mode);
 
   // Primary pick = first variant that clears the gate; the rest ride along in
   // `variants` for the panel's picker. On the trimmed path the `find` falls
@@ -501,6 +580,11 @@ replies.post('/replies/generate', async (c) => {
       ...row,
       language: resolvedLanguage.language ?? null,
       languageSource: resolvedLanguage.source ?? null,
+      // RC.5: the same echo for the room — the panel shows WHICH and WHY so a
+      // wrong resolution is visible before the paste, without re-deriving the
+      // precedence client-side (§7.4c). Never null on this path.
+      mode: resolvedMode.mode.id,
+      modeSource: resolvedMode.source,
     },
     201,
   );
@@ -529,6 +613,11 @@ interface BatchBody {
   // instruction block, and a per-tweet language would need a template change.
   // Top-level, never a per-tweet field: parseBatchTweets' whitelist refuses it.
   language?: unknown;
+  // RC.5: an override for the whole call. The MODE itself is per POST — the
+  // resolver answers once per tweet and the prompt carries a MODE line each —
+  // but an OVERRIDE is a human saying "draft this queue as banter", which is a
+  // property of the click, not of a tweet. Same shape as `language`.
+  mode?: unknown;
 }
 
 replies.post('/replies/generate-batch', async (c) => {
@@ -597,6 +686,12 @@ replies.post('/replies/generate-batch', async (c) => {
   if ('error' in langOrErr) return c.json({ error: langOrErr.error }, 400);
   const language = langOrErr.language;
 
+  // RC.5: same slot, same reason — refuse before the relationship lookups and
+  // long before the call.
+  const modeOrErr = parseReplyModeOverride(body.mode);
+  if ('error' in modeOrErr) return c.json({ error: modeOrErr.error }, 400);
+  const modeOverride = modeOrErr.mode;
+
   // Relationship briefs (C3): same block per tweet, capped to 2 lines/person
   // (renderRelationshipBrief) to protect the token budget. One lookup per
   // distinct handle; best-effort.
@@ -635,6 +730,21 @@ replies.post('/replies/generate-batch', async (c) => {
     targets: tweets.map((t) => ({ handle: t.handle, text: t.text })),
   });
   const singleAngle = resolvedLanguage.profile !== null;
+  // RC.5: one room PER POST — the asymmetry with the language above, and the
+  // reason the mode rides inside {{POSTS}} rather than in one tail block. A
+  // Cannon queue is deliberately heterogeneous, so a set-wide answer would hand
+  // 24 posts the register of whichever one voted loudest. Aligned by index with
+  // `tweets`; stamped onto the tweet the way the C3 relationship brief is, and
+  // never accepted from the client (parseBatchTweets has no such field).
+  const resolvedModes = await resolveReplyMode({
+    ...(modeOverride !== undefined ? { explicit: modeOverride } : {}),
+    targets: tweets.map((t) => ({ handle: t.handle, text: t.text })),
+  });
+  for (const [i, t] of tweets.entries()) {
+    const r = resolvedModes[i];
+    if (r) t.mode = r.mode;
+  }
+  const modeByTweetId = new Map(tweets.map((t, i) => [t.tweetId, resolvedModes[i]]));
   // Registry prompt (AI.5): the standalone batch default, DB-overridable like
   // the single-reply key; a per-request systemPromptOverride still beats it.
   const batchPrompt = loadPromptSafe('reply-batch');
@@ -664,9 +774,15 @@ replies.post('/replies/generate-batch', async (c) => {
         messages,
         // ML.3: the batch twin of the single path's narrowing — same reason,
         // same non-guarantee (the per-tweet trim below is the contract).
+        // RC.5: one schema for a queue of mixed rooms, so it carries the UNION
+        // of their angles — still a real narrowing (a football-and-grief batch
+        // never offers `debate`), and the per-tweet trim below is what holds
+        // each post to its own room.
         jsonSchema: {
           name: 'batch_replies',
-          schema: singleAngle ? batchReplySchema({ angles: ['extends'] }) : BATCH_REPLY_SCHEMA,
+          schema: batchReplySchema({
+            angles: singleAngle ? ['extends'] : unionAngles(resolvedModes),
+          }),
         },
         // Sha of the effective batch body + niche suffix (grok-only) — busts
         // the cached prefix on a prompt override edit or a niche edit.
@@ -693,12 +809,27 @@ replies.post('/replies/generate-batch', async (c) => {
   // so an un-updated panel build still reads them (RU.3).
   const wanted = new Set(tweets.map((t) => t.tweetId));
   const seen = new Set<string>();
-  const out: { tweetId: string; text: string; angle: string; variants: ReplyVariant[] }[] = [];
+  const out: {
+    tweetId: string;
+    text: string;
+    angle: string;
+    variants: ReplyVariant[];
+    mode: string | null;
+    modeSource: string | null;
+  }[] = [];
   for (const r of batch) {
     if (!wanted.has(r.tweetId) || seen.has(r.tweetId)) continue;
     // ML.3 (decision 7): the trim is PER TWEET — one `extends` variant each,
     // and every tweet still appears. Same helper as the single path.
-    const variants = singleAngle ? trimToSingleVariant(r.variants) : r.variants;
+    // RC.5: on the English path the per-tweet trim is the ROOM's angle set —
+    // the one place a per-post rule can be enforced, since the schema could
+    // only carry the union.
+    const resolved = modeByTweetId.get(r.tweetId);
+    const variants = singleAngle
+      ? trimToSingleVariant(r.variants)
+      : resolved
+        ? trimToModeAngles(r.variants, resolved.mode)
+        : r.variants;
     const primary = variants[0];
     if (!primary) continue;
     seen.add(r.tweetId);
@@ -707,6 +838,11 @@ replies.post('/replies/generate-batch', async (c) => {
       text: primary.text,
       angle: primary.angle,
       variants,
+      // RC.5: echoed per reply, not per call — the panel chips each queued row
+      // with its own room and the rule that picked it, so a wrong resolution is
+      // visible BEFORE the paste (and fixable for good with a roster pin).
+      mode: resolved?.mode.id ?? null,
+      modeSource: resolved?.source ?? null,
     });
   }
 

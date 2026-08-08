@@ -108,6 +108,24 @@ describe('mergeSightings', () => {
     expect(mergeSightings([drafted], [updated], [])[0]?.variants).toHaveLength(2);
   });
 
+  test('a re-sighting keeps the room the reply was drafted for (RC.5)', () => {
+    const drafted = sighting('1', { reply: 'r', mode: 'wholesome', modeSource: 'detected' });
+    const resighted = sighting('1', { lastSeenAt: '2026-06-10T11:00:00.000Z' });
+    const merged = mergeSightings([drafted], [resighted], []);
+    // The chip has to outlive a scroll-past, or the check it exists for is gone
+    // exactly when the row is still unworked.
+    expect(merged[0]?.mode).toBe('wholesome');
+    expect(merged[0]?.modeSource).toBe('detected');
+  });
+
+  test('a re-drafted row takes the fresh room (RC.5)', () => {
+    const drafted = sighting('1', { mode: 'general', modeSource: 'fallback' });
+    const updated = sighting('1', { mode: 'banter', modeSource: 'roster' });
+    const merged = mergeSightings([drafted], [updated], []);
+    expect(merged[0]?.mode).toBe('banter');
+    expect(merged[0]?.modeSource).toBe('roster');
+  });
+
   test('a re-sighting keeps the draftId the background stamped after confirm (RU.6)', () => {
     const confirmed = sighting('1', { reply: 'r', draftId: 'draft-abc' });
     const resighted = sighting('1', { lastSeenAt: '2026-06-10T13:00:00.000Z' });

@@ -1275,6 +1275,19 @@ button.danger:hover:not(:disabled) {
   letter-spacing: 0.04em;
   color: var(--strat-band-hot);
 }
+/* RC.5 — the room this row's reply was drafted for. Deliberately quiet: it is a
+   check you glance at, not a verdict competing with the band. */
+.radar-mode {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: help;
+}
 /* RD.2 — the RU.4 angle picker, in the card: one tab per variant above the
    reply body. Smaller than the Queue/Clicked tabs (.radar-tab) — these are
    inside a row, not the section header. */

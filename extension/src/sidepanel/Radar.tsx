@@ -48,6 +48,7 @@ import type {
   HumanizerSettings,
   PlacedTodayResponse,
   ReplyLanguageSource,
+  ReplyModeSource,
 } from '../shared/types.ts';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { CoachChip } from './CoachChip.tsx';
@@ -106,6 +107,19 @@ function languageNote(out: {
         : '';
   return ` · in ${out.language}${how}`;
 }
+
+// RC.5 — why this row was drafted for this room, in one sentence: the chip's
+// tooltip. `languageSourceTitle`'s twin, and the same reason it exists — a
+// resolution you cannot explain is one you will not trust, and the chip's whole
+// job is to make a wrong room visible BEFORE the paste. The `roster` line names
+// the fix: a `cannon_targets.topic` pin corrects a camped handle for good.
+const MODE_SOURCE_TITLE: Record<ReplyModeSource, string> = {
+  explicit: 'You chose this room.',
+  curated: 'Classified by the curation pass that picked this post.',
+  roster: 'Pinned on the cannon roster — this account always drafts in this room.',
+  detected: 'Detected from the post itself.',
+  fallback: 'Nothing resolved a room, so this drafted as general — pin the handle to fix it.',
+};
 
 type CurateOutcome = { ok: true; res: CurateResponse } | { ok: false; detail: string | null };
 
@@ -448,6 +462,12 @@ export function RadarSection({
             tweetId: r.tweetId,
             reply: r.text,
             variants: r.variants,
+            // RC.5: the room rides per reply, straight through to the buffer —
+            // this panel never re-derives it (§7.4c). `?? undefined` because the
+            // wire says `null` for "the server resolved none" and the stored
+            // sighting says absent.
+            ...(r.mode ? { mode: r.mode } : {}),
+            ...(r.modeSource ? { modeSource: r.modeSource } : {}),
           })),
         };
         await chrome.runtime.sendMessage(msg);
@@ -954,6 +974,23 @@ function RadarRow({
           >
             {s.personTier}
           </button>
+        )}
+        {/* RC.5 — the room this reply was drafted for, before the paste. It
+            sits next to "reply ready" because it describes that reply: a
+            `wholesome` chip under a football post is the signal to redraft or
+            pin the handle, and it is only readable while the draft is still
+            unpasted. */}
+        {s.mode && (
+          <span
+            className="radar-mode"
+            title={
+              s.modeSource
+                ? MODE_SOURCE_TITLE[s.modeSource]
+                : 'The room this reply was drafted for.'
+            }
+          >
+            {s.mode}
+          </span>
         )}
         {s.reply && <span className="radar-ready">reply ready</span>}
         <button

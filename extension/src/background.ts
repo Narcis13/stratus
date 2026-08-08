@@ -39,6 +39,7 @@ import {
   type ApiResponse,
   type NotifContextMap,
   type NotifContextResponse,
+  type RadarReplies,
   isApiRequest,
   isLaunchDismiss,
   isLaunchGet,
@@ -356,9 +357,7 @@ async function dismissSightings(tweetIds: string[]): Promise<void> {
 // Attach batch-drafted replies onto matching sightings (§7.2). Single writer,
 // same as add/dismiss — a sighting evicted between draft and attach is simply
 // skipped (the panel only renders what's in the buffer).
-async function attachReplies(
-  items: { tweetId: string; reply: string; variants?: ReplyVariant[] }[],
-): Promise<void> {
+async function attachReplies(items: RadarReplies['replies']): Promise<void> {
   const { sightings } = await readRadar();
   const byId = new Map(items.map((i) => [i.tweetId, i]));
   await chrome.storage.local.set({
@@ -367,6 +366,11 @@ async function attachReplies(
       if (!item) return s;
       const next: RadarSighting = { ...s, reply: item.reply };
       if (item.variants && item.variants.length > 0) next.variants = item.variants;
+      // RC.5: the room rides with the reply it was drafted for. Stamped only
+      // when the server answered one — an older server leaves the row's chip
+      // off rather than showing a room nobody resolved.
+      if (item.mode) next.mode = item.mode;
+      if (item.modeSource) next.modeSource = item.modeSource;
       return next;
     }),
   });

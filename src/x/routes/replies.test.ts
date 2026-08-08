@@ -16,6 +16,7 @@ import { inArray, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { classifyBand } from '../../shared/replyBand.ts';
+import { GENERAL_MODE, REPLY_MODES } from '../../shared/replyMode.ts';
 import { cannonTargets, radarDrafts } from '../db/schema.ts';
 import { MAX_CURATE_TWEETS } from '../replies/curate.ts';
 import { resolveReplyLanguage } from '../replies/language.ts';
@@ -626,7 +627,12 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(calls[0]?.prompt).toContain('Keep each reply under 140 Japanese characters.');
   });
 
-  test('the same gate-failing response in English still keeps three variants and costs two calls', async () => {
+  // RC.5 moved the English side of this: the language trim is still
+  // language-gated, but the ROOM now narrows the same call. This post detects to
+  // nothing, so it is `general` — three angles, `debate` not among them — and
+  // the `debate` variant the stub returns is trimmed away. The COST assertion,
+  // which is what this test is really for, is unchanged: two calls.
+  test('the same gate-failing response in English keeps what the room allows and still costs two calls', async () => {
     const { out, calls } = await withStubbedGrok(THREE_ENGLISH, () =>
       generate({
         context: post('ml3en', 'Shipping the rewrite without a type system is a losing game.'),
@@ -636,29 +642,40 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     const row = out.body as {
       language: string | null;
       languageSource: string | null;
-      variants: unknown[];
+      mode: string;
+      modeSource: string;
+      variants: { angle: string }[];
     };
-    // The trim is language-gated, not global.
-    expect(row.variants).toHaveLength(3);
     expect(row.language).toBeNull();
     expect(row.languageSource).toBeNull();
+    expect(row.mode).toBe('general');
+    expect(row.modeSource).toBe('fallback');
+    // Two of the stub's three angles are in `general`; the `debate` one is not.
+    expect(row.variants.map((v) => v.angle)).toEqual(['extends', 'contrarian']);
     // Untouched English path: no variant clears the gate, so one regenerate.
     expect(calls).toHaveLength(2);
-    expect(calls[0]?.angles).toEqual([...REPLY_ANGLES]);
+    expect(calls[0]?.angles).toEqual([...GENERAL_MODE.angles]);
   });
 
-  test('an explicit body language outranks the post script, and English keeps all three', async () => {
+  test('an explicit body language outranks the post script; the ROOM is what narrows English', async () => {
     const { out, calls } = await withStubbedGrok(THREE_ENGLISH, () =>
-      // The Task 5 override button: the same post, redrafted in English.
+      // The ML.5 override button: the same post, redrafted in English.
       generate({ context: post('ml3jp2', '評価の設計を直したほうがいい。'), language: 'English' }),
     );
     expect(out.status).toBe(201);
-    const row = out.body as { language: string; languageSource: string; variants: unknown[] };
+    const row = out.body as {
+      language: string;
+      languageSource: string;
+      mode: string;
+      variants: unknown[];
+    };
     expect(row.language).toBe('English');
     expect(row.languageSource).toBe('explicit');
-    // English has no profile by construction — three angles, gate as always.
-    expect(row.variants).toHaveLength(3);
-    expect(calls[0]?.angles).toEqual([...REPLY_ANGLES]);
+    // English has no profile by construction — so the language narrowing is off
+    // and RC.5's is what remains: the room's angles, not the whole vocabulary.
+    expect(row.mode).toBe('general');
+    expect(row.variants).toHaveLength(2);
+    expect(calls[0]?.angles).toEqual([...GENERAL_MODE.angles]);
   });
 
   // §7.4 is about ORDER, not amount: a refused post pays for nothing at all —
@@ -714,10 +731,10 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(calls[0]?.angles).toEqual(['extends']);
   });
 
-  // RC.4: the assertion is "unnarrowed", i.e. the WHOLE vocabulary, which is why
-  // it reads `REPLY_ANGLES` rather than a literal — the union grew to five here
-  // and will grow again before it shrinks.
-  test('a mixed-language batch drafts in English — the unnarrowed schema', async () => {
+  // RC.5: "unnarrowed by LANGUAGE" is what this asserts now — the schema still
+  // narrows, by the union of the rooms in the queue (both posts detect to
+  // nothing, so the union is `general`'s three).
+  test('a mixed-language batch drafts in English — narrowed by room, not by language', async () => {
     const perTweet = JSON.stringify({
       replies: [
         { id: '1000000', variants: JSON.parse(THREE_ENGLISH).replies },
@@ -734,12 +751,133 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     );
     expect(out.status).toBe(200);
     const body = out.body as {
-      replies: { variants: unknown[] }[];
+      replies: { variants: unknown[]; mode: string; modeSource: string }[];
       language: string | null;
     };
     expect(body.language).toBeNull();
-    expect(body.replies[0]?.variants).toHaveLength(3);
-    expect(calls[0]?.angles).toEqual([...REPLY_ANGLES]);
+    expect(body.replies[0]?.variants).toHaveLength(2);
+    expect(body.replies[0]?.mode).toBe('general');
+    expect(body.replies[0]?.modeSource).toBe('fallback');
+    // The batch schema carries the UNION of the queue's rooms, in REPLY_ANGLES
+    // order — not a room's own preference order, which is the single path's.
+    expect(calls[0]?.angles).toEqual(
+      REPLY_ANGLES.filter((a) => (GENERAL_MODE.angles as readonly string[]).includes(a)),
+    );
+  });
+
+  // RC.5 route consequences, nested here to reuse the stubbed-fetch harness
+  // above: same no-network, no-spend contract, and the call log is still what
+  // proves what the model was actually asked for.
+  describe('the room, end to end (RC.5)', () => {
+    const BANTER = REPLY_MODES.find((m) => m.id === 'banter');
+    if (!BANTER) throw new Error('the banter room must exist');
+    // One variant per angle a room might allow, so the trim has something to do.
+    const MIXED_ANGLES = JSON.stringify({
+      replies: [
+        { text: 'offside by a shoulder and a half', angle: 'observation', gloss: null },
+        { text: 'the keeper had already gone', angle: 'extends', gloss: null },
+        { text: 'Backwards. The eval breaks first.', angle: 'contrarian', gloss: null },
+      ],
+    });
+    const FOOTBALL = 'Arsenal fans after that penalty decision lmao';
+
+    test('a detected room narrows the schema, trims the response and is echoed both ways', async () => {
+      const { out, calls } = await withStubbedGrok(MIXED_ANGLES, () =>
+        generate({ context: post('rc5ban', FOOTBALL) }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as {
+        mode: string;
+        modeSource: string;
+        variants: { angle: string }[];
+        contextSnapshot: { mode?: string; modeSource?: string };
+      };
+      expect(row.mode).toBe('banter');
+      expect(row.modeSource).toBe('detected');
+      // §7.16: contextSnapshot persists exactly what the model was told, which
+      // is what Task 9's per-mode crosstab reads back.
+      expect(row.contextSnapshot.mode).toBe('banter');
+      expect(row.contextSnapshot.modeSource).toBe('detected');
+      // `contrarian` is not a banter angle — schema-unrepresentable, and trimmed
+      // even so (the trim is the contract, the schema is the optimization).
+      expect(calls[0]?.angles).toEqual([...BANTER.angles]);
+      expect(row.variants.map((v) => v.angle)).toEqual(['observation', 'extends']);
+      // The clause and its budget reached the prompt; the template did not move.
+      expect(calls[0]?.prompt).toContain("This post's room is `banter`.");
+      expect(calls[0]?.prompt).toContain(
+        `Aim for ${BANTER.minChars}–${BANTER.maxChars} characters`,
+      );
+    });
+
+    test('an explicit body mode outranks detection', async () => {
+      const { out, calls } = await withStubbedGrok(MIXED_ANGLES, () =>
+        // A dev post drafted as banter because a human said so.
+        generate({
+          context: post('rc5ovr', 'Rewrote the whole thing in TypeScript and the codebase halved'),
+          mode: 'banter',
+        }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as { mode: string; modeSource: string };
+      expect(row.mode).toBe('banter');
+      expect(row.modeSource).toBe('explicit');
+      expect(calls[0]?.angles).toEqual([...BANTER.angles]);
+    });
+
+    test('a malformed mode is a 400 before anything is spent (§7.4)', async () => {
+      const { out, calls } = await withStubbedGrok(MIXED_ANGLES, () =>
+        generate({ context: post('rc5bad', FOOTBALL), mode: 42 }),
+      );
+      expect(out.status).toBe(400);
+      expect((out.body as { error: string }).error).toBe('invalid_mode');
+      expect(calls).toHaveLength(0);
+    });
+
+    test('an UNRECOGNIZED mode falls through to detection rather than 400ing (§7.11)', async () => {
+      const { out } = await withStubbedGrok(MIXED_ANGLES, () =>
+        generate({ context: post('rc5unk', FOOTBALL), mode: 'shitposting' }),
+      );
+      expect(out.status).toBe(201);
+      const row = out.body as { mode: string; modeSource: string };
+      expect(row.mode).toBe('banter');
+      expect(row.modeSource).toBe('detected');
+    });
+
+    test('a heterogeneous batch gets one room PER POST, one legend, and a union schema', async () => {
+      const perTweet = JSON.stringify({
+        replies: [
+          { id: '1000000', variants: JSON.parse(MIXED_ANGLES).replies },
+          { id: '1000001', variants: JSON.parse(MIXED_ANGLES).replies },
+        ],
+      });
+      const { out, calls } = await withStubbedGrok(perTweet, () =>
+        batch({
+          tweets: [
+            { ...tweet(0), text: FOOTBALL },
+            {
+              ...tweet(1),
+              text: 'My grandmother passed away last night. She taught me to draw.',
+            },
+          ],
+        }),
+      );
+      expect(out.status).toBe(200);
+      const body = out.body as {
+        replies: { tweetId: string; mode: string; modeSource: string; variants: unknown[] }[];
+      };
+      // The whole reason the mode is per post: one queue, two rooms.
+      expect(body.replies.map((r) => r.mode)).toEqual(['banter', 'wholesome']);
+      expect(body.replies.map((r) => r.modeSource)).toEqual(['detected', 'detected']);
+      // banter keeps 2 of the 3 returned angles, wholesome keeps observation
+      // only (`extends` IS a wholesome angle — so 2 as well).
+      expect(body.replies[0]?.variants).toHaveLength(2);
+      const prompt = calls[0]?.prompt ?? '';
+      expect(prompt).toContain('MODE: banter');
+      expect(prompt).toContain('MODE: wholesome');
+      expect(prompt.split('The rooms in this batch:').length - 1).toBe(1);
+      // ONE schema for a mixed queue ⇒ the union of the two rooms' angles.
+      expect(calls[0]?.angles).toEqual(['extends', 'observation', 'question']);
+    });
   });
 });
 

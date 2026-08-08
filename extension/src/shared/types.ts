@@ -6,7 +6,7 @@ import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
-import type { ReplyAngle } from '../replyMode.ts';
+import type { ReplyAngle, ReplyModeId } from '../replyMode.ts';
 
 export type PostStatus =
   | 'draft'
@@ -808,11 +808,24 @@ export interface PostContext {
    *  and every pre-ML row leave both absent. Mirrors src/x/replies/prompt.ts. */
   language?: string;
   languageSource?: ReplyLanguageSource;
+  /** RC.5: the room this draft was written into and which rule picked it —
+   *  server-stamped before the insert, exactly like the language pair above and
+   *  refused from a client on the same terms. Absent on every pre-RC row. */
+  mode?: ReplyModeId;
+  modeSource?: ReplyModeSource;
 }
 
 /** Which rule picked the draft's language (src/x/replies/language.ts). The panel
  *  reads this rather than re-deriving the precedence (§7.4c). */
 export type ReplyLanguageSource = 'explicit' | 'roster' | 'detected';
+
+/** Which rule picked the draft's ROOM (RC.5, src/x/replies/mode.ts). Same
+ *  contract as `ReplyLanguageSource` and mirrored here for the same reason: the
+ *  panel names the sources, and the resolution itself is server-side. `fallback`
+ *  is the honest fifth value — nothing answered, so the room is `general` (it
+ *  does NOT mean the post was judged neutral, and that difference is what a
+ *  roster pin fixes). */
+export type ReplyModeSource = 'explicit' | 'curated' | 'roster' | 'detected' | 'fallback';
 
 /** RC.4: five angles, not three — `observation` (one specific noticed detail, no
  *  argument) and `question` (one the OP would want to answer) joined the
@@ -867,6 +880,11 @@ export interface ReplyDraft {
 export interface ReplyDraftGenerated extends ReplyDraft {
   language: string | null;
   languageSource: ReplyLanguageSource | null;
+  /** RC.5's echo of the room resolution. Never null on the generate path —
+   *  every post is in some room and `general` is an answer — but typed nullable
+   *  so a pre-RC.5 server (or a replayed fixture) reads as "not told". */
+  mode: ReplyModeId | null;
+  modeSource: ReplyModeSource | null;
 }
 
 export interface RepliesListOpts {
@@ -936,8 +954,16 @@ export interface BatchReplyItem {
   tweetId: string;
   text: string;
   angle: ReplyAngle;
-  // All 3 angle variants (RU.3); text/angle stay the primary (variants[0]).
+  // Every angle variant (RU.3); text/angle stay the primary (variants[0]).
+  // Since RC.5 the count is the ROOM's angle count, so never assume three.
   variants: ReplyVariant[];
+  // RC.5 — the room the server resolved for THIS post and the rule that picked
+  // it. Per reply, not per call (unlike `language` below): a Cannon queue is
+  // deliberately heterogeneous. The panel chips the queued row with it so a
+  // wrong room is visible before the paste. `null` only from a server that
+  // resolved nothing for this id.
+  mode: ReplyModeId | null;
+  modeSource: ReplyModeSource | null;
 }
 
 export interface BatchReplyResponse {

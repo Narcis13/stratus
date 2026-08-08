@@ -9,8 +9,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { inArray } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
+import { REPLY_MODES, type ReplyAngle } from '../../shared/replyMode.ts';
 import { cannonTargets } from '../db/schema.ts';
-import { resolveReplyMode } from './mode.ts';
+import { resolveReplyMode, trimToModeAngles } from './mode.ts';
+import type { ReplyVariant } from './prompt.ts';
 
 const H_PINNED = 'rc3pinned';
 const H_BENCHED = 'rc3benched';
@@ -142,5 +144,39 @@ describe('resolveReplyMode (RC.3) — per post, not per call', () => {
     const out = await resolveReplyMode({ targets: [{ handle: H_UNKNOWN, text: DEV }] });
     expect(out).toHaveLength(1);
     expect(out[0]?.mode.id).toBe('expertise');
+  });
+});
+
+// RC.5 — the per-tweet angle trim. Pure, so no DB and no fixtures: the room's
+// `angles` field is the whole input.
+describe('trimToModeAngles (RC.5)', () => {
+  const v = (angle: ReplyAngle): ReplyVariant => ({ text: angle, angle, gloss: null });
+  const wholesome = REPLY_MODES.find((m) => m.id === 'wholesome');
+  if (!wholesome) throw new Error('the wholesome room must exist');
+
+  test('keeps the room’s angles and drops the rest, in the order they arrived', () => {
+    const out = trimToModeAngles(
+      [v('extends'), v('contrarian'), v('question'), v('debate')],
+      wholesome,
+    );
+    expect(out.map((x) => x.angle)).toEqual(['extends', 'question']);
+  });
+
+  test('a response entirely outside the room survives untouched — money is spent', () => {
+    // The §7.35 asymmetry: a paid draft in the wrong ANGLE column is still a
+    // reply I can read and edit; zero variants is a wasted call.
+    const wrong = [v('contrarian'), v('debate')];
+    expect(trimToModeAngles(wrong, wholesome)).toEqual(wrong);
+  });
+
+  test('every room is a no-op on a response that already obeys it', () => {
+    for (const mode of REPLY_MODES) {
+      const obedient = mode.angles.map((a) => v(a));
+      expect(trimToModeAngles(obedient, mode)).toEqual(obedient);
+    }
+  });
+
+  test('an empty input stays empty — the caller’s own primary check fires', () => {
+    expect(trimToModeAngles([], wholesome)).toEqual([]);
   });
 });

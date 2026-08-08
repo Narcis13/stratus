@@ -10,7 +10,8 @@
 
 import { CANNON, type CannonThresholds, cannonAgeTone, cannonScore } from '../cannon.ts';
 import type { TweetSignals } from '../replyBand.ts';
-import type { ReplyVariant } from './types.ts';
+import type { ReplyModeId } from '../replyMode.ts';
+import type { ReplyModeSource, ReplyVariant } from './types.ts';
 
 // 'manual' = the user pinned this tweet into the queue via the ⊕ button (RU.8).
 // 'roster' = a fresh post by someone already in my circle, captured despite a
@@ -85,6 +86,15 @@ export interface RadarSighting {
   // `reply` stays the primary (variants[0].text); the full set rides for the
   // on-page variant chips (Task 7). Survives re-sightings like `reply`.
   variants?: ReplyVariant[];
+  // RC.5 — the room the server drafted this reply into and the rule that picked
+  // it, attached with the reply and surviving re-sightings like it. Kept on the
+  // sighting rather than derived here on purpose (§7.4c): the resolution is the
+  // server's (an override, the curate call, a `cannon_targets.topic` pin, then
+  // keyword detection), and a panel that re-derived it would eventually disagree
+  // with the prompt the reply was actually written against. Absent on a row
+  // drafted before RC.5 or rehydrated from `radar_drafts`, which stores neither.
+  mode?: ReplyModeId;
+  modeSource?: ReplyModeSource;
   // ISO time the user clicked a reply-ready row (its reply was copied). A
   // clicked sighting leaves the live queue for the "Clicked" view so the queue
   // stays the not-yet-worked set. Survives re-sightings like `reply`.
@@ -145,6 +155,11 @@ export function mergeSightings(
     const variants = s.variants ?? prev.variants;
     const clickedAt = s.clickedAt ?? prev.clickedAt;
     const draftId = s.draftId ?? prev.draftId;
+    // RC.5: the room belongs to the reply, so it survives a re-sighting on the
+    // same terms — a content-script report that wiped it would leave a drafted
+    // row with no chip the moment the tweet scrolled past again.
+    const mode = s.mode ?? prev.mode;
+    const modeSource = s.modeSource ?? prev.modeSource;
     // The stickier band survives (RU.8 human pin > classifier verdict > GT.8
     // roster capture); at equal stickiness the fresher incoming band wins.
     const band = bandStickiness(prev.band) > bandStickiness(s.band) ? prev.band : s.band;
@@ -153,6 +168,8 @@ export function mergeSightings(
     if (variants !== undefined) merged.variants = variants;
     if (clickedAt !== undefined) merged.clickedAt = clickedAt;
     if (draftId !== undefined) merged.draftId = draftId;
+    if (mode !== undefined) merged.mode = mode;
+    if (modeSource !== undefined) merged.modeSource = modeSource;
     byId.set(s.tweetId, merged);
   }
   const all = [...byId.values()];

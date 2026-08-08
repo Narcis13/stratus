@@ -1,13 +1,26 @@
 import { describe, expect, test } from 'bun:test';
-import { REPLY_MODES, REPLY_ANGLES as SHARED_REPLY_ANGLES } from '../../shared/replyMode.ts';
+import {
+  GENERAL_MODE,
+  REPLY_MODES,
+  type ReplyMode,
+  type ReplyModeId,
+  REPLY_ANGLES as SHARED_REPLY_ANGLES,
+} from '../../shared/replyMode.ts';
 import {
   BATCH_REPLY_SCHEMA,
+  type BatchTweet,
   MAX_GLOSS_LENGTH,
   REPLY_ANGLES,
+  REPLY_BATCH_PROMPT_TEMPLATE,
+  REPLY_PROMPT_TEMPLATE,
   REPLY_VARIANTS_SCHEMA,
   batchReplySchema,
+  buildBatchGrokInput,
   parseBatchReplies,
   parseReplyVariants,
+  renderBatchModeNote,
+  renderBatchTweet,
+  renderModeClause,
   replyVariantsSchema,
 } from './prompt.ts';
 
@@ -175,5 +188,110 @@ describe('ML.2 gloss parsing (§7.35 asymmetry)', () => {
     expect(
       parseReplyVariants('{"replies":[{"text":"   ","angle":"extends","gloss":"fine gloss"}]}'),
     ).toBeNull();
+  });
+});
+
+// RC.5 — the mode, rendered. Everything here is a per-call VALUE: the two
+// byte-synced literals must not move for this feature, which is what the last
+// test in the block asserts.
+describe('RC.5 mode rendering', () => {
+  const byId = (id: ReplyModeId): ReplyMode => {
+    const m = REPLY_MODES.find((x) => x.id === id);
+    if (!m) throw new Error(`${id} must exist in the table`);
+    return m;
+  };
+  const WHOLESOME = byId('wholesome');
+  const EXPERTISE = byId('expertise');
+  const t: BatchTweet = { tweetId: '1', handle: 'someone', author: 'SO', text: 'post one' };
+
+  test('the clause is ONE line — it rides at the tail and is paid for every call', () => {
+    const clause = renderModeClause(WHOLESOME);
+    expect(clause.includes('\n')).toBe(false);
+    expect(clause).toContain('`wholesome`');
+  });
+
+  test('it carries the room, the persona level, the register, the move and the budget', () => {
+    const clause = renderModeClause(WHOLESOME);
+    expect(clause).toContain('Persona: off');
+    expect(clause).toContain(WHOLESOME.registerNote);
+    expect(clause).toContain(WHOLESOME.moves);
+    expect(clause).toContain('30–90 characters');
+  });
+
+  test('the angle narrowing names the count, the allowed angles AND the excluded ones', () => {
+    // wholesome allows three of five: the count matters because the head asks
+    // for exactly three variants and a two-angle room would buy a duplicate.
+    expect(renderModeClause(WHOLESOME)).toContain(
+      'In this room produce exactly 3 variants, one per angle: observation, question and extends. No contrarian and debate.',
+    );
+    // banter allows two — the singular/plural and the count both move.
+    expect(renderModeClause(byId('banter'))).toContain(
+      'In this room produce exactly 2 variants, one per angle: observation and extends.',
+    );
+  });
+
+  test('narrowAngles:false drops the angle sentence and keeps everything else', () => {
+    const off = renderModeClause(WHOLESOME, { narrowAngles: false });
+    // ML.3 already narrowed a resolved-language call to one `extends` variant;
+    // two narrowing sentences in one tail is a contradiction the model arbitrates.
+    expect(off).not.toContain('In this room produce');
+    expect(off).toContain('Persona: off');
+    expect(off).toContain('30–90 characters');
+  });
+
+  test('renderBatchTweet stays byte-identical without a mode, and adds ONE line with one', () => {
+    const cold = renderBatchTweet(t, 0);
+    expect(cold).not.toContain('MODE:');
+    const warm = renderBatchTweet({ ...t, mode: EXPERTISE }, 0);
+    expect(warm).toBe(`${cold}\nMODE: expertise`);
+  });
+
+  test('the legend describes each room ONCE, in first-seen order', () => {
+    const note = renderBatchModeNote([WHOLESOME, EXPERTISE, WHOLESOME]);
+    expect(note.split('\n').filter((l) => l.startsWith('- '))).toHaveLength(2);
+    expect(note.indexOf('`wholesome`')).toBeLessThan(note.indexOf('`expertise`'));
+    // Only the rooms in the queue — a football batch never pays for six specs.
+    expect(note).not.toContain('`banter`');
+  });
+
+  test('batch: no mode → byte-identical to the pre-RC.5 prompt; modes → one legend at the tail', () => {
+    const cold = buildBatchGrokInput([t, { ...t, tweetId: '2' }])[0]?.content ?? '';
+    expect(cold).not.toContain('MODE:');
+    expect(cold).not.toContain('The rooms in this batch:');
+
+    const warm =
+      buildBatchGrokInput([
+        { ...t, mode: WHOLESOME },
+        { ...t, tweetId: '2', mode: WHOLESOME },
+      ])[0]?.content ?? '';
+    // Two MODE lines (one per post), one legend (the whole batch).
+    expect(warm.split('MODE: wholesome').length - 1).toBe(2);
+    expect(warm.split('The rooms in this batch:').length - 1).toBe(1);
+    expect(warm.indexOf('The rooms in this batch:')).toBeGreaterThan(warm.indexOf('POST 2'));
+  });
+
+  test('batch: a resolved language turns the legend narrowing off and still lands BEFORE the clause', () => {
+    const warm =
+      buildBatchGrokInput([{ ...t, mode: WHOLESOME }], undefined, undefined, undefined, undefined, {
+        language: 'Japanese',
+        languageProfile: { code: 'ja' } as never,
+      })[0]?.content ?? '';
+    expect(warm).not.toContain('In this room produce');
+    expect(warm.indexOf('Write all variants in Japanese')).toBeGreaterThan(
+      warm.indexOf('The rooms in this batch:'),
+    );
+  });
+
+  test('the general room renders like any other — a fallback is an answer, not an absence', () => {
+    expect(renderModeClause(GENERAL_MODE)).toContain('`general`');
+    expect(renderModeClause(GENERAL_MODE)).toContain('Persona: stance');
+  });
+
+  test('provenance: neither byte-synced literal carries the mode prose', () => {
+    for (const template of [REPLY_PROMPT_TEMPLATE, REPLY_BATCH_PROMPT_TEMPLATE]) {
+      expect(template).not.toContain("This post's room is");
+      expect(template).not.toContain('The rooms in this batch:');
+      expect(template).not.toContain('In this room produce');
+    }
   });
 });

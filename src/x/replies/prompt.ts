@@ -9,7 +9,13 @@
 import type { GrokMessage } from '../../grok/index.ts';
 import type { LanguageProfile } from '../../shared/language.ts';
 import type { Band } from '../../shared/replyBand.ts';
-import { REPLY_ANGLES, type ReplyAngle } from '../../shared/replyMode.ts';
+import {
+  type PersonaUse,
+  REPLY_ANGLES,
+  type ReplyAngle,
+  type ReplyMode,
+  type ReplyModeId,
+} from '../../shared/replyMode.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
 import { RELATIONSHIP_INSTRUCTION } from '../people/relationship.ts';
 import { type PillarDef, renderPillars } from '../posts/pillars.ts';
@@ -81,6 +87,16 @@ export interface PostContext {
    *  leaves both absent, which is also how a pre-ML row reads. */
   language?: string;
   languageSource?: 'explicit' | 'roster' | 'detected';
+  /** RC.5: the ROOM this draft was written into, and which rule picked it.
+   *  Server-RESOLVED like `language` (src/x/replies/mode.ts) and stamped before
+   *  the insert, never client-supplied — parseContext's whitelist refuses both
+   *  inside the context object; an operator's override is a top-level body
+   *  field (§7.16). Recorded so Task 9's per-mode crosstab reads what the model
+   *  was actually told rather than re-deriving a resolution that has since
+   *  changed. Every pre-RC row leaves both absent, which is the same shape a
+   *  mode-less CLI call leaves. */
+  mode?: ReplyModeId;
+  modeSource?: 'explicit' | 'curated' | 'roster' | 'detected' | 'fallback';
 }
 
 const CONTEXT_PLACEHOLDER = '{{TWEET_CONTEXT}}';
@@ -133,6 +149,84 @@ export function renderLanguageClause(language: string, profile?: LanguageProfile
 function languageBlock(language?: string, profile?: LanguageProfile | null): string {
   const trimmed = language?.trim() ?? '';
   return trimmed === '' ? '' : `\n\n${renderLanguageClause(trimmed, profile)}`;
+}
+
+// ---------------------------------------------------------------- RC.5 mode
+//
+// Which ROOM this reply is being written into, rendered as a per-call VALUE at
+// the variable tail — `renderLanguageClause`'s twin, for the same three reasons.
+// The prose is OURS (a resolved id is never interpolated into a template), the
+// resolution is per POST so it cannot be static, and riding at the tail is what
+// keeps `reply prompt.md` and both TS literals byte-identical: after RC.1 they
+// do not move again in this plan (§7.14).
+//
+// The split with the head is deliberate and it is a cost decision. RC.1 put the
+// CONSTANT half in the template — persona is background not material, the
+// humanization block, 40–90 characters, the four opening bans — where it is a
+// cacheable prefix. What varies per post is here: which room, how much of the
+// persona that room allows, its angles, its budget, its opening move. A 450-token
+// block at the tail is 450 tokens paid uncached on every single call.
+//
+// ONE line, like the language clause, for exactly that reason.
+const PERSONA_USE_INSTRUCTION: Record<PersonaUse, string> = {
+  full: 'the biography and the lane nouns ARE the material here, so use them hard.',
+  stance:
+    'a first-person opinion is welcome, but no lane nouns (code, ship, build, SaaS, solopreneur, AI, marketing, startup) and no biography.',
+  off: 'no first-person claim about my work at all — the post is the material, I am not.',
+};
+
+/** "a, b and c" — the angle lists read as prose, not as an array dump. */
+function andList(items: readonly string[]): string {
+  if (items.length <= 1) return items[0] ?? '';
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
+// The angles, phrased as a SCOPED narrowing ("in this room, produce only …"),
+// never as "ignore the rule above" — the same wording discipline ML.2 settled
+// on, and for the same reason: the stable prefix still says three variants, and
+// a model honors a scoped override far more reliably than a flat contradiction.
+// The COUNT is named here too, which the language clause never had to do: a mode
+// may allow two angles, and the head's "exactly three variants" would otherwise
+// buy a duplicate. The route's per-tweet trim is what makes either a guarantee.
+function angleNarrowing(mode: ReplyMode): string {
+  const n = mode.angles.length;
+  const only = `In this room produce exactly ${n} variant${n === 1 ? '' : 's'}, one per angle: ${andList(mode.angles)}.`;
+  const excluded = REPLY_ANGLES.filter((a) => !mode.angles.includes(a));
+  return excluded.length === 0 ? only : `${only} No ${andList(excluded)}.`;
+}
+
+// The body shared by the single clause and the batch legend — one renderer, so
+// the two cannot describe the same room differently.
+function modeSpec(mode: ReplyMode, narrowAngles: boolean): string {
+  const parts = [
+    `Persona: ${mode.personaUse} — ${PERSONA_USE_INSTRUCTION[mode.personaUse]}`,
+    `Register: ${mode.registerNote}`,
+    `Opening move: ${mode.moves}`,
+    `Aim for ${mode.minChars}–${mode.maxChars} characters.`,
+  ];
+  if (narrowAngles) parts.push(angleNarrowing(mode));
+  return parts.join(' ');
+}
+
+/**
+ * The single path's mode clause.
+ *
+ * `narrowAngles: false` drops the angle sentence entirely, and the one caller
+ * that passes it is a call where a LANGUAGE resolved: ML.3's decision 7 already
+ * ships exactly one `extends` variant there, and two narrowing sentences in one
+ * tail are a contradiction the model gets to arbitrate. The room's register,
+ * budget and opening move still apply — a Japanese grief post is `wholesome`
+ * whatever alphabet it is in.
+ */
+export function renderModeClause(mode: ReplyMode, opts?: { narrowAngles?: boolean }): string {
+  return `This post's room is \`${mode.id}\`. ${modeSpec(mode, opts?.narrowAngles ?? true)}`;
+}
+
+// Absent mode → the empty string, so a mode-less call (a CLI caller, a test)
+// assembles byte-identically to a pre-RC.5 prompt. Same equivalence discipline
+// every other tail block keeps.
+function modeBlock(mode?: ReplyMode, narrowAngles = true): string {
+  return mode ? `\n\n${renderModeClause(mode, { narrowAngles })}` : '';
 }
 
 // N0.4: the "Who I am" body comes from the active niche. Constant per niche, so
@@ -435,6 +529,13 @@ export interface BatchTweet {
   url?: string;
   /** Rendered relationship brief (C3), ≤2 lines/person — server-stamped. */
   relationship?: string;
+  /** RC.5: the room THIS post is in, server-resolved (src/x/replies/mode.ts).
+   *  Rides per post — beside `relationship` and for the same reason — because a
+   *  Cannon queue is deliberately heterogeneous: football, an Apple headline and
+   *  a Japanese grief post in one batch is the doctrine working, and a set-wide
+   *  mode would hand 24 posts the register of whichever one voted loudest. Never
+   *  client-supplied: parseBatchTweets' whitelist has no such field. */
+  mode?: ReplyMode;
 }
 
 export interface BatchReply {
@@ -565,6 +666,10 @@ export function renderBatchTweet(t: BatchTweet, i: number): string {
     `@${stripAt(t.handle)} (${t.author}):`,
     t.text,
   ];
+  // RC.5: the room, one word, right under the post it describes. The legend
+  // that says what the word MEANS rides once at the tail — repeating a
+  // 60-word spec under 25 posts is 25× the tokens for one fact.
+  if (t.mode) lines.push(`MODE: ${t.mode.id}`);
   if (t.relationship && t.relationship.trim() !== '') lines.push(t.relationship);
   return lines.join('\n');
 }
@@ -573,6 +678,34 @@ export function renderBatchTweet(t: BatchTweet, i: number): string {
 // instruction rides ONCE per batch, in the variable tail (never the static
 // head — the cacheable prefix must not change with who's in the queue).
 const BATCH_RELATIONSHIP_NOTE = `Some posts above carry a RELATIONSHIP line — my real prior history with that author. ${RELATIONSHIP_INSTRUCTION}`;
+
+// RC.5: BATCH_RELATIONSHIP_NOTE's twin, and the same division of labour — the
+// per-post MODE lines carry the fact, this carries how to read it, once, at the
+// tail. Only the rooms actually present are described: a queue of 25 football
+// posts pays for one legend line, not six.
+const BATCH_MODE_NOTE_HEAD =
+  "Each post above carries a MODE line — the kind of room that post is in. Reply in that room's register, on its angles, at its length. The mode is per POST: never carry one post's register, persona level or angle set into the next. The rooms in this batch:";
+
+/**
+ * The batch legend. Distinct modes only, first-seen order (which is queue
+ * order, so the legend reads in the order the posts do).
+ *
+ * `narrowAngles: false` on a resolved-language batch, same reason as the single
+ * clause: ML.3 already narrowed every post to one `extends` variant there.
+ */
+export function renderBatchModeNote(
+  modes: readonly ReplyMode[],
+  opts?: { narrowAngles?: boolean },
+): string {
+  const seen = new Set<ReplyModeId>();
+  const lines: string[] = [];
+  for (const m of modes) {
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    lines.push(`- \`${m.id}\` — ${modeSpec(m, opts?.narrowAngles ?? true)}`);
+  }
+  return `${BATCH_MODE_NOTE_HEAD}\n${lines.join('\n')}`;
+}
 
 // Builds the single user message from the registry template (AI.5): stable
 // instruction head, then the posts and the optional steer at the very end
@@ -629,6 +762,14 @@ export function buildBatchGrokInput(
   // M1 (ME.3): the personal-context brief rides ONCE per batch — it describes
   // me, not the targets — at the very tail.
   if (opts?.meBrief && opts.meBrief.trim() !== '') content += `\n\n${opts.meBrief}`;
+  // RC.5: the mode legend, once, for the rooms actually in the queue. Before the
+  // language clause on purpose — when both fire, ML.3's single-`extends` rule is
+  // the LAST thing the model reads, and `narrowAngles` has already dropped this
+  // block's competing angle sentence.
+  const modes = tweets.flatMap((t) => (t.mode ? [t.mode] : []));
+  if (modes.length > 0) {
+    content += `\n\n${renderBatchModeNote(modes, { narrowAngles: !opts?.languageProfile })}`;
+  }
   // CQ.7: one language clause for the whole batch — the batch prompt has ONE
   // instruction block, so a per-post language would need a template change this
   // rendering exists to avoid. `me` is last in this builder, so "after me" is
@@ -737,6 +878,9 @@ export function buildGrokInput(
     template?: string;
     language?: string;
     languageProfile?: LanguageProfile | null;
+    /** RC.5: the resolved room for THIS post. The route resolves once and hands
+     *  it over, the same shape `languageProfile` rides in. */
+    mode?: ReplyMode;
   },
 ): GrokMessage[] {
   const template = substituteReplyPersona(
@@ -766,10 +910,15 @@ export function buildGrokInput(
   if (ctx.me && ctx.me.trim() !== '') {
     content = `${content}\n\n${ctx.me}`;
   }
-  // CQ.7: the language clause, right after `me` — tail order relationship → me
-  // → language → guidance. It rides in opts, not on ctx: the other tail blocks
-  // are context the server scraped or derived, this is an instruction the
-  // caller asked for (validated in the route, rendered here).
+  // RC.5: the mode clause, right after `me` and before the language clause —
+  // tail order relationship → me → mode → language → guidance. Same opts
+  // channel and same reasoning as the language clause: an instruction the
+  // server resolved, rendered here, never interpolated into a template.
+  content += modeBlock(opts?.mode, !opts?.languageProfile);
+  // CQ.7: the language clause, right after the mode — tail order relationship →
+  // me → mode → language → guidance. It rides in opts, not on ctx: the other
+  // tail blocks are context the server scraped or derived, this is an
+  // instruction the caller asked for (validated in the route, rendered here).
   content += languageBlock(opts?.language, opts?.languageProfile);
   if (pillars && pillars.length > 0) {
     content = `${content}\n\n${renderReplyPillarsBlock(pillars)}`;

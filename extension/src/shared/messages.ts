@@ -2,9 +2,10 @@
 // the background service worker. The background worker is the only place that
 // reads the bearer token and attaches the Authorization header.
 
+import type { ReplyModeId } from '../replyMode.ts';
 import type { EarlyReply } from './launch.ts';
 import type { RadarSighting, RankMap } from './radar.ts';
-import type { MentionStatus, ReplyVariant } from './types.ts';
+import type { MentionStatus, ReplyModeSource, ReplyVariant } from './types.ts';
 
 export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
@@ -55,9 +56,17 @@ export interface RadarDismiss {
 // the background so it stays the single writer of the session ring buffer.
 export interface RadarReplies {
   type: 'stratus/radar-replies';
-  // `reply` is the primary (variants[0].text); `variants` carries all 3 angles
-  // (RU.4) so the buffer can serve the on-page variant chips (Task 7).
-  replies: { tweetId: string; reply: string; variants?: ReplyVariant[] }[];
+  // `reply` is the primary (variants[0].text); `variants` carries every angle
+  // the post's room allows (RU.4, RC.5) so the buffer can serve the on-page
+  // variant chips (Task 7). `mode`/`modeSource` are that room and the rule that
+  // picked it — per reply, since a Cannon queue is deliberately heterogeneous.
+  replies: {
+    tweetId: string;
+    reply: string;
+    variants?: ReplyVariant[];
+    mode?: ReplyModeId;
+    modeSource?: ReplyModeSource;
+  }[];
 }
 
 // User clicked a reply-ready Radar row (its reply was copied). Routed through
