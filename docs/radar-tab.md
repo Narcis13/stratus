@@ -17,7 +17,7 @@ That's the Radar's whole job:
 - **Capture** — as you scroll, the extension computes each tweet's **band** and streams every **hot** and **warm** one into this queue ($0 — it's reading what the page already rendered, not calling the X API). Plus one exception that isn't about heat at all: a **fresh post by someone already in your circle** is captured even when the band says skip.
 - **Rank** — the queue is ordered by what's actually worth your next five minutes, not by when you saw it.
 - **Curate** (once the queue outgrows one batch) — a cheap scoring call grades every fresh tweet for *reply payoff*, throws the filler out of the queue, and hands the drafting money to the best of what's left.
-- **Draft** — one Grok call writes **three different angles** for every queued tweet at once.
+- **Draft** — one Grok call writes only the angles that fit each tweet's **room**. A football joke and a funeral post no longer get the same reply menu.
 - **Hand off** — you pick the angle, it lands on your clipboard, and the tweet opens.
 
 | Term | Meaning |
@@ -27,12 +27,13 @@ That's the Radar's whole job:
 | **your circle** | A quiet tweet that got in because of *who posted it*: someone you've replied to before, or someone on your 2–10× target roster. Same rule the reply gate uses, so anything captured this way is also something you can draft a reply to without forcing past the "dead post" warning. |
 | **cannon** | A tweet that got in for **arbitrage**: it was under 30 minutes old and either cleared the views-per-reply floor on sight, or its author is on your camped **cannon roster**. See **The Cannon**, below. |
 | **Cannon score** | `views ÷ (replies + 1)` — how many eyes a post has per reply already under it. A lot of views and almost nobody in the comments means an early reply actually gets read. It deliberately knows nothing about the author's follower count: a 200k account's dead post is worth less than a 2k account's live one, and looking size up would cost $0.010 per handle to measure the wrong axis. |
-| **Angle** | How a reply engages: **extends** (build on the point), **contrarian** (respectfully disagree), **debate** (open a real question). Every draft comes as one of each. |
+| **Room / mode** | What kind of conversation the post is in: **expertise**, **hot-take**, **news**, **wholesome**, **banter**, or **general** when nothing resolves. The server decides it per post from an explicit request override, a curation label, a cannon-roster topic pin, or the post text, in that order. Every drafted row shows the room and why it was picked before you paste. |
+| **Angle** | How a reply engages: **extends** (build on the point), **contrarian** (take the other side), **debate** (open an argument), **observation** (notice one concrete detail), or **question** (ask something the author would want to answer). The room narrows the menu: banter gets two safe angles; wholesome and news get observation/question; expertise keeps the original argument-heavy set. |
 | **Tier** | What the people layer knows about the author: **ally**, **mutual**, or **target** (on your 2–10× roster). A warm tweet from an ally beats a hot tweet from a stranger. |
 
 **The queue only grows while you browse.** It's stored in the extension's own local storage, so it survives a browser restart, an extension reload and a service-worker recycle — it used to live in *session* memory, which Chrome drops on any of those, and a queue that collapsed mid-scroll was the result. Two things take a tweet out, and only two: **you dismiss it** (the ✕, Clear, or a curated pass's drops), or it **ages out after 24 hours** — a tweet you first saw yesterday isn't a reply opportunity today. Beyond 100 rows the least-recently-seen are evicted (pins last).
 
-Drafted replies are also saved server-side and rehydrate into the queue the next time you open the panel, all three angles intact.
+Drafted replies are also saved server-side and rehydrate into the queue the next time you open the panel, with the variants the room allowed intact.
 
 ---
 
@@ -55,7 +56,7 @@ Four ways in, all free:
 
 ## Header actions
 
-- **Draft replies (N)** — makes **one** Grok call that drafts **three angle variants** (extends / contrarian / debate) for every un-drafted tweet in the queue (**20 at a time by default**). The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded. In the **Cannon** view the same button drafts the cannon rows instead.
+- **Draft replies (N)** — makes **one** Grok call for every un-drafted tweet in the queue (**20 at a time by default**). Each post is resolved into its own room and receives that room's angle set: 2 or 3 variants in English, or one `extends` variant when the batch resolves to another language. The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded. In the **Cannon** view the same button drafts the cannon rows instead.
 - **Curate & draft (N)** — the same thing, but it grades first. See below. **These two are the only buttons on the tab that spend money.** It renders in the **Queue view only** — see *The Cannon*, below, for why.
 - **Clear** — dismisses everything currently shown in the view you're looking at. In the Cannon view that means exactly the rows on screen, never the ones the 30-minute cutoff is hiding. Dismissed tweets never re-enter the queue, even though the page keeps re-sighting them while they're on screen.
 - **⚙** — the batch sizes. Three numbers live in there: the radar's own **draft cap**, the **batch cap the server enforces**, and the **curated batch size**. A plain click sends the *lower of the first two*, so raising one past the other can't buy you a refused click; the third sizes a curated pass and is itself capped by the server's batch cap. What lands on the radar by band isn't here — it's the **Reply band** group in **Settings → Tuning**, the same thresholds the on-page border uses, which is why the border can never promise a draft the server then refuses. (⊕ pins and fresh posts by your circle get in regardless of those thresholds — see the three ways in, above.)
@@ -68,9 +69,9 @@ After a long scroll session the queue holds 40+ tweets, and "Draft replies" spen
 
 **Curate & draft (25)** — one cheap scoring call grades **every fresh tweet in the queue** for reply payoff ("if I write one sharp reply under this, will it earn impressions and profile visits for *me*?"), then:
 
-1. Everything flagged as **filler** is **dismissed from the queue** — connection invites, follow trains and pods, giveaways, contentless engagement bait, bare announcements with nothing to add to.
+1. Everything flagged as **filler** is **dismissed from the queue** — connection invites, follow trains and pods, giveaways, contentless engagement bait, or a personal announcement that cannot be answered without inventing a story.
 2. Everything below the cut is dismissed too. Only the **top 25** (or whatever the knob says) survive.
-3. Those survivors get the normal 3-variant batch draft — one Grok call, exactly as before.
+3. Those survivors get the normal room-specific batch draft — one Grok call, exactly as before.
 
 **Your ⊕ pins are never scored away.** A tweet you pinned by hand isn't sent for grading at all, and it's always in the draft set, ahead of the curated survivors. A deliberate human click outranks the model. `roster`, `hot` and `warm` rows all get graded — content quality is exactly the thing the band numbers can't see.
 
@@ -91,7 +92,7 @@ After a long scroll session the queue holds 40+ tweets, and "Draft replies" spen
 
 **Rows with no text are left alone.** An image-only sighting has nothing to grade and nothing to reply to, so it's skipped by both halves of the pass and stays in the queue.
 
-The rubric itself — what earns a high score, and the exact list of what counts as filler — is an editable prompt: **[Settings → Prompts → reply curation](./settings-tab.md#prompts-editor-the-prompts-subtab)**. It's the only prompt in stratus that *removes* things rather than writing them, so widening its filler list throws more of your queue away. Both the default size and that list are **opening guesses**; change them from what you see in your own measured reply outcomes, not on a hunch.
+The rubric itself — what earns a high score, and the exact list of what counts as filler — is an editable prompt: **[Settings → Prompts → reply curation](./settings-tab.md#prompts-editor-the-prompts-subtab)**. It now scores the **concrete hook** a reply can grab — a named thing, number, visible detail, claim, or moment — regardless of whether the topic is in your professional lane. The scorer also returns a room label for free, which outranks detection when the survivors are drafted. It's the only prompt in stratus that *removes* things rather than writing them, so widening its filler list throws more of your queue away. Both the default size and that list are **opening guesses**; change them from what you see in your own measured reply outcomes, not on a hunch.
 
 ---
 
@@ -186,11 +187,12 @@ Each row is `score · @handle · nN · scored Nd ago`, ranked score-desc with ne
 - In the **Cannon view only**, a **score chip** ahead of the band chip — the row's `views ÷ (replies + 1)`.
 - The **author** — click to open their dossier in the People tab.
 - A **tier chip** if they're on your roster (`ally`, `mutual`, `target`) — also a dossier link. This is *why* they outrank a louder stranger.
+- A **room chip** once drafted — `expertise`, `hot-take`, `news`, `wholesome`, `banter`, or `general`. Hover it to see whether the server used an explicit override, the curation pass, a roster topic pin, text detection, or the honest fallback. A wrong room is visible before the paste; pin the handle's topic in the cannon roster when an account consistently lives in one room.
 - **reply ready** once a draft exists.
 - **✕** to dismiss the row (done, or not worth it).
 - The **tweet text**, as a link — clicking it just opens the tweet on X.
 - A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
-- **Angle tabs** (once drafted) — `extends` · `contrarian` · `debate`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The score never reorders the tabs. **A non-English draft has one variant, so no tab strip renders at all** — not an empty one.
+- **Angle tabs** (once drafted) — the subset this room allows, drawn from `extends` · `contrarian` · `debate` · `observation` · `question`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The room's first angle is the primary pick, and the score never reorders the tabs. **A non-English draft has one variant, so no tab strip renders at all** — not an empty one.
 - **A gloss line** under the reply body on a non-English draft: a literal, muted English rendering of what that reply actually says. It is never copied — clicking the body still yields only the reply itself.
 - **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after — or to `copied ✓ · jitter: prefix, typo:swap` / `copied ✓ · no jitter this time` when **Humanize picks** is on (below).
 - A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.
@@ -207,6 +209,8 @@ Under the Queue/Clicked strip sits a checkbox: **Humanize picks**, with the odds
 
 With it on, the angle you click is roughened on the way to your clipboard — a leading `honestly,`, a trailing `well said`, a lowercased first word, a dropped final period, or a small typo. Handles, names and links are never touched. The hint line then names what fired, so the feature is never silently doing nothing.
 
+**Keep this off until you have reviewed the suffix pool.** The shipped suffixes predate the reply-craft overhaul: `well said`, `love this`, `good stuff`, `solid point`, and `nice one`. They are exactly the generic closing filler the drafting prompt now removes, and the default 0.20 suffix chance can staple one onto an otherwise sharp reply. The project default remains off; if you enable it now, first empty the suffix pool or set **Suffix chance** to `0` in Settings. A deterministic-humanizer overhaul is tracked separately.
+
 Two things it deliberately does **not** do:
 
 - **It never rewrites the stored draft.** The variants on the row stay exactly as Grok wrote them, so re-reading the card shows the real draft and the coach scores stay meaningful. What the jitter produces is recorded only as *what actually went out* — the same field a hand-edit lands in.
@@ -222,7 +226,7 @@ If the panel can't reach the server when the tab mounts, the checkbox renders **
 
 ## On the tweet page: the angle chips
 
-When you open a drafted tweet on x.com, the same three angles appear as a small chip strip on that tweet's action row — so you don't have to switch back to the panel to change your mind.
+When you open a drafted tweet on x.com, the same room-specific angles appear as a small chip strip on that tweet's action row — so you don't have to switch back to the panel to change your mind.
 
 **Clicking a chip copies that variant to your clipboard and nothing else.** The hint reads *"Copied — press ⌘V in the reply box."* Paste it yourself and hit Reply.
 
@@ -237,7 +241,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 1. Browse X normally for a while. Hot and warm tweets — plus fresh posts by your circle — accumulate here on their own ($0). Hit **⊕** on anything else you want in the queue regardless of band.
 2. Open **Radar**. Skim the **why** lines and dismiss (**✕**) whatever isn't worth it *before* drafting — you don't pay for tweets you dropped.
 3. Click **Draft replies (N)** — one Grok call, cost shown afterwards. If the queue got long enough for **Curate & draft (N)** to appear, prefer it: it does step 2's culling for you and puts the drafting money on the tweets most likely to pay.
-4. For each **reply ready** row: read the three angle tabs, click the body of the one you want. It's copied and the tweet opens.
+4. For each **reply ready** row: check the room chip, read the available angle tabs, then click the body of the one you want. It's copied and the tweet opens.
 5. On X: paste, edit it into your own words if you like, hit Reply.
 6. The row is in **Clicked** now. When you're done, **Clear** the view.
 
@@ -273,4 +277,4 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **[Playbook](./playbook-tab.md)** — which angles and which situations actually earn views and profile visits.
 - **[On x.com itself](./s6-augmented-ui.md)** — the ⊕ button, the band border, the timeline chips and the context panel.
 - **[Settings → Tuning](./settings-tab.md)** — the Reply band thresholds, the two batch caps, the curated batch size and the four **Cannon** knobs.
-- **[Settings → Prompts](./settings-tab.md#prompts-editor-the-prompts-subtab)** — `reply curation`, the rubric that decides what counts as filler.
+- **[Settings → Prompts](./settings-tab.md#prompts-editor-the-prompts-subtab)** — `reply curation`, the topic-agnostic hook rubric that decides what counts as filler and returns each post's room.
