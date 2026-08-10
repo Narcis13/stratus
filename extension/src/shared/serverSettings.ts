@@ -16,14 +16,15 @@
 // matching baked fallback in the same edit.
 //
 // The imports here are shims over shared pure modules — `../replyBand.ts`
-// (UI.7) and `../cannon.ts` — and nothing else: content.ts already inlines both
-// into the IIFE, and BAND/CANNON are the canonical owners of their defaults on
-// BOTH sides of the wire, so re-typing those numbers here would be the
-// second-owner bug this file exists to prevent. The rule this module actually
+// (UI.7), `../cannon.ts` and `../radarSweep.ts` — and nothing else: content.ts
+// already inlines all three into the IIFE, and BAND/CANNON/SWEEP are the
+// canonical owners of their defaults on BOTH sides of the wire, so re-typing
+// those numbers here would be the second-owner bug this file exists to prevent. The rule this module actually
 // lives by is "nothing that can't be inlined into the content-script IIFE"
 // (§7.26) — no React, no sidepanel module, nothing with its own dependencies.
 
 import { CANNON, type CannonThresholds } from '../cannon.ts';
+import { SWEEP, type SweepConfig } from '../radarSweep.ts';
 import { BAND, type BandThresholds } from '../replyBand.ts';
 
 /** chrome.storage.local key the background writes the flat blob to. */
@@ -53,6 +54,10 @@ export interface ServerConfig {
    *  server's cannon routes read the same four knobs, so one number moves both
    *  sides; `scoreMin` is a MEASURED floor (see src/shared/cannon.ts). */
   cannon: CannonThresholds;
+  /** x.sweep.* — the eleven numbers an armed sweep admits on (RS.1). The server
+   *  has NO consumer for these: capture is the content script's job, so this is
+   *  the only side that reads them, and a `0` on any `max*` means no ceiling. */
+  sweep: SweepConfig;
   /** x.display.doNextCap — rows the Today "Do next" strip shows before the
    *  overflow line (UI.12). */
   doNextCap: number;
@@ -106,6 +111,7 @@ export const SERVER_DEFAULTS: ServerConfig = {
   panelRefreshCap: 4,
   band: BAND,
   cannon: CANNON,
+  sweep: SWEEP,
   doNextCap: 5,
   doNextSnoozeH: 24,
   fansAmberTopN: 10,
@@ -152,6 +158,11 @@ function readString(blob: ServerSettingsBlob, key: string, fallback: string): st
   return typeof v === 'string' ? v : fallback;
 }
 
+function readBoolean(blob: ServerSettingsBlob, key: string, fallback: boolean): boolean {
+  const v = blob[key];
+  return typeof v === 'boolean' ? v : fallback;
+}
+
 function readHours(blob: ServerSettingsBlob, key: string, fallback: number[]): number[] {
   const v = blob[key];
   if (!Array.isArray(v) || v.length === 0) return fallback;
@@ -192,6 +203,26 @@ function readCannon(blob: ServerSettingsBlob): CannonThresholds {
   };
 }
 
+// Same per-key discipline again, and here it is the sharpest: these eleven are
+// the ONLY rule deciding what an armed sweep captures, so a corrupt `minViews`
+// dropping the other ten back to baked would quietly re-open the intake with a
+// config the user never chose. Per key, the baked `SWEEP` value stands in.
+function readSweep(blob: ServerSettingsBlob): SweepConfig {
+  return {
+    minViews: readNumber(blob, 'x.sweep.minViews', SWEEP.minViews),
+    maxViews: readNumber(blob, 'x.sweep.maxViews', SWEEP.maxViews),
+    minLikes: readNumber(blob, 'x.sweep.minLikes', SWEEP.minLikes),
+    maxLikes: readNumber(blob, 'x.sweep.maxLikes', SWEEP.maxLikes),
+    minReplies: readNumber(blob, 'x.sweep.minReplies', SWEEP.minReplies),
+    maxReplies: readNumber(blob, 'x.sweep.maxReplies', SWEEP.maxReplies),
+    maxAgeMin: readNumber(blob, 'x.sweep.maxAgeMin', SWEEP.maxAgeMin),
+    verifiedOnly: readBoolean(blob, 'x.sweep.verifiedOnly', SWEEP.verifiedOnly),
+    campedBypass: readBoolean(blob, 'x.sweep.campedBypass', SWEEP.campedBypass),
+    circleBypass: readBoolean(blob, 'x.sweep.circleBypass', SWEEP.circleBypass),
+    autoStopMin: readNumber(blob, 'x.sweep.autoStopMin', SWEEP.autoStopMin),
+  };
+}
+
 /** Resolve a stored blob (or anything at all) into a usable config. A missing,
  *  malformed or partial blob yields the baked defaults for whatever it can't
  *  supply — reading settings never throws and never returns undefined. */
@@ -210,6 +241,7 @@ export function readServerConfig(raw: unknown): ServerConfig {
     ),
     band: readBand(blob),
     cannon: readCannon(blob),
+    sweep: readSweep(blob),
     doNextCap: readNumber(blob, 'x.display.doNextCap', SERVER_DEFAULTS.doNextCap),
     doNextSnoozeH: readNumber(blob, 'x.display.doNextSnoozeH', SERVER_DEFAULTS.doNextSnoozeH),
     fansAmberTopN: readNumber(blob, 'x.display.fansAmberTopN', SERVER_DEFAULTS.fansAmberTopN),

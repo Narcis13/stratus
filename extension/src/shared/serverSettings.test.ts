@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CANNON } from '../cannon.ts';
+import { SWEEP } from '../radarSweep.ts';
 import { BAND } from '../replyBand.ts';
 import {
   SERVER_DEFAULTS,
@@ -38,6 +39,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       panelRefreshCap: 1,
       band: BAND,
       cannon: CANNON,
+      sweep: SWEEP,
       doNextCap: 8,
       doNextSnoozeH: 48,
       fansAmberTopN: 25,
@@ -126,6 +128,7 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'radarDraftCap',
       'repliesListLimit',
       'selfHandle',
+      'sweep',
       'voiceListLimit',
     ]);
   });
@@ -257,5 +260,73 @@ describe('readServerConfig — band thresholds (UI.7)', () => {
 
   test('0 is a real threshold — it switches the dead-zone rule off', () => {
     expect(readServerConfig({ 'x.band.tooSmallViews': 0 }).band.tooSmallViews).toBe(0);
+  });
+});
+
+// RS.1 — the sweep filters. Unlike the band, these eleven have NO server
+// consumer: the content script is the only reader, so this resolver is the whole
+// path from a PATCH to what a scroll captures. It also holds the mirror's first
+// booleans, which is why the fallback discipline is asserted on those too — a
+// `'false'` string reaching `campedBypass` as truthy would re-open a bypass the
+// user switched off.
+describe('readServerConfig — sweep filters (RS.1)', () => {
+  test('a configured sweep arrives whole', () => {
+    const cfg = readServerConfig({
+      'x.sweep.minViews': 1000,
+      'x.sweep.maxViews': 50_000,
+      'x.sweep.minLikes': 5,
+      'x.sweep.maxLikes': 900,
+      'x.sweep.minReplies': 1,
+      'x.sweep.maxReplies': 25,
+      'x.sweep.maxAgeMin': 90,
+      'x.sweep.verifiedOnly': true,
+      'x.sweep.campedBypass': false,
+      'x.sweep.circleBypass': true,
+      'x.sweep.autoStopMin': 45,
+    });
+    expect(cfg.sweep).toEqual({
+      minViews: 1000,
+      maxViews: 50_000,
+      minLikes: 5,
+      maxLikes: 900,
+      minReplies: 1,
+      maxReplies: 25,
+      maxAgeMin: 90,
+      verifiedOnly: true,
+      campedBypass: false,
+      circleBypass: true,
+      autoStopMin: 45,
+    });
+  });
+
+  test('no sweep keys at all = the shipped filters, unchanged', () => {
+    expect(readServerConfig({}).sweep).toEqual(SWEEP);
+    expect(readServerConfig(undefined).sweep).toEqual(SWEEP);
+  });
+
+  test('one corrupt filter falls back alone — the other ten still apply', () => {
+    const cfg = readServerConfig({
+      'x.sweep.minViews': 'lots',
+      'x.sweep.maxReplies': 12,
+      'x.sweep.verifiedOnly': 'yes',
+      'x.sweep.circleBypass': true,
+    });
+    expect(cfg.sweep.minViews).toBe(SWEEP.minViews);
+    expect(cfg.sweep.maxReplies).toBe(12);
+    expect(cfg.sweep.verifiedOnly).toBe(SWEEP.verifiedOnly);
+    expect(cfg.sweep.circleBypass).toBe(true);
+  });
+
+  test('0 is a real value — it is the "no ceiling" sentinel, not a missing key', () => {
+    const cfg = readServerConfig({ 'x.sweep.maxViews': 0, 'x.sweep.minViews': 0 });
+    expect(cfg.sweep.maxViews).toBe(0);
+    expect(cfg.sweep.minViews).toBe(0);
+  });
+
+  test('a false switch reads as false, not as unset', () => {
+    expect(readServerConfig({ 'x.sweep.campedBypass': false }).sweep.campedBypass).toBe(false);
+    expect(readServerConfig({ 'x.sweep.campedBypass': 0 }).sweep.campedBypass).toBe(
+      SWEEP.campedBypass,
+    );
   });
 });

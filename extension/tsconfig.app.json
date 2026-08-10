@@ -31,6 +31,7 @@
     "../src/shared/judge.ts",
     "../src/shared/humanize.ts",
     "../src/shared/cannon.ts",
+    "../src/shared/radarSweep.ts",
     "../src/shared/language.ts",
     "../src/shared/replyMode.ts"
   ],

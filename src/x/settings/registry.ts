@@ -12,6 +12,7 @@
 import * as store from '../../settings/store.ts';
 import type { SettingScope, SettingsRegistry } from '../../settings/store.ts';
 import { CANNON } from '../../shared/cannon.ts';
+import { SWEEP } from '../../shared/radarSweep.ts';
 
 export type { SettingScope };
 export { SettingsError } from '../../settings/store.ts';
@@ -623,6 +624,146 @@ const RADAR: SettingDef[] = [
   },
 ];
 
+// Sweep (RS.1) — what an armed sweep is allowed to put into the Radar queue.
+// The Radar is manual by default; these eleven numbers are the ONLY admission
+// rule while a sweep runs, which is why every one of them is `mirrored`: the
+// content script decides capture with `passesSweep` and the server has no
+// consumer at all (the `x.display.*` precedent — a server-scoped knob here would
+// never reach the code that reads it). The defaults ARE `SWEEP` (never retyped),
+// and a group-shape test asserts the group is exactly `keyof SweepConfig`, so a
+// knob cannot be half-exposed. Provenance for each number is in the header of
+// src/shared/radarSweep.ts — two of them restate BAND's numbers rather than
+// importing them (§7.33), so the sweep can be tuned without moving the
+// classifier that draws the on-page border.
+const SWEEP_RECAL = 'An opening guess — recalibrate at n >= 100 swept rows, never by feel.';
+const NO_CEILING = '0 means no ceiling.';
+
+const SWEEP_KNOBS: SettingDef[] = [
+  {
+    key: 'x.sweep.minViews',
+    group: 'sweep',
+    label: 'Min impressions',
+    description: `Impressions a tweet needs before a sweep admits it. Ships at the number the reply band's "worth a reply" floor uses, restated rather than shared — moving this does not move the on-page border. ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.minViews,
+    min: 0,
+    max: 1_000_000,
+    unit: 'views',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.maxViews',
+    group: 'sweep',
+    label: 'Max impressions',
+    description: `Impressions past which a tweet is too big to be worth replying to — your reply lands under a crowd. ${NO_CEILING} ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.maxViews,
+    min: 0,
+    max: 1_000_000,
+    unit: 'views',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.minLikes',
+    group: 'sweep',
+    label: 'Min likes',
+    description: `Likes a tweet needs before a sweep admits it. A floor of 0 is no floor. ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.minLikes,
+    min: 0,
+    max: 1_000_000,
+    unit: 'likes',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.maxLikes',
+    group: 'sweep',
+    label: 'Max likes',
+    description: `Likes past which a tweet is too far along to bother replying to. ${NO_CEILING} ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.maxLikes,
+    min: 0,
+    max: 1_000_000,
+    unit: 'likes',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.minReplies',
+    group: 'sweep',
+    label: 'Min replies',
+    description: `Replies a tweet needs before a sweep admits it — a floor on "is anyone actually there". A floor of 0 is no floor. ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.minReplies,
+    min: 0,
+    max: 1_000_000,
+    unit: 'replies',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.maxReplies',
+    group: 'sweep',
+    label: 'Max replies',
+    description: `Replies past which you are buried in the thread. Ships at the reply band's "still near the top" number, restated rather than shared. ${NO_CEILING} ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.maxReplies,
+    min: 0,
+    max: 1_000_000,
+    unit: 'replies',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.maxAgeMin',
+    group: 'sweep',
+    label: 'Max tweet age',
+    description: `Minutes old past which nothing is swept in. The ONE age rule: it applies to every arm, including the camped and circle bypasses, and it is also the flood control on those two. Always enforced — unlike the other maximums, 0 here is not a "no ceiling" sentinel and the floor is 1. ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.maxAgeMin,
+    min: 1,
+    max: 1440,
+    unit: 'min',
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.verifiedOnly',
+    group: 'sweep',
+    label: 'Verified authors only',
+    description: `Sweep in only tweets whose author carries the verified badge. Ships OFF against the monetization pivot's own argument (Premium viewers are the only impressions that count), because a filter defaulting ON with a badge selector X owns and will drift would empty the queue silently. An unreadable author counts as NOT verified — the refusal is the visible failure. ${SWEEP_RECAL}`,
+    type: 'boolean',
+    default: SWEEP.verifiedOnly,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.campedBypass',
+    group: 'sweep',
+    label: 'Camped accounts bypass',
+    description: `Let posts from camped Cannon accounts in without meeting the metric filters (they still obey the max age). A camped account's three-minute-old post has no numbers yet, and camping adjacent Premium niches is the strategy's own prescription. ${SWEEP_RECAL}`,
+    type: 'boolean',
+    default: SWEEP.campedBypass,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.circleBypass',
+    group: 'sweep',
+    label: 'Circle accounts bypass',
+    description: `Let posts from your CRM circle in without meeting the metric filters (they still obey the max age). Ships OFF — the ambient circle arm survives as a switch, not as a default. ${SWEEP_RECAL}`,
+    type: 'boolean',
+    default: SWEEP.circleBypass,
+    scope: 'mirrored',
+  },
+  {
+    key: 'x.sweep.autoStopMin',
+    group: 'sweep',
+    label: 'Sweep auto-stop',
+    description: `How long one armed sweep runs before it stops on its own. Not an admission filter: it bounds the session. Expiry is evaluated when the page reads the state, so a tab that slept past the deadline captures nothing on wake. ${SWEEP_RECAL}`,
+    type: 'number',
+    default: SWEEP.autoStopMin,
+    min: 1,
+    max: 240,
+    unit: 'min',
+    scope: 'mirrored',
+  },
+];
+
 // Cannon — the arbitrage reading of the radar buffer. Every knob is `mirrored`
 // for the UI.7 reason: the page's Cannon view and the server's cannon routes
 // decide eligibility with the same `src/shared/cannon.ts`, so a server-only knob
@@ -1068,6 +1209,7 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...BAND_KNOBS,
   ...GATES,
   ...RADAR,
+  ...SWEEP_KNOBS,
   ...CANNON_KNOBS,
   ...WORKERS,
   ...BUDGETS,
@@ -1088,6 +1230,7 @@ export const GROUP_LABELS: Record<string, string> = {
   band: 'Reply band',
   gates: 'Stat gates',
   radar: 'Radar',
+  sweep: 'Sweep',
   cannon: 'Cannon',
   workers: 'Workers',
   budgets: 'Budgets',

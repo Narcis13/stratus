@@ -1,6 +1,6 @@
 # Radar manual-first — handpicked queue + an armed sweep with explicit admission rules
 
-- **Status:** planned 2026-08-10 · not started
+- **Status:** planned 2026-08-10 · **Task 1 (RS.1) SHIPPED 2026-08-10** — the sweep core, the `sweep` registry group (registry recount after RS.1: **17 groups / 79 knobs / 44 mirrored**) and the extension mirror. Tasks 2–6 open.
 - **Goal fit:** Goal 4 (Circles / the people layer) — the Radar is the reply-target queue. This does not add a goal, it takes control of one that currently fills itself.
 - **Cost impact:** **$0 to build and $0 to run.** No X call, no LLM call, no table, no migration. Recurring cost *falls*: a smaller queue means `Draft replies` / `Curate & draft` batch fewer tweets per click (~$0.002–0.01 per call today, unchanged per call, fewer rows in it).
 - **Invariants touched:** §7.4 (refuse-before-spend, applied here as gate ORDER inside `applyBand` — free checks before the one DOM read); §7.11 (null = unknown — and why the verified gate deliberately reads unknown as *fail*); §7.19 (every threshold below is an opening guess, recalibrate at a stated n, never by feel); §7.24 (background stays the single writer of the **buffer**; the sweep switch is config, not buffer — the `passiveCapture` precedent); §7.26 (new shared modules must inline into the content IIFE — no deps); §7.27 (one parser: the sweep predicate has ONE home shared by registry and page); §7.33 (a borrowed threshold is replayed before it ships — here every default is restated from BAND with its provenance, not imported).
@@ -169,10 +169,12 @@ Recalibrate the sweep defaults from that at **n ≥ 100 swept rows**, never earl
 - No test asserts the total knob count in a way that hardcodes 68 — if one exists, update it to the recounted number.
 
 **Done when:**
-- [ ] `GET /x/settings` shows a `sweep` group of eleven knobs; `GET /x/settings/values?scope=mirrored` carries all eleven `x.sweep.*` keys
-- [ ] `readServerConfig({})` returns `SWEEP` for `.sweep`; a blob with one corrupt sweep key keeps the other ten
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` green; `cd extension && bun run build` green
-- [ ] Committed: `feat(radar): RS.1 the sweep predicate — one pure rule, eleven mirrored knobs`
+- [x] `GET /x/settings` shows a `sweep` group of eleven knobs; `GET /x/settings/values?scope=mirrored` carries all eleven `x.sweep.*` keys  ← verified in-process against the registry: the group renders between `radar` and `cannon`, all eleven mirrored, values = `SWEEP`
+- [x] `readServerConfig({})` returns `SWEEP` for `.sweep`; a blob with one corrupt sweep key keeps the other ten
+- [x] `bun test` (2331 pass) + `bun run typecheck` + `bun run lint` green; `cd extension && bun run build` green
+- [x] Committed: `feat(radar): RS.1 the sweep predicate — one pure rule, eleven mirrored knobs`
+
+**Shipped note (for Task 6's codemap recount):** registry is now **17 groups / 79 knobs / 44 mirrored** — measured, not carried forward. `readBoolean` is new in `serverSettings.ts` (the mirror's first boolean keys). The `maxAgeMin` knob is the ONE maximum with no `0 = no ceiling` sentinel: it is always enforced and its registry floor is 1, and both the predicate and its knob description say so.
 
 **Cost note:** $0. No route, no call, no table.
 

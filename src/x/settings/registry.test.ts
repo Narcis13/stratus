@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { CANNON } from '../../shared/cannon.ts';
+import { SWEEP } from '../../shared/radarSweep.ts';
 import { BAND } from '../../shared/replyBand.ts';
 import {
   SETTINGS_REGISTRY,
@@ -15,6 +16,7 @@ import {
 
 type BandKey = keyof typeof BAND;
 type CannonKey = keyof typeof CANNON;
+type SweepKey = keyof typeof SWEEP;
 
 function def(over: Partial<SettingDef>): SettingDef {
   return {
@@ -131,6 +133,7 @@ describe('registry adapter + grouping', () => {
       'band',
       'gates',
       'radar',
+      'sweep',
       'cannon',
       'workers',
       'budgets',
@@ -149,6 +152,7 @@ describe('registry adapter + grouping', () => {
       'Reply band',
       'Stat gates',
       'Radar',
+      'Sweep',
       'Cannon',
       'Workers',
       'Budgets',
@@ -380,6 +384,17 @@ describe('registry adapter + grouping', () => {
       'x.band.tooSmallVpm',
       'x.gates.bestTimeMinN',
       'x.radar.curatedCount',
+      'x.sweep.minViews',
+      'x.sweep.maxViews',
+      'x.sweep.minLikes',
+      'x.sweep.maxLikes',
+      'x.sweep.minReplies',
+      'x.sweep.maxReplies',
+      'x.sweep.maxAgeMin',
+      'x.sweep.verifiedOnly',
+      'x.sweep.campedBypass',
+      'x.sweep.circleBypass',
+      'x.sweep.autoStopMin',
       'x.cannon.scoreMin',
       'x.cannon.maxAgeMin',
       'x.cannon.redAgeMin',
@@ -434,6 +449,71 @@ describe('registry adapter + grouping', () => {
         CANNON[d.key.replace('x.cannon.', '') as CannonKey],
       ]);
     }
+  });
+
+  // RS.1: the same UI.7 group-shape rule a third time. It matters more here than
+  // anywhere else — these eleven are the ONLY rule deciding what an armed sweep
+  // captures, so a knob with no key would be a filter the user can see the effect
+  // of and cannot move, and a server-scoped one would never reach the content
+  // script that is its only consumer.
+  test('the sweep group is exactly the predicate shape, every key mirrored', () => {
+    const sweep = settingsByGroup().find((g) => g.id === 'sweep');
+    const suffixes = (sweep?.defs ?? []).map((d) => d.key.replace('x.sweep.', ''));
+    expect(suffixes.length).toBe(11);
+    expect(suffixes.slice().sort()).toEqual(Object.keys(SWEEP).slice().sort());
+    expect((sweep?.defs ?? []).every((d) => d.scope === 'mirrored')).toBe(true);
+    // Capture binds the next mutation burst — nothing here arms a timer.
+    expect((sweep?.defs ?? []).every((d) => d.appliesOn === undefined)).toBe(true);
+    // The defaults ARE the module's constant, never a second calibration.
+    for (const d of sweep?.defs ?? []) {
+      expect([d.key, d.default]).toEqual([d.key, SWEEP[d.key.replace('x.sweep.', '') as SweepKey]]);
+    }
+    // §7.19 lives in the copy, not in a lock — every knob carries the sample size.
+    for (const d of sweep?.defs ?? []) {
+      expect([
+        d.key,
+        d.description.endsWith('recalibrate at n >= 100 swept rows, never by feel.'),
+      ]).toEqual([d.key, true]);
+    }
+  });
+
+  test('the three sweep switches are booleans and validate as such', () => {
+    for (const k of ['x.sweep.verifiedOnly', 'x.sweep.campedBypass', 'x.sweep.circleBypass']) {
+      expect([k, settingsRegistry.validate(k, true)]).toEqual([k, null]);
+      expect([k, settingsRegistry.validate(k, false)]).toEqual([k, null]);
+      expect([k, settingsRegistry.validate(k, 'true')]).toEqual([k, 'not_a_boolean']);
+      expect([k, settingsRegistry.validate(k, 1)]).toEqual([k, 'not_a_boolean']);
+    }
+  });
+
+  test('validation honors the RS.1 sweep ranges', () => {
+    // 0 is a real value on every metric knob: a floor of 0 is no floor and a
+    // ceiling of 0 is the documented "no ceiling" sentinel, so neither may be
+    // refused the way a display cap's 0 is.
+    for (const k of [
+      'x.sweep.minViews',
+      'x.sweep.maxViews',
+      'x.sweep.minLikes',
+      'x.sweep.maxLikes',
+      'x.sweep.minReplies',
+      'x.sweep.maxReplies',
+    ]) {
+      expect([k, settingsRegistry.validate(k, 0)]).toEqual([k, null]);
+      expect([k, settingsRegistry.validate(k, 1_000_000)]).toEqual([k, null]);
+      expect([k, settingsRegistry.validate(k, 1_000_001)]).toEqual([k, 'out_of_range']);
+      expect([k, settingsRegistry.validate(k, -1)]).toEqual([k, 'out_of_range']);
+    }
+    // The age gate is the one maximum with no sentinel — it is always enforced,
+    // so 0 ("nothing newer than this instant") is refused rather than read as off.
+    expect(settingsRegistry.validate('x.sweep.maxAgeMin', 1)).toBeNull();
+    expect(settingsRegistry.validate('x.sweep.maxAgeMin', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.sweep.maxAgeMin', 1440)).toBeNull();
+    expect(settingsRegistry.validate('x.sweep.maxAgeMin', 1441)).toBe('out_of_range');
+    // A session shorter than a minute would expire before the first scroll.
+    expect(settingsRegistry.validate('x.sweep.autoStopMin', 1)).toBeNull();
+    expect(settingsRegistry.validate('x.sweep.autoStopMin', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.sweep.autoStopMin', 240)).toBeNull();
+    expect(settingsRegistry.validate('x.sweep.autoStopMin', 241)).toBe('out_of_range');
   });
 
   test('validation honors UI.7 band ranges (calibration, never a lock)', () => {
