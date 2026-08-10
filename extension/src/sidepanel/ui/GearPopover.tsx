@@ -9,6 +9,10 @@ interface Props {
   onPatch: (key: string, value: unknown) => void;
   /** Optional per-key reset — wire to `settingsClient.resetKeys`. */
   onReset?: ((key: string) => void) | undefined;
+  /** Optional "reset everything this gear shows" — wire to the same route with
+   *  the gear's whole key list. Rendered only when at least one row is actually
+   *  overridden, so the footer is a fact about the card, not a dead control. */
+  onResetAll?: (() => void) | undefined;
   /** Accessible name for the trigger. */
   label?: string | undefined;
   /** One line of context above the rows (UI.12). Mostly OWNERSHIP: a gear is
@@ -28,12 +32,16 @@ export function GearPopover({
   settings,
   onPatch,
   onReset,
+  onResetAll,
   label = 'Configure',
   note,
   errors,
 }: Props): JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // `isDefault` is maintained optimistically by the editor, so this tracks a
+  // slider drag rather than lagging a refetch.
+  const overridden = settings.some((s) => !s.isDefault);
 
   useEffect(() => {
     if (!open) return;
@@ -79,6 +87,22 @@ export function GearPopover({
               )}
             </div>
           ))}
+          {onResetAll && (
+            <div className="ui-gear-foot">
+              <button
+                type="button"
+                className="ui-gear-reset"
+                // Nothing is overridden → nothing to drop. Shown-but-disabled
+                // rather than hidden, so the footer doesn't appear and vanish as
+                // rows move.
+                disabled={!overridden}
+                onClick={onResetAll}
+                title="Drop every override on this card and go back to the shipped numbers"
+              >
+                Reset to defaults
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

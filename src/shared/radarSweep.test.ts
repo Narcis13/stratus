@@ -36,7 +36,9 @@ describe('passesSweep — the numeric gates, both sides of every boundary', () =
   });
 
   test('exactly minLikes passes, one under fails', () => {
-    const cfg = with_({ minLikes: 25 });
+    // The ceiling is lifted out of the way so the floor is the only gate this
+    // asserts — the shipped maxLikes sits below the floor being tested.
+    const cfg = with_({ minLikes: 25, maxLikes: 0 });
     expect(passesSweep(cand({ likes: 25 }), cfg)).toBe(true);
     expect(passesSweep(cand({ likes: 24 }), cfg)).toBe(false);
   });
@@ -64,8 +66,8 @@ describe('passesSweep — the numeric gates, both sides of every boundary', () =
   });
 
   // The one sentinel in the module. A `max*` of 0 must never read as "admit
-  // nothing" — that is the misreading that would make the shipped defaults
-  // (maxViews/maxLikes at 0) sweep in exactly zero tweets.
+  // nothing" — that misreading would make a user who clears a ceiling sweep in
+  // exactly zero tweets, which is the opposite of what typing 0 means.
   test('0 on every max* means no ceiling', () => {
     const huge = cand({ views: 9_000_000, likes: 500_000, replies: 100_000 });
     expect(passesSweep(huge, with_({ maxViews: 0, maxLikes: 0, maxReplies: 0 }))).toBe(true);
@@ -92,8 +94,9 @@ describe('passesSweep — the numeric gates, both sides of every boundary', () =
 
 describe('passesSweep — the verified gate (a gate, not a bucket)', () => {
   test('verified: null passes when verifiedOnly is off', () => {
-    expect(passesSweep(cand({ verified: null }))).toBe(true);
-    expect(passesSweep(cand({ verified: false }))).toBe(true);
+    const cfg = with_({ verifiedOnly: false });
+    expect(passesSweep(cand({ verified: null }), cfg)).toBe(true);
+    expect(passesSweep(cand({ verified: false }), cfg)).toBe(true);
   });
 
   // §7.11 says null is unknown and unknown is not "no" — inverted here on
@@ -117,8 +120,10 @@ describe('passesSweep — the verified gate (a gate, not a bucket)', () => {
 
 describe('sweepNeedsVerified', () => {
   test('exactly the verifiedOnly switch, both ways', () => {
-    expect(sweepNeedsVerified(SWEEP)).toBe(false);
+    expect(sweepNeedsVerified(with_({ verifiedOnly: false }))).toBe(false);
     expect(sweepNeedsVerified(with_({ verifiedOnly: true }))).toBe(true);
+    // The shipped set needs it — the page pays for the badge read by default.
+    expect(sweepNeedsVerified(SWEEP)).toBe(true);
   });
 });
 
@@ -128,23 +133,32 @@ describe('the shipped defaults', () => {
   test('SWEEP is the documented opening guess set', () => {
     expect(SWEEP).toEqual({
       minViews: 300,
-      maxViews: 0,
+      maxViews: 2000,
       minLikes: 0,
-      maxLikes: 0,
+      maxLikes: 20,
       minReplies: 0,
       maxReplies: 40,
       maxAgeMin: 60,
-      verifiedOnly: false,
+      verifiedOnly: true,
       campedBypass: true,
       circleBypass: false,
       autoStopMin: 30,
     });
   });
 
-  test('verifiedOnly ships OFF and circleBypass ships OFF; campedBypass ships ON', () => {
-    expect(SWEEP.verifiedOnly).toBe(false);
+  test('verifiedOnly ships ON and circleBypass ships OFF; campedBypass ships ON', () => {
+    expect(SWEEP.verifiedOnly).toBe(true);
     expect(SWEEP.circleBypass).toBe(false);
     expect(SWEEP.campedBypass).toBe(true);
+  });
+
+  // The three ceilings ship as real bounds now, so the shipped set admits a
+  // BAND, not a half-open range. A regression to 0 (= no ceiling) on either of
+  // the two that moved would silently re-open the queue to crowded posts.
+  test('the shipped ceilings are real ceilings, above their floors', () => {
+    expect(SWEEP.maxViews).toBeGreaterThan(SWEEP.minViews);
+    expect(SWEEP.maxLikes).toBeGreaterThan(SWEEP.minLikes);
+    expect(SWEEP.maxReplies).toBeGreaterThan(SWEEP.minReplies);
   });
 });
 

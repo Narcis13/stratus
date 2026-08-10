@@ -58,22 +58,22 @@ Press **Start sweep** in the Radar header. While it runs, a tweet you scroll pas
 | Filter | Default | What it admits |
 |---|---|---|
 | **Min impressions** | 300 | A tweet needs at least this many views. Ships at the number the reply band's "worth a reply" floor uses, restated rather than shared — moving it does not move the on-page border. |
-| **Max impressions** | 0 (no ceiling) | Past this, the post is too big: your reply lands under a crowd. |
+| **Max impressions** | 2000 | Past this, the post is too big: your reply lands under a crowd. An order of magnitude above the floor, so the admitted band is still wide enough to fill a session. |
 | **Min likes** | 0 (no floor) | |
-| **Max likes** | 0 (no ceiling) | |
+| **Max likes** | 20 | The like ceiling matching the impressions one at the ~1% like rate a small post runs at. |
 | **Min replies** | 0 (no floor) | A floor on "is anyone actually there". |
 | **Max replies** | 40 | Past this you're buried in the thread. The reply band's "still near the top" number, restated. |
 | **Max tweet age** | 60 min | Nothing older is swept in. **The one age rule** — it applies to every arm, including the two bypasses below, and it is what keeps them from flooding the queue. |
-| **Verified authors only** | off | Only sweep in tweets whose author carries the verified badge. |
+| **Verified authors only** | **on** | Only sweep in tweets whose author carries the verified badge — only Premium viewers' impressions count toward the goal, so a reply under an unverified author is unpaid work. |
 | **Camped accounts bypass** | **on** | A post by someone on your camped **cannon roster** gets in without meeting the metric filters — a three-minute-old post has no numbers yet, and that is exactly when the slot under it is open. Still obeys the max age. Chip: `cannon`. |
 | **Circle accounts bypass** | off | Same, for people in your CRM circle. Chip: `your circle`. |
 | **Sweep auto-stop** | 30 min | How long one armed sweep lasts. Not a filter. |
 
-**On every maximum except the age one, `0` means "no ceiling".** The age bound is the exception and it is always enforced — its floor in the settings is 1 minute, and 0 there is refused rather than read as "unlimited".
+**On every maximum except the age one, `0` means "no ceiling"** — two of them ship as real ceilings now, but type a 0 into one yourself and that ceiling comes off. The age bound is the exception and it is always enforced — its floor in the settings is 1 minute, and 0 there is refused rather than read as "unlimited".
 
 **A swept tweet keeps the classifier's chip when the classifier had one.** If the band said hot or warm, the row reads `hot` / `warm`; otherwise it reads `swept`. The two bypass arms keep their own chips (`cannon`, `your circle`), so the Cannon view's membership means exactly what it always did.
 
-**Verified is the one filter that can fail quietly, and it fails in the safe direction.** The badge is read off X's own markup, which X owns and will change. An author whose name block can't be read counts as **not verified**, so a drift shows up as a visibly empty queue rather than as a filter that silently stopped filtering. That is also why the switch ships **off**: turn it on once you have watched a scroll admit a verified author and refuse an unverified one.
+**Verified is the one filter that can fail quietly, and it fails in the safe direction.** The badge is read off X's own markup, which X owns and will change. An author whose name block can't be read counts as **not verified**, so a drift shows up as a visibly empty queue rather than as a filter that silently stopped filtering. It ships **on** anyway, because an unverified author's impressions do not count toward the goal — but that makes it the **first switch to turn off** when the queue goes unexpectedly empty, since a drifted selector and a genuinely quiet feed look identical from the panel.
 
 **Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then band (hot, then warm, then `swept`, `your circle` and `cannon`), then how fast the tweet is gaining views, then recency. A filter admission never outranks a hot verdict. **The Queue is deliberately not re-sorted by cannon score** — that ordering exists in the Cannon view and nowhere else, because the Queue is the relationship lane and an arbitrage shot must not push an ally off the top of it.
 
@@ -106,7 +106,7 @@ Directly under the Queue / Cannon / Clicked strip, in **all three views** (a swe
 
   The ended notice only appears for an expiry the panel actually watched — a Stop you pressed goes straight back to `Manual`, and opening the panel long after a sweep expired shows plain `Manual` too. The notice exists to catch an auto-stop mid-session, not to report history.
 
-- **⚙** — the eleven sweep filters, typed as exact numbers, with the same reset dots and refusal messages as the Settings tab. Its note states the split so the band stays legible: *these numbers are the only thing that decides what a sweep admits; the reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune.*
+- **⚙** — the eleven sweep filters, typed as exact numbers, with the same reset dots and refusal messages as the Settings tab, and a **Reset to defaults** button at the foot of the card that drops every override on it back to the shipped numbers in one request (greyed out when nothing is overridden). Its note states the split so the band stays legible: *these numbers are the only thing that decides what a sweep admits; the reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune.*
 
 **Both writes are optimistic and roll back honestly.** If arming fails the row goes back to `Manual`; if stopping fails the row goes back to **`Sweeping`** and says so — because the page really is still capturing, and a row claiming a stop that did not happen is the one lie this control cannot afford.
 

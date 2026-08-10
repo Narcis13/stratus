@@ -48,6 +48,11 @@ export interface SettingsEditor {
   change: (key: string, value: unknown) => void;
   /** Drop one override back to its registry default. */
   resetKey: (key: string) => void;
+  /** Drop a whole set of overrides — what a gear's "Reset to defaults" uses.
+   *  Keys, not a group id: a gear tunes a curated subset that may not be a
+   *  whole registry group, and resetting more than the card shows would move
+   *  numbers the user cannot see. */
+  resetKeyList: (keys: string[]) => void;
   /** Drop every override in a group. */
   resetGroupId: (id: string) => void;
   /** Re-read the server's truth (also runs after a refusal). */
@@ -142,25 +147,38 @@ export function useSettingsEditor(settings: Settings): SettingsEditor {
     [commit],
   );
 
-  const resetKey = useCallback(
-    (key: string): void => {
-      // A pending edit for this key is now meaningless — dropping the override
-      // is the newer intent, so cancel rather than flush.
-      const t = timers.current.get(key);
-      if (t) clearTimeout(t);
-      timers.current.delete(key);
-      pendingValues.current.delete(key);
+  const resetKeyList = useCallback(
+    (keys: string[]): void => {
+      if (keys.length === 0) return;
+      for (const key of keys) {
+        // A pending edit for a key being reset is now meaningless — dropping the
+        // override is the newer intent, so cancel rather than flush (rule 3's
+        // one exception).
+        const t = timers.current.get(key);
+        if (t) clearTimeout(t);
+        timers.current.delete(key);
+        pendingValues.current.delete(key);
+      }
+      // One request for the whole set: a per-key fan-out would leave a partial
+      // reset on the first failure, and the route already takes a key list.
       void (async () => {
         try {
-          await resetKeys(settingsRef.current, [key]);
+          await resetKeys(settingsRef.current, keys);
           await reload();
         } catch (e) {
-          setRowErrors((p) => ({ ...p, [key]: e instanceof ApiError ? e.code : 'reset_failed' }));
+          const code = e instanceof ApiError ? e.code : 'reset_failed';
+          setRowErrors((p) => {
+            const next = { ...p };
+            for (const key of keys) next[key] = code;
+            return next;
+          });
         }
       })();
     },
     [reload],
   );
+
+  const resetKey = useCallback((key: string): void => resetKeyList([key]), [resetKeyList]);
 
   const resetGroupId = useCallback(
     (id: string): void => {
@@ -179,5 +197,15 @@ export function useSettingsEditor(settings: Settings): SettingsEditor {
     [reload],
   );
 
-  return { groups, error, rowErrors, busyGroup, change, resetKey, resetGroupId, reload };
+  return {
+    groups,
+    error,
+    rowErrors,
+    busyGroup,
+    change,
+    resetKey,
+    resetKeyList,
+    resetGroupId,
+    reload,
+  };
 }

@@ -21,19 +21,29 @@
 //                    (§7.33) — the sweep must be tunable without moving the
 //                    classifier that draws the on-page border, and the two sets
 //                    share numbers today only by coincidence of origin.
-//   maxViews      0  no ceiling.
+//   maxViews   2000  a ceiling, not "no ceiling": a reply under a post already
+//                    past a couple thousand impressions lands beneath a crowd,
+//                    and the queue filling with those is what a `0` here bought.
+//                    Sits an order of magnitude above minViews so the admitted
+//                    band is wide enough to fill a session.
 //   minLikes      0  no floor.
-//   maxLikes      0  no ceiling.
+//   maxLikes     20  the like ceiling that matches the impressions one at the
+//                    ~1% like-rate a small post runs at. Same argument as
+//                    maxViews: it bounds "already crowded".
 //   minReplies    0  no floor.
 //   maxReplies   40  the number BAND.earlyReplies uses — "still near the top of
 //                    the thread". Restated for the same reason as minViews.
 //   maxAgeMin    60  opening guess. CANNON.maxAgeMin is 30 and is about a
 //                    *slot*; this is about a *feed session*.
-//   verifiedOnly false ships OFF, against the monetization pivot's own argument
-//                    (Premium viewers are the only impressions that count). A
-//                    filter that defaults ON and silently empties on a selector
-//                    drift is the worse failure; flip it once the browser pass
-//                    has proven the badge selector, not before.
+//   verifiedOnly true ships ON, on the monetization pivot's own argument: only
+//                    Premium viewers' impressions count toward the 500K, so a
+//                    reply under an unverified author's post is unpaid work.
+//                    It shipped OFF while the badge selector was unproven — a
+//                    filter that empties the queue on a selector drift is the
+//                    worse failure — and the browser pass since has held. The
+//                    failure mode remains visible: an unreadable author counts
+//                    as NOT verified, so drift shows up as an empty queue, and
+//                    this is the first switch to flip when one appears.
 //   campedBypass true  a camped cannon account's 3-minute-old post has no
 //                    numbers yet, and camping adjacent Premium niches is the
 //                    pivot's own prescription.
@@ -77,13 +87,13 @@ export interface SweepConfig {
 
 export const SWEEP: SweepConfig = {
   minViews: 300,
-  maxViews: 0,
+  maxViews: 2000,
   minLikes: 0,
-  maxLikes: 0,
+  maxLikes: 20,
   minReplies: 0,
   maxReplies: 40,
   maxAgeMin: 60,
-  verifiedOnly: false,
+  verifiedOnly: true,
   campedBypass: true,
   circleBypass: false,
   autoStopMin: 30,

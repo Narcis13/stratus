@@ -37,6 +37,9 @@ export function SettingsGear({ editor, keys, label, note }: Props): JSX.Element 
       settings={entries}
       onPatch={editor.change}
       onReset={editor.resetKey}
+      // The card's own keys, never the registry group: `keys` is what the user
+      // can see, and resetting a key that isn't on screen would be invisible.
+      onResetAll={() => editor.resetKeyList(entries.map((e) => e.key))}
       label={label}
       note={note}
       errors={editor.rowErrors}

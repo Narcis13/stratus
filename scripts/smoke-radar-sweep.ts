@@ -314,17 +314,28 @@ console.log('(c) passesSweep boundaries');
   ok(`${cases.length} boundary cases, both sides of all six numeric gates`);
 
   // The shipped defaults, sanity-checked as a set rather than key by key: a
-  // 400-view, 12-minute-old post with no likes is exactly what the sweep exists
-  // to admit, and a two-hour-old one is not.
-  if (!passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 12, verified: null }))
-    fail('the shipped SWEEP defaults refuse a 400-view 12-minute-old post');
-  if (passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 120, verified: null }))
+  // 400-view, 12-minute-old post from a verified author with no likes is exactly
+  // what the sweep exists to admit; a two-hour-old one is not, and neither is a
+  // 5,000-view one now that maxViews ships as a real ceiling.
+  if (!passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 12, verified: true }))
+    fail('the shipped SWEEP defaults refuse a 400-view 12-minute-old verified post');
+  if (passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 120, verified: true }))
     fail('the shipped SWEEP defaults admit a two-hour-old post');
-  ok('the shipped SWEEP defaults admit a fresh mid-size post and refuse a stale one');
+  if (passesSweep({ views: 5000, likes: 0, replies: 3, ageMin: 12, verified: true }))
+    fail('the shipped SWEEP defaults admit a post past the shipped view ceiling');
+  ok('the shipped SWEEP defaults admit a fresh mid-size post, refuse a stale or crowded one');
+
+  // verifiedOnly ships ON, so the shipped set refuses an author the page could
+  // not read a badge for. That is the gate working; it is also the reason an
+  // empty queue and a drifted selector look alike.
+  if (passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 12, verified: null }))
+    fail('the shipped SWEEP defaults admit an unreadable author');
+  ok('the shipped SWEEP defaults refuse an unreadable author (verifiedOnly ships ON)');
 
   // The perf contract has a name so it stays reviewable: the caller pays for the
-  // DOM badge read only when the answer can still matter.
-  if (sweepNeedsVerified(SWEEP) || !sweepNeedsVerified({ ...SWEEP, verifiedOnly: true }))
+  // DOM badge read only when the answer can still matter — which, at the shipped
+  // defaults, is now every candidate that clears the numbers.
+  if (!sweepNeedsVerified(SWEEP) || sweepNeedsVerified({ ...SWEEP, verifiedOnly: false }))
     fail('sweepNeedsVerified does not track verifiedOnly');
   ok('sweepNeedsVerified tracks verifiedOnly both ways (the skipped DOM read)');
 }

@@ -3917,18 +3917,34 @@ button.chip[aria-pressed="true"] {
   position: relative;
   display: inline-flex;
 }
+/* The trigger reads as a CONTROL at rest, not as a decoration: a 28px hit
+   target with a standing border and surface. It used to be a transparent glyph
+   that only appeared on hover, which made the one place a sweep is configured
+   the least visible thing in its row. */
 .ui-gear-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--strat-muted);
-  padding: 2px 6px;
-  font-size: var(--strat-text-body);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  background: var(--strat-bg-elev);
+  border: 1px solid var(--strat-border);
+  color: var(--strat-text);
+  padding: 0 var(--strat-space-3);
+  font-size: var(--strat-text-lg);
   line-height: 1;
-  border-radius: var(--strat-radius-sm);
+  border-radius: var(--strat-radius-md);
   cursor: pointer;
 }
 .ui-gear-btn:hover:not(:disabled) {
   background: var(--strat-bg-hover);
+  color: var(--strat-text);
+  border-color: var(--strat-accent);
+}
+/* Open is a state worth seeing — the card can overlap the trigger's neighbours. */
+.ui-gear-btn[aria-expanded="true"] {
+  background: var(--strat-bg-hover);
+  border-color: var(--strat-accent);
   color: var(--strat-text);
 }
 .ui-gear-pop {
@@ -3965,6 +3981,34 @@ button.chip[aria-pressed="true"] {
 .ui-gear-error {
   margin: 0 0 var(--strat-space-3);
   font-size: var(--strat-text-xs);
+}
+/* The card's footer: one destructive-ish action, separated by a rule so it can
+   never be mistaken for another row. */
+.ui-gear-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--strat-space-4);
+  padding-top: var(--strat-space-4);
+  border-top: 1px solid var(--strat-border);
+}
+.ui-gear-reset {
+  background: transparent;
+  border: 1px solid var(--strat-border);
+  color: var(--strat-muted);
+  padding: var(--strat-space-2) var(--strat-space-5);
+  font-size: var(--strat-text-xs);
+  line-height: 1.4;
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.ui-gear-reset:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  color: var(--strat-text);
+  border-color: var(--strat-warn);
+}
+.ui-gear-reset:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 /* ============================================================================

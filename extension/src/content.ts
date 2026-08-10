@@ -108,6 +108,51 @@ import type {
 import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
 import { readVerified } from './shared/verified.ts';
 
+// ------------------------------------------------- orphaned content script
+//
+// Reloading the unpacked extension (or an auto-update) kills the message port
+// of every content script ALREADY injected into an open x.com tab, but leaves
+// the script itself running: the MutationObserver keeps firing, every
+// chrome.runtime call throws "Extension context invalidated", and the page
+// console fills with warnings from a script that can never work again. There is
+// no recovery — the live script is the one injected on the next page load — so
+// the orphan detects itself once, stops the scan engine, and goes quiet.
+
+let contextDead = false;
+let scanObserver: MutationObserver | null = null;
+
+function markContextDead(): void {
+  if (contextDead) return;
+  contextDead = true;
+  scanObserver?.disconnect();
+  scanObserver = null;
+  console.info('[stratus] extension reloaded — reload this tab to re-arm stratus');
+}
+
+/** False once this script is orphaned; the scan loop's gate. */
+function contextAlive(): boolean {
+  if (contextDead) return false;
+  // `chrome.runtime.id` reads undefined on an invalidated context (and the
+  // property access itself can throw) — cheaper than probing with a message.
+  try {
+    if (chrome.runtime?.id) return true;
+  } catch {
+    // falls through to the same verdict
+  }
+  markContextDead();
+  return false;
+}
+
+/** Warn, unless the "failure" is only this script having been orphaned. */
+function warnErr(label: string, err: unknown): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (msg.includes('Extension context invalidated') || msg.includes('context invalidated')) {
+    markContextDead();
+    return;
+  }
+  console.warn(label, err);
+}
+
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
 const AUTHOR_BTN_CLASS = 'stratus-save-author-btn';
@@ -1127,7 +1172,7 @@ async function getActiveChannels(): Promise<{ slug: string; keywords: string[] |
       return res.data;
     }
   } catch (err) {
-    console.warn('[stratus] channels fetch failed', err);
+    warnErr('[stratus] channels fetch failed', err);
   }
   return channelCache?.channels ?? [];
 }
@@ -1172,7 +1217,7 @@ async function offerChannelChips(btn: HTMLButtonElement, tweet: ScrapedTweet): P
           const res = (await chrome.runtime.sendMessage(req)) as ApiResponse | undefined;
           ok = res?.ok === true;
         } catch (err) {
-          console.warn('[stratus] tag failed', err);
+          warnErr('[stratus] tag failed', err);
         }
         if (ok) {
           chip.dataset.state = 'tagged';
@@ -1233,7 +1278,7 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
   try {
     author = await scrapeAuthorFromHoverCard(article, tweet.handle);
   } catch (err) {
-    console.warn('[stratus] hover-card scrape failed', err);
+    warnErr('[stratus] hover-card scrape failed', err);
   }
 
   const body: ScrapeBody = author ? { tweet, author } : { tweet };
@@ -1248,7 +1293,7 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
   try {
     res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
   } catch (err) {
-    console.error('[stratus] sendMessage failed', err);
+    warnErr('[stratus] sendMessage failed', err);
   }
 
   if (res?.ok) {
@@ -1376,7 +1421,7 @@ async function onSaveAuthorClick(btn: HTMLButtonElement): Promise<void> {
   try {
     res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
   } catch (err) {
-    console.error('[stratus] save author sendMessage failed', err);
+    warnErr('[stratus] save author sendMessage failed', err);
   }
 
   if (res?.ok) {
@@ -1587,7 +1632,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     const id = out[REPLY_IDEA_ID_KEY];
     if (idea && typeof id === 'string' && id !== '') ideaId = id;
   } catch (err) {
-    console.warn('[stratus] reply master read override failed', err);
+    warnErr('[stratus] reply master read override failed', err);
   }
 
   const request: ApiRequest = {
@@ -1607,7 +1652,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   try {
     res = (await chrome.runtime.sendMessage(request)) as ApiResponse<ReplyDraft> | undefined;
   } catch (err) {
-    console.error('[stratus] reply master sendMessage failed', err);
+    warnErr('[stratus] reply master sendMessage failed', err);
   }
 
   if (!res || !res.ok) {
@@ -1633,7 +1678,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     await navigator.clipboard.writeText(replyText);
   } catch (err) {
     copied = false;
-    console.warn('[stratus] clipboard write failed', err);
+    warnErr('[stratus] clipboard write failed', err);
   }
 
   try {
@@ -1643,7 +1688,7 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
     // re-use is one click from the Ideas tab.)
     if (idea) await chrome.storage.local.remove([REPLY_IDEA_KEY, REPLY_IDEA_ID_KEY]);
   } catch (err) {
-    console.warn('[stratus] storage.set lastDraft failed', err);
+    warnErr('[stratus] storage.set lastDraft failed', err);
   }
 
   // Opt-in (Settings → "Auto-type reply drafts", default off): stream the draft
@@ -1746,7 +1791,7 @@ function requestVariants(tweetId: string): void {
       variantCache.set(tweetId, res?.ok && isReplyVariants(res.variants) ? res.variants : null);
     })
     .catch((err) => {
-      console.warn('[stratus] radar variants-get failed', err);
+      warnErr('[stratus] radar variants-get failed', err);
       variantCache.set(tweetId, null);
     })
     .finally(() => {
@@ -1815,7 +1860,7 @@ async function onVariantChipClick(
   try {
     await chrome.runtime.sendMessage(msg);
   } catch (err) {
-    console.warn('[stratus] variant paste report failed', err);
+    warnErr('[stratus] variant paste report failed', err);
   }
 }
 
@@ -2121,7 +2166,7 @@ async function onCannedPick(
   try {
     res = (await chrome.runtime.sendMessage(request)) as ApiResponse<UseReplyResponse> | undefined;
   } catch (err) {
-    console.warn('[stratus] canned use failed', err);
+    warnErr('[stratus] canned use failed', err);
   }
 
   if (!res || !res.ok) {
@@ -2575,7 +2620,7 @@ async function refreshGlanceMap(): Promise<void> {
     // A fresh install (no bearer) returns `unconfigured` — silent: chips just
     // don't render, like the save button on an unconfigured extension.
   } catch (err) {
-    console.warn('[stratus] glance fetch failed', err);
+    warnErr('[stratus] glance fetch failed', err);
   }
 }
 
@@ -2705,7 +2750,7 @@ async function refreshDossier(handle: string): Promise<void> {
       dossierCache.set(handle, { state: 'unavailable', dossier: null, at: Date.now() });
     }
   } catch (err) {
-    console.warn('[stratus] dossier fetch failed', err);
+    warnErr('[stratus] dossier fetch failed', err);
     dossierCache.set(handle, { state: 'unavailable', dossier: null, at: Date.now() });
   }
 }
@@ -3042,7 +3087,7 @@ function flushRadar(): void {
     try {
       await chrome.runtime.sendMessage(msg);
     } catch (err) {
-      console.warn('[stratus] radar report failed', err);
+      warnErr('[stratus] radar report failed', err);
     }
   })();
 }
@@ -3137,7 +3182,7 @@ function onRadarAddClick(btn: HTMLButtonElement): void {
     try {
       await chrome.runtime.sendMessage(msg);
     } catch (err) {
-      console.warn('[stratus] radar add failed', err);
+      warnErr('[stratus] radar add failed', err);
     }
   })();
 }
@@ -3320,7 +3365,7 @@ function flushSightings(): void {
         console.warn('[stratus] sighting report failed', res.code);
       }
     } catch (err) {
-      console.warn('[stratus] sighting report failed', err);
+      warnErr('[stratus] sighting report failed', err);
     }
   })();
 }
@@ -3411,7 +3456,7 @@ function flushPassiveHarvest(): void {
         console.warn('[stratus] passive harvest failed', res.code);
       }
     } catch (err) {
-      console.warn('[stratus] passive harvest failed', err);
+      warnErr('[stratus] passive harvest failed', err);
     }
   })();
 }
@@ -3531,7 +3576,7 @@ async function sendActiveTimes(extracted: ExtractedActiveTimes, grid: number[][]
   } catch (err) {
     if (!activeTimesFailLogged) {
       activeTimesFailLogged = true;
-      console.warn('[stratus] active-times capture failed', err);
+      warnErr('[stratus] active-times capture failed', err);
     }
   }
 }
@@ -3627,7 +3672,7 @@ function flushLaunchReplies(): void {
     try {
       await chrome.runtime.sendMessage(msg);
     } catch (err) {
-      console.warn('[stratus] launch report failed', err);
+      warnErr('[stratus] launch report failed', err);
     }
   })();
 }
@@ -3716,7 +3761,7 @@ async function fetchNotifContext(force: boolean): Promise<void> {
       notifRankMap = res.rankMap;
     }
   } catch (err) {
-    console.warn('[stratus] notif context failed', err);
+    warnErr('[stratus] notif context failed', err);
   }
   // Stamped on settle, not only on success: the background already decides what
   // to cache on failure (it keeps the last good map), so this throttle only
@@ -3894,7 +3939,7 @@ function flushEngagements(): void {
         console.warn('[stratus] engagement report failed', res.code);
       }
     } catch (err) {
-      console.warn('[stratus] engagement report failed', err);
+      warnErr('[stratus] engagement report failed', err);
     }
   })();
 }
@@ -3944,7 +3989,7 @@ async function onSyncChipClick(btn: HTMLButtonElement): Promise<void> {
   try {
     res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
   } catch (err) {
-    console.warn('[stratus] mentions refresh failed', err);
+    warnErr('[stratus] mentions refresh failed', err);
   }
 
   if (!res?.ok) {
@@ -3969,6 +4014,9 @@ async function onSyncChipClick(btn: HTMLButtonElement): Promise<void> {
 // --------------------------------------------------------------- scan loop
 
 function scan(root: ParentNode): void {
+  // An orphaned script would otherwise keep injecting buttons that can only
+  // throw the moment they are clicked.
+  if (!contextAlive()) return;
   const focusedId = focusedTweetIdFromUrl();
   const glance = getGlanceMap();
   const onNotifications = onNotificationsPage();
@@ -4000,7 +4048,7 @@ function scan(root: ParentNode): void {
 
 let scheduled = false;
 function scheduleScan(): void {
-  if (scheduled) return;
+  if (contextDead || scheduled) return;
   scheduled = true;
   // requestAnimationFrame coalesces mutation bursts — X emits hundreds of
   // subtree mutations per scroll tick.
@@ -4022,8 +4070,8 @@ function start(): void {
   initQueuedIds();
   initReplyFocus();
   scan(document);
-  const observer = new MutationObserver(scheduleScan);
-  observer.observe(document.body, { childList: true, subtree: true });
+  scanObserver = new MutationObserver(scheduleScan);
+  scanObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 // --------------------------------------------------- fill-from-clipboard
@@ -4137,7 +4185,7 @@ async function copyForPaste(text: string): Promise<DeliverMode> {
     await navigator.clipboard.writeText(text);
     return 'copied';
   } catch (err) {
-    console.warn('[stratus] clipboard write failed', err);
+    warnErr('[stratus] clipboard write failed', err);
     return 'failed';
   }
 }
@@ -4150,7 +4198,7 @@ async function deliverToReplyBox(text: string): Promise<DeliverMode> {
     await navigator.clipboard.writeText(text);
   } catch (err) {
     copied = false;
-    console.warn('[stratus] clipboard write failed', err);
+    warnErr('[stratus] clipboard write failed', err);
   }
   const editor = findReplyEditor();
   if (editor && (await fillEditor(editor, text))) return 'inserted';
@@ -4166,7 +4214,7 @@ async function typeClipboardIntoFocused(): Promise<void> {
   try {
     text = await navigator.clipboard.readText();
   } catch (err) {
-    console.warn('[stratus] clipboard read failed', err);
+    warnErr('[stratus] clipboard read failed', err);
     return;
   }
   // Already on the clipboard by definition — a failed fill costs nothing here,
