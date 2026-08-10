@@ -15,8 +15,15 @@
 // tabs *in the card* (RD.2): clicking the one you want copies it, moves the row
 // to Clicked, and opens the tweet — paste, done.
 
-import { type JSX, useCallback, useEffect, useState } from 'react';
+import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 import { type HumanizeResult, humanize, jitterOdds } from '../humanize.ts';
+import {
+  SWEEP_STATE_KEY,
+  type SweepSession,
+  startSweepSession,
+  sweepActiveAt,
+  sweepMinutesLeft,
+} from '../radarSweep.ts';
 import { formatCount } from '../replyBand.ts';
 import type {
   RadarClick,
@@ -71,6 +78,38 @@ import { Section } from './ui/Section.tsx';
 // that decides how many queue rows get DISMISSED has to be reachable from the
 // surface it acts on.
 const RADAR_KEYS = ['x.display.radarDraftCap', 'x.ai.batchReplyCap', 'x.radar.curatedCount'];
+
+// RS.4 — the eleven knobs an armed sweep admits on, ordered the way the row
+// reads them: the three metric pairs, then the age bound, then the three
+// switches, then the session length. Same `useSettingsEditor` the drafting gear
+// uses — one editor per tab, never one per gear (SettingsGear's header).
+const SWEEP_KEYS = [
+  'x.sweep.minViews',
+  'x.sweep.maxViews',
+  'x.sweep.minLikes',
+  'x.sweep.maxLikes',
+  'x.sweep.minReplies',
+  'x.sweep.maxReplies',
+  'x.sweep.maxAgeMin',
+  'x.sweep.verifiedOnly',
+  'x.sweep.campedBypass',
+  'x.sweep.circleBypass',
+  'x.sweep.autoStopMin',
+];
+
+// The ownership split, stated where the confusion lands. After RS.3 the twelve
+// Reply-band thresholds no longer decide what enters the queue, so a reader who
+// finds them unchanged in Settings → Tuning would reasonably conclude the group
+// is dead. It isn't — it still draws the on-page badge and still gates a single
+// reply draft. Without this line the gear teaches the wrong model.
+const SWEEP_NOTE =
+  'These numbers decide what an armed sweep admits into the queue. The twelve Reply-band thresholds in Settings → Tuning still draw the on-page border and still gate a single reply draft — they no longer decide what enters the queue. A max of 0 means "no ceiling"; the age bound is enforced on every arm, including the two bypasses.';
+
+// How long "Sweep ended" stays up after the panel WATCHES a session expire, then
+// the row falls back to the manual line. An auto-stop the user never saw is the
+// failure the countdown exists to prevent — but a notice that never clears is
+// its own lie, because by then nothing has been captured for an hour.
+const SWEEP_ENDED_NOTICE_MS = 60_000;
 
 // RC.4 — both calls report failure as a value instead of throwing, so the
 // orchestration below reads as the sequence it is (grade → dismiss → draft)
@@ -304,6 +343,126 @@ export function RadarSection({
   // lands (or forever, on an unreachable server) → every draft is English, the
   // pre-CQ.7 behaviour.
   const [cannonLanguages, setCannonLanguages] = useState<Map<string, string>>(new Map());
+
+  // RS.4 — the armed sweep, as the panel holds it. Three pieces of state and one
+  // hard rule between them: **the stored value is the truth and `Date.now()` is
+  // the clock, on every render**. The tick below only forces re-renders.
+  //
+  //   sweepRaw   whatever `radar:sweep` holds, unresolved. Absent = manual, and
+  //              that is the default a fresh install, a cleared profile and an
+  //              expired session all land on.
+  //   endedAt    when this panel WATCHED a session expire (never a stop it was
+  //              asked for), so the row can say so for a minute.
+  const [sweepRaw, setSweepRaw] = useState<unknown>(null);
+  const [, setSweepTick] = useState(0);
+  const [endedAt, setEndedAt] = useState<number | null>(null);
+  const sawSweepActive = useRef(false);
+
+  // Resolved fresh every render — NOT held in state and NOT decided by the
+  // interval. A side panel that spent the session backgrounded gets its timers
+  // throttled to whatever the browser feels like; if the countdown owned
+  // `active`, the row would sit lit long past the expiry the page itself has
+  // already stopped honouring (content.ts re-resolves the same way).
+  const sweep = sweepActiveAt(sweepRaw, Date.now());
+  const sweeping = sweep !== null;
+  const sweepEnded = endedAt !== null && Date.now() - endedAt < SWEEP_ENDED_NOTICE_MS;
+
+  // The panel reads the key and follows it; the writes below are the only ones
+  // it makes. §7.24's single-writer rule governs the sightings BUFFER, not a
+  // control — `passiveCapture` is the precedent, and content.ts only ever reads
+  // this key.
+  useEffect(() => {
+    let alive = true;
+    // Same race as the sightings read: a change landing before the initial get
+    // resolves wins, or the pre-write value would overwrite it.
+    let sawChange = false;
+    void chrome.storage.local
+      .get(SWEEP_STATE_KEY)
+      .then((out) => {
+        if (!alive || sawChange) return;
+        setSweepRaw(out[SWEEP_STATE_KEY] ?? null);
+      })
+      .catch(() => {
+        // Manual — the safe state, already loaded.
+      });
+
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: chrome.storage.AreaName,
+    ): void => {
+      if (area !== 'local') return;
+      const change = changes[SWEEP_STATE_KEY];
+      if (!change) return;
+      sawChange = true;
+      setSweepRaw(change.newValue ?? null);
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, []);
+
+  // The countdown, and ONLY the countdown: one re-render a second so the minutes
+  // figure moves. It exists while a sweep is armed and is torn down the moment
+  // the render above stops resolving one — including on unmount.
+  useEffect(() => {
+    if (!sweeping) return;
+    const id = setInterval(() => setSweepTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [sweeping]);
+
+  // Watch for the transition into "not armed" and record whether we saw it. No
+  // dep array on purpose: the flip can come from a storage change, a tick, or a
+  // render the sweep had nothing to do with, and all three are the same event.
+  // `stopSweep` clears the flag first, so a stop you asked for never announces
+  // itself as an auto-stop.
+  useEffect(() => {
+    if (sweeping) {
+      sawSweepActive.current = true;
+      return;
+    }
+    if (sawSweepActive.current) {
+      sawSweepActive.current = false;
+      setEndedAt(Date.now());
+    }
+  });
+
+  // Retire the notice. A throttled timeout that fires late is harmless — the
+  // render already compares against `SWEEP_ENDED_NOTICE_MS` itself.
+  useEffect(() => {
+    if (endedAt === null) return;
+    const id = setTimeout(() => setEndedAt(null), SWEEP_ENDED_NOTICE_MS);
+    return () => clearTimeout(id);
+  }, [endedAt]);
+
+  // Arm from the CURRENT mirrored `autoStopMin` — the length is read at the
+  // press, so editing the knob in the gear applies to the next sweep, not
+  // retroactively to a running one whose `expiresAt` is already written.
+  // Optimistic like every other panel write; the onChanged listener confirms.
+  const startSweep = (): void => {
+    const session: SweepSession = startSweepSession(Date.now(), server.sweep);
+    setEndedAt(null);
+    setSweepRaw(session);
+    void chrome.storage.local.set({ [SWEEP_STATE_KEY]: session }).catch(() => {
+      setSweepRaw(null);
+      setNote('Sweep start failed — capture is still manual.');
+    });
+  };
+
+  const stopSweep = (): void => {
+    // A stop the user pressed is not the failure the ended notice is for.
+    const prev = sweepRaw;
+    sawSweepActive.current = false;
+    setEndedAt(null);
+    setSweepRaw(null);
+    void chrome.storage.local.remove(SWEEP_STATE_KEY).catch(() => {
+      // The key survived, so the page is still capturing. Put the row back
+      // rather than leave it claiming a stop that didn't happen.
+      setSweepRaw(prev);
+      setNote('Sweep stop failed — the sweep is still armed. Press Stop again.');
+    });
+  };
 
   // C0: ask the background to pull the server's radar_drafts copy — after a
   // browser restart the session buffer is empty but paid-for drafts survive.
@@ -721,6 +880,39 @@ export function RadarSection({
         </button>
       </div>
 
+      {/* RS.4 — the intake valve. Renders in ALL THREE views, unlike the
+          humanize label below it: a sweep is global (it decides whether anything
+          enters the queue at all), while humanizing decorates one pick in one
+          view. Hiding this in Cannon or Clicked is how you end up sweeping for
+          an hour without knowing it. */}
+      <div className="radar-sweep">
+        <button
+          type="button"
+          className={`radar-sweep-btn${sweeping ? ' armed' : ''}`}
+          onClick={() => (sweeping ? stopSweep() : startSweep())}
+          title={
+            sweeping
+              ? 'Stop capturing. Nothing enters the queue after this except tweets you ⊕ by hand.'
+              : `Arm capture for ${server.sweep.autoStopMin} minutes: while it runs, tweets you scroll past that clear the filters below queue up by themselves.`
+          }
+        >
+          {sweeping ? 'Stop sweep' : 'Start sweep'}
+        </button>
+        <span className={`radar-sweep-state${sweeping ? ' armed' : sweepEnded ? ' ended' : ''}`}>
+          {sweeping
+            ? `Sweeping · ${sweepMinutesLeft(sweep, Date.now())}m left`
+            : sweepEnded
+              ? 'Sweep ended — nothing new is being captured'
+              : 'Manual — only ⊕ pins enter the queue'}
+        </span>
+        <SettingsGear
+          editor={editor}
+          keys={SWEEP_KEYS}
+          label="Configure what a sweep admits"
+          note={SWEEP_NOTE}
+        />
+      </div>
+
       {/* HM.3 — opt-in jitter on the angle you click. Queue-only: it decorates
           the act of picking, and the Clicked view is a log of picks already made
           (a re-copy there still honors the flag, it just isn't where you set it). */}
@@ -797,10 +989,23 @@ export function RadarSection({
         </>
       ) : view === 'queue' ? (
         queue.length === 0 ? (
-          <EmptyState
-            line="Browse X — hot/warm tweets you scroll past queue up here."
-            hint="Nothing is fetched for this; it's what the page already showed you, banded and ranked."
-          />
+          // RS.4 — "empty" means two different things now, and only one of them
+          // is a reason to go touch the filters. Manual-and-empty is the DEFAULT
+          // state of a working install, so it names the two ways in; swept-and-
+          // empty says the sweep is running and admitting nothing, which is the
+          // sentence that sends you to the ⚙ (and the one that surfaces a
+          // drifted verified selector under `verifiedOnly`).
+          sweeping ? (
+            <EmptyState
+              line="Sweeping — nothing has cleared the filters yet."
+              hint="Keep scrolling; tweets that pass queue up on sight. Nothing is fetched for this. If it stays empty, the ⚙ next to Stop sweep is where the thresholds live."
+            />
+          ) : (
+            <EmptyState
+              line="Nothing queued — the Radar is manual by default."
+              hint="Press ⊕ on any tweet to pin it here, or Start sweep to let tweets clearing your filters in by themselves for a bounded session."
+            />
+          )
         ) : (
           <>
             {ready.length > 0 && (

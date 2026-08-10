@@ -1109,6 +1109,50 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--strat-accent) 14%, transparent);
 }
+/* RS.4 — the intake valve, between the tab strip and the humanize label. Sits
+   above it because it outranks it: this decides whether anything enters the
+   queue at all, and it renders in every view. */
+.radar-sweep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+}
+.radar-sweep-btn {
+  font-size: var(--strat-text-xs);
+  padding: 3px 10px;
+  border: 1px solid var(--strat-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--strat-muted);
+}
+/* Armed reads as "a thing is running", not as a selected tab — hence the ok
+   tone rather than the accent the active tab uses. The two are adjacent and
+   must never be mistaken for each other. */
+.radar-sweep-btn.armed {
+  color: var(--strat-text);
+  border-color: var(--strat-ok);
+  background: color-mix(in srgb, var(--strat-ok) 16%, transparent);
+}
+.radar-sweep-state {
+  font-size: var(--strat-text-xs);
+  color: var(--strat-muted);
+  font-variant-numeric: tabular-nums;
+}
+.radar-sweep-state.armed {
+  color: var(--strat-ok);
+}
+/* The auto-stop notice. Warn, not danger: nothing broke — capture simply
+   stopped, which is exactly what the session was armed to do. */
+.radar-sweep-state.ended {
+  color: var(--strat-warn);
+}
+/* The filters live at the far end of the row, away from the button that arms
+   them: a mis-click on ⚙ while reaching for Stop would leave the sweep running. */
+.radar-sweep .ui-gear {
+  margin-left: auto;
+}
+
 /* HM.3 — the pick-time jitter toggle, directly under the Queue/Clicked strip.
    A label row rather than a button: it flips a server-owned project setting,
    and the odds sit next to it so the switch says what it buys. */

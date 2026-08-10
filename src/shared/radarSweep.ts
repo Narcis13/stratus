@@ -168,3 +168,17 @@ export function sweepActiveAt(raw: unknown, nowMs: number): SweepSession | null 
   if (!Number.isFinite(expiresMs) || expiresMs <= nowMs) return null;
   return { startedAt, expiresAt };
 }
+
+/** Whole minutes left on an armed sweep — the countdown's only arithmetic (RS.4).
+ *
+ *  Rounds **up**: a 30-minute sweep must read "30m left" the instant it is armed,
+ *  not "29m", and the last partial minute is still a minute you can capture in.
+ *  Takes a resolved `SweepSession` rather than the raw stored value because a
+ *  LABEL must never be what decides whether a sweep is live — `sweepActiveAt`
+ *  has already answered that, at read time, on every render. Floors at 0 so an
+ *  expiry observed between that resolve and this call can't print a negative. */
+export function sweepMinutesLeft(session: SweepSession, nowMs: number): number {
+  const ms = Date.parse(session.expiresAt) - nowMs;
+  if (!Number.isFinite(ms) || ms <= 0) return 0;
+  return Math.ceil(ms / 60_000);
+}

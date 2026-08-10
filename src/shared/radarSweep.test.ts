@@ -7,6 +7,7 @@ import {
   passesSweep,
   startSweepSession,
   sweepActiveAt,
+  sweepMinutesLeft,
   sweepNeedsVerified,
 } from './radarSweep.ts';
 
@@ -203,5 +204,35 @@ describe('the sweep session', () => {
   test('an active session round-trips through JSON (what storage actually holds)', () => {
     const s = startSweepSession(T0);
     expect(sweepActiveAt(JSON.parse(JSON.stringify(s)), T0 + 60_000)).toEqual(s);
+  });
+});
+
+describe('sweepMinutesLeft (RS.4)', () => {
+  const T0 = Date.parse('2026-08-10T12:00:00.000Z');
+
+  // The countdown rounds UP, and this is the assertion that says why: a sweep
+  // armed for 30 minutes reads "30m left" the instant it starts. A floor would
+  // print 29 and read as a minute already lost.
+  test('a freshly armed sweep reads its full length', () => {
+    expect(sweepMinutesLeft(startSweepSession(T0), T0)).toBe(30);
+    expect(sweepMinutesLeft(startSweepSession(T0, with_({ autoStopMin: 5 })), T0)).toBe(5);
+  });
+
+  test('a partial minute still counts as a minute', () => {
+    const s = startSweepSession(T0);
+    expect(sweepMinutesLeft(s, T0 + 60_000)).toBe(29);
+    expect(sweepMinutesLeft(s, T0 + 60_001)).toBe(29);
+    expect(sweepMinutesLeft(s, T0 + 6 * 60_000 + 1)).toBe(24);
+    // The last second of the session is still "1m left", never "0m".
+    expect(sweepMinutesLeft(s, T0 + 30 * 60_000 - 1)).toBe(1);
+  });
+
+  // The label never contradicts the gate: at and past the moment `sweepActiveAt`
+  // stops resolving, this is 0 rather than a negative number.
+  test('an expired or malformed session floors at 0 instead of going negative', () => {
+    const s = startSweepSession(T0);
+    expect(sweepMinutesLeft(s, T0 + 30 * 60_000)).toBe(0);
+    expect(sweepMinutesLeft(s, T0 + 86_400_000)).toBe(0);
+    expect(sweepMinutesLeft({ startedAt: 'x', expiresAt: 'tomorrow-ish' }, T0)).toBe(0);
   });
 });
