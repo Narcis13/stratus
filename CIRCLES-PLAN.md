@@ -1,6 +1,7 @@
 # CIRCLES-PLAN.md — The People Layer & Warm Product build plan
 
 > Status: ADOPTED (2026-07-02) — C0 + C1 shipped 2026-07-02; C2 + C3 + C4 + C5 + C6 + C7 shipped 2026-07-04; C8 + C9 shipped 2026-07-05; C10 (added later, own plan) shipped 2026-07-23. All phases complete.
+> **Post-plan, in C0/C4 territory: the Radar became manual-first (RS.1–RS.6, 2026-08-10, `plans/2026-08-10-radar-manual-first.md`, $0).** The queue this lane feeds no longer fills itself: nothing enters except a ⊕ pin, unless you arm a bounded **sweep** whose eleven filters you own. The C0 persistence contract is untouched (`radar_drafts` gained no column — `band` simply carries a sixth value, `'sweep'`), and C4's rule holds with a fourth member: `'sweep'` joins `manual`/`roster`/`cannon` in `QUEUE_META_BANDS`, so a capture reason can never land in a Playbook hot/warm cell. The circle arm (GT.8) survives as a switch, **off by default** — the people layer no longer pushes rows into the queue unasked. See `docs/radar-tab.md`.
 > Companion to `PLAN.md` (which stays the canonical plan for
 > the original three goals). Adopting this plan **amends the scope ceiling in `CLAUDE.md`**
 > from three goals to four:
