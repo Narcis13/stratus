@@ -145,7 +145,11 @@ export const RADAR_CAP = 100;
 export const RADAR_DISMISSED_CAP = 500;
 
 // How long a sighting stays queueable. Replacing "until the browser closes",
-// and deliberately the same 24h ROSTER_MAX_AGE_MIN uses in content.ts: a tweet
+// and 24h because a tweet you first saw yesterday is not a reply opportunity
+// today. (It used to be stated as "the same 24h ROSTER_MAX_AGE_MIN uses" — that
+// constant is gone at RS.3: every capture arm now takes its age bound from the
+// user's `x.sweep.maxAgeMin`, default 60. This TTL stays independent — how long
+// a captured row is workable is not how fresh a tweet must be to be captured.) A tweet
 // you first saw yesterday is not a reply opportunity today, and the server
 // expires its own drafted copy at 48h anyway. This is the ONLY implicit way a
 // row leaves the queue — everything else is a dismiss the human asked for.

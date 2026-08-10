@@ -23,10 +23,17 @@
 // action row — one click spends a pick server-side and types it into the reply
 // composer. See the section near the variant chips.
 
-import { isCannonEligible } from './cannon.ts';
-import type { CannonThresholds } from './cannon.ts';
 import { suggestChannels } from './channelSuggest.ts';
 import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
+import {
+  SWEEP_STATE_KEY,
+  type SweepCandidate,
+  type SweepConfig,
+  type SweepSession,
+  passesSweep,
+  sweepActiveAt,
+  sweepNeedsVerified,
+} from './radarSweep.ts';
 import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
 import type { BandThresholds, TweetSignals } from './replyBand.ts';
 import {
@@ -98,6 +105,7 @@ import type {
   UseReplyResponse,
 } from './shared/types.ts';
 import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
+import { readVerified } from './shared/verified.ts';
 
 const BUTTON_CLASS = 'stratus-save-btn';
 const REPLY_BTN_CLASS = 'stratus-reply-master-btn';
@@ -2174,19 +2182,25 @@ function attachCannedButton(article: Element, focusedTweetId: string): void {
 // blank.
 let bandThresholds: BandThresholds = SERVER_DEFAULTS.band;
 
-// CQ.4: the cannon capture arm's four knobs, mirrored the same way and from the
-// same blob — one read and one listener serve both, because a second listener
-// over the same key would be two subscriptions to one fact. Baked
-// SERVER_DEFAULTS.cannon until the first read resolves, same degradation.
-let cannonCfg: CannonThresholds = SERVER_DEFAULTS.cannon;
+// RS.3: the eleven sweep knobs, mirrored the same way and from the same blob —
+// one read and one listener serve both, because a second listener over the same
+// key would be two subscriptions to one fact. Baked SERVER_DEFAULTS.sweep until
+// the first read resolves, same degradation.
+//
+// (CQ.4's `cannonCfg` lived here too until RS.3 took the capture decision off
+// the score model: the camped arm now takes its age bound from
+// `sweepCfg.maxAgeMin` like every other arm, and `isCannonEligible` is a
+// display rule in the server's `cannonQueue` only. Nothing on the page reads
+// `x.cannon.*` any more, so the blob is no longer resolved here.)
+let sweepCfg: SweepConfig = SERVER_DEFAULTS.sweep;
 
-function initBandThresholds(): void {
+function initMirroredConfig(): void {
   chrome.storage.local
     .get(SERVER_SETTINGS_KEY)
     .then((out) => {
       const cfg = readServerConfig(out[SERVER_SETTINGS_KEY]);
       bandThresholds = cfg.band;
-      cannonCfg = cfg.cannon;
+      sweepCfg = cfg.sweep;
     })
     .catch(() => {
       /* keep defaults */
@@ -2197,8 +2211,39 @@ function initBandThresholds(): void {
     if (!change) return;
     const cfg = readServerConfig(change.newValue);
     bandThresholds = cfg.band;
-    cannonCfg = cfg.cannon;
+    sweepCfg = cfg.sweep;
   });
+}
+
+// RS.3 — the armed sweep. **The Radar is manual by default**: with no
+// `radar:sweep` key nothing on this page enters the queue except a ⊕ the human
+// pressed. The panel writes the key (§7.24's single-writer rule governs the
+// sightings BUFFER, not a control — `passiveCapture` is the precedent); the
+// page only ever reads it.
+//
+// Stored parsed, and re-resolved through `sweepActiveAt` on EVERY read: expiry
+// is a read-time fact and no timer owns it, so a tab that slept past
+// `expiresAt` cannot capture one tweet on wake.
+let sweepSession: SweepSession | null = null;
+
+function initSweepState(): void {
+  chrome.storage.local
+    .get(SWEEP_STATE_KEY)
+    .then((out) => {
+      sweepSession = sweepActiveAt(out[SWEEP_STATE_KEY], Date.now());
+    })
+    .catch(() => {
+      /* manual — the safe state */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[SWEEP_STATE_KEY];
+    if (change) sweepSession = sweepActiveAt(change.newValue, Date.now());
+  });
+}
+
+function sweepIsArmed(): boolean {
+  return sweepActiveAt(sweepSession, Date.now()) !== null;
 }
 
 function looksLikeReplyBait(article: Element): boolean {
@@ -2209,7 +2254,12 @@ function looksLikeReplyBait(article: Element): boolean {
   return false;
 }
 
-function readTweetSignals(article: Element): TweetSignals | null {
+// ONE aria parse per article per scan (RS.3). `likes` was always in the label
+// and always thrown away; the sweep's min/max-likes gate needs it, and
+// `TweetSignals` deliberately does not grow a field for it (that type is stored
+// inside `radar_drafts.signals` and `reply_drafts.contextSnapshot`), so it
+// rides beside the signals instead.
+function readTweetCapture(article: Element): { sig: TweetSignals; likes: number } | null {
   const reply = article.querySelector('[data-testid="reply"]');
   const actionRow = reply?.closest('div[role="group"]');
   const aria = actionRow?.getAttribute('aria-label');
@@ -2223,26 +2273,34 @@ function readTweetSignals(article: Element): TweetSignals | null {
   const ageMin = Math.max(0, (Date.now() - posted) / 60000);
 
   return {
-    views: m.views,
-    replies: m.replies,
-    ageMin,
-    vpm: m.views / Math.max(ageMin, 1),
-    bait: looksLikeReplyBait(article),
+    sig: {
+      views: m.views,
+      replies: m.replies,
+      ageMin,
+      vpm: m.views / Math.max(ageMin, 1),
+      bait: looksLikeReplyBait(article),
+    },
+    likes: m.likes,
   };
 }
 
-// GT.8 flood control: a roster capture is an ambient auto-capture like a band
-// sighting, and without an age guard one deep scroll fills a cap-100 queue with
-// week-old debts. "Skip when the age is unknown" comes free — readTweetSignals
-// returns null without a parseable <time>.
-const ROSTER_MAX_AGE_MIN = 24 * 60;
+function readTweetSignals(article: Element): TweetSignals | null {
+  return readTweetCapture(article)?.sig ?? null;
+}
 
 // Does a tweet the classifier passed on still belong in the queue because of WHO
 // posted it (GT.8)? Cheap gates first — applyBand re-runs on every mutation
 // burst, so the free age check comes before the DOM read that yields the handle
 // (one querySelector, the same one applyPersonChips already pays per article).
+//
+// RS.3: the age bound is `x.sweep.maxAgeMin`, not a private 24h constant. One
+// age rule now governs every arm including the two bypasses — it is the same
+// flood control `ROSTER_MAX_AGE_MIN` was doing (one deep scroll must not fill a
+// cap-100 queue with week-old debts) with the number in the user's hands.
+// "Skip when the age is unknown" still comes free: readTweetCapture returns
+// null without a parseable <time>.
 function isRosterSighting(article: Element, sig: TweetSignals, glance: GlanceMap): boolean {
-  if (sig.ageMin > ROSTER_MAX_AGE_MIN) return false;
+  if (sig.ageMin > sweepCfg.maxAgeMin) return false;
   const permalink = findPermalink(article);
   if (!permalink) return false;
   // Membership is the reply gate's own rule, never "is the author in the map":
@@ -2250,46 +2308,74 @@ function isRosterSighting(article: Element, sig: TweetSignals, glance: GlanceMap
   return isReciprocityPerson(glance[permalink.username.toLowerCase()]);
 }
 
-// Does a tweet belong in the Cannon queue (CQ.4)? Two independent halves, either
-// one enough:
-//   - the SCORE half (`isCannonEligible`, the shared views-per-reply model) puts
-//     an unknown account's 200k-views/6-replies post in the queue without it
-//     being on any list;
-//   - the ROSTER half (`isCannonPerson`) puts a camped account's three-minute-old
-//     post with 40 views in the queue before the numbers exist to earn it — which
-//     is the whole point of camping.
-// Gate order mirrors isRosterSighting's exactly and for the same reason: applyBand
-// re-runs on every mutation burst, so the free age check comes before the one
-// findPermalink DOM read (the same one applyPersonChips already pays per article).
-function isCannonSighting(article: Element, sig: TweetSignals, glance: GlanceMap): boolean {
-  if (sig.ageMin > cannonCfg.maxAgeMin) return false;
+// Is this a camped cannon account's post (RS.3, was `isCannonSighting`)? A
+// camped account's three-minute-old post has 40 views and no numbers to earn a
+// place, which is the whole point of camping — so `x.sweep.campedBypass` lets it
+// skip the METRIC gates, never the age gate.
+//
+// CQ.4's SCORE half is gone from capture on purpose: once the sweep filters own
+// the numbers, a second opinion about "dense enough" would be a rule the user
+// can't see. `isCannonEligible` survives as a READ-time display rule in the
+// server's `cannonQueue`, so nothing queued stops surfacing in the Cannon view.
+//
+// Gate order mirrors isRosterSighting's exactly and for the same reason.
+function isCampedSighting(article: Element, sig: TweetSignals, glance: GlanceMap): boolean {
+  if (sig.ageMin > sweepCfg.maxAgeMin) return false;
   const permalink = findPermalink(article);
   if (!permalink) return false;
-  const entry = glance[permalink.username.toLowerCase()];
-  return isCannonEligible(sig, cannonCfg) || isCannonPerson(entry);
+  return isCannonPerson(glance[permalink.username.toLowerCase()]);
 }
 
 function applyBand(article: HTMLElement, glance: GlanceMap): void {
-  const sig = readTweetSignals(article);
+  const cap = readTweetCapture(article);
+  const sig = cap?.sig ?? null;
   const band = sig ? classifyBand(sig, bandThresholds) : null;
+  // NOT gated by the sweep, and must not become gated: the border/dim is how you
+  // decide what to ⊕, so it has to be drawn on a manual (i.e. normal) scroll.
   if (band) article.dataset.stratusBand = band;
   else delete article.dataset.stratusBand;
-  if (sig && (band === 'hot' || band === 'warm')) recordRadarSighting(article, band, sig);
-  // An arbitrage slot the band classifier has no opinion about (CQ.4) — a dense
-  // post by an unknown account, or anything fresh from a camped one. Ahead of the
-  // roster arm because a handle on both lists is in the queue for the reach, and
-  // that is the queue it should be workable from.
-  else if (sig && isCannonSighting(article, sig, glance)) {
-    recordRadarSighting(article, 'cannon', sig);
+
+  // RS.3 — the whole capture decision. Manual is the default state: with no
+  // armed sweep NOTHING here enters the queue, and the ⊕ is the only door.
+  // While a sweep IS armed, three arms, first match wins:
+  //   1. the filters (the user's own numbers) — keeps a hot/warm verdict when
+  //      the classifier happened to agree, otherwise bands the row 'sweep';
+  //   2. a camped cannon account, metric gates bypassed (ahead of the roster arm
+  //      because a handle on both lists is queued for the reach, and that is the
+  //      queue it should be workable from);
+  //   3. a reciprocity/circle account, same bypass, shipped OFF.
+  // Gate order is the perf contract: the armed check is a cached compare plus one
+  // Date.parse, the numeric gates are already in hand from the one aria parse,
+  // and findPermalink (arms 2/3) is the query applyPersonChips already pays.
+  if (cap && sig && sweepIsArmed()) {
+    const candidate: SweepCandidate = {
+      views: sig.views,
+      likes: cap.likes,
+      replies: sig.replies,
+      ageMin: sig.ageMin,
+      // The one DOM read this feature adds, and it is paid ONLY when the answer
+      // can still matter — `verifiedOnly` ships off, so the default scroll pays
+      // nothing. Do not hoist it out of this branch. `null` (unreadable name
+      // block) is a refusal inside passesSweep, deliberately: a drifted badge
+      // selector must show up as an empty queue, not as a filter that quietly
+      // stopped filtering.
+      verified: sweepNeedsVerified(sweepCfg) ? readVerified(article) : null,
+    };
+    const extras = { likes: cap.likes, verified: candidate.verified };
+    if (passesSweep(candidate, sweepCfg)) {
+      recordRadarSighting(article, band === 'hot' || band === 'warm' ? band : 'sweep', sig, extras);
+    } else if (sweepCfg.campedBypass && isCampedSighting(article, sig, glance)) {
+      recordRadarSighting(article, 'cannon', sig, extras);
+    } else if (sweepCfg.circleBypass && isRosterSighting(article, sig, glance)) {
+      recordRadarSighting(article, 'roster', sig, extras);
+    }
   }
-  // A quiet post by someone already mine still enters the queue — the border and
-  // the dim stay exactly as the classifier called them, this only feeds the
-  // Radar (GT.8).
-  else if (sig && isRosterSighting(article, sig, glance)) {
-    recordRadarSighting(article, 'roster', sig);
-  }
+
   // Every band, including skip — the opportunity funnel needs the denominator.
   // A null sig is an ad/promoted row (no metrics label), which filters itself.
+  // NOT gated by the sweep either, and must not become gated: this is the HV.2
+  // corpus feed, and a gated one would make buildTimelineFunnel measure your
+  // button-pressing instead of your timeline.
   if (sig) recordPassiveHarvest(article);
 }
 
@@ -2722,7 +2808,20 @@ const pendingRadar = new Map<string, RadarSighting>();
 const radarSentAt = new Map<string, { at: number; band: RadarBand }>();
 let radarFlushTimer: number | null = null;
 
-function recordRadarSighting(article: Element, band: RadarBand, sig: TweetSignals): void {
+// RS.3 — the two capture-time facts the sweep admits on that `signals` can't
+// carry (see RadarSighting's own note). `verified: null` means "unread", which
+// is not a claim either way, so it is omitted rather than stored.
+interface SightingExtras {
+  likes?: number;
+  verified?: boolean | null;
+}
+
+function recordRadarSighting(
+  article: Element,
+  band: RadarBand,
+  sig: TweetSignals,
+  extras?: SightingExtras,
+): void {
   const permalink = findPermalink(article);
   if (!permalink) return;
   const sent = radarSentAt.get(permalink.tweetId);
@@ -2733,7 +2832,7 @@ function recordRadarSighting(article: Element, band: RadarBand, sig: TweetSignal
   const author = userNameEl?.querySelector<HTMLAnchorElement>('a')?.textContent?.trim() || null;
   const now = new Date().toISOString();
 
-  pendingRadar.set(permalink.tweetId, {
+  const sighting: RadarSighting = {
     tweetId: permalink.tweetId,
     url: permalink.url,
     handle: permalink.username,
@@ -2745,7 +2844,11 @@ function recordRadarSighting(article: Element, band: RadarBand, sig: TweetSignal
     signals: { ...sig, ageMin: Math.round(sig.ageMin), vpm: Math.round(sig.vpm * 10) / 10 },
     firstSeenAt: now,
     lastSeenAt: now,
-  });
+  };
+  // exactOptionalPropertyTypes: build without the key, never assign undefined.
+  if (extras?.likes !== undefined) sighting.likes = extras.likes;
+  if (typeof extras?.verified === 'boolean') sighting.verified = extras.verified;
+  pendingRadar.set(permalink.tweetId, sighting);
   if (radarFlushTimer === null) {
     radarFlushTimer = window.setTimeout(flushRadar, RADAR_FLUSH_MS);
   }
@@ -3676,7 +3779,8 @@ function start(): void {
   initPassiveCaptureSetting();
   initPassiveHarvestSetting();
   initContextCollapsed();
-  initBandThresholds();
+  initMirroredConfig();
+  initSweepState();
   initReplyFocus();
   scan(document);
   const observer = new MutationObserver(scheduleScan);
