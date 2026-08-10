@@ -3891,29 +3891,25 @@ button.chip[aria-pressed="true"] {
   font-family: inherit;
   font-size: var(--strat-text-sm);
 }
-.ui-setting-control input[type="number"] {
-  width: 68px;
-}
 .ui-numberarray {
   width: 120px;
 }
 
-/* Slider — bounded range with a tabular readout */
-.ui-slider {
+/* NumberField — a typed number box with its unit beside it (RS.7 retired the
+   range slider: a 0–1,000,000 knob is unaimable on a 110px track) */
+.ui-numberfield {
   display: flex;
   align-items: center;
-  gap: var(--strat-space-4);
+  gap: var(--strat-space-3);
 }
-.ui-slider-range {
-  accent-color: var(--strat-accent);
-  width: 110px;
-}
-.ui-slider-value {
-  font-size: var(--strat-text-sm);
-  color: var(--strat-text);
+.ui-numberfield-input {
+  width: 92px;
   font-variant-numeric: tabular-nums;
-  min-width: 42px;
   text-align: right;
+}
+.ui-numberfield-unit {
+  font-size: var(--strat-text-sm);
+  color: var(--strat-muted);
 }
 
 /* GearPopover — inline-config affordance */

@@ -1,6 +1,6 @@
 import { type JSX, useEffect, useState } from 'react';
 import type { SettingEntry } from '../api.ts';
-import { Slider } from './Slider.tsx';
+import { NumberField } from './NumberField.tsx';
 
 interface Props {
   entry: SettingEntry;
@@ -14,7 +14,7 @@ function asNumber(v: unknown, fallback: number): number {
 }
 
 /** SettingRow — label + description + a control chosen from the SettingDef meta
- *  (number → Slider when bounded else number input; boolean → checkbox; enum →
+ *  (number → NumberField; boolean → checkbox; enum →
  *  select; string → text; numberArray → comma-separated text). A reset dot marks
  *  non-default values. Pure presentation — the PATCH lives in `settingsClient`. */
 export function SettingRow({ entry, onChange, onReset }: Props): JSX.Element {
@@ -79,28 +79,15 @@ function renderControl(entry: SettingEntry, onChange: (v: unknown) => void): JSX
       return <NumberArrayInput entry={entry} onChange={onChange} />;
     default: {
       const num = asNumber(entry.value, asNumber(entry.default, entry.min ?? 0));
-      if (entry.min !== undefined && entry.max !== undefined) {
-        return (
-          <Slider
-            value={num}
-            min={entry.min}
-            max={entry.max}
-            step={entry.step ?? 1}
-            ariaLabel={entry.label}
-            unit={entry.unit}
-            onChange={onChange}
-          />
-        );
-      }
       return (
-        <input
-          type="number"
+        <NumberField
           value={num}
           min={entry.min}
           max={entry.max}
           step={entry.step ?? 1}
-          aria-label={entry.label}
-          onChange={(e) => onChange(Number(e.target.value))}
+          ariaLabel={entry.label}
+          unit={entry.unit}
+          onChange={onChange}
         />
       );
     }

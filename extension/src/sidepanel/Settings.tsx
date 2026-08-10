@@ -16,7 +16,7 @@ import {
   api,
 } from './api.ts';
 import { COMING_SOON, comingSoonMatches } from './comingSoon.ts';
-import { filterSettingGroups } from './settingsClient.ts';
+import { filterSettingGroups, visibleSettingGroups } from './settingsClient.ts';
 import { useSettingsEditor } from './settingsEditor.ts';
 import {
   DEFAULT_DENSITY,
@@ -370,7 +370,6 @@ const GROUP_NOTE: Record<string, string> = {
     'Your reply quota and week reply % are not here — they belong to the active niche. Edit them under General → Niche.',
   people:
     'The 2–10× target-band multipliers belong to the active niche (General → Niche), not to this group.',
-  band: 'These twelve are the classifier thresholds — what counts as hot, warm or skip on the page badge and at the reply gate, which read the same numbers. How many replies you owe a day, and the 2–10× follower window, are niche settings (General → Niche).',
   ai: 'Per-surface house defaults. A value set under Settings → AI is a global override and wins over these; blank fields there fall back to exactly this group.',
   workers:
     'Knobs tagged "restart" arm a timer when the server boots, so they apply on the next restart. Everything else in Tuning applies to the very next request.',
@@ -381,9 +380,19 @@ const GROUP_NOTE: Record<string, string> = {
 function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
   // UI.12 moved the optimistic/debounce/flush/re-read discipline into
   // `useSettingsEditor` so the inline Today gears share it byte for byte.
-  const { groups, error, rowErrors, busyGroup, change, resetKey, resetGroupId } =
-    useSettingsEditor(settings);
+  const {
+    groups: allGroups,
+    error,
+    rowErrors,
+    busyGroup,
+    change,
+    resetKey,
+    resetGroupId,
+  } = useSettingsEditor(settings);
   const [query, setQuery] = useState('');
+  // RS.7 — the reply-band group is no longer rendered here (settingsClient's
+  // HIDDEN_GROUPS); the Radar's Sweep gear owns queue admission alone.
+  const groups = allGroups === null ? null : visibleSettingGroups(allGroups);
 
   if (groups === null) {
     return (

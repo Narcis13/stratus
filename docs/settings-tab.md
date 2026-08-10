@@ -130,13 +130,13 @@ These three are stored locally in the extension, like the connection fields — 
 
 ## Tuning (the Tuning subtab)
 
-**Tuning** is every number stratus makes a decision with, in one place. Doctrine cadence, quest targets, follow-up windows, the reply-band thresholds, stat gates, budgets, worker schedules, display limits — all of it, live-editable, with the bounds and the reasoning attached to each row.
+**Tuning** is every number stratus makes a decision with, in one place. Doctrine cadence, quest targets, follow-up windows, the sweep filters, stat gates, budgets, worker schedules, display limits — all of it, live-editable, with the bounds and the reasoning attached to each row. (One group is deliberately absent — see *[The reply band left this tab](#the-reply-band-left-this-tab)*.)
 
 The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
 
-### The seventeen groups
+### The sixteen groups
 
-Today the registry holds **79 knobs in 17 groups**. This is the map — what each group decides, and where you see it change.
+The registry holds **79 knobs in 17 groups**; this tab renders **67 of them in 16 groups**. The missing one is **Reply band** — since 2026-08-10 those twelve classifier thresholds are not editable from the panel at all (see *[The reply band left this tab](#the-reply-band-left-this-tab)* below). This is the map of what's here — what each group decides, and where you see it change.
 
 | Group | Knobs | What it decides | Where the change shows |
 |---|---|---|---|
@@ -147,7 +147,6 @@ Today the registry holds **79 knobs in 17 groups**. This is the map — what eac
 | **Follow-ups** | 8 | The follow-up queue's windows: chain freshness, DM readiness, neglected target/ally days, momentum %, re-up age range, unacknowledged-fan days. | Do next, Targets, Top fans, the dossier queue. |
 | **Pinned watch** | 2 | When a pinned post reads as stale, and the ratio that says something outperforms it. | Today's pinned-watch card. |
 | **Digest** | 1 | How many neglected people the Sunday digest names. | The weekly digest. |
-| **Reply band** | 12 | The reply-band **classifier** thresholds — views, replies, freshness, views-per-minute, the too-small floors. | The on-page badge *and* the server's single-draft gate — same numbers, both sides. **They no longer decide what enters the Radar queue** (the Sweep group does, below); they still draw the border you decide from. |
 | **Stat gates** | 2 | How much data a Playbook cell and a best-time cell need before they read as evidence. | The Playbook's `insufficient data (n=…/N)` cells; the best-time advice. |
 | **Radar** | 2 | How long a radar draft stays clickable, and how many tweets a curated drafting pass keeps (the effective size is the lower of this and the batch reply cap). | The **[Radar](./radar-tab.md)** tab's queue. |
 | **Sweep** | 11 | **What an armed sweep is allowed to put into the Radar queue**: min/max impressions, min/max likes, min/max replies, a max tweet age, a verified-authors-only switch, two bypass switches (camped cannon accounts — **on**; circle accounts — **off**), and how long one sweep runs before it auto-stops (30 min). All eleven are **mirrored** — the page is what enforces them. | The **[Radar](./radar-tab.md#filling-the-queue)** tab's queue, while a sweep is armed. The same eleven rows are editable from the ⚙ next to **Start sweep** without leaving the Radar. |
@@ -158,13 +157,14 @@ Today the registry holds **79 knobs in 17 groups**. This is the map — what eac
 | **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
 | **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
 
-Forty-four of the 79 are also **mirrored** to the extension (Identity, all of Doctrine, Reply band, **Sweep** and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number. The Sweep group is the one whose mirroring is not a convenience but the mechanism: no server route reads those eleven numbers at all — the content script does, off the mirrored blob.
+Forty-four of the 79 are also **mirrored** to the extension (Identity, all of Doctrine, the hidden Reply band, **Sweep** and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number. The Sweep group is the one whose mirroring is not a convenience but the mechanism: no server route reads those eleven numbers at all — the content script does, off the mirrored blob.
 
 ### How a row works
 
-Each row shows the knob's **name**, a one-line **description** carrying the *why* (and the warning, where there is one), and a control picked to fit: a **slider** for a bounded number, a plain number box for an unbounded one, a checkbox, a dropdown, or a comma-separated list for things like the posting-hour anchors.
+Each row shows the knob's **name**, a one-line **description** carrying the *why* (and the warning, where there is one), and a control picked to fit: a **number box** for any number, a checkbox, a dropdown, or a comma-separated list for things like the posting-hour anchors.
 
-- **Saving is automatic.** Move a control and it saves about a third of a second later — there is no Save button. The pause exists so dragging a slider is one save, not fifty. Switching subtabs mid-drag still saves.
+- **Numbers are typed, not dragged.** Every number knob is a box you type an exact value into — sliders were dropped on 2026-08-10 because a filter whose ceiling is 1,000,000 impressions can't be aimed on a 110px track. **A number saves when you leave the box or press Enter**, not per keystroke (otherwise typing `500` into a knob with a floor of `100` would fight you at the first digit). A value outside the knob's floor/ceiling is snapped to the nearest one; a blank or non-numeric box reverts to what's stored.
+- **Saving is automatic.** Commit a box (or click a checkbox) and it saves about a third of a second later — there is no Save button. Switching subtabs, or clicking outside an inline ⚙ popover, saves what you typed rather than dropping it.
 - **A small accent dot** appears to the left of any knob you've changed from its shipped default. **Click the dot** to put that one knob back.
 - **Out-of-range values are refused by the server**, not by the box. If you type something the knob's floor or ceiling forbids, the row shows the refusal code and snaps back to the value that's actually stored. Those floors and ceilings are the real guard — they're the reason a budget knob can't be talked into an unbounded number, here or by an AI agent through the MCP tools.
 - **A `restart` tag** on a row means that knob is read once when the server boots (it arms a timer), so a change lands on the next restart. Only the worker schedule knobs are like this; **everything else applies to the very next request** — no restart, no rebuild.
@@ -188,13 +188,20 @@ There is no second store and no second copy: a gear edits the same key with the 
 A few numbers you might expect in Tuning deliberately live somewhere else, because each setting has exactly one owner:
 
 - **Your reply quota, week reply %, and the 2–10× target-follower window** belong to your **active niche** — edit them under **General → Niche**. Tuning says so at the top of the affected groups.
-- **The Reply band group is a different thing from the reply targets.** Those twelve numbers are the *classifier* thresholds — what counts as hot, warm or skip. They're the same numbers on both sides: the badge stratus draws on a tweet and the gate the server applies before spending on a draft read the identical settings, so the badge can never promise a draft the server then refuses. (Changing one takes effect on the page within a few minutes, or immediately when you reopen the panel.)
-- **The Cannon group is not a second Reply band.** The band classifier decides *hot / warm / skip*; the Cannon floor decides *is there an open slot under this post*. They read the same signals and answer different questions, and neither overrides the other — a `skip`-banded post can be a perfectly good cannon shot. The shipped floor (**120**) is the measured p90 of your own harvest corpus, not a number borrowed from someone else's account; recalibrate it from a replay of that corpus, never by feel.
-- **The Sweep group is what decides your queue; the Reply band group no longer does.** Since 2026-08-10 the Radar is manual by default and the eleven Sweep filters are the only rule an armed sweep admits by. The twelve band thresholds kept their other two jobs (the on-page border, the single-draft gate) — which is exactly why they were not deleted, and why editing them will not change what shows up in the queue. Every Sweep default is an **opening guess**; recalibrate at 100+ swept rows from the SQL in the **[Radar doc](./radar-tab.md#tips-and-good-to-know)**, never by feel.
+- **The Cannon group is not a second reply band.** The band classifier decides *hot / warm / skip*; the Cannon floor decides *is there an open slot under this post*. They read the same signals and answer different questions, and neither overrides the other — a `skip`-banded post can be a perfectly good cannon shot. The shipped floor (**120**) is the measured p90 of your own harvest corpus, not a number borrowed from someone else's account; recalibrate it from a replay of that corpus, never by feel.
+- **The Sweep group is the only thing that decides your queue.** Since 2026-08-10 the Radar is manual by default and the eleven Sweep filters are the only rule an armed sweep admits by. Every Sweep default is an **opening guess**; recalibrate at 100+ swept rows from the SQL in the **[Radar doc](./radar-tab.md#tips-and-good-to-know)**, never by feel.
 - **The 2–10× target-follower window has nothing to do with the cannon roster.** They're separate lists chosen on separate criteria — relationship versus reach — and widening the 2–10× band does not add anyone to the cannon.
 - **AI calls is the lower of two tiers.** Those knobs are the per-surface defaults; whatever you set in **Settings → AI** is a *global* override that wins over them. The blank fields in the AI subtab are what fall back to this group. The AI subtab links straight here.
 
-> A caution worth repeating from the descriptions themselves: the band thresholds and the stat gates ship as **opening guesses**. They're worth recalibrating from measurements — not from a hunch — and the descriptions tell you how much data each one wants first.
+> A caution worth repeating from the descriptions themselves: the Sweep filters and the stat gates ship as **opening guesses**. They're worth recalibrating from measurements — not from a hunch — and the descriptions tell you how much data each one wants first.
+
+### The reply band left this tab
+
+Until 2026-08-10 a **Reply band** group sat here: twelve classifier thresholds (view floors, reply ceilings, freshness, views-per-minute, the too-small floors). It's gone from the panel, on purpose.
+
+- **Why.** After the Radar went manual-first, those twelve stopped deciding what enters the queue — the eleven **Sweep** filters do. Two look-alike sets of numbers a tab apart, only one of which does the job you're trying to do, is a trap. There is now exactly **one** place to set what a tweet must clear: the **⚙ next to Start sweep** on the Radar (the same eleven knobs also appear as the **Sweep** group above).
+- **What still happens.** The band classifier itself is untouched. It still draws the hot/warm/skip border stratus paints on a tweet as you scroll, and it still gates a single Reply Master draft — server and page reading the identical numbers, so the border can never promise a draft the server then refuses. It runs on whatever those twelve are set to today; nothing changed values.
+- **If you ever need to move one.** They're still real settings (`x.band.*`) — reachable over the API (`PATCH /x/settings`) or through the MCP `x_update_setting` tool, just not from a control in the panel. That's deliberate: they're a calibration surface that wants **≥100 measured replies** behind a change, not a knob for a Tuesday.
 
 ### Coming soon
 

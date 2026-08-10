@@ -24,7 +24,7 @@ That's the Radar's whole job:
 
 | Term | Meaning |
 |---|---|
-| **Band** | The verdict computed for each tweet as you scroll: **hot** ("reply now"), **warm** ("worth watching"), **skip** ("thread's too deep, you'd be buried"). Based on views, reply count, age, how fast it's gaining views, and whether it's "reply-bait". The thresholds live in **Settings → Tuning → Reply band** — the same twelve the on-page border uses. **They no longer decide what enters the queue** — they still draw the border you decide from, and they still gate a single Reply Master draft. |
+| **Band** | The verdict computed for each tweet as you scroll: **hot** ("reply now"), **warm** ("worth watching"), **skip** ("thread's too deep, you'd be buried"). Based on views, reply count, age, how fast it's gaining views, and whether it's "reply-bait". The thresholds are a **fixed classifier** — since 2026-08-10 they're no longer editable in the panel (they left Settings along with any suggestion that they filter anything). **They do not decide what enters the queue** — they draw the border you decide from, and they gate a single Reply Master draft. |
 | **Sweep** | A bounded session during which tweets may enter the queue by themselves. You arm it from the Radar header (**Start sweep**), it stops when you press Stop, when you click the on-page chip, or on its own after **30 minutes** by default. Absent = manual, which is where a fresh install, a cleared profile and an expired session all land. |
 | **manual** | A tweet *you* pinned with the ⊕ button on x.com, regardless of band. "I want to reply to this one, period." The only way in when no sweep is armed. |
 | **swept** | A tweet an armed sweep's filters admitted while the band classifier had no opinion about it. Hover it: *"your sweep filters admitted this one — the band classifier had no opinion."* If the classifier *did* say hot or warm, the row keeps that chip instead. |
@@ -53,7 +53,7 @@ Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button.
 
 ### 2. During an armed sweep
 
-Press **Start sweep** in the Radar header. While it runs, a tweet you scroll past enters the queue if it clears **your** filters — eleven numbers you own, in the **⚙** next to the button and in **Settings → Tuning → Sweep**:
+Press **Start sweep** in the Radar header. While it runs, a tweet you scroll past enters the queue if it clears **your** filters — eleven numbers you own, typed into the **⚙** next to the button (or the **Sweep** group in **Settings → Tuning**; same knobs, same values). This is the **only** admission rule there is:
 
 | Filter | Default | What it admits |
 |---|---|---|
@@ -106,7 +106,7 @@ Directly under the Queue / Cannon / Clicked strip, in **all three views** (a swe
 
   The ended notice only appears for an expiry the panel actually watched — a Stop you pressed goes straight back to `Manual`, and opening the panel long after a sweep expired shows plain `Manual` too. The notice exists to catch an auto-stop mid-session, not to report history.
 
-- **⚙** — the eleven sweep filters, edited in place with the same reset dots and refusal messages as the Settings tab. Its note states the ownership split so the band group stays legible: *these numbers decide what a sweep admits; the twelve Reply-band thresholds still draw the on-page border and still gate a single reply draft, and they no longer decide what enters the queue.*
+- **⚙** — the eleven sweep filters, typed as exact numbers, with the same reset dots and refusal messages as the Settings tab. Its note states the split so the band stays legible: *these numbers are the only thing that decides what a sweep admits; the reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune.*
 
 **Both writes are optimistic and roll back honestly.** If arming fails the row goes back to `Manual`; if stopping fails the row goes back to **`Sweeping`** and says so — because the page really is still capturing, and a row claiming a stop that did not happen is the one lie this control cannot afford.
 
@@ -119,7 +119,7 @@ Directly under the Queue / Cannon / Clicked strip, in **all three views** (a swe
 - **Draft replies (N)** — makes **one** Grok call for every un-drafted tweet in the queue (**20 at a time by default**). Each post is resolved into its own room and receives that room's angle set: 2 or 3 variants in English, or one `extends` variant when the batch resolves to another language. The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded. In the **Cannon** view the same button drafts the cannon rows instead.
 - **Curate & draft (N)** — the same thing, but it grades first. See below. **These two are the only buttons on the tab that spend money.** It renders in the **Queue view only** — see *The Cannon*, below, for why.
 - **Clear** — dismisses everything currently shown in the view you're looking at. In the Cannon view that means exactly the rows on screen, never the ones the 30-minute cutoff is hiding. Dismissed tweets never re-enter the queue, even though the page keeps re-sighting them while they're on screen.
-- **⚙** (next to the header buttons) — the batch sizes. Three numbers live in there: the radar's own **draft cap**, the **batch cap the server enforces**, and the **curated batch size**. A plain click sends the *lower of the first two*, so raising one past the other can't buy you a refused click; the third sizes a curated pass and is itself capped by the server's batch cap. What lands on the radar by band isn't here — it's the **Reply band** group in **Settings → Tuning**, the same thresholds the on-page border uses, which is why the border can never promise a draft the server then refuses. (⊕ pins and fresh posts by your circle get in regardless of those thresholds — see the three ways in, above.)
+- **⚙** (next to the header buttons) — the batch sizes. Three numbers live in there: the radar's own **draft cap**, the **batch cap the server enforces**, and the **curated batch size**. A plain click sends the *lower of the first two*, so raising one past the other can't buy you a refused click; the third sizes a curated pass and is itself capped by the server's batch cap. What lands on the radar at all isn't here — that's the sweep ⚙ next to **Start sweep**. (⊕ pins and fresh posts by your circle get in regardless of the sweep filters — see the three ways in, above.)
 
 ---
 
@@ -368,5 +368,5 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **[Replies](./replies-tab.md)** — Reply Master (one tweet, deeper context) and the canned reply lists.
 - **[Playbook](./playbook-tab.md)** — which angles and which situations actually earn views and profile visits.
 - **[On x.com itself](./s6-augmented-ui.md)** — the ⊕ button, the band border, the timeline chips and the context panel.
-- **[Settings → Tuning](./settings-tab.md)** — the eleven **Sweep** filters (the same ones the ⚙ here edits), the Reply band thresholds, the two batch caps, the curated batch size and the four **Cannon** knobs.
+- **[Settings → Tuning](./settings-tab.md)** — the eleven **Sweep** filters (the same ones the ⚙ here edits), the two batch caps, the curated batch size and the four **Cannon** knobs. The reply-band thresholds are **[no longer there](./settings-tab.md#the-reply-band-left-this-tab)**.
 - **[Settings → Prompts](./settings-tab.md#prompts-editor-the-prompts-subtab)** — `reply curation`, the topic-agnostic hook rubric that decides what counts as filler and returns each post's room.

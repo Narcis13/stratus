@@ -97,13 +97,13 @@ const SWEEP_KEYS = [
   'x.sweep.autoStopMin',
 ];
 
-// The ownership split, stated where the confusion lands. After RS.3 the twelve
-// Reply-band thresholds no longer decide what enters the queue, so a reader who
-// finds them unchanged in Settings → Tuning would reasonably conclude the group
-// is dead. It isn't — it still draws the on-page badge and still gates a single
-// reply draft. Without this line the gear teaches the wrong model.
+// The ownership split, stated where the confusion lands. RS.3 took queue
+// admission off the twelve Reply-band thresholds and RS.7 took those thresholds
+// out of Settings entirely, so this gear is now the ONLY place admission is
+// configured. The band still exists — it draws the on-page border and gates a
+// single reply draft — it is just not a control any more.
 const SWEEP_NOTE =
-  'These numbers decide what an armed sweep admits into the queue. The twelve Reply-band thresholds in Settings → Tuning still draw the on-page border and still gate a single reply draft — they no longer decide what enters the queue. A max of 0 means "no ceiling"; the age bound is enforced on every arm, including the two bypasses.';
+  'These numbers are the only thing that decides what an armed sweep admits into the queue — nothing in Settings competes with them. The reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune. A max of 0 means "no ceiling"; the age bound is enforced on every arm, including the two bypasses.';
 
 // How long "Sweep ended" stays up after the panel WATCHES a session expire, then
 // the row falls back to the manual line. An auto-stop the user never saw is the
@@ -847,7 +847,7 @@ export function RadarSection({
             editor={editor}
             keys={RADAR_KEYS}
             label="Configure radar drafting"
-            note="One click, one Grok call — a plain batch is the lower of the first two. The third sizes a Curate & draft pass instead: it grades every fresh tweet, dismisses what scores as filler, and drafts that many survivors (still capped by the batch cap). What lands on the radar by band is the Reply band group in Settings → Tuning (the same twelve thresholds the on-page badge uses); ⊕ pins and fresh posts by your circle get in regardless — and a pin is never scored away."
+            note="One click, one Grok call — a plain batch is the lower of the first two. The third sizes a Curate & draft pass instead: it grades every fresh tweet, dismisses what scores as filler, and drafts that many survivors (still capped by the batch cap). What lands on the radar at all is the sweep gear next to Start sweep; ⊕ pins and fresh posts by your circle get in regardless — and a pin is never scored away."
           />
         </>
       }
@@ -1670,7 +1670,7 @@ const BAND_TITLE: Record<RadarSighting['band'], string | undefined> = {
   cannon:
     'Captured for the cannon: either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast.',
   sweep:
-    'Your sweep filters admitted this one — the band classifier had no opinion. Tune the numbers in the Radar gear or Settings → Tuning.',
+    'Your sweep filters admitted this one — the band classifier had no opinion. Tune the numbers in the gear next to Start sweep.',
 };
 
 // S0.3 chip tooltip — why this author outranks a louder rando.

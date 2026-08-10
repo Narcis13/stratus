@@ -336,7 +336,7 @@ Four section headers carry a **⚙**. Each one opens a small card of exactly the
 
 **How the gears behave:**
 
-- **Changes save themselves.** There is no Save button. Drag a slider or type a number and it's written a moment after you stop — one write per knob, not one per drag tick. Closing the popover mid-edit still saves what you moved.
+- **Changes save themselves.** There is no Save button. Type a number and it's written a moment after you leave the box (or press Enter) — one write per knob. Clicking outside the popover mid-edit saves what you typed rather than dropping it.
 - **A rejected value snaps back.** Every knob has a floor and a ceiling defined server-side; a value outside them is refused, the row shows the error code, and the saved value reappears. The bounds are the guard — not the UI.
 - **A small accent dot** next to a label means that knob is no longer at its shipped default. Click the dot to put it back.
 - **A gear is invisible when the server is unreachable.** The section itself keeps working: the numbers it renders with come from a locally mirrored copy that falls back to the shipped defaults, so a dead server changes nothing about what you see, only your ability to edit it.

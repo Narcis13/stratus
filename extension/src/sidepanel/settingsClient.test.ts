@@ -5,6 +5,7 @@ import {
   entriesForKeys,
   filterSettingGroups,
   flattenSettings,
+  visibleSettingGroups,
 } from './settingsClient.ts';
 
 function entry(over: Partial<SettingEntry> & { key: string }): SettingEntry {
@@ -48,6 +49,18 @@ const GROUPS: SettingsGroup[] = [
     ],
   },
 ];
+
+describe('visibleSettingGroups', () => {
+  test('drops the reply-band group (RS.7 — the sweep gear owns admission)', () => {
+    const res = visibleSettingGroups(GROUPS);
+    expect(res.map((g) => g.id)).toEqual(['budgets']);
+  });
+
+  test('every other group survives, untouched', () => {
+    const res = visibleSettingGroups(GROUPS);
+    expect(res[0]).toBe(GROUPS[0] as SettingsGroup);
+  });
+});
 
 describe('filterSettingGroups', () => {
   test('an empty query returns the groups untouched', () => {

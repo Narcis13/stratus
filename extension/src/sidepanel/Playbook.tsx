@@ -38,7 +38,7 @@ import { Section } from './ui/Section.tsx';
 const PLAYBOOK_SETTING_KEYS = ['x.gates.minCellN'];
 
 const GATE_NOTE =
-  'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. Band thresholds are NOT here — those move by hand at ≥100 measured replies (Settings → Tuning → band).';
+  'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. Band thresholds are NOT here, and RS.7 took them out of Settings too — the band is a fixed classifier now. What enters the Radar queue is the sweep gear on the Radar tab.';
 
 // Every top-level slice of the response, in render order. Only used to NAME what
 // an out-of-date server left out — the per-section `slice()` guard is what
