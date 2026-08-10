@@ -32,6 +32,7 @@ import {
   type SweepSession,
   passesSweep,
   sweepActiveAt,
+  sweepMinutesLeft,
   sweepNeedsVerified,
 } from './radarSweep.ts';
 import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
@@ -76,7 +77,7 @@ import {
   shouldRecordPassive,
   toPassiveIngestRow,
 } from './shared/passiveHarvest.ts';
-import { personTierFor } from './shared/radar.ts';
+import { RADAR_SIGHTINGS_KEY, coerceSightings, personTierFor, pruneStale } from './shared/radar.ts';
 import type { PersonTier, RadarBand, RadarSighting, RankMap } from './shared/radar.ts';
 import { REPLY_FOCUS_KEY, shouldFocusReply } from './shared/replyFocus.ts';
 import { SERVER_DEFAULTS, SERVER_SETTINGS_KEY, readServerConfig } from './shared/serverSettings.ts';
@@ -147,6 +148,10 @@ const CANNED_TITLE_CLASS = 'stratus-canned-title';
 const CANNED_CLOSE_CLASS = 'stratus-canned-close';
 const CANNED_BODY_CLASS = 'stratus-canned-body';
 const RADAR_ADD_CLASS = 'stratus-radar-add-btn';
+// RS.5 — the on-page sweep indicator. One element, portalled to <body>.
+const SWEEP_CHIP_CLASS = 'stratus-sweep-chip';
+const SWEEP_CHIP_DOT_CLASS = 'stratus-sweep-chip-dot';
+const SWEEP_CHIP_TEXT_CLASS = 'stratus-sweep-chip-text';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -165,6 +170,11 @@ const CANNED_BTN_LABEL = 'Canned';
 const CANNED_CACHE_TTL_MS = 60_000;
 const SAVE_BTN_LABEL = 'Save to stratus';
 const RADAR_BTN_LABEL = 'Add to Radar';
+const RADAR_ADD_TITLE = 'Add this tweet to the stratus Radar queue';
+// RS.5 — the accessible name of a ⊕ whose tweet is already in the queue. It is
+// never painted (the queued face is icon-only, see injectStyles), so this is
+// what a screen reader and the tooltip say.
+const RADAR_QUEUED_LABEL = 'Already in the Radar queue';
 const AUTHOR_BTN_LABEL = 'Save author to stratus';
 // How long to wait for X's hover card to render after we synthesise a hover.
 const HOVER_CARD_TIMEOUT_MS = 1500;
@@ -410,10 +420,15 @@ function injectStyles(): void {
     }
     .${ACT_CLASS}[data-state="saved"],
     .${ACT_CLASS}[data-state="added"],
+    .${ACT_CLASS}[data-state="queued"],
     .${ACT_CLASS}[data-state="done"] {
       color: var(--stratus-hot);
       background: var(--stratus-hot-fill);
     }
+    /* RS.5 — "queued" is a standing fact, not a report, so it keeps the lit face
+       but stays icon-only: a timeline where 20 rows are queued must not grow 20
+       widened action rows. The name lives in aria-label/title instead. */
+    .${ACT_CLASS}[data-state="queued"] .${ACT_LABEL_CLASS} { display: none; }
     .${ACT_CLASS}[data-state="failed"] {
       color: var(--stratus-danger);
       background: var(--stratus-danger-fill);
@@ -456,6 +471,55 @@ function injectStyles(): void {
       color: var(--stratus-danger);
       border-color: var(--stratus-danger);
       background: var(--stratus-danger-fill);
+    }
+    /* RS.5 — the sweeping chip. Bottom-LEFT on purpose: x.com leaves that corner
+       free at every width, while bottom-right belongs to the compose FAB. Hot
+       tone because armed means "a thing is running" — the same reading the
+       panel's armed button takes from --strat-ok. Below the canned popover's
+       z-index so a popover opened over it still wins. */
+    .${SWEEP_CHIP_CLASS} {
+      all: unset;
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      z-index: 2147482000;
+      box-sizing: border-box;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      padding: 7px 13px;
+      border-radius: 9999px;
+      font: 600 12px/1 var(--stratus-font);
+      letter-spacing: 0.02em;
+      color: var(--stratus-hot);
+      border: 1px solid var(--stratus-hot-line);
+      background: var(--stratus-hot-fill);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+      transition: color 120ms, border-color 120ms, background 120ms;
+    }
+    .${SWEEP_CHIP_CLASS}:hover {
+      color: var(--stratus-danger);
+      border-color: var(--stratus-danger);
+      background: var(--stratus-danger-fill);
+    }
+    .${SWEEP_CHIP_CLASS}:focus-visible { border-color: currentColor; }
+    .${SWEEP_CHIP_CLASS}[data-state="stopping"] { cursor: progress; opacity: 0.7; }
+    .${SWEEP_CHIP_DOT_CLASS} {
+      width: 7px;
+      height: 7px;
+      border-radius: 9999px;
+      background: currentColor;
+      flex: 0 0 auto;
+      animation: stratus-sweep-pulse 1.8s ease-in-out infinite;
+    }
+    .${SWEEP_CHIP_TEXT_CLASS} { white-space: nowrap; }
+    @keyframes stratus-sweep-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .${SWEEP_CHIP_DOT_CLASS} { animation: none; }
     }
     article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 var(--stratus-hot); }
     article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 var(--stratus-warm); }
@@ -2231,6 +2295,7 @@ function initSweepState(): void {
     .get(SWEEP_STATE_KEY)
     .then((out) => {
       sweepSession = sweepActiveAt(out[SWEEP_STATE_KEY], Date.now());
+      syncSweepChip();
     })
     .catch(() => {
       /* manual — the safe state */
@@ -2238,12 +2303,117 @@ function initSweepState(): void {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     const change = changes[SWEEP_STATE_KEY];
-    if (change) sweepSession = sweepActiveAt(change.newValue, Date.now());
+    if (!change) return;
+    sweepSession = sweepActiveAt(change.newValue, Date.now());
+    // A Start/Stop in the panel must land on the page immediately, not on the
+    // next mutation burst — a chip that appears three scroll ticks after Start
+    // reads as "capture didn't turn on".
+    syncSweepChip();
   });
 }
 
 function sweepIsArmed(): boolean {
   return sweepActiveAt(sweepSession, Date.now()) !== null;
+}
+
+// ------------------------------------------------------ the sweeping chip (RS.5)
+//
+// While a sweep is armed, one small pill sits bottom-left saying so and carrying
+// the minutes left, so the page alone answers "how long have I been sweeping"
+// without opening the panel. Clicking it removes `radar:sweep` — stopping the
+// sweep from the page is one click and reversible.
+//
+// Deliberately NOT: filter editing, a count badge, or a Start control. Starting
+// from here would need the filters visible to be honest about what it arms.
+
+/** The armed `expiresAt` a timer is currently pending for — one timeout at a
+ *  time, re-armed only when the session actually changes. */
+let sweepChipTimerFor: string | null = null;
+let sweepChipTimer: number | null = null;
+
+function clearSweepChipTimer(): void {
+  if (sweepChipTimer !== null) window.clearTimeout(sweepChipTimer);
+  sweepChipTimer = null;
+  sweepChipTimerFor = null;
+}
+
+function buildSweepChip(): HTMLButtonElement {
+  const chip = document.createElement('button');
+  chip.type = 'button';
+  chip.className = SWEEP_CHIP_CLASS;
+  chip.dataset.state = 'active';
+  chip.title = 'Stop the sweep — the Radar goes back to manual';
+  const dot = document.createElement('span');
+  dot.className = SWEEP_CHIP_DOT_CLASS;
+  dot.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.className = SWEEP_CHIP_TEXT_CLASS;
+  chip.append(dot, text);
+  chip.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    onSweepChipClick(chip);
+  });
+  document.body.appendChild(chip);
+  return chip;
+}
+
+function syncSweepChip(): void {
+  const now = Date.now();
+  const session = sweepActiveAt(sweepSession, now);
+  const existing = document.querySelector<HTMLButtonElement>(`.${SWEEP_CHIP_CLASS}`);
+  if (!session) {
+    existing?.remove();
+    clearSweepChipTimer();
+    return;
+  }
+
+  const label = `Sweeping · ${sweepMinutesLeft(session, now)}m left`;
+  const chip = existing ?? buildSweepChip();
+  // The sig skip is the applyPersonChips discipline: scan() runs on every
+  // mutation burst and X emits hundreds per scroll tick.
+  if (chip.dataset.sig !== label) {
+    chip.dataset.sig = label;
+    const text = chip.querySelector<HTMLElement>(`.${SWEEP_CHIP_TEXT_CLASS}`);
+    if (text) text.textContent = label;
+    chip.setAttribute('aria-label', `${label}. Click to stop capturing.`);
+  }
+
+  // One timeout armed at expiry so the chip disappears on a quiet page instead
+  // of waiting for a mutation burst that may never come. It does NOT own the
+  // truth — every reader resolves through sweepActiveAt (RS.3) — it only causes
+  // the re-render. The countdown itself refreshes on scans, which is exactly
+  // when a sweep is being used.
+  if (sweepChipTimerFor !== session.expiresAt) {
+    clearSweepChipTimer();
+    sweepChipTimerFor = session.expiresAt;
+    sweepChipTimer = window.setTimeout(
+      () => {
+        sweepChipTimer = null;
+        sweepChipTimerFor = null;
+        syncSweepChip();
+      },
+      Math.max(0, Date.parse(session.expiresAt) - now) + 250,
+    );
+  }
+}
+
+function onSweepChipClick(chip: HTMLButtonElement): void {
+  chip.dataset.state = 'stopping';
+  void chrome.storage.local
+    .remove(SWEEP_STATE_KEY)
+    .then(() => {
+      sweepSession = null;
+      syncSweepChip();
+    })
+    .catch(() => {
+      // The key is still there, so the page is still capturing. Say the sweep is
+      // running, because it is — a chip that vanished on a failed stop would be
+      // the one lie this control cannot afford (RS.4).
+      chip.dataset.state = 'active';
+      chip.dataset.sig = '';
+      syncSweepChip();
+    });
 }
 
 function looksLikeReplyBait(article: Element): boolean {
@@ -2907,7 +3077,7 @@ function attachRadarAddButton(article: Element): void {
     icons: [svgIcon(ICON_PLUS_CIRCLE)],
     tone: 'muted',
     order: ACT_ORDER.radar,
-    title: 'Add this tweet to the stratus Radar queue',
+    title: RADAR_ADD_TITLE,
     label: RADAR_BTN_LABEL,
     extraClass: RADAR_ADD_CLASS,
   });
@@ -2952,8 +3122,14 @@ function onRadarAddClick(btn: HTMLButtonElement): void {
   setActLabel(btn, 'Added to Radar');
   window.setTimeout(() => {
     if (!btn.isConnected) return;
+    // RS.5: settle into whatever the buffer now says — `queued` if the
+    // background accepted the write, `idle` if it never landed. A hard reset to
+    // idle flashed a just-added tweet back to empty, which read as "it didn't
+    // take". The state clear is what releases the button from the 'added' skip
+    // in syncRadarAddStates.
     btn.dataset.state = 'idle';
-    setActLabel(btn, RADAR_BTN_LABEL);
+    btn.dataset.sig = '';
+    syncRadarAddStates();
   }, 1500);
 
   const msg: RadarReport = { type: 'stratus/radar-report', sightings: [sighting] };
@@ -2964,6 +3140,66 @@ function onRadarAddClick(btn: HTMLButtonElement): void {
       console.warn('[stratus] radar add failed', err);
     }
   })();
+}
+
+// ------------------------------------------------- the ⊕ that remembers (RS.5)
+//
+// Which tweets are already in the Radar queue, so a ⊕ scrolled back to renders
+// lit instead of pretending nothing was ever added.
+//
+// **READ-ONLY.** The background is the single writer of the sightings buffer
+// (§7.24); this is a mirror and never writes back. Pruned at read time with the
+// same `pruneStale` the panel reads through, so the page and the queue can't
+// disagree about what is still queueable.
+//
+// Derived state that can be stale by one flush window — fine for an affordance,
+// and not a reason to poll. A dismissed row leaves the buffer, so the ⊕ goes
+// back to idle on the change event that removed it.
+const queuedIds = new Set<string>();
+
+function readQueuedIds(raw: unknown): void {
+  queuedIds.clear();
+  for (const s of pruneStale(coerceSightings(raw), Date.now())) queuedIds.add(s.tweetId);
+}
+
+function initQueuedIds(): void {
+  chrome.storage.local
+    .get(RADAR_SIGHTINGS_KEY)
+    .then((out) => {
+      readQueuedIds(out[RADAR_SIGHTINGS_KEY]);
+      syncRadarAddStates();
+    })
+    .catch(() => {
+      /* nothing queued as far as this page knows — the idle face is the safe one */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[RADAR_SIGHTINGS_KEY];
+    if (!change) return;
+    readQueuedIds(change.newValue);
+    syncRadarAddStates();
+  });
+}
+
+function syncRadarAddStates(): void {
+  for (const btn of document.querySelectorAll<HTMLButtonElement>(`.${RADAR_ADD_CLASS}`)) {
+    // The optimistic "Added to Radar" face owns the button for its 1.5s; the
+    // revert in onRadarAddClick hands it back.
+    if (btn.dataset.state === 'added') continue;
+    const article = btn.closest('article[data-testid="tweet"]');
+    // Re-derived per scan, never cached on the button: X recycles action rows
+    // as it virtualises the timeline, and a remembered id would eventually
+    // light the ⊕ on somebody else's post.
+    const tweetId = article ? (findPermalink(article)?.tweetId ?? '') : '';
+    const state = tweetId && queuedIds.has(tweetId) ? 'queued' : 'idle';
+    const sig = `${tweetId}:${state}`;
+    if (btn.dataset.sig === sig) continue; // unchanged — skip the DOM write
+    btn.dataset.sig = sig;
+    btn.dataset.state = state;
+    const label = state === 'queued' ? RADAR_QUEUED_LABEL : RADAR_BTN_LABEL;
+    btn.title = state === 'queued' ? RADAR_QUEUED_LABEL : RADAR_ADD_TITLE;
+    setActLabel(btn, label);
+  }
 }
 
 // ------------------------------------------------- passive hover capture (C6)
@@ -3750,6 +3986,8 @@ function scan(root: ParentNode): void {
   syncContextPanel(focusedId);
   syncVariantChips(focusedId);
   syncAuthorButton();
+  syncRadarAddStates();
+  syncSweepChip();
   capturePassiveHoverCards();
   captureLaunchReplies();
   syncActiveTimesCapture();
@@ -3781,6 +4019,7 @@ function start(): void {
   initContextCollapsed();
   initMirroredConfig();
   initSweepState();
+  initQueuedIds();
   initReplyFocus();
   scan(document);
   const observer = new MutationObserver(scheduleScan);

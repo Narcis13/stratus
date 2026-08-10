@@ -342,10 +342,18 @@ Recalibrate the sweep defaults from that at **n ≥ 100 swept rows**, never earl
 **Tests:** none new (`content.ts` is browser-verified by convention). If a preview/label helper appears, it goes in a `shared/` module with a suite, the `variantChips.ts` precedent.
 
 **Done when:**
-- [ ] The chip appears on Start, shows the remaining minutes, stops the sweep on click, and disappears at expiry on an idle page
-- [ ] ⊕ on a queued tweet renders lit after scrolling away and back, and returns to idle when the row is cleared from the panel
-- [ ] `cd extension && bun run build` green; `bun test` + `bun run typecheck` + `bun run lint` green
-- [ ] Committed: `feat(radar): RS.5 the sweeping chip and a ⊕ that remembers`
+- [x] The chip appears on Start, shows the remaining minutes, stops the sweep on click, and disappears at expiry on an idle page ← by construction: the `SWEEP_STATE_KEY` `onChanged` listener now calls `syncSweepChip()` (so a panel Start/Stop lands on the page immediately, not on the next mutation burst), the label is `sweepMinutesLeft(session, now)` through the RS.4 helper, the click `remove`s the key, and one `setTimeout` armed at `expiresAt + 250ms` re-syncs on a quiet page. **Interaction proof is Task 6's browser pass** (`dist/content.js` carries `stratus-sweep-chip` ×3, `Sweeping · `, `m left`, `stratus-sweep-pulse`).
+- [x] ⊕ on a queued tweet renders lit after scrolling away and back, and returns to idle when the row is cleared from the panel ← `syncRadarAddStates()` from `scan()` (which is what re-runs on scroll-back) over a read-only `queuedIds` mirror fed by one `chrome.storage.local.get(RADAR_SIGHTINGS_KEY)` + an `onChanged` listener; a dismiss rewrites that key, so the ⊕ returns to idle on the same event. `dist/content.js` carries `radar:sightings` and `Already in the Radar queue`.
+- [x] `cd extension && bun run build` green; `bun test` (2349 server across 124 files + 547 extension across 33 — **unchanged, no new suite: `content.ts` is browser-verified by convention and no helper was extracted**) + `bun run typecheck` + `bun run lint` green
+- [x] Committed: `feat(radar): RS.5 the sweeping chip and a ⊕ that remembers`
+
+**Shipped note (for Task 6's docs-sync):**
+1. **The queued mirror is pruned at READ time, with the panel's own `pruneStale`.** Both existing readers (`background.ts`, `Radar.tsx`) prune what they read; a page that skipped it would light a ⊕ for a row the panel had already aged out, and the two surfaces would disagree about the same buffer. Read-only in both directions — §7.24's single writer is untouched.
+2. **The tweetId is re-derived per scan, never cached on the button.** `radarAddHandled` keys off the action ROW, and X recycles rows as it virtualises the timeline, so a remembered id would eventually light the ⊕ on somebody else's post. One extra `findPermalink` per rendered radar button per scan, inside the budget `applyBand`/`applyPersonChips` already pay per article; a `data-sig` skip means an unchanged scan writes no DOM.
+3. **`queued` is icon-only** — it joins the `saved`/`added`/`done` lit-face rule but a second rule hides its `ACT_LABEL`, because a standing fact must not widen 20 action rows the way a 1.5 s status report can. The name lives in `title`/`aria-label` (`Already in the Radar queue`).
+4. **The 1.5 s revert clears `data-state` *and* `data-sig` before re-syncing.** `syncRadarAddStates` skips buttons reading `added` (so a storage event 200 ms after the click can't cut the confirmation flash short), which means the revert has to release that hold explicitly — otherwise the button would be frozen on its optimistic face until the next id change.
+5. **The chip is hot-toned at rest and danger-toned on hover** — armed is "a thing is running" (the same reading RS.4's `--strat-ok` armed button takes), and the hover states what the click does. No new overlay token was needed; every rule is `var(--stratus-*)`. The pulse dot is disabled under `prefers-reduced-motion`.
+6. **A failed stop says "still sweeping", it does not vanish.** `chrome.storage.local.remove` rejecting leaves the key — and therefore the capture arm — armed, so the chip re-renders its live countdown rather than reporting a stop that did not happen (RS.4's shipped note 3, on the page side).
 
 **Cost note:** $0.
 
