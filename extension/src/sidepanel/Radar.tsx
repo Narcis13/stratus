@@ -1437,21 +1437,24 @@ function rowAngles(
   return s.reply ? [{ angle: null, text: s.reply, gloss: null }] : [];
 }
 
-// The band chip's face. Only 'roster' needs a translation: the stored value is
-// the cohort key the server records, "your circle" is what it means to a human
-// (GT.8).
+// The band chip's face. Two need a translation: the stored value is the cohort
+// key the server records, "your circle" (GT.8) and "swept" (RS.2) are what they
+// mean to a human.
 const BAND_LABEL: Record<RadarSighting['band'], string> = {
   hot: 'hot',
   warm: 'warm',
   manual: 'manual',
   roster: 'your circle',
   cannon: 'cannon',
+  sweep: 'swept',
 };
 
 // A band carries a tooltip when its reason ISN'T visible in the numbers under
-// it (the GT.8 rule). Two qualify: a roster capture says nothing about the
-// tweet, and a cannon capture is a claim the band chip alone can't distinguish
-// from the read-time score — the tweet may be here because of who posted it.
+// it (the GT.8 rule). Three qualify: a roster capture says nothing about the
+// tweet, a cannon capture is a claim the band chip alone can't distinguish
+// from the read-time score — the tweet may be here because of who posted it —
+// and a sweep admission is the user's own filters talking, some of which
+// (likes, verified) aren't in the numbers on the card at all.
 // hot/warm/manual are self-explaining and stay bare.
 const BAND_TITLE: Record<RadarSighting['band'], string | undefined> = {
   hot: undefined,
@@ -1461,6 +1464,8 @@ const BAND_TITLE: Record<RadarSighting['band'], string | undefined> = {
     'Below the reply band, but in the queue anyway: you have replied to them before, or they are on your 2–10x target roster. Same rule the reply gate uses.',
   cannon:
     'Captured for the cannon: either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast.',
+  sweep:
+    'Your sweep filters admitted this one — the band classifier had no opinion. Tune the numbers in the Radar gear or Settings → Tuning.',
 };
 
 // S0.3 chip tooltip — why this author outranks a louder rando.

@@ -1232,6 +1232,14 @@ button.danger:hover:not(:disabled) {
   border: 1px solid color-mix(in srgb, var(--strat-accent) 40%, transparent);
   background: transparent;
 }
+/* RS.2: admitted by the user's own sweep filters, with no classifier verdict
+   behind it. Muted like the roster capture — neither is a claim about the tweet
+   — but dashed, because the rule that let it in is one the user can change. */
+.radar-band-sweep {
+  color: var(--strat-muted);
+  border: 1px dashed color-mix(in srgb, var(--strat-muted) 55%, transparent);
+  background: transparent;
+}
 .radar-author {
   flex: 1;
   font-size: 11px;

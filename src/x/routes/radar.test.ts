@@ -21,8 +21,9 @@ const T_MANUAL = '991000000000000004'; // RU.8: band='manual' + signals
 const T_TTL = '991000000000000005'; // UI.4: 10h-old row for the TTL knob
 const T_ROSTER = '991000000000000006'; // GT.8: band='roster' + signals
 const T_CANNON = '991000000000000007'; // CQ.4: band='cannon' + signals
+const T_SWEEP = '991000000000000008'; // RS.2: band='sweep' + signals
 const T_UNKNOWN = '991999999999999999'; // no row — 404
-const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL, T_ROSTER, T_CANNON];
+const IDS = [T_WITH, T_NULL, T_OTHER, T_MANUAL, T_TTL, T_ROSTER, T_CANNON, T_SWEEP];
 
 const PRIMARY_TEXT = 'v1 extends: I shipped mine in 3 days';
 const VARIANTS = [
@@ -114,6 +115,19 @@ beforeAll(async () => {
       band: 'cannon',
       signals: { views: 204_000, replies: 6, ageMin: 9, vpm: 22_666, bait: false },
       replyText: 'cannon reply',
+      angle: 'extends',
+    },
+    {
+      // RS.2: an armed sweep's filters admitted this one — no classifier verdict
+      // behind it, so the column is the only record of why it was queued.
+      tweetId: T_SWEEP,
+      url: `https://x.com/gina/status/${T_SWEEP}`,
+      handle: 'gina',
+      author: 'Gina',
+      snippet: 'an ordinary post my sweep filters let through',
+      band: 'sweep',
+      signals: { views: 610, replies: 2, ageMin: 18, vpm: 34, bait: false },
+      replyText: 'sweep reply',
       angle: 'extends',
     },
   ]);
@@ -431,5 +445,24 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
     // WHY it held this row, so radar_drafts.band is untouched.
     const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, T_CANNON));
     expect(row?.band).toBe('cannon');
+  });
+
+  test("confirm: a 'sweep' band lands as null in the stored reply snapshot (RS.2, §7.19)", async () => {
+    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_SWEEP}/confirm`, 'POST');
+    expect(status).toBe(201);
+    // Fourth member of the queue-metadata family. Asserted against the ROW READ
+    // BACK FROM THE DB, not the response body: what a later Playbook read sees is
+    // the persisted snapshot, and a coercion that only held in the response would
+    // pass a body-only check while still writing a capture reason into a band
+    // cell.
+    const [reply] = await db.select().from(replyDrafts).where(eq(replyDrafts.id, body.id));
+    expect(reply).toBeDefined();
+    const snapshot = reply?.contextSnapshot as ReplyRow['contextSnapshot'];
+    expect(snapshot.signals).toBeDefined();
+    expect(snapshot.signals?.band).toBeNull();
+    expect(snapshot.metrics.views).toBe(610);
+    // The queue must still be able to say why it held the row.
+    const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, T_SWEEP));
+    expect(row?.band).toBe('sweep');
   });
 });

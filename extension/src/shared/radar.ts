@@ -22,11 +22,16 @@ import type { ReplyModeSource, ReplyVariant } from './types.ts';
 // author is on the camped cannon roster. Unlike 'roster' this one IS partly a
 // claim about the tweet — but it is the Cannon view's own reading, not the
 // band classifier's, so it stays queue metadata like the other two.
-// All three are queue/UX metadata, not classifier verdicts — none ever enters
+// 'sweep' = an armed sweep's filters admitted this post (RS.2) and the band
+// classifier had no opinion on it — your own min/max impressions/likes/replies,
+// age and verified-only rules are the entire reason it is here. A tweet the
+// classifier DID call hot/warm keeps that verdict; 'sweep' is only ever the
+// else-branch.
+// All four are queue/UX metadata, not classifier verdicts — none ever enters
 // the Playbook's hot/warm band cells (their reply_drafts signals keep the real
-// computed band, null when uncomputed; the confirm endpoint coerces all three
+// computed band, null when uncomputed; the confirm endpoint coerces all four
 // away).
-export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster' | 'cannon';
+export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster' | 'cannon' | 'sweep';
 
 // How strongly a stored band resists being overwritten by a re-sighting. A
 // human pin outranks everything; a real classifier verdict outranks a roster
@@ -41,6 +46,9 @@ export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster' | 'cannon';
 // pre-existing behaviour for every hot/warm pair. Only 'roster', which says
 // nothing about the tweet, sits below.
 //
+// 'sweep' takes the same split as 'cannon' for the same reason: filters the user
+// wrote and armed on purpose are a real reason to hold the row.
+//
 // The asymmetry matters in both directions: a roster row that catches fire takes
 // the fresher hot/warm verdict (the upgrade), while a tweet that EARNED hot and
 // then went quiet is never demoted to 'roster' on the next scroll past it — vpm
@@ -48,7 +56,7 @@ export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster' | 'cannon';
 function bandStickiness(b: RadarBand): number {
   if (b === 'manual') return 2;
   if (b === 'roster') return 0;
-  return 1; // hot / warm / cannon
+  return 1; // hot / warm / cannon / sweep
 }
 
 // Who the author is, as far as the people layer knows (S0.3). A warm post from
@@ -107,6 +115,19 @@ export interface RadarSighting {
   // rankmap after every buffer write — always re-derived, never merged, so a
   // stage change is reflected on the next write.
   personTier?: PersonTier;
+  // RS.2 — two capture-time facts the sweep filters admit on that `signals`
+  // doesn't carry, kept so a queue card can show WHY the row is here (a
+  // min-likes or verified-only rule is invisible in views/replies/age).
+  //
+  // Extension-only on purpose: they are not on the batch-draft wire and there is
+  // no column for them. They deliberately do NOT go into `TweetSignals`, which
+  // is the server-shared shape stored inside `radar_drafts.signals` and
+  // `reply_drafts.contextSnapshot` — widening that would reach the band gate,
+  // the Playbook funnel and every snapshot already written.
+  //
+  // Merged like `reply`: a metric-less re-sighting keeps what was captured.
+  likes?: number;
+  verified?: boolean;
 }
 
 // Buffer keys. These live in **chrome.storage.local**, not `.session`: the
@@ -160,6 +181,11 @@ export function mergeSightings(
     // row with no chip the moment the tweet scrolled past again.
     const mode = s.mode ?? prev.mode;
     const modeSource = s.modeSource ?? prev.modeSource;
+    // RS.2: same terms — a re-sighting that couldn't read the like count or the
+    // verified badge (a collapsed card, a drifted selector) must not erase what
+    // the capture that admitted this row actually saw.
+    const likes = s.likes ?? prev.likes;
+    const verified = s.verified ?? prev.verified;
     // The stickier band survives (RU.8 human pin > classifier verdict > GT.8
     // roster capture); at equal stickiness the fresher incoming band wins.
     const band = bandStickiness(prev.band) > bandStickiness(s.band) ? prev.band : s.band;
@@ -170,6 +196,8 @@ export function mergeSightings(
     if (draftId !== undefined) merged.draftId = draftId;
     if (mode !== undefined) merged.mode = mode;
     if (modeSource !== undefined) merged.modeSource = modeSource;
+    if (likes !== undefined) merged.likes = likes;
+    if (verified !== undefined) merged.verified = verified;
     byId.set(s.tweetId, merged);
   }
   const all = [...byId.values()];
@@ -242,10 +270,14 @@ function tierWeight(t: PersonTier | undefined): number {
 // Queue is the reciprocity lane, ranked tier-first, and an arbitrage capture
 // must not outrank a hot one inside it. The cannon ordering (by score, by age)
 // lives in the Cannon view and nowhere else.
+//
+// 'sweep' (RS.2) takes the identical split for the identical reason — see the
+// stickiness note above.
 function bandWeight(b: RadarBand): number {
   if (b === 'hot') return 2;
   if (b === 'warm') return 1;
-  return 0; // roster / cannon — and 'manual', which never reaches here against a non-pin
+  // roster / cannon / sweep — and 'manual', which never reaches here against a non-pin
+  return 0;
 }
 
 // Queue order: a manual add (the human pinned it, RU.8) tops everything; then
@@ -450,7 +482,8 @@ export function isRadarSighting(v: unknown): v is RadarSighting {
       r.band === 'warm' ||
       r.band === 'manual' ||
       r.band === 'roster' ||
-      r.band === 'cannon') &&
+      r.band === 'cannon' ||
+      r.band === 'sweep') &&
     typeof r.signals === 'object' &&
     r.signals !== null
   );

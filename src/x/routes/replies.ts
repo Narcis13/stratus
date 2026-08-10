@@ -930,7 +930,7 @@ replies.post('/replies/generate-batch', async (c) => {
 });
 
 // Every `band` a batch tweet may claim: the two real classifier verdicts plus
-// the three queue-metadata bands (RU.8 / GT.8 / CQ.4). Mirrors
+// the four queue-metadata bands (RU.8 / GT.8 / CQ.4 / RS.2). Mirrors
 // `RadarBatchTweet['band']` — widen both together.
 const ACCEPTED_BATCH_BANDS: ReadonlySet<string> = new Set([
   'hot',
@@ -938,6 +938,7 @@ const ACCEPTED_BATCH_BANDS: ReadonlySet<string> = new Set([
   'manual',
   'roster',
   'cannon',
+  'sweep',
 ]);
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
@@ -976,7 +977,8 @@ export function parseBatchTweets(
     let band: RadarBatchTweet['band'];
     if (r.band !== undefined && r.band !== null) {
       // 'manual' = a ⊕ add (RU.8), 'roster' = a quiet post by someone in my
-      // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4); all three are
+      // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4), 'sweep' = an
+      // armed sweep's filters (RS.2); all four are
       // stored on radar_drafts.band as queue metadata, never classifier verdicts
       // — the confirm endpoint coerces them away from the reply_drafts
       // contextSnapshot signals. Not re-checked against the people layer or the

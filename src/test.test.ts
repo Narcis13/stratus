@@ -1024,6 +1024,12 @@ describe('batch replies (Radar §7.2)', () => {
     if ('error' in cannon) throw new Error(cannon.error);
     expect(cannon.tweets[0]?.band).toBe('cannon');
 
+    // RS.2: a sweep admission — the fourth. The wire has to accept it or a swept
+    // row can't be drafted at all, which is the whole queue under manual-first.
+    const sweep = parseBatchTweets([{ tweetId: '666', handle: 'gina', text: 'g', band: 'sweep' }]);
+    if ('error' in sweep) throw new Error(sweep.error);
+    expect(sweep.tweets[0]?.band).toBe('sweep');
+
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
     });

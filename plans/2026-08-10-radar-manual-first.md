@@ -1,6 +1,6 @@
 # Radar manual-first — handpicked queue + an armed sweep with explicit admission rules
 
-- **Status:** planned 2026-08-10 · **Task 1 (RS.1) SHIPPED 2026-08-10** — the sweep core, the `sweep` registry group (registry recount after RS.1: **17 groups / 79 knobs / 44 mirrored**) and the extension mirror. Tasks 2–6 open.
+- **Status:** planned 2026-08-10 · **Task 1 (RS.1) SHIPPED 2026-08-10** — the sweep core, the `sweep` registry group (registry recount after RS.1: **17 groups / 79 knobs / 44 mirrored**) and the extension mirror. · **Task 2 (RS.2) SHIPPED 2026-08-10** — the sixth band `'sweep'` end to end (buffer → batch wire → `radar_drafts` → confirm-coerced to `null`) plus `likes`/`verified` on the sighting. Tasks 3–6 open.
 - **Goal fit:** Goal 4 (Circles / the people layer) — the Radar is the reply-target queue. This does not add a goal, it takes control of one that currently fills itself.
 - **Cost impact:** **$0 to build and $0 to run.** No X call, no LLM call, no table, no migration. Recurring cost *falls*: a smaller queue means `Draft replies` / `Curate & draft` batch fewer tweets per click (~$0.002–0.01 per call today, unchanged per call, fewer rows in it).
 - **Invariants touched:** §7.4 (refuse-before-spend, applied here as gate ORDER inside `applyBand` — free checks before the one DOM read); §7.11 (null = unknown — and why the verified gate deliberately reads unknown as *fail*); §7.19 (every threshold below is an opening guess, recalibrate at a stated n, never by feel); §7.24 (background stays the single writer of the **buffer**; the sweep switch is config, not buffer — the `passiveCapture` precedent); §7.26 (new shared modules must inline into the content IIFE — no deps); §7.27 (one parser: the sweep predicate has ONE home shared by registry and page); §7.33 (a borrowed threshold is replayed before it ships — here every default is restated from BAND with its provenance, not imported).
@@ -209,10 +209,12 @@ Recalibrate the sweep defaults from that at **n ≥ 100 swept rows**, never earl
 - `src/x/routes/radar.test.ts`: a `radar_drafts` row stored with `band: 'sweep'` confirms to a `reply_drafts` row whose `contextSnapshot.signals.band` is `null` (**read the row back from the DB** — `persistRadarDrafts`-class writes are best-effort, so a green call proves nothing, RC.5's lesson).
 
 **Done when:**
-- [ ] A `'sweep'` band round-trips buffer → batch wire → `radar_drafts` → confirm, and lands as `band: null` in the reply snapshot
-- [ ] `BAND_LABEL` is exhaustive again (the `Record<RadarSighting['band'], string>` type forces it)
-- [ ] `bun test` + `bun run typecheck` + `bun run lint` green; `cd extension && bun run build` green
-- [ ] Committed: `feat(radar): RS.2 the sixth band — 'sweep' end to end, plus likes/verified on the sighting`
+- [x] A `'sweep'` band round-trips buffer → batch wire → `radar_drafts` → confirm, and lands as `band: null` in the reply snapshot
+- [x] `BAND_LABEL` is exhaustive again (the `Record<RadarSighting['band'], string>` type forces it)
+- [x] `bun test` (2339 pass) + `bun run typecheck` + `bun run lint` green; `cd extension && bun run build` green
+- [x] Committed: `feat(radar): RS.2 the sixth band — 'sweep' end to end, plus likes/verified on the sighting`
+
+**Shipped note (for Task 6's docs-sync + Task 3's author):** the plan's file list was **two files short of the round-trip**, both found by following the wire rather than the list. (1) **`src/x/routes/replies.ts::ACCEPTED_BATCH_BANDS`** — the runtime validator behind `POST /x/replies/generate-batch`, whose own comment says it mirrors `RadarBatchTweet['band']`; the union is a compile-time type and this Set is what actually refuses, so widening only the type would have made every swept row fail `invalid_tweet_band_i` at draft time — the whole queue under manual-first. (2) **`extension/src/sidepanel/styles.css`** — the chip renders `radar-band-${s.band}`, so a sixth band with no rule paints only the base pill; `.radar-band-sweep` is muted like `.radar-band-roster` (neither is a claim about the tweet) but **dashed**, because the rule that admitted it is one the user can change. Also: there is no `ROSTER_BAND_TITLE` constant to sit beside — the tooltips are inline entries in `BAND_TITLE`, and `sweep` follows that (a named const declared after `BAND_TITLE` would be a TDZ throw at module load).
 
 **Cost note:** $0.
 

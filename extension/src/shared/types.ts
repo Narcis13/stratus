@@ -925,9 +925,10 @@ export interface BatchReplyTweet {
   text: string;
   url?: string;
   // 'manual' = a ⊕ pinned tweet (RU.8), 'roster' = a quiet post by someone in my
-  // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4); carried through so
-  // radar_drafts.band records it (queue metadata), never sent to Grok.
-  band?: 'hot' | 'warm' | 'manual' | 'roster' | 'cannon';
+  // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4), 'sweep' = an armed
+  // sweep's filters admitted it (RS.2); carried through so radar_drafts.band
+  // records it (queue metadata), never sent to Grok.
+  band?: 'hot' | 'warm' | 'manual' | 'roster' | 'cannon' | 'sweep';
   signals?: TweetSignals;
   // RC.2/RC.4 — the 0–100 reply-payoff score the curation pass gave this tweet,
   // stored on radar_drafts so "did curation pick better tweets?" is answerable

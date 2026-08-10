@@ -269,6 +269,54 @@ describe('mergeSightings', () => {
     expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
     expect(merged.some((s) => s.tweetId === 'cannon-1')).toBe(true);
   });
+
+  test('a sweep admission is never demoted by a roster re-sight (RS.2)', () => {
+    // Same rung as hot/warm/cannon: the user's own filters admitted this row, so
+    // "someone I know posted it" is not new information that should replace it.
+    const swept = sighting('1', { band: 'sweep' });
+    expect(mergeSightings([swept], [sighting('1', { band: 'roster' })], [])[0]?.band).toBe('sweep');
+  });
+
+  test('a sweep row takes a fresher hot verdict (RS.2 shares the hot/warm rung)', () => {
+    const swept = sighting('1', { band: 'sweep' });
+    expect(mergeSightings([swept], [sighting('1', { band: 'hot' })], [])[0]?.band).toBe('hot');
+    // …and back the other way, which is what "same rung" means.
+    expect(mergeSightings([sighting('1', { band: 'hot' })], [swept], [])[0]?.band).toBe('sweep');
+  });
+
+  test('a manual pin still outranks a sweep re-sight', () => {
+    const pinned = sighting('1', { band: 'manual' });
+    expect(mergeSightings([pinned], [sighting('1', { band: 'sweep' })], [])[0]?.band).toBe(
+      'manual',
+    );
+  });
+
+  test('likes/verified survive a metric-less re-sighting (RS.2)', () => {
+    // The sweep admitted this row on numbers the card can't otherwise show; a
+    // re-sight that couldn't read them must not erase why it is here.
+    const captured = sighting('1', { band: 'sweep', likes: 42, verified: true });
+    const resighted = sighting('1', { band: 'sweep', lastSeenAt: '2026-06-10T11:00:00.000Z' });
+    const merged = mergeSightings([captured], [resighted], []);
+    expect(merged[0]?.likes).toBe(42);
+    expect(merged[0]?.verified).toBe(true);
+    expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z');
+  });
+
+  test('a fresher read of likes/verified wins (RS.2)', () => {
+    const captured = sighting('1', { likes: 5, verified: false });
+    const later = sighting('1', { likes: 60, verified: true });
+    const merged = mergeSightings([captured], [later], []);
+    expect(merged[0]?.likes).toBe(60);
+    expect(merged[0]?.verified).toBe(true);
+  });
+
+  test('likes/verified stay ABSENT, not undefined, when never captured', () => {
+    // exactOptionalPropertyTypes: an `undefined` value would round-trip through
+    // JSON as a dropped key anyway, so the buffer must never write one.
+    const merged = mergeSightings([sighting('1')], [sighting('1', { reply: 'r' })], []);
+    expect(merged[0] && 'likes' in merged[0]).toBe(false);
+    expect(merged[0] && 'verified' in merged[0]).toBe(false);
+  });
 });
 
 describe('appendDismissed', () => {
@@ -360,6 +408,35 @@ describe('rankSightings', () => {
       'hot-slow',
       'warm-slow',
       'roster-fast',
+    ]);
+  });
+
+  test('a sweep admission ranks below hot and under a manual pin (RS.2)', () => {
+    // Weight 0, unlike its stickiness rung: the main Queue is tier-first and a
+    // filter admission must not outrank a verdict inside it. Same tier on all
+    // three so band is the only thing being read here, and the swept row has the
+    // best vpm so a wrong weight would surface as a pass.
+    const rows = [
+      sighting('sweep-fast', {
+        band: 'sweep',
+        personTier: 'target',
+        signals: { views: 900, replies: 1, ageMin: 3, vpm: 300, bait: false },
+      }),
+      sighting('hot-slow', {
+        band: 'hot',
+        personTier: 'target',
+        signals: { views: 900, replies: 9, ageMin: 200, vpm: 4, bait: false },
+      }),
+      sighting('manual-cold', {
+        band: 'manual',
+        personTier: 'target',
+        signals: { views: 0, replies: 0, ageMin: 2, vpm: 0, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
+      'manual-cold',
+      'hot-slow',
+      'sweep-fast',
     ]);
   });
 
@@ -715,6 +792,7 @@ describe('isRadarSightings', () => {
     expect(isRadarSightings([sighting('1', { band: 'manual' })])).toBe(true);
     expect(isRadarSightings([sighting('1', { band: 'roster' })])).toBe(true); // GT.8
     expect(isRadarSightings([sighting('1', { band: 'cannon' })])).toBe(true); // CQ.4
+    expect(isRadarSightings([sighting('1', { band: 'sweep' })])).toBe(true); // RS.2
     expect(isRadarSightings([{ ...sighting('1'), band: 'cold' }])).toBe(false);
     expect(isRadarSightings([])).toBe(true);
     expect(isRadarSightings(undefined)).toBe(false);
@@ -728,6 +806,10 @@ describe('coerceSightings', () => {
     const good = sighting('1');
     expect(coerceSightings([good, { nope: true }, sighting('2')])).toEqual([good, sighting('2')]);
     expect(coerceSightings([{ ...sighting('1'), band: 'cold' }])).toEqual([]);
+    // RS.2 — a swept row survives a reload like every other band; a reader that
+    // dropped it would silently empty the queue of everything the sweep caught.
+    const swept = sighting('3', { band: 'sweep', likes: 12, verified: true });
+    expect(coerceSightings([swept])).toEqual([swept]);
     expect(coerceSightings(undefined)).toEqual([]);
     expect(coerceSightings('not an array')).toEqual([]);
     expect(coerceSightings([])).toEqual([]);
