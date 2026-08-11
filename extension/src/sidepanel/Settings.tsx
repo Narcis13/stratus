@@ -16,7 +16,7 @@ import {
   api,
 } from './api.ts';
 import { COMING_SOON, comingSoonMatches } from './comingSoon.ts';
-import { filterSettingGroups, visibleSettingGroups } from './settingsClient.ts';
+import { filterSettingGroups, groupResetTarget, visibleSettingGroups } from './settingsClient.ts';
 import { useSettingsEditor } from './settingsEditor.ts';
 import {
   DEFAULT_DENSITY,
@@ -387,6 +387,7 @@ function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
     busyGroup,
     change,
     resetKey,
+    resetKeyList,
     resetGroupId,
   } = useSettingsEditor(settings);
   const [query, setQuery] = useState('');
@@ -412,6 +413,9 @@ function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
   }
 
   const filtered = filterSettingGroups(groups, query);
+  // How many knobs each group really has, so a card rendering a search-filtered
+  // subset can tell that it is one — `filtered` alone cannot.
+  const fullSizes = new Map(groups.map((g) => [g.id, g.settings.length]));
   const features = COMING_SOON.filter((f) => comingSoonMatches(f, query));
   const totalKnobs = groups.reduce((n, g) => n + g.settings.length, 0);
   const shownKnobs = filtered.reduce((n, g) => n + g.settings.length, 0);
@@ -448,39 +452,62 @@ function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
         </div>
       )}
 
-      {filtered.map((group) => (
-        <div className="panel" key={group.id}>
-          <Section
-            title={group.label}
-            actions={
-              <button
-                type="button"
-                className="settings-group-reset"
-                disabled={busyGroup === group.id}
-                onClick={() => resetGroupId(group.id)}
-              >
-                {busyGroup === group.id ? 'Resetting…' : 'Reset group'}
-              </button>
-            }
-          >
-            {GROUP_NOTE[group.id] && <p className="muted settings-note">{GROUP_NOTE[group.id]}</p>}
-            {group.settings.map((entry) => (
-              <div key={entry.key}>
-                <SettingRow
-                  entry={entry}
-                  onChange={(v) => change(entry.key, v)}
-                  onReset={() => resetKey(entry.key)}
-                />
-                {rowErrors[entry.key] && (
-                  <p className="error settings-row-error">
-                    {rowErrors[entry.key]} — value rejected, showing the saved one.
-                  </p>
-                )}
-              </div>
-            ))}
-          </Section>
-        </div>
-      ))}
+      {filtered.map((group) => {
+        const target = groupResetTarget(
+          group.settings,
+          fullSizes.get(group.id) ?? group.settings.length,
+        );
+        return (
+          <div className="panel" key={group.id}>
+            <Section
+              title={group.label}
+              actions={
+                <button
+                  type="button"
+                  className="settings-group-reset"
+                  // Inert when nothing in view is overridden — the same fact the
+                  // gear's footer states, rather than a control that no-ops.
+                  disabled={target === null || busyGroup === group.id}
+                  title={
+                    target?.kind === 'keys'
+                      ? 'Drop the overrides on the rows this search is showing'
+                      : 'Drop every override in this group and go back to the shipped numbers'
+                  }
+                  onClick={() => {
+                    if (target === null) return;
+                    if (target.kind === 'group') resetGroupId(group.id);
+                    else resetKeyList(target.keys);
+                  }}
+                >
+                  {busyGroup === group.id
+                    ? 'Resetting…'
+                    : target?.kind === 'keys'
+                      ? `Reset these ${target.keys.length}`
+                      : 'Reset group'}
+                </button>
+              }
+            >
+              {GROUP_NOTE[group.id] && (
+                <p className="muted settings-note">{GROUP_NOTE[group.id]}</p>
+              )}
+              {group.settings.map((entry) => (
+                <div key={entry.key}>
+                  <SettingRow
+                    entry={entry}
+                    onChange={(v) => change(entry.key, v)}
+                    onReset={() => resetKey(entry.key)}
+                  />
+                  {rowErrors[entry.key] && (
+                    <p className="error settings-row-error">
+                      {rowErrors[entry.key]} — value rejected, showing the saved one.
+                    </p>
+                  )}
+                </div>
+              ))}
+            </Section>
+          </div>
+        );
+      })}
 
       {features.length > 0 && (
         <div className="panel">

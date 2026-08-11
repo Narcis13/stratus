@@ -175,7 +175,11 @@ The box at the top filters as you type, across every group at once. It matches a
 
 ### Per-group reset
 
-Every group header has a **Reset group** button, which drops every override in that group back to the shipped defaults at once. Groups you've never touched are already at their defaults, so it does nothing there.
+Every group header has a **Reset group** button, which drops every override in that group back to the shipped defaults at once.
+
+It only ever moves knobs you can actually see. **With a search query active**, the card is showing a subset of its group, so the button relabels to **Reset these N** and drops only the rows on screen — a reset that quietly moved nine knobs you'd filtered out would be the opposite of an undo. Clear the search and it goes back to being a whole-group reset.
+
+It's **greyed out when nothing in view is overridden**, the same way a gear's footer is, so the button doubles as an answer to "have I changed anything in here?"
 
 ### The same knobs, next to the feature (inline ⚙)
 

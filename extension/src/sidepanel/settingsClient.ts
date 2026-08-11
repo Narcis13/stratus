@@ -87,6 +87,28 @@ export function entriesForKeys(groups: SettingsGroup[], keys: string[]): Setting
   return out;
 }
 
+/** What a group card's reset button should actually drop.
+ *
+ *  `SettingsGear` already states the rule this enforces — "the card's own keys,
+ *  never the registry group: resetting a key that isn't on screen would be
+ *  invisible" — but the Tuning tab's own card was resetting the whole registry
+ *  group while the search filter had it rendering two rows of eleven. An undo
+ *  control that moves numbers off screen is the one thing it must not do.
+ *
+ *  So: the whole group when the card is showing all of it (cheaper, and it also
+ *  clears override rows for knobs hidden by HIDDEN_GROUPS-adjacent drift),
+ *  otherwise exactly the rows on screen. `null` = nothing in view is overridden,
+ *  so the button is inert — the gear's `disabled={!overridden}` discipline,
+ *  applied to the same control in the other surface. Pure. */
+export function groupResetTarget(
+  rendered: SettingEntry[],
+  fullCount: number,
+): { kind: 'group' } | { kind: 'keys'; keys: string[] } | null {
+  if (!rendered.some((s) => !s.isDefault)) return null;
+  if (rendered.length >= fullCount) return { kind: 'group' };
+  return { kind: 'keys', keys: rendered.map((s) => s.key) };
+}
+
 function sameValue(a: unknown, b: unknown): boolean {
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((v, i) => v === b[i]);

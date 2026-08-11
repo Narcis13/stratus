@@ -5,6 +5,7 @@ import {
   entriesForKeys,
   filterSettingGroups,
   flattenSettings,
+  groupResetTarget,
   visibleSettingGroups,
 } from './settingsClient.ts';
 
@@ -196,5 +197,34 @@ describe('applyOptimisticValue', () => {
 
   test('an unknown key changes nothing', () => {
     expect(applyOptimisticValue(GROUPS, 'x.gone.away', 5)).toEqual(GROUPS);
+  });
+});
+
+describe('groupResetTarget', () => {
+  const overridden = (key: string): SettingEntry => entry({ key, value: 9, isDefault: false });
+
+  test('an unfiltered card with an override resets the whole group', () => {
+    expect(groupResetTarget([overridden('a'), entry({ key: 'b' })], 2)).toEqual({ kind: 'group' });
+  });
+
+  test('a search-filtered card resets ONLY the rows on screen', () => {
+    // The bug this exists for: the Sweep group renders 2 of 11 rows under a
+    // query and "Reset group" was dropping all 11 — moving numbers the user
+    // could not see, which is the one thing an undo control must not do.
+    expect(groupResetTarget([overridden('a'), overridden('b')], 11)).toEqual({
+      kind: 'keys',
+      keys: ['a', 'b'],
+    });
+  });
+
+  test('nothing overridden in view → inert, whether filtered or not', () => {
+    expect(groupResetTarget([entry({ key: 'a' }), entry({ key: 'b' })], 2)).toBeNull();
+    expect(groupResetTarget([entry({ key: 'a' })], 11)).toBeNull();
+  });
+
+  test('an empty card is inert rather than a whole-group reset', () => {
+    // rendered.length >= fullCount is true for 0 >= 0; the override check has to
+    // come first or an empty group card would offer to reset it.
+    expect(groupResetTarget([], 0)).toBeNull();
   });
 });
