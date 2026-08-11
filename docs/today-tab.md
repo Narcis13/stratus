@@ -12,7 +12,7 @@ stratus is a personal growth-and-CRM tool for X (Twitter). It schedules your pos
 
 The other tabs are where you *do* focused work:
 
-- **Radar** — the reply queue: hot/warm tweets caught while you browsed, batch-drafted three ways.
+- **Radar** — the reply queue: tweets your sweep filters caught while you browsed, batch-drafted three ways.
 - **Composer / Calendar** — write and schedule posts.
 - **Voice** — save other people's tweets for style reference; manage your content "pillars."
 - **People** — the CRM: one page ("dossier") per person you've ever interacted with.
@@ -351,7 +351,7 @@ Four section headers carry a **⚙**. Each one opens a small card of exactly the
 1. Open the panel — you land on **Today**.
 2. Start with **Do Next**: clear any **chain** rows first (someone re-engaged you — reply fast via the ↗ link), then **DM** and neglected **target/ally** rows. Snooze (zz) anything you can't get to.
 3. Drop to **Conversations** and click **Refresh** to pull any new mentions (costs ~$0.001 each; you get 4/day). Work the open loops top-down: expand a thread → **Draft reply** → pick a variant → **Copy** → paste into X → **Done**.
-4. Switch to the **[Radar](./radar-tab.md)** tab for hot/warm tweets you scrolled past. Hit **Draft replies** to batch-draft them in one Grok call, then click the angle you want on each row (which copies it and opens the tweet) and paste on X.
+4. Switch to the **[Radar](./radar-tab.md)** tab for the tweets your sweep caught while you scrolled. Hit **Draft replies** to batch-draft them in one Grok call, then click the angle you want on each row (which copies it and opens the tweet) and paste on X.
 5. Glance at **Targets** and **Top Fans** for amber lines — neglected people who deserve a reply.
 6. Check the **Replies quota** bar to see how close you are to today's target.
 
@@ -365,7 +365,7 @@ Four section headers carry a **⚙**. Each one opens a small card of exactly the
 
 ### Act on a Radar opportunity
 
-That loop lives on its own tab now — see **[Radar → Workflow](./radar-tab.md#workflow-work-the-radar)**. In short: hot/warm tweets pile up while you browse ($0), **Draft replies (N)** writes three angles for each in one Grok call, and clicking the angle you want copies it and opens the tweet.
+That loop lives on its own tab now — see **[Radar → Workflow](./radar-tab.md#workflow-work-the-radar)**. In short: swept tweets pile up while a sweep is armed ($0), **Draft replies (N)** writes three angles for each in one Grok call, and clicking the angle you want copies it and opens the tweet.
 
 ### The 30 minutes after a post goes live (Launch Room)
 

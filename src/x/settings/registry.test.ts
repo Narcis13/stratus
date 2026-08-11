@@ -5,7 +5,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CANNON } from '../../shared/cannon.ts';
 import { SWEEP } from '../../shared/radarSweep.ts';
-import { BAND } from '../../shared/replyBand.ts';
 import {
   SETTINGS_REGISTRY,
   type SettingDef,
@@ -14,7 +13,6 @@ import {
   validateSettingValue,
 } from './registry.ts';
 
-type BandKey = keyof typeof BAND;
 type CannonKey = keyof typeof CANNON;
 type SweepKey = keyof typeof SWEEP;
 
@@ -130,7 +128,6 @@ describe('registry adapter + grouping', () => {
       'followups',
       'pinned',
       'digest',
-      'band',
       'gates',
       'radar',
       'sweep',
@@ -149,7 +146,6 @@ describe('registry adapter + grouping', () => {
       'Follow-ups',
       'Pinned watch',
       'Digest',
-      'Reply band',
       'Stat gates',
       'Radar',
       'Sweep',
@@ -370,18 +366,6 @@ describe('registry adapter + grouping', () => {
       'x.doctrine.anchors4',
       'x.doctrine.ladderSwitchAt',
       'x.followups.neglectedTargetDays',
-      'x.band.bigViews',
-      'x.band.baitViews',
-      'x.band.earlyReplies',
-      'x.band.midReplies',
-      'x.band.freshMin',
-      'x.band.risingVPM',
-      'x.band.baitVPM',
-      'x.band.watchVPM',
-      'x.band.watchReplyCeiling',
-      'x.band.tooSmallAgeMin',
-      'x.band.tooSmallViews',
-      'x.band.tooSmallVpm',
       'x.gates.bestTimeMinN',
       'x.radar.curatedCount',
       'x.sweep.minViews',
@@ -413,24 +397,6 @@ describe('registry adapter + grouping', () => {
     // The server's own refresh cap is the real limit and stays server-side —
     // the panel budget degrading to its baked value must never widen it.
     expect(mirrored).not.toContain('x.mentions.serverRefreshCap');
-  });
-
-  // UI.7: the band group must be the WHOLE BandThresholds shape, not a subset.
-  // A threshold with no key is a number only a rebuild can change, sitting
-  // beside eleven that a PATCH moves — and half a rule (the three dead-zone
-  // knobs) reads as an oversight rather than a decision.
-  test('the band group is exactly the classifier shape, every key mirrored', () => {
-    const band = settingsByGroup().find((g) => g.id === 'band');
-    const suffixes = (band?.defs ?? []).map((d) => d.key.replace('x.band.', ''));
-    expect(suffixes.slice().sort()).toEqual(Object.keys(BAND).slice().sort());
-    // The badge and the /x/replies/generate gate must classify with the same
-    // numbers, so no band knob may be server-only.
-    expect((band?.defs ?? []).every((d) => d.scope === 'mirrored')).toBe(true);
-    // And the shipped defaults ARE the classifier's own — the registry is not a
-    // second calibration.
-    for (const d of band?.defs ?? []) {
-      expect([d.key, d.default]).toEqual([d.key, BAND[d.key.replace('x.band.', '') as BandKey]]);
-    }
   });
 
   // Same UI.7 rule one module over: the cannon group must be the WHOLE
@@ -514,22 +480,6 @@ describe('registry adapter + grouping', () => {
     expect(settingsRegistry.validate('x.sweep.autoStopMin', 0)).toBe('out_of_range');
     expect(settingsRegistry.validate('x.sweep.autoStopMin', 240)).toBeNull();
     expect(settingsRegistry.validate('x.sweep.autoStopMin', 241)).toBe('out_of_range');
-  });
-
-  test('validation honors UI.7 band ranges (calibration, never a lock)', () => {
-    expect(settingsRegistry.validate('x.band.bigViews', 50)).toBeNull();
-    expect(settingsRegistry.validate('x.band.bigViews', 49)).toBe('out_of_range');
-    expect(settingsRegistry.validate('x.band.bigViews', 5001)).toBe('out_of_range');
-    expect(settingsRegistry.validate('x.band.midReplies', 4)).toBe('out_of_range');
-    expect(settingsRegistry.validate('x.band.freshMin', 241)).toBe('out_of_range');
-    // The two dead-zone knobs a user may legitimately want to switch OFF bottom
-    // out at 0 (nothing has fewer than 0 views, or under 0 views/min).
-    expect(settingsRegistry.validate('x.band.tooSmallViews', 0)).toBeNull();
-    expect(settingsRegistry.validate('x.band.tooSmallVpm', 0)).toBeNull();
-    // §7.19 lives in the copy, not in a lock — every knob says so.
-    for (const d of SETTINGS_REGISTRY.filter((x) => x.group === 'band')) {
-      expect([d.key, d.description.includes('>=100 measured replies')]).toEqual([d.key, true]);
-    }
   });
 
   // UI.12: the Today tab's own presentation caps. They are the first knobs whose

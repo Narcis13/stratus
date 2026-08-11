@@ -57,7 +57,7 @@ beforeAll(async () => {
       handle: 'alice',
       author: 'Alice Builder',
       snippet: 'shipping is a skill you learn by shipping',
-      band: 'hot',
+      band: 'sweep',
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
       replyText: PRIMARY_TEXT,
       angle: 'extends',
@@ -272,7 +272,7 @@ interface ReplyRow {
   sourcePostedAt: string | null; // Date column → ISO string over JSON
   variants: { text: string; angle: string }[] | null;
   contextSnapshot: {
-    signals?: { band: string | null; views: number; ageMin: number };
+    signals?: { views: number; ageMin: number };
     metrics: { views: number; replies: number; reposts: number; likes: number };
     topComments: unknown[];
   };
@@ -310,7 +310,7 @@ describe('GET /radar/drafts expiry honors x.radar.draftTtlH', () => {
       handle: 'carol',
       author: null,
       snippet: 'ttl fixture',
-      band: 'warm',
+      band: 'sweep',
       signals: null,
       replyText: 'still fresh at the default window',
       angle: 'extends',
@@ -371,9 +371,10 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
     expect(body.replyText).toBe(PRIMARY_TEXT);
     expect(body.variants).toHaveLength(3);
     expect(body.sourceUrl).toBe(`https://x.com/alice/status/${T_WITH}`);
-    // contextSnapshot parse-shapes like PostContext (band from the column,
-    // metrics from signals, topComments []).
-    expect(body.contextSnapshot.signals?.band).toBe('hot');
+    // contextSnapshot parse-shapes like PostContext (metrics from signals,
+    // topComments []). The band is NOT copied in — it is queue metadata that
+    // stays in its own column.
+    expect(body.contextSnapshot.signals).not.toHaveProperty('band');
     expect(body.contextSnapshot.signals?.views).toBe(1500);
     expect(body.contextSnapshot.metrics).toEqual({
       views: 1500,
@@ -411,58 +412,36 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
     expect(body.variants).toEqual([{ text: 'a plain reply', angle: 'extends' }]);
   });
 
-  test('a manual-band row (RU.8) confirms with signals.band coerced to null', async () => {
-    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_MANUAL}/confirm`, 'POST');
-    expect(status).toBe(201);
-    // The signals block still rides (metrics present) but band is NOT 'manual' —
-    // a manual pin is queue metadata, never a classifier verdict, so it can't
-    // enter the Playbook's hot/warm band cells (§7.19).
-    expect(body.contextSnapshot.signals).toBeDefined();
-    expect(body.contextSnapshot.signals?.band).toBeNull();
-    expect(body.contextSnapshot.metrics.views).toBe(800);
-  });
+  // Every band is queue metadata about HOW the row entered — a ⊕ pin (RU.8), a
+  // circle capture (GT.8), an arbitrage capture (CQ.4), a sweep admission
+  // (RS.2). None of them may reach the reply snapshot: the snapshot records what
+  // the TWEET looked like, and a capture reason sitting in it would be read back
+  // as a fact about the post. The column keeps the value; the snapshot never
+  // gets one.
+  const CONFIRM_BANDS: Array<[string, string, number]> = [
+    ['manual', T_MANUAL, 800],
+    ['roster', T_ROSTER, 42],
+    ['cannon', T_CANNON, 204_000],
+    ['sweep', T_SWEEP, 610],
+  ];
 
-  test("confirm: a 'roster' band never reaches the reply snapshot (GT.8, §7.19)", async () => {
-    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_ROSTER}/confirm`, 'POST');
-    expect(status).toBe(201);
-    // Same rule as the ⊕ pin above: the queue's reason for holding the row is
-    // not a classifier verdict, so it must not become one in the Playbook's
-    // hot/warm cells. The real metrics still ride.
-    expect(body.contextSnapshot.signals).toBeDefined();
-    expect(body.contextSnapshot.signals?.band).toBeNull();
-    expect(body.contextSnapshot.metrics.views).toBe(42);
-  });
-
-  test("confirm: a 'cannon' band is coerced away while the column keeps it (CQ.4, §7.19)", async () => {
-    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_CANNON}/confirm`, 'POST');
-    expect(status).toBe(201);
-    // Third member of the queue-metadata family, same rule: the snapshot must
-    // not claim a classifier verdict the classifier never gave.
-    expect(body.contextSnapshot.signals).toBeDefined();
-    expect(body.contextSnapshot.signals?.band).toBeNull();
-    expect(body.contextSnapshot.metrics.views).toBe(204_000);
-    // …and the coercion is snapshot-only: the queue must still be able to say
-    // WHY it held this row, so radar_drafts.band is untouched.
-    const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, T_CANNON));
-    expect(row?.band).toBe('cannon');
-  });
-
-  test("confirm: a 'sweep' band lands as null in the stored reply snapshot (RS.2, §7.19)", async () => {
-    const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${T_SWEEP}/confirm`, 'POST');
-    expect(status).toBe(201);
-    // Fourth member of the queue-metadata family. Asserted against the ROW READ
-    // BACK FROM THE DB, not the response body: what a later Playbook read sees is
-    // the persisted snapshot, and a coercion that only held in the response would
-    // pass a body-only check while still writing a capture reason into a band
-    // cell.
-    const [reply] = await db.select().from(replyDrafts).where(eq(replyDrafts.id, body.id));
-    expect(reply).toBeDefined();
-    const snapshot = reply?.contextSnapshot as ReplyRow['contextSnapshot'];
-    expect(snapshot.signals).toBeDefined();
-    expect(snapshot.signals?.band).toBeNull();
-    expect(snapshot.metrics.views).toBe(610);
-    // The queue must still be able to say why it held the row.
-    const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, T_SWEEP));
-    expect(row?.band).toBe('sweep');
-  });
+  for (const [band, tweetId, views] of CONFIRM_BANDS) {
+    test(`confirm: a '${band}' band stays in its column and never enters the snapshot`, async () => {
+      const { status, body } = await send<ReplyRow>(`/x/radar/drafts/${tweetId}/confirm`, 'POST');
+      expect(status).toBe(201);
+      // Asserted against the ROW READ BACK FROM THE DB, not the response body:
+      // what a later Playbook read sees is the persisted snapshot, and a rule
+      // that only held in the response would pass a body-only check.
+      const [reply] = await db.select().from(replyDrafts).where(eq(replyDrafts.id, body.id));
+      expect(reply).toBeDefined();
+      const snapshot = reply?.contextSnapshot as ReplyRow['contextSnapshot'];
+      // The signals block still rides (real metrics) — it just carries no band.
+      expect(snapshot.signals).toBeDefined();
+      expect(snapshot.signals).not.toHaveProperty('band');
+      expect(snapshot.metrics.views).toBe(views);
+      // The queue must still be able to say why it held the row.
+      const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, tweetId));
+      expect(row?.band).toBe(band);
+    });
+  }
 });

@@ -3,6 +3,8 @@
 The **Radar** is your reply queue. **It is manual by default**: nothing enters it except tweets you ⊕ by hand. When you want the queue to fill itself, you arm a **sweep** for a bounded session and state, as numbers, what it is allowed to admit. One click drafts a reply for the whole queue; one click on the angle you like copies it and opens the tweet so you can paste.
 
 > **This changed on 2026-08-10.** The Radar used to fill itself on every scroll from three ambient rules, and the only way to shape that was twelve band thresholds encoding someone else's model of "worth replying to". Now capture is a valve you open. Expect a much smaller queue — that is the feature, not a regression.
+>
+> **And on 2026-08-11 those twelve thresholds were deleted**, along with the classifier they fed: no more coloured left border or dimmed rows on x.com, no more "dead post" refusal from Reply Master. The sweep filters below are the only rule that decides what a tweet qualifies for.
 
 It sits in the **Operate** group, right under Today. It used to be a section *inside* Today — it moved out because it's the surface you spend the most time in during a reply session, and it's the only one that updates itself live while you're on X.
 
@@ -26,8 +28,8 @@ That's the Radar's whole job:
 |---|---|
 | **Band** | The verdict computed for each tweet as you scroll: **hot** ("reply now"), **warm** ("worth watching"), **skip** ("thread's too deep, you'd be buried"). Based on views, reply count, age, how fast it's gaining views, and whether it's "reply-bait". The thresholds are a **fixed classifier** — since 2026-08-10 they're no longer editable in the panel (they left Settings along with any suggestion that they filter anything). **They do not decide what enters the queue** — they draw the border you decide from, and they gate a single Reply Master draft. |
 | **Sweep** | A bounded session during which tweets may enter the queue by themselves. You arm it from the Radar header (**Start sweep**), it stops when you press Stop, when you click the on-page chip, or on its own after **30 minutes** by default. Absent = manual, which is where a fresh install, a cleared profile and an expired session all land. |
-| **manual** | A tweet *you* pinned with the ⊕ button on x.com, regardless of band. "I want to reply to this one, period." The only way in when no sweep is armed. |
-| **swept** | A tweet an armed sweep's filters admitted while the band classifier had no opinion about it. Hover it: *"your sweep filters admitted this one — the band classifier had no opinion."* If the classifier *did* say hot or warm, the row keeps that chip instead. |
+| **manual** | A tweet *you* pinned with the ⊕ button on x.com, regardless of the filters. "I want to reply to this one, period." The only way in when no sweep is armed. |
+| **swept** | A tweet an armed sweep's filters admitted — the ordinary way a row arrives. Hover it: *"your sweep filters admitted this one — the band classifier had no opinion."* If the classifier *did* say hot or warm, the row keeps that chip instead. |
 | **your circle** | A quiet tweet that got in because of *who posted it*: someone you've replied to before, or someone on your 2–10× target roster. Only during a sweep, and only with the **Circle accounts bypass** switch on (it ships **off**). Same rule the reply gate uses, so anything captured this way is also something you can draft a reply to without forcing past the "dead post" warning. |
 | **cannon** | A tweet whose author is on your camped **cannon roster**, admitted during a sweep without meeting the metric filters (it still obeys the max age). The **Camped accounts bypass** switch ships **on**. See **The Cannon**, below. |
 | **Cannon score** | `views ÷ (replies + 1)` — how many eyes a post has per reply already under it. A lot of views and almost nobody in the comments means an early reply actually gets read. It deliberately knows nothing about the author's follower count: a 200k account's dead post is worth less than a 2k account's live one, and looking size up would cost $0.010 per handle to measure the wrong axis. |
@@ -47,7 +49,7 @@ Two ways in, both free. One is always open; the other you arm.
 
 ### 1. By hand, with ⊕ — the default and always-on path
 
-Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button. It pushes that tweet into the queue whatever its band — a question you want to answer properly later, a stranger nobody has noticed yet. Pinned tweets get a **`manual`** band chip and rank at the very top.
+Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button. It pushes that tweet into the queue whatever the filters would say — a question you want to answer properly later, a stranger nobody has noticed yet. Pinned tweets get a **`manual`** band chip and rank at the very top.
 
 **The ⊕ stays lit on tweets that are already queued.** Scroll away, scroll back, and the button on a queued tweet renders in its filled state with the tooltip *"Already in the Radar queue"* — so you never pin the same post twice or wonder whether the click registered. Dismiss the row in the panel and the ⊕ goes back to empty on the next scan.
 
@@ -57,12 +59,12 @@ Press **Start sweep** in the Radar header. While it runs, a tweet you scroll pas
 
 | Filter | Default | What it admits |
 |---|---|---|
-| **Min impressions** | 300 | A tweet needs at least this many views. Ships at the number the reply band's "worth a reply" floor uses, restated rather than shared — moving it does not move the on-page border. |
+| **Min impressions** | 300 | A tweet needs at least this many views. Inherited from the old reply band's "worth a reply" floor, restated rather than shared — moving it does not move the on-page border. |
 | **Max impressions** | 2000 | Past this, the post is too big: your reply lands under a crowd. An order of magnitude above the floor, so the admitted band is still wide enough to fill a session. |
 | **Min likes** | 0 (no floor) | |
 | **Max likes** | 20 | The like ceiling matching the impressions one at the ~1% like rate a small post runs at. |
 | **Min replies** | 0 (no floor) | A floor on "is anyone actually there". |
-| **Max replies** | 40 | Past this you're buried in the thread. The reply band's "still near the top" number, restated. |
+| **Max replies** | 40 | Past this you're buried in the thread. The old reply band's "still near the top" number, restated. |
 | **Max tweet age** | 60 min | Nothing older is swept in. **The one age rule** — it applies to every arm, including the two bypasses below, and it is what keeps them from flooding the queue. |
 | **Verified authors only** | **on** | Only sweep in tweets whose author carries the verified badge — only Premium viewers' impressions count toward the goal, so a reply under an unverified author is unpaid work. |
 | **Camped accounts bypass** | **on** | A post by someone on your camped **cannon roster** gets in without meeting the metric filters — a three-minute-old post has no numbers yet, and that is exactly when the slot under it is open. Still obeys the max age. Chip: `cannon`. |
@@ -71,21 +73,20 @@ Press **Start sweep** in the Radar header. While it runs, a tweet you scroll pas
 
 **On every maximum except the age one, `0` means "no ceiling"** — two of them ship as real ceilings now, but type a 0 into one yourself and that ceiling comes off. The age bound is the exception and it is always enforced — its floor in the settings is 1 minute, and 0 there is refused rather than read as "unlimited".
 
-**A swept tweet keeps the classifier's chip when the classifier had one.** If the band said hot or warm, the row reads `hot` / `warm`; otherwise it reads `swept`. The two bypass arms keep their own chips (`cannon`, `your circle`), so the Cannon view's membership means exactly what it always did.
+**A swept tweet reads `swept`.** The two bypass arms keep their own chips (`cannon`, `your circle`), so the Cannon view's membership means exactly what it always did. Every chip now names a *capture reason* — how the row got here — rather than a verdict about the tweet.
 
 **Verified is the one filter that can fail quietly, and it fails in the safe direction.** The badge is read off X's own markup, which X owns and will change. An author whose name block can't be read counts as **not verified**, so a drift shows up as a visibly empty queue rather than as a filter that silently stopped filtering. It ships **on** anyway, because an unverified author's impressions do not count toward the goal — but that makes it the **first switch to turn off** when the queue goes unexpectedly empty, since a drifted selector and a genuinely quiet feed look identical from the panel.
 
-**Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then band (hot, then warm, then `swept`, `your circle` and `cannon`), then how fast the tweet is gaining views, then recency. A filter admission never outranks a hot verdict. **The Queue is deliberately not re-sorted by cannon score** — that ordering exists in the Cannon view and nowhere else, because the Queue is the relationship lane and an arbitrage shot must not push an ally off the top of it.
+**Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then how fast the tweet is gaining views, then recency. **The capture reason does not sort the queue** — with the classifier gone every band says how a row arrived, not how loud it is, and how loud it is, is exactly what views-per-minute measures. **The Queue is deliberately not re-sorted by cannon score** — that ordering exists in the Cannon view and nowhere else, because the Queue is the relationship lane and an arbitrage shot must not push an ally off the top of it.
 
-**Under pressure the queue keeps the loud ones.** It holds 100 rows; when it overflows, `your circle` captures are dropped first, then the oldest hot / warm / `swept` / `cannon` sightings, and a ⊕ pin is dropped last.
+**Under pressure the queue keeps what you asked for.** It holds 100 rows; when it overflows, `your circle` captures are dropped first, then the oldest `swept` / `cannon` sightings, and a ⊕ pin is dropped last.
 
 **"Your circle" means *stage `engaged` or better*** — someone you have actually posted a reply to — plus your target roster. It deliberately does **not** mean everyone stratus has a row for: simply hovering someone's name on the timeline files them away, and treating that as a relationship would put most of x.com in this queue.
 
 ### What a sweep does *not* change
 
-- **The on-page band border still renders on every tweet, sweep or no sweep.** It is how you decide what to ⊕; gating it would leave you pinning blind.
 - **The free passive harvest still runs.** Every tweet that scrolls past keeps feeding the corpus the Playbook's timeline funnel measures against. Gating it would make that funnel measure your button-pressing instead of your timeline.
-- **The twelve `x.band.*` thresholds keep two jobs**: they draw that border, and they still gate a single **Reply Master** draft (the "dead post" warning). They no longer decide what enters the queue. Retiring them would silently change both.
+- **Nothing marks up the timeline.** There used to be a green/amber left border and a dimmed row, drawn by a reply-band classifier. Both are gone as of 2026-08-11, along with the classifier and its twelve `x.band.*` thresholds — the filters above are the only rule left. **Reply Master no longer refuses a draft** either: the "dead post — click to force" warning came from the same classifier.
 
 ---
 
@@ -177,7 +178,7 @@ A row is in the Cannon if **either** is true:
 - its score clears the floor (`x.cannon.scoreMin`, **120** by default — see the note on that number below), **or**
 - it was captured on the cannon arm in the first place (band `cannon`), which also covers roster accounts whose fresh post has too few views to score yet.
 
-So a tweet the classifier already called `hot` shows up here without being re-banded, and a roster account's three-minute-old post shows up before it has any numbers at all. Both, and neither is redundant.
+So a dense swept tweet shows up here without being re-banded, and a roster account's three-minute-old post shows up before it has any numbers at all. Both, and neither is redundant.
 
 **The score is a *display* rule now, not a capture rule.** It used to also pull tweets into the queue on sight; since 2026-08-10 the sweep filters own admission, and `x.cannon.scoreMin` decides only what surfaces in this view out of what's already queued. The camped-roster half survives as a capture arm — the **Camped accounts bypass** switch in the sweep filters, on by default — and it only fires while a sweep is armed.
 
@@ -245,7 +246,7 @@ Each row is `score · @handle · nN · scored Nd ago`, ranked score-desc with ne
 
 ## A row, part by part
 
-- A **band chip** — `hot`, `warm`, `manual`, a muted, dashed `swept` (hover it: *"your sweep filters admitted this one — the band classifier had no opinion"*; the dash is there because the rule that admitted it is one you can change), a muted `your circle` (hover it: it explains that the row is here for the person, not the numbers), or `cannon`. **Hover `cannon` too:** *"either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast."* A band whose reason isn't visible in the numbers always carries its reason in a tooltip.
+- A **band chip** — `manual`, a muted, dashed `swept` (hover it: *"your sweep filters admitted this one"*; the dash is there because the rule that admitted it is one you can change), a muted `your circle` (hover it: it explains that the row is here for the person, not the numbers), or `cannon`. All four name *how the row was captured*; none is a judgement about the tweet. **Hover `cannon` too:** *"either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast."* A band whose reason isn't visible in the numbers always carries its reason in a tooltip.
 - In the **Cannon view only**, a **score chip** ahead of the band chip — the row's `views ÷ (replies + 1)`.
 - The **author** — click to open their dossier in the People tab.
 - A **tier chip** if they're on your roster (`ally`, `mutual`, `target`) — also a dossier link. This is *why* they outrank a louder stranger.
@@ -253,7 +254,7 @@ Each row is `score · @handle · nN · scored Nd ago`, ranked score-desc with ne
 - **reply ready** once a draft exists.
 - **✕** to dismiss the row (done, or not worth it).
 - The **tweet text**, as a link — clicking it just opens the tweet on X.
-- A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the signals behind the band verdict. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
+- A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the numbers the row was captured with. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
 - **Angle tabs** (once drafted) — the subset this room allows, drawn from `extends` · `contrarian` · `debate` · `observation` · `question`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The room's first angle is the primary pick, and the score never reorders the tabs. **A non-English draft has one variant, so no tab strip renders at all** — not an empty one.
 - **A gloss line** under the reply body on a non-English draft: a literal, muted English rendering of what that reply actually says. It is never copied — clicking the body still yields only the reply itself.
 - **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after — or to `copied ✓ · jitter: prefix, typo:swap` / `copied ✓ · no jitter this time` when **Humanize picks** is on (below).
@@ -345,7 +346,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **The ⊕ is the whole default path, not an escape hatch any more.** The band classifier no longer decides admission, so a tweet it would have skipped is one click away like any other.
 - **Expect `Curate & draft` to stop appearing most days.** It only renders once the fresh queue outgrows the curated size (25 by default), and a handpicked queue rarely does. That is correct — curation exists to thin a queue you did not choose. Don't "fix" it by lowering the curated size.
 - **Pressing Start more than twice in a sitting means the auto-stop is too short.** 30 minutes is a guess about attention span, not a measurement; the knob is right there in the ⚙.
-- **A pinned tweet never pollutes your analytics.** `manual` is queue metadata, not a band verdict: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see. **`swept`, `your circle` and `cannon` work the same way** — one says your filters let it in, one says who posted it, one says the Cannon view wanted it. Four queue-metadata bands now, one rule: none of them ever lands in a Playbook hot/warm cell.
+- **A pinned tweet never pollutes your analytics.** `manual` is queue metadata about how the row was captured: pinned rows are excluded from the Playbook's hot/warm comparisons, because you chose them for reasons the classifier can't see. **`swept`, `your circle` and `cannon` work the same way** — one says your filters let it in, one says who posted it, one says the Cannon view wanted it. Four queue-metadata bands now, one rule: none of them ever lands in a Playbook hot/warm cell.
 - **Whether manual-first changed what you reply to is one SQL query**, in the explorer or through `x_query` — there is deliberately no Playbook section for it:
 
   ```sql

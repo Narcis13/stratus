@@ -252,8 +252,12 @@ describe.if(authed)('batch reply guards (Radar §7.2)', () => {
   });
 });
 
-describe.if(authed)('reply band gate (§7.3)', () => {
-  const deadContext = {
+// The band gate that used to live here is gone (the classifier was deleted).
+// What remains is the body-validation half of §7.4, which is the ONLY thing
+// standing between this suite and a real paid Grok call — every case here must
+// therefore end in a 4xx BEFORE the drafter, never in a 200.
+describe.if(authed)('replies/generate refuses before spend (§7.4)', () => {
+  const context = {
     tweetId: '123456',
     handle: 'someone',
     author: 'Some One',
@@ -264,26 +268,23 @@ describe.if(authed)('reply band gate (§7.3)', () => {
     topComments: [],
   };
 
-  // A dead post (old, tiny, not bait) refuses with 422 BEFORE any Grok spend —
-  // and before the niche read (N0.4: refuse-before-work keeps this path
-  // byte-identical to the pre-niche behavior).
-  test('dead post without override → 422 band_gate', async () => {
+  test('AI.5: unknown provider → 400 invalid_provider, ahead of any spend', async () => {
     const res = await app.request('/x/replies/generate', {
       method: 'POST',
       headers: AUTH,
-      body: JSON.stringify({ context: deadContext }),
-    });
-    expect(res.status).toBe(422);
-    expect(((await res.json()) as { error: string }).error).toBe('band_gate');
-  });
-
-  test('AI.5: unknown provider → 400 invalid_provider, ahead of the band gate', async () => {
-    const res = await app.request('/x/replies/generate', {
-      method: 'POST',
-      headers: AUTH,
-      body: JSON.stringify({ context: deadContext, provider: 'gemini' }),
+      body: JSON.stringify({ context, provider: 'gemini' }),
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_provider');
+  });
+
+  test('a malformed context → 400, still ahead of any spend', async () => {
+    const res = await app.request('/x/replies/generate', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ context: { ...context, tweetId: 'not-an-id' } }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_context_tweet_id');
   });
 });

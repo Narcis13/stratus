@@ -778,11 +778,10 @@ export interface PostContextMetrics {
   likes: number;
 }
 
-// Band verdict + the exact classifier inputs (replyBand.ts), frozen at capture
-// time so every persisted draft is a labeled row for recalibrating BAND from
-// first-party outcomes (GET /x/replies/outcomes, evals/analyze-own-replies.ts).
+// The tweet's reading at capture time (replyBand.ts), frozen so every persisted
+// draft records what the post looked like when it was drafted. The Playbook's
+// latency table reads `ageMin` back off it. Mirrors the server's PostSignals.
 export interface PostSignals {
-  band: 'hot' | 'warm' | 'skip' | null;
   views: number;
   replies: number;
   ageMin: number;
@@ -900,8 +899,6 @@ export interface ReplyGenerateBody {
   idea?: string;
   /** C6: the Idea Inbox row the steer came from — the server consumes it. */
   ideaId?: string;
-  /** Skip the server-side band gate (§7.3) — mentions are never band-gated. */
-  override?: boolean;
   systemPromptOverride?: string;
   model?: string;
   reasoningEffort?: 'none' | 'low' | 'medium' | 'high';
@@ -928,7 +925,7 @@ export interface BatchReplyTweet {
   // circle (GT.8), 'cannon' = an arbitrage capture (CQ.4), 'sweep' = an armed
   // sweep's filters admitted it (RS.2); carried through so radar_drafts.band
   // records it (queue metadata), never sent to Grok.
-  band?: 'hot' | 'warm' | 'manual' | 'roster' | 'cannon' | 'sweep';
+  band?: 'manual' | 'roster' | 'cannon' | 'sweep';
   signals?: TweetSignals;
   // RC.2/RC.4 — the 0–100 reply-payoff score the curation pass gave this tweet,
   // stored on radar_drafts so "did curation pick better tweets?" is answerable
@@ -2100,32 +2097,15 @@ export interface ReachFit {
   cells: ReachCell[];
 }
 
-// Opportunity-capture funnel (HV.5). `unknown` is not a verdict — the row had
-// no tweet time, so no age and no velocity to classify with; it never folds
-// into the null band, which does mean "judged not worth replying to".
+// Opportunity-capture funnel (HV.5), bucketed by the sweep filters — the one
+// rule that decides what qualifies. `unknown` is not a filter verdict: the row
+// had no tweet time, so the always-enforced age gate could not be evaluated at
+// all; it never folds into `filtered`, which does mean "the filters said no".
 export interface PlaybookFunnelCell {
-  band: 'hot' | 'warm' | 'skip' | null | 'unknown';
+  bucket: 'qualifies' | 'filtered' | 'unknown';
   seen: number;
   replied: number;
   rate: number | null;
-  sufficient: boolean;
-}
-
-export interface PlaybookBandCell {
-  band: 'hot' | 'warm' | 'skip' | null;
-  n: number;
-  medianViews: number | null;
-  meanViews: number | null;
-  hitRate: number | null;
-  likeRate: number | null;
-  meanProfileClicks: number | null;
-  sufficient: boolean;
-}
-
-export interface PlaybookBaitCell {
-  n: number;
-  medianViews: number | null;
-  meanLikes: number | null;
   sufficient: boolean;
 }
 
@@ -2283,14 +2263,6 @@ export interface Playbook {
     canned: PlaybookCell;
     unattributed: number;
   };
-  bandCalibration: {
-    totalMeasured: number;
-    hitThresholdViews: number | null;
-    bands: PlaybookBandCell[];
-    actionable: { n: number; medianViews: number | null; hitRate: number | null };
-    passed: { n: number; medianViews: number | null; hitRate: number | null };
-    bait: { bait: PlaybookBaitCell; nonBait: PlaybookBaitCell };
-  };
   relationshipLift: {
     withRelationship: PlaybookCell;
     withoutRelationship: PlaybookCell;
@@ -2384,7 +2356,8 @@ export interface Playbook {
   ownReplyPerformance: OwnReplyPerformance;
   // Timeline opportunity-capture funnel (HV.5): of the tweets the algorithm
   // actually put in front of me (the passive home-timeline corpus), how many did
-  // I reply to, per band at first sighting. Rate is null under the per-cell gate.
+  // I reply to — split by whether my sweep filters would admit them, evaluated
+  // at first sighting. Rate is null under the per-cell gate.
   timelineFunnel: {
     cells: PlaybookFunnelCell[];
     totalSeen: number;

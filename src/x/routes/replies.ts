@@ -2,7 +2,7 @@
 // Mounted under `/x` by `mountX` in ../index.ts.
 //
 // Routes:
-//   POST   /replies/generate   body: { context, idea?, override?, systemPromptOverride?, model?, reasoningEffort?, language? }
+//   POST   /replies/generate   body: { context, idea?, systemPromptOverride?, model?, reasoningEffort?, language? }
 //   GET    /replies            ?status=&sourceAuthor=&limit=&since=
 //   GET    /replies/outcomes   ?limit=&since=   posted drafts joined to their metrics
 //   GET    /replies/:id
@@ -23,12 +23,10 @@ import {
   askLLM,
   llmErrorPayload,
 } from '../../llm/index.ts';
-import { type TweetSignals, classifyBand, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
+import { type TweetSignals, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
 import { GENERAL_MODE, REPLY_ANGLES, type ReplyAngle } from '../../shared/replyMode.ts';
-import { isCannonHandleSafe } from '../cannon/membership.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
-import { isReciprocityHandleSafe } from '../people/reciprocity.ts';
 import {
   type RelationshipFacts,
   renderRelationship,
@@ -65,7 +63,6 @@ import {
   replyVariantsSchema,
 } from '../replies/prompt.ts';
 import { loadReplyWinnersSafe } from '../replies/winners.ts';
-import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
 import { getSetting } from '../settings/registry.ts';
 import { consumeIdeaSafe } from './ideas.ts';
 import { loadMeContextSafe } from './me.ts';
@@ -189,7 +186,6 @@ interface RawBody {
   // C6 Idea Inbox: when the steer came from a stored idea, its id rides along
   // so a successful draft consumes it (status flip + backlink, routes/ideas.ts).
   ideaId?: unknown;
-  override?: unknown;
   systemPromptOverride?: unknown;
   model?: unknown;
   // AI.5: per-request LLM provider override ('grok' | 'openrouter'); absent →
@@ -274,12 +270,6 @@ replies.post('/replies/generate', async (c) => {
     reasoningEffort = r;
   }
 
-  let override = false;
-  if (body.override !== undefined && body.override !== null) {
-    if (typeof body.override !== 'boolean') return c.json({ error: 'invalid_override' }, 400);
-    override = body.override;
-  }
-
   let applyPillars = false;
   if (body.applyPillars !== undefined && body.applyPillars !== null) {
     if (typeof body.applyPillars !== 'boolean')
@@ -300,55 +290,21 @@ replies.post('/replies/generate', async (c) => {
   if ('error' in modeOrErr) return c.json({ error: modeOrErr.error }, 400);
   const modeOverride = modeOrErr.mode;
 
-  // Band gate (§7.3): don't spend a Grok call — or a daily reply slot — on a
-  // dead post. Runs BEFORE the Grok call; `override: true` is the explicit
-  // escape hatch (the extension arms it on a second deliberate click).
-  // UI.7: the thresholds are read from the store per request (the same numbers
-  // the badge got through the mirrored blob), so tightening the band takes
-  // effect on the next call — and can only ever REFUSE more, never spend more.
-  const gateSignals = gateSignalsFor(ctx, Date.now());
-  const band = classifyBand(gateSignals, bandThresholdsFromSettings());
-  if ((band === null || band === 'skip') && !override) {
-    // GT.6: the refusal default stands for strangers, but not for the people
-    // layer — a quiet post by someone I already reply to (or by a 2–10x roster
-    // target) is the reciprocity lane, not a dead post. Server-side by design
-    // (§7.16): a client that could send its own exemption would weaken the
-    // money gate for every caller. $0 SQL, and it runs ONLY here, so a hot/warm
-    // post never pays for the lookup (§7.4). Uniform across `null` and `skip`:
-    // a roster person's bait post is still their post, and a human clicked.
-    if (await isReciprocityHandleSafe(ctx.handle)) {
-      // Stamped BEFORE the insert so `contextSnapshot` records why a refused
-      // band still drafted — that is what keeps the exempt drafts a cohort the
-      // BAND crosstab can tell apart from a human `override`.
-      ctx.gateBypass = 'roster';
-    } else if (await isCannonHandleSafe(ctx.handle)) {
-      // CQ.3: the second carve-out, same shape and same refusal-arm-only
-      // placement. A camped cannon target's quiet post is the whole reason the
-      // roster exists — the arbitrage is the AUTHOR's audience, not this post's
-      // velocity — so the band saying "dead" is not the question being asked.
-      // A DISTINCT stamp from `'roster'` on purpose (§7.4a): the two lanes are
-      // different bets and the crosstab has to be able to grade them apart.
-      //
-      // Sized against the real corpus before shipping (§7.33): the roster is a
-      // hand-curated 15–25 handles, so this covers a bounded, deliberate slice
-      // rather than the whole deliberate-reply flow (which is what sank the
-      // `noticed` floor in reciprocity.ts). If `GET /x/cannon/targets` ever
-      // returns hundreds, this carve-out has become the gate turned off and
-      // `gateBypass: 'cannon'` has become a constant — re-measure it then.
-      ctx.gateBypass = 'cannon';
-    } else {
-      return c.json({ error: 'band_gate', band, signals: { band, ...gateSignals } }, 422);
-    }
-  }
-
-  // Stamp the gate's verdict when the caller didn't send capture-time signals
-  // (CLI callers, older extension builds) — every draft stays a labeled
-  // training row for the BAND recalibration crosstab (§6.2).
-  if (!ctx.signals) ctx.signals = { band, ...gateSignals };
+  // No band gate here any more. It classified the post and 422'd a "dead" one
+  // before the Grok call; RS.3 moved admission onto the sweep filters and this
+  // was the leftover second opinion — untunable, and able to refuse a tweet the
+  // user's own sweep had just admitted. What reaches this endpoint is already a
+  // deliberate selection (a swept queue row or a hand-picked ⊕), so the human
+  // click IS the gate. §7.4 still governs everything above: the body validation,
+  // the language and the mode override all refuse before spend.
+  //
+  // Stamp capture signals when the caller didn't send them (CLI callers, older
+  // extension builds) so every draft carries the tweet's reading at draft time —
+  // the Playbook's latency table reads `signals.ageMin` off exactly this.
+  if (!ctx.signals) ctx.signals = captureSignalsFor(ctx, Date.now());
 
   // N0.4: reply grounding comes from the active niche (server-stamped, never
-  // client-supplied). Loaded AFTER the band gate — a refused call reads
-  // nothing — and stamped into ctx before the insert so contextSnapshot
+  // client-supplied). Stamped into ctx before the insert so contextSnapshot
   // records which niche grounded this draft (future per-niche crosstab key).
   const niche = loadActiveNicheSafe();
   ctx.niche = { slug: niche.slug };
@@ -357,9 +313,9 @@ replies.post('/replies/generate', async (c) => {
   // the cannon roster's pin for this handle, else the post's own script, else
   // English (src/x/replies/language.ts owns the rule; single and batch call the
   // same function). Placed HERE on purpose: inside the refuse-before-spend
-  // ladder, after the band gate, before the paid call. A 422'd post must never
-  // pay for a `cannon_targets` read, cheap as it is — §7.4 is about ORDER, not
-  // amount. Stamped into ctx before the insert like niche/relationship, so
+  // ladder: resolved before the paid call, never after. §7.4 is about ORDER,
+  // not amount — a 400'd body must not pay for a `cannon_targets` read.
+  // Stamped into ctx before the insert like niche/relationship, so
   // contextSnapshot records the language the model was actually given (§7.16).
   const resolvedLanguage = await resolveReplyLanguage({
     ...(language !== undefined ? { explicit: language } : {}),
@@ -379,8 +335,8 @@ replies.post('/replies/generate', async (c) => {
   // (`cannon_targets.topic`), else keyword detection, else `general`
   // (src/x/replies/mode.ts owns the rule; single and batch call the same
   // function over the same shape, so the two cannot fork). Same slot in the
-  // refuse-before-spend ladder as the language: after the band gate, before the
-  // paid call, $0 either way. The `?? ` can't fire — one target in, one
+  // refuse-before-spend ladder as the language: resolved before the paid call,
+  // $0 either way. The `?? ` can't fire — one target in, one
   // resolution out — but a mode is not something to leave `undefined` on a path
   // that stamps it into the row.
   const resolvedMode: ResolvedReplyMode = (
@@ -422,7 +378,7 @@ replies.post('/replies/generate', async (c) => {
   // RC.6: my measured winners FOR THAT ROOM — the positive counterweight to
   // RC.1's negative rules, and $0 (a `harvest_rows` read plus the same pure
   // detection the resolution above already ran). Same slot in the ladder, after
-  // the band gate. Language-scoped: a resolved profile only takes winners
+  // the paid call. Language-scoped: a resolved profile only takes winners
   // written in that language, and the English path only takes ones no script
   // detector can place. Best-effort — an empty pool is the ordinary state.
   const winners = await loadReplyWinnersSafe([resolvedMode.mode.id], {
@@ -457,7 +413,7 @@ replies.post('/replies/generate', async (c) => {
   if (guidance) ctx.guidance = guidance;
 
   // Registry prompt (AI.3): DB override else the shipped default. Loaded after
-  // the band gate (a refused call reads nothing) — a per-request
+  // any refusal above (a refused call reads nothing) — a per-request
   // systemPromptOverride still beats it inside buildGrokInput.
   const prompt = loadPromptSafe('reply');
   const pillarDefs = applyPillars ? await getActivePillars() : undefined;
@@ -618,7 +574,7 @@ replies.post('/replies/generate', async (c) => {
     .returning();
 
   // C6: the steer came from the Idea Inbox — consume it with the backlink.
-  // A band-gate refusal or Grok failure never reaches here, so a failed
+  // A validation refusal or Grok failure never reaches here, so a failed
   // generate leaves the idea open.
   if (ideaId && row) await consumeIdeaSafe(ideaId, 'reply_drafts', row.id);
 
@@ -644,11 +600,10 @@ replies.post('/replies/generate', async (c) => {
 //
 // One Grok call drafts a reply for a whole queue of tweets the Radar collected.
 // Unlike /replies/generate this does NOT create reply_drafts rows or run the
-// band gate — the queue is already a deliberate selection (hot/warm by the band
-// scan, plus ⊕ manual pins and GT.8 roster sightings, both human-curated lanes
-// the gate would have exempted anyway): the replies live
-// in the extension's session ring buffer, copied to the clipboard when the user
-// opens a tweet. Since CIRCLES-PLAN C0 each reply also lands in `radar_drafts`
+// per-tweet gate — the queue is already a deliberate selection (swept rows plus
+// ⊕ manual pins and GT.8 roster sightings, all lanes a human armed or clicked):
+// the replies live in the extension's session ring buffer, copied to the
+// clipboard when the user opens a tweet. Since CIRCLES-PLAN C0 each reply also lands in `radar_drafts`
 // so a browser restart no longer loses paid-for drafts (routes/radar.ts).
 
 interface BatchBody {
@@ -929,17 +884,23 @@ replies.post('/replies/generate-batch', async (c) => {
   });
 });
 
-// Every `band` a batch tweet may claim: the two real classifier verdicts plus
-// the four queue-metadata bands (RU.8 / GT.8 / CQ.4 / RS.2). Mirrors
-// `RadarBatchTweet['band']` — widen both together.
+// Every `band` a batch tweet may claim — pure queue metadata about HOW the row
+// entered (RU.8 / GT.8 / CQ.4 / RS.2), never a verdict about the tweet. Mirrors
+// `RadarBatchTweet['band']` — widen both together. The old classifier verdicts
+// `'hot'`/`'warm'` are still accepted so a stale extension build's queue keeps
+// posting; the route folds them into `'sweep'` below.
 const ACCEPTED_BATCH_BANDS: ReadonlySet<string> = new Set([
-  'hot',
-  'warm',
   'manual',
   'roster',
   'cannon',
   'sweep',
+  'hot',
+  'warm',
 ]);
+
+/** Legacy verdict bands from a pre-removal extension build, folded onto the arm
+ *  that would capture the row today. */
+const LEGACY_BATCH_BANDS: ReadonlySet<string> = new Set(['hot', 'warm']);
 
 // Pure validator — exported for unit tests. Dedups by id, clamps the batch.
 // Optional band/signals (C0) carry the Radar's capture-time verdict — and
@@ -987,7 +948,9 @@ export function parseBatchTweets(
       if (!ACCEPTED_BATCH_BANDS.has(r.band as string)) {
         return { error: `invalid_tweet_band_${i}` };
       }
-      band = r.band as RadarBatchTweet['band'];
+      band = LEGACY_BATCH_BANDS.has(r.band as string)
+        ? 'sweep'
+        : (r.band as RadarBatchTweet['band']);
     }
 
     let signals: TweetSignals | undefined;
@@ -1550,7 +1513,7 @@ replies.patch('/replies/:id', async (c) => {
     // A reply to MY OWN post tracks no person: the LaunchRoom seed comment
     // (GT.3) arrives under the placeholder handle 'me', and upserting it would
     // mint a phantom stage-`engaged` row that joins the reciprocity set — the
-    // band-gate exemption, the daily quest AND the glance map (GT.6–GT.8).
+    // the daily quest AND the glance map (GT.6–GT.8).
     // "Own post" is structural, not a sentinel compare: the source tweet is a
     // posts_published row, which a real @me account's tweets can never be.
     // Best-effort in the §7.8 direction — a failed lookup keeps the old
@@ -1627,12 +1590,12 @@ function isStatus(v: unknown): v is Status {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);
 }
 
-// Exported for unit tests (pure). Classifier inputs for the band gate: prefer
-// the capture-time raw inputs the extension stamped (DOM-aware bait, exact
-// age) but always recompute the band server-side — a stale extension build
-// doesn't get to spend the Grok call on its own verdict. Without signals the
-// inputs derive from metrics + postedAt + the shared text-only bait check.
-export function gateSignalsFor(ctx: PostContext, nowMs: number): TweetSignals {
+// Exported for unit tests (pure). The tweet's reading at draft time, for rows
+// that arrive without one: prefer the capture-time raw inputs the extension
+// stamped (DOM-aware bait, exact age), else derive them from metrics + postedAt
+// + the shared text-only bait check. Nothing decides on this — it is the
+// measurement stamp the Playbook's latency table reads back.
+export function captureSignalsFor(ctx: PostContext, nowMs: number): TweetSignals {
   if (ctx.signals) {
     const { views, replies, ageMin, vpm, bait } = ctx.signals;
     return { views, replies, ageMin, vpm, bait };
@@ -1743,11 +1706,9 @@ function parseSignals(value: unknown): { signals: PostSignals } | { error: strin
   }
   const s = value as Record<string, unknown>;
 
-  const band = s.band;
-  if (band !== null && band !== 'hot' && band !== 'warm' && band !== 'skip') {
-    return { error: 'invalid_context_signals_band' };
-  }
-
+  // `band` used to be validated here. Older extension builds still send it;
+  // it is accepted and DROPPED rather than 400'd, because a stale build must
+  // keep drafting — the classifier that produced it no longer exists.
   const nums: Record<'views' | 'replies' | 'ageMin' | 'vpm', number> = {
     views: 0,
     replies: 0,
@@ -1764,5 +1725,5 @@ function parseSignals(value: unknown): { signals: PostSignals } | { error: strin
 
   if (typeof s.bait !== 'boolean') return { error: 'invalid_context_signals_bait' };
 
-  return { signals: { band, ...nums, bait: s.bait } };
+  return { signals: { ...nums, bait: s.bait } };
 }

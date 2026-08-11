@@ -17,7 +17,7 @@ You'll usually open this tab to:
 - Sanity-check a habit ("is replying to *hot* tweets actually worth it, or should I focus on *warm* ones?").
 - Decide where to aim your effort (which angle, which content pillar, which size of account).
 - Pull your best-performing post templates out of your own winners so you can reuse them.
-- See what you're *missing* — the **Timeline funnel** measures how many of the good tweets you were shown scrolled past unanswered.
+- See what you're *missing* — the **Timeline funnel** measures how many of the tweets your sweep filters would admit scrolled past unanswered.
 
 ---
 
@@ -49,7 +49,7 @@ Next to it is a small **⚙**. Open it and you can move the gate (5–100) — a
 
 **Lower it deliberately, not casually.** The registry description says it plainly: **below 20 is exploration, not evidence.** Dropping the gate to 5 doesn't give you better information, it gives you the same thin data with the safety off — and because the same number gates the AI guidance, a loosened gate means your reply drafts start being steered by a finding built on five tweets. The honest use is temporary: drop it to peek at where a trend might be heading, then put it back with the reset dot.
 
-> The ⚙ moves the **sample gate** only. It never touches the **band thresholds** (hot/warm/skip) — those move by hand, and only at ≥100 measured replies. The gear's own note says so.
+> The ⚙ moves the **sample gate** only — it is a minimum-sample bar, never a filter on what qualifies. The only thing that decides that is the sweep gear on the [Radar](./radar-tab.md#the-sweep-filters). The gear's own note says so.
 
 ### The Refresh button
 
@@ -97,26 +97,6 @@ The top table (`Reply angles (N measured)`) has one row per angle with how many 
 
 Below it are collapsible drill-downs by **the other person's follower count** — `authors <1k`, `1k-10k`, `10k-100k`, `100k+`, and `unknown`. Click one to expand it. This answers a sharper question: *the angle that works on small accounts may not be the one that works on big accounts.* A contrarian reply might earn clicks under a 50k-follower post but fall flat under a 500-follower one. Each bucket is gated separately, so most will read "insufficient data" for a long while — you simply reply to fewer big accounts than small ones.
 
-### Band calibration
-
-**Question it answers:** *When stratus labels a tweet "hot" vs "warm", does hot really deliver better replies — or am I wasting effort chasing the hot ones?*
-
-As you browse, stratus grades tweets into **bands** — roughly, **hot** (surging engagement worth jumping on), **warm** (decent), and **skip** (not worth a reply). This table checks whether that grading holds up against your *actual* reply outcomes. Columns:
-
-- **band** — hot / warm / skip / null (null = replies where no band was recorded).
-- **n** — measured replies in that band.
-- **med views** — median views of your replies under those tweets.
-- **hit-rate** — the share of those replies that cleared a "hit" bar. The bar is **your own p75 views** (the view count only your top 25% of tweets normally beat) — shown under the table as `hit = ≥… views (my p75)`. So hit-rate answers "how often did replying here produce one of my better-than-usual tweets?".
-- **≥1 like** — the share that earned at least one like.
-- **clicks** — mean profile clicks.
-
-Under the table, two more readouts:
-
-- **actionable vs passed** — pooled outcomes for tweets the band system said were worth acting on versus ones it said to pass, with medians. This is the bottom-line test of whether the grading earns its keep.
-- **bait** — a split of your replies by whether the original tweet looked like **engagement bait** (a post fishing for replies), so you can see whether bait tweets convert differently.
-
-> A note under this section reminds you: the band thresholds themselves are only ever changed **by hand, and only once ≥100 replies are measured**. This table is the *evidence* you'd use to make that call — it never moves the thresholds on its own.
-
 ### Batch vs single drafts
 
 **Question it answers:** *Do the replies I draft one-at-a-time (Reply Master) do better or worse than the ones I mass-draft from the Radar queue?*
@@ -145,23 +125,27 @@ This is the honest judge of the provider experiment: switch to a new model, keep
 
 Every other section here measures the replies you *wrote*. This one measures the ones you **didn't**. Its raw material is the passive timeline capture: while you scroll `x.com/home`, stratus records each tweet you were shown, free (see **[Harvest](./harvest-tab.md)**; the toggle lives in **[Settings](./settings-tab.md)**). The header reads `Timeline funnel (14/430 replied)` — replies you made, out of tweets you were shown, over the last 30 days.
 
-The table splits that by **the band the tweet was in when you first saw it** — how good an opportunity it was at that moment:
+The table splits that by **whether your own sweep filters would admit the tweet**, evaluated at your **first** sighting of it:
 
 | Column | Meaning |
 |---|---|
-| **band when seen** | `hot` / `warm` / `skip` / `no band` / `unknown` — the classification at your **first** sighting. |
-| **seen** | Distinct tweets you were shown in that band. |
+| **my filters** | `would sweep in` / `filtered out` / `no age` — see below. |
+| **seen** | Distinct tweets you were shown in that bucket. |
 | **replied** | How many of those you replied to. |
-| **capture** | `replied ÷ seen`, as a percentage — your capture rate for that band. |
+| **capture** | `replied ÷ seen`, as a percentage — your capture rate for that bucket. |
 
-**How to read it.** The `hot` row is the one that matters: those were live, fast-moving tweets where a reply had the best chance of being seen. A low hot-capture rate means opportunities are scrolling past you — the fix is the [Replies](./replies-tab.md) tab and the Radar on [Today](./today-tab.md), not more scrolling. The `skip` row *should* be near zero; that's the machinery working.
+**How to read it.** The `would sweep in` row is the one that matters: those are the tweets your *current* filters say are worth a reply, and they scrolled past you anyway. A low capture rate there is an instruction with two possible readings — either arm a sweep more often, or your filters are looser than your actual appetite. The `filtered out` row should be near zero; that's the filters doing their job.
+
+Before 2026-08-11 this table split by a *classifier's* hot/warm/skip verdict. It splits by your filters now because that classifier is gone and the sweep is the only rule left — which also makes the number more useful: it measures capture against a rule you can actually change.
 
 **Things worth knowing before you trust a number:**
 
-- **The band is frozen at first sighting.** Seeing the same tweet again three hours later doesn't re-band it — by then the moment has passed, and re-banding would flatter you.
-- **`no band` vs `unknown` are different.** `no band` means stratus classified the tweet and judged it not worth replying to. `unknown` means it couldn't tell — the tweet's timestamp never rendered, so there was no age, so there was no velocity to score. A sudden pile-up in `unknown` is a capture glitch, not a change in your timeline.
+- **The bucket is frozen at first sighting.** Seeing the same tweet again three hours later doesn't re-bucket it — by then the moment has passed, and re-bucketing would flatter you.
+- **It uses your filters as they are *right now*.** Tighten them and the whole 30-day history re-labels on the next read. That's intended: the question is "how much of what my current filters would admit did I actually reply to", not a frozen historical verdict.
+- **The verified-only filter is not applied here.** The passive corpus never recorded whether an author carried the badge, and a filter that can't be evaluated would mark every row `filtered out`. Impressions, likes, replies and age are checked exactly as configured; the badge is skipped.
+- **`filtered out` vs `no age` are different.** `filtered out` means the filters looked and said no. `no age` means they couldn't look — the tweet's timestamp never rendered, so there was no age to check against your age bound. A sudden pile-up in `no age` is a capture glitch, not a change in your timeline.
 - **The rate reads low on purpose.** Only replies you drafted *in stratus* count as "replied". Canned replies and anything you typed straight into X leave no draft behind, so they're invisible here. Treat the number as a floor and watch the trend, not the absolute.
-- **Every cell is gated at n≥20 seen** and shows `insufficient data (n=…)` until then. Getting 20 tweets into a band is hours of scrolling, not minutes — expect this whole section to say nothing for the first few days.
+- **Every cell is gated at n≥20 seen** and shows `insufficient data (n=…)` until then. Getting 20 tweets into a bucket is hours of scrolling, not minutes — expect this whole section to say nothing for the first few days.
 - **"Nothing captured yet — passive harvest fills this while you scroll x.com/home."** means the corpus is empty: either passive capture is off, or you haven't browsed with the extension loaded.
 
 ### Relationship lift
@@ -369,8 +353,8 @@ Both are held to the same **n≥20 gate**. If a finding hasn't cleared the gate,
 
 ## Common workflows
 
-**"Is it worth replying to hot tweets?"**
-Scroll to **Band calibration**. Compare the **hot** and **warm** rows' med views and clicks, and read the **actionable vs passed** line underneath. If hot doesn't clearly beat warm once both clear the gate, you're spending effort on the label, not the outcome. (Remember: the band thresholds only move by hand at ≥100 measured — this is the evidence, not the switch.)
+**"Are my sweep filters set right?"**
+Scroll to **Timeline funnel**. If `would sweep in` is a large row with a low capture rate, the filters are admitting more than you can work — tighten them on the Radar's ⚙. If it's a tiny row, they're too strict and good tweets are landing in `filtered out` unexamined. (This replaced the old **Band calibration** table, which graded a classifier that no longer exists.)
 
 **"Which reply angle works for big accounts vs small ones?"**
 Go to **Reply angles**. Read the overall table first, then expand the author-size drill-downs (`authors 10k-100k`, `authors <1k`, …). Look for an angle that wins in the size bucket you actually reply to most. Expect several buckets to say "insufficient data" — that just means you haven't replied to enough accounts of that size yet.

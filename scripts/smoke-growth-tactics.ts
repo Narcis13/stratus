@@ -3,24 +3,26 @@
 // radar routers in-process (no port, no workers, no X call) against the real DB
 // and drives the four things the lane actually decides:
 //
-//   (a) the band gate's people-layer carve-out (GT.6) — a dead post by someone
-//       in my circle clears the gate, a stranger's and a retired person's do
-//       not, and a client-sent `gateBypass` is dropped by `parseContext`;
+//   (a) the reciprocity SET (GT.6's surviving half) — who counts as "my people"
+//       (stage >= the floor, not retired), plus the standing proof that
+//       `/replies/generate` no longer refuses anyone: the band gate and both of
+//       its carve-outs were deleted on 2026-08-11, so a dead post by a stranger
+//       must now reach the LLM layer exactly like a circle member's does;
 //   (b) `buildMilestoneWatch` (GT.4) — pure, on synthetic series, incl. the
 //       witnessed-crossing rule the studio twin does not have;
 //   (c) the reciprocity quest's arithmetic through `GET /x/brief` (GT.7) — and
 //       specifically its QUALIFIER, which is the whole feature: the same posted
 //       reply counts or doesn't depending only on whether the author was
 //       already mine when the day started;
-//   (d) `radar_drafts.band = 'roster'` (GT.8) coerced to null on confirm while
-//       the real metrics survive (§7.19).
+//   (d) `radar_drafts.band = 'roster'` (GT.8) staying in its own column on
+//       confirm — never in the reply snapshot — while the real metrics survive.
 //
-// **$0 and it can never spend**, which is the interesting constraint here: the
-// exempt draft is proven by how FAR it gets, not by a draft coming back — both
-// LLM keys are force-unset in a `finally` so a request that clears the gate
-// lands on `503 llm_not_configured` (the `drafter.test.ts` trick). There is no
-// `--live` flag: the only paid thing in reach would be the Grok call this
-// script exists to prove we did not make.
+// **$0 and it can never spend**, which matters MORE now than it did: with the
+// band gate gone, a `/replies/generate` call here would really buy a draft. Both
+// LLM keys are force-unset in a `finally`, so every request lands on
+// `503 llm_not_configured` (the `drafter.test.ts` trick) and "how far it got" is
+// still the proof. There is no `--live` flag: the only paid thing in reach would
+// be the Grok call this script exists to prove we did not make.
 //
 // The format cooldown the plan's Task 9 also lists is NOT asserted here — GT.5
 // was superseded by SC.6 (masterplan D142) and `smoke-coach.ts` (SC.9) owns
@@ -96,8 +98,9 @@ async function keyless<T>(fn: () => T | Promise<T>): Promise<T> {
   }
 }
 
-// A post with 40 views an hour old: `classifyBand` says null (dead), so the
-// gate refuses unless the author is my people.
+// A post with 40 views an hour old. Until 2026-08-11 the band gate refused this
+// outright unless the author was my people; now nothing screens it, which is
+// what the two calls below assert.
 const deadContext = (handle: string) => ({
   tweetId: DEAD_TWEET,
   handle,
@@ -116,10 +119,10 @@ const generate = (handle: string) =>
     body: JSON.stringify({ context: deadContext(handle) }),
   });
 
-// ------------------------------------------------------- (a) the gate (GT.6)
+// ------------------------------------------ (a) the reciprocity set (GT.6)
 
 // Stamped well before today so the SAME row also satisfies the quest's
-// `{asOf: todayStart}` reading in step (c) — the gate asks unscoped.
+// `{asOf: todayStart}` reading in step (c).
 await db.insert(people).values({
   handle: MINE,
   stage: RECIPROCITY_MIN_STAGE,
@@ -139,43 +142,39 @@ if (!memberSet.has(MINE)) fail(`${MINE} at stage ${RECIPROCITY_MIN_STAGE} is not
 if (memberSet.has(GONE)) fail('a retired person is still in the reciprocity set');
 ok(`reciprocity set: ${memberSet.size} handles, floor = ${RECIPROCITY_MIN_STAGE}`);
 
-let res = await keyless(() => generate(MINE));
-if (res.status !== 503) {
-  fail(`exempt handle: /replies/generate returned ${res.status} (want 503): ${await res.text()}`);
+// The band gate is GONE, so all three of these must now behave identically:
+// every one reaches the LLM layer and stops there because the keys are unset.
+// A 422 from any of them means a per-tweet gate has been reintroduced somewhere.
+for (const [label, handle] of [
+  ['my people', MINE],
+  ['a stranger', STRANGER],
+  ['a retired person', GONE],
+] as const) {
+  const res = await keyless(() => generate(handle));
+  if (res.status !== 503) {
+    fail(`${label}: /replies/generate returned ${res.status} (want 503): ${await res.text()}`);
+  }
+  if (((await res.json()) as { error: string }).error !== 'llm_not_configured') {
+    fail(`${label} did not reach the LLM layer — something refused it`);
+  }
 }
-if (((await res.json()) as { error: string }).error !== 'llm_not_configured') {
-  fail('exempt handle did not reach the LLM layer — the gate refused it');
-}
-ok('gate exemption: a dead post by my people reaches 503 llm_not_configured (nothing spent)');
+ok('no per-tweet gate: my people, a stranger and a retired person all reach 503 (nothing spent)');
 
-res = await generate(STRANGER);
-if (res.status !== 422) fail(`stranger: expected 422, got ${res.status}`);
-let refused = (await res.json()) as { error: string; band: unknown };
-if (refused.error !== 'band_gate' || refused.band !== null) {
-  fail(`stranger refusal shape wrong: ${JSON.stringify(refused)}`);
-}
-ok('an unknown handle keeps the refusal default (422 band_gate, band null)');
-
-res = await generate(GONE);
-if (res.status !== 422) fail(`retired person: expected 422, got ${res.status}`);
-refused = (await res.json()) as { error: string; band: unknown };
-if (refused.error !== 'band_gate') fail('retired person did not get band_gate');
-ok('a retired person is not my people — the dead post still 422s');
-
-// §7.16: `gateBypass` is server-stamped. parseContext builds from an explicit
-// allowlist, so a client that sends one is refused by construction.
+// §7.16 still governs the context allowlist even with `gateBypass` retired:
+// parseContext builds from an explicit list, so unknown keys are dropped.
 const parsed = parseContext({ ...deadContext(MINE), gateBypass: 'roster' });
 if ('error' in parsed) fail(`parseContext rejected a valid context: ${JSON.stringify(parsed)}`);
 if ('gateBypass' in parsed) fail('parseContext let a client-supplied gateBypass through');
-ok('gateBypass is never accepted from the client (§7.16)');
+ok('an unknown client-sent context key is dropped, not carried (§7.16)');
 
-// Nothing above may have written a draft — every arm returned before the insert.
+// Nothing above may have written a draft — every call died at the LLM layer,
+// which sits before the insert.
 const strayDrafts = await db
   .select({ id: replyDrafts.id })
   .from(replyDrafts)
   .where(eq(replyDrafts.sourceTweetId, DEAD_TWEET));
-if (strayDrafts.length !== 0) fail(`the gate steps wrote ${strayDrafts.length} reply_drafts rows`);
-ok('the gate steps wrote no rows');
+if (strayDrafts.length !== 0) fail(`the generate steps wrote ${strayDrafts.length} rows`);
+ok('the generate steps wrote no rows');
 
 // --------------------------------------------------- (b) milestones (GT.4)
 
@@ -290,7 +289,7 @@ await persistRadarDrafts(
   'gt9-smoke',
 );
 
-res = await app.request(`/x/radar/drafts?tweetId=${ROSTER_TWEET}`);
+let res = await app.request(`/x/radar/drafts?tweetId=${ROSTER_TWEET}`);
 if (res.status !== 200) fail(`GET /x/radar/drafts returned ${res.status}`);
 const queued = (await res.json()) as { drafts: Array<{ tweetId: string; band: string | null }> };
 const rosterRow = queued.drafts.find((d) => d.tweetId === ROSTER_TWEET);
@@ -302,20 +301,22 @@ if (res.status !== 201) fail(`roster confirm returned ${res.status}: ${await res
 const confirmed = (await res.json()) as {
   contextSnapshot: {
     metrics?: { views: number };
-    signals?: { band: string | null; views: number };
+    signals?: { views: number };
   };
 };
-// §7.19: a roster capture is queue metadata, not a classifier verdict — it is
-// coerced away exactly like a `manual` ⊕ pin, so it can never land in the
-// Playbook's hot/warm band cells. The measured numbers are untouched.
-if (confirmed.contextSnapshot.signals?.band !== null) {
-  fail(`roster band survived confirm as ${confirmed.contextSnapshot.signals?.band} (want null)`);
+// A roster capture is queue metadata about HOW the row entered — like a `manual`
+// ⊕ pin — so it stays in `radar_drafts.band` and never reaches the reply
+// snapshot, which records what the TWEET looked like. Metrics are untouched.
+if (confirmed.contextSnapshot.signals && 'band' in confirmed.contextSnapshot.signals) {
+  fail(
+    `the roster band reached the snapshot: ${JSON.stringify(confirmed.contextSnapshot.signals)}`,
+  );
 }
 if (confirmed.contextSnapshot.signals?.views !== 37) {
   fail('the roster row lost its real view count in the snapshot');
 }
 if (confirmed.contextSnapshot.metrics?.views !== 37) fail('metrics.views not rebuilt');
-ok('confirm coerces roster → null band while the real metrics survive (§7.19)');
+ok('confirm keeps the roster band in its column, out of the snapshot; metrics survive');
 
 // ------------------------------------------------------------------ cleanup
 

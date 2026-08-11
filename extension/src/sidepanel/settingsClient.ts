@@ -30,23 +30,6 @@ export function flattenSettings(groups: SettingsGroup[]): SettingEntry[] {
   return groups.flatMap((g) => g.settings);
 }
 
-// RS.7 — groups the Settings tab does not render. `band` is here because the
-// Radar's Sweep gear is now the ONLY place a tweet's admission to the queue is
-// configured (RS.3 took that job off the band thresholds); leaving twelve
-// look-alike numbers one tab away invited the user to tune the wrong ones. The
-// knobs stay in the server registry and keep their stored values — they still
-// draw the on-page border and gate the single reply draft — they are simply not
-// editable from the panel any more. Hiding, not deleting: the classifier is a
-// calibration surface (>=100 measured replies), not a daily control.
-const HIDDEN_GROUPS = new Set(['band']);
-
-/** The registry minus the groups the Settings tab doesn't render. Applied
- *  before the search filter so a hidden group can't be summoned by a query.
- *  Pure. */
-export function visibleSettingGroups(groups: SettingsGroup[]): SettingsGroup[] {
-  return groups.filter((g) => !HIDDEN_GROUPS.has(g.id));
-}
-
 /** Search filter for the Settings tab (UI.11). Matches a knob on its key, label
  *  or description; a query matching the GROUP's label or id keeps the whole
  *  group, so "budget" finds every budget knob rather than only the ones whose
@@ -96,8 +79,8 @@ export function entriesForKeys(groups: SettingsGroup[], keys: string[]): Setting
  *  control that moves numbers off screen is the one thing it must not do.
  *
  *  So: the whole group when the card is showing all of it (cheaper, and it also
- *  clears override rows for knobs hidden by HIDDEN_GROUPS-adjacent drift),
- *  otherwise exactly the rows on screen. `null` = nothing in view is overridden,
+ *  clears override rows for keys the card no longer renders), otherwise exactly
+ *  the rows on screen. `null` = nothing in view is overridden,
  *  so the button is inert — the gear's `disabled={!overridden}` discipline,
  *  applied to the same control in the other surface. Pure. */
 export function groupResetTarget(

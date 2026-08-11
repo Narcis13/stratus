@@ -11,13 +11,7 @@ import { JUDGE_VERDICT_ORDER, type JudgeVerdictLabel, deriveApproved } from '../
 import { detectScript, resolveLanguageProfile } from '../shared/language.ts';
 import { type CoachBand, type CoachLexicon, scoreDraft } from '../shared/postCoach.ts';
 import { POST_FORMATS, type PostFormat, classifyFormat } from '../shared/postFormat.ts';
-import {
-  BAND,
-  type Band,
-  type BandThresholds,
-  classifyBand,
-  textLooksLikeReplyBait,
-} from '../shared/replyBand.ts';
+import { SWEEP, type SweepConfig, passesSweep } from '../shared/radarSweep.ts';
 import {
   REPLY_MODES,
   type ReplyMode,
@@ -28,7 +22,7 @@ import {
 } from '../shared/replyMode.ts';
 
 /** Default per-cell minimum sample before a stat is allowed to claim anything.
- *  Same spirit as the BAND ≥100 rule, scaled to per-cell granularity. */
+ *  §7.19's ≥100-measured discipline, scaled to per-cell granularity. */
 export const DEFAULT_MIN_CELL_N = 20;
 
 export interface MeasuredOutcome {
@@ -60,12 +54,6 @@ export function median(values: Array<number | null | undefined>): number | null 
 function mean(values: number[]): number | null {
   if (values.length === 0) return null;
   return values.reduce((a, b) => a + b, 0) / values.length;
-}
-
-function percentile(values: number[], p: number): number | null {
-  if (values.length === 0) return null;
-  const s = [...values].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))] as number;
 }
 
 function cellOf(outcomes: Array<MeasuredOutcome | null>, minN: number): OutcomeCell {
@@ -310,182 +298,6 @@ export function buildBatchVsSingle(
       minN,
     ),
   };
-}
-
-// ------------------------------------- 5. bait crosstab + band hit-rates
-
-/** One measured reply with its capture-time classifier reading — the JSON
- *  form of what evals/analyze-own-replies.ts computes (the script stays for
- *  deep dives; this feeds the page). */
-export interface ScoredReply {
-  band: Band;
-  bait: boolean;
-  views: number;
-  likes: number;
-  profileClicks: number | null;
-}
-
-/** Derive a ScoredReply from an outcome row: capture-time signals when
- *  stamped, else derived from contextSnapshot metrics + draft-creation age
- *  (same fallback as the eval script). Null when unmeasurable.
- *
- *  UI.7 deliberately did NOT make this fallback read the configured thresholds
- *  (unlike buildTimelineFunnel). Most rows here carry the band STAMPED at
- *  capture time, and this table is the evidence a recalibration is judged on
- *  (§7.19); relabelling the unstamped minority with today's numbers would mix
- *  two vintages inside one crosstab and make the evidence move whenever the
- *  knob does. The shipped defaults are the closest thing to "the thresholds
- *  those rows were captured under". */
-export function scoreReplyOutcome(row: {
-  signals: {
-    band: Band;
-    views: number;
-    replies: number;
-    ageMin: number;
-    vpm: number;
-    bait: boolean;
-  } | null;
-  sourceMetrics: { views: number; replies: number } | null;
-  sourceText: string;
-  sourcePostedAt: Date | string | null;
-  draftCreatedAt: Date | string;
-  outcome: { views: number | null; likes: number | null; profileVisits: number | null } | null;
-}): ScoredReply | null {
-  if (!row.outcome || row.outcome.views === null) return null;
-
-  let band: Band;
-  let bait: boolean;
-  if (row.signals) {
-    band = row.signals.band;
-    bait = row.signals.bait;
-  } else {
-    if (!row.sourceMetrics || !row.sourcePostedAt) return null;
-    const postedMs = new Date(row.sourcePostedAt).getTime();
-    const createdMs = new Date(row.draftCreatedAt).getTime();
-    if (Number.isNaN(postedMs) || Number.isNaN(createdMs)) return null;
-    const ageMin = Math.max(0, (createdMs - postedMs) / 60_000);
-    bait = textLooksLikeReplyBait(row.sourceText);
-    band = classifyBand({
-      views: row.sourceMetrics.views,
-      replies: row.sourceMetrics.replies,
-      ageMin,
-      vpm: row.sourceMetrics.views / Math.max(ageMin, 1),
-      bait,
-    });
-  }
-  return {
-    band,
-    bait,
-    views: row.outcome.views,
-    likes: row.outcome.likes ?? 0,
-    profileClicks: row.outcome.profileVisits,
-  };
-}
-
-export interface BandCell {
-  band: Band;
-  n: number;
-  medianViews: number | null;
-  meanViews: number | null;
-  /** Share of this band's replies clearing the account's p75 views. */
-  hitRate: number | null;
-  /** Share that got at least one like. */
-  likeRate: number | null;
-  meanProfileClicks: number | null;
-  sufficient: boolean;
-}
-
-export interface BaitCell {
-  n: number;
-  medianViews: number | null;
-  meanLikes: number | null;
-  sufficient: boolean;
-}
-
-export interface BandCalibration {
-  totalMeasured: number;
-  /** p75 of all measured reply views — the "hit" bar, account-calibrated. */
-  hitThresholdViews: number | null;
-  bands: BandCell[];
-  actionable: { n: number; medianViews: number | null; hitRate: number | null };
-  passed: { n: number; medianViews: number | null; hitRate: number | null };
-  bait: { bait: BaitCell; nonBait: BaitCell };
-}
-
-const BAND_ORDER: Band[] = ['hot', 'warm', 'skip', null];
-
-export function buildBandCalibration(
-  scored: ScoredReply[],
-  minN = DEFAULT_MIN_CELL_N,
-): BandCalibration {
-  const allViews = scored.map((s) => s.views);
-  const hit = percentile(allViews, 75);
-
-  const bands: BandCell[] = [];
-  for (const band of BAND_ORDER) {
-    const g = scored.filter((s) => s.band === band);
-    if (g.length === 0) continue;
-    const views = g.map((s) => s.views);
-    const clicks = g.filter((s) => s.profileClicks !== null).map((s) => s.profileClicks as number);
-    bands.push({
-      band,
-      n: g.length,
-      medianViews: median(views),
-      meanViews: roundOrNull(mean(views)),
-      hitRate: hit === null ? null : round2(g.filter((s) => s.views >= hit).length / g.length),
-      likeRate: round2(g.filter((s) => s.likes >= 1).length / g.length),
-      meanProfileClicks: roundOrNull(mean(clicks)),
-      sufficient: g.length >= minN,
-    });
-  }
-
-  const actionable = scored.filter((s) => s.band === 'hot' || s.band === 'warm');
-  const passed = scored.filter((s) => s.band === 'skip' || s.band === null);
-
-  return {
-    totalMeasured: scored.length,
-    hitThresholdViews: hit,
-    bands,
-    actionable: sideCell(actionable, hit),
-    passed: sideCell(passed, hit),
-    bait: {
-      bait: baitCell(
-        scored.filter((s) => s.bait),
-        minN,
-      ),
-      nonBait: baitCell(
-        scored.filter((s) => !s.bait),
-        minN,
-      ),
-    },
-  };
-}
-
-function sideCell(
-  g: ScoredReply[],
-  hit: number | null,
-): { n: number; medianViews: number | null; hitRate: number | null } {
-  return {
-    n: g.length,
-    medianViews: median(g.map((s) => s.views)),
-    hitRate:
-      hit === null || g.length === 0
-        ? null
-        : round2(g.filter((s) => s.views >= hit).length / g.length),
-  };
-}
-
-function baitCell(g: ScoredReply[], minN: number): BaitCell {
-  return {
-    n: g.length,
-    medianViews: median(g.map((s) => s.views)),
-    meanLikes: roundOrNull(mean(g.map((s) => s.likes))),
-    sufficient: g.length >= minN,
-  };
-}
-
-function roundOrNull(v: number | null): number | null {
-  return v === null ? null : round2(v);
 }
 
 // ------------------------------------------------------ 6. relationship lift
@@ -919,47 +731,56 @@ export function buildModelEffectiveness(
 
 /** One tweet the algorithm put in front of me, from the ambient home-timeline
  *  corpus (`harvest_rows` mode='timeline', HV.1). Metrics are DOM-scraped at
- *  sighting time; the band is derived here and never stored (§7.12). */
+ *  sighting time; the bucket is derived here and never stored (§7.12). */
 export interface TimelineSeenRow {
   tweetId: string;
   views: number;
   comments: number;
+  likes: number;
   text: string;
-  /** null when the article's `<time>` never rendered — see TimelineBand. */
+  /** null when the article's `<time>` never rendered — see TimelineBucket. */
   tweetTimeMs: number | null;
   capturedAtMs: number;
 }
 
-/** `unknown` is NOT a classifier verdict: a row with no tweet time has no
- *  derivable age, therefore no velocity, therefore nothing to ask classifyBand.
- *  It stays its own bucket (same discipline as LATENCY_BUCKETS' `unknown`) so it
- *  can never be folded into the real `null` band, which DOES mean "judged not
- *  worth replying to". */
-export type TimelineBand = Band | 'unknown';
+/** Which side of the sweep filters a seen tweet fell on.
+ *
+ *  This axis used to be the reply band's four verdicts. The classifier is gone,
+ *  and re-axising onto `passesSweep` is what keeps the cell honest: the funnel
+ *  now measures capture against the ONE rule the user actually tunes, so a
+ *  disappointing `qualifies` rate is a real instruction (scroll a sweep, or
+ *  loosen the filters) instead of a comment on a classifier nobody controls.
+ *
+ *  `unknown` is NOT a filter verdict: a row with no tweet time has no derivable
+ *  age, so the always-enforced age gate cannot be evaluated at all. It stays its
+ *  own bucket (LATENCY_BUCKETS' `unknown` discipline) so it can never be folded
+ *  into `filtered`, which DOES mean "the filters looked and said no". */
+export type TimelineBucket = 'qualifies' | 'filtered' | 'unknown';
 
-const TIMELINE_BAND_ORDER: TimelineBand[] = ['hot', 'warm', 'skip', null, 'unknown'];
+const TIMELINE_BUCKET_ORDER: TimelineBucket[] = ['qualifies', 'filtered', 'unknown'];
 
-export function deriveTimelineBand(
+/** **`verifiedOnly` is deliberately forced OFF here.** `harvest_rows` never
+ *  recorded the author's badge — the passive corpus predates the filter — so
+ *  asking the real config would fail every row on unknown-verified (passesSweep
+ *  resolves unknown as a refusal, by design) and print a 0% funnel that means
+ *  nothing. The metric and age filters are evaluated exactly as configured; the
+ *  badge one is not evaluated at all, and the page says so. */
+export function deriveTimelineBucket(
   row: TimelineSeenRow,
-  thresholds: BandThresholds = BAND,
-): TimelineBand {
+  cfg: SweepConfig = SWEEP,
+): TimelineBucket {
   if (row.tweetTimeMs === null || !Number.isFinite(row.tweetTimeMs)) return 'unknown';
   const ageMin = Math.max(0, (row.capturedAtMs - row.tweetTimeMs) / 60_000);
-  return classifyBand(
-    {
-      views: row.views,
-      replies: row.comments,
-      ageMin,
-      vpm: row.views / Math.max(ageMin, 1),
-      bait: textLooksLikeReplyBait(row.text),
-    },
-    thresholds,
+  const passes = passesSweep(
+    { views: row.views, likes: row.likes, replies: row.comments, ageMin, verified: true },
+    { ...cfg, verifiedOnly: false },
   );
+  return passes ? 'qualifies' : 'filtered';
 }
 
 export interface FunnelCell {
-  band: TimelineBand;
-  /** Distinct tweets in this band (rows are deduped to their first sighting). */
+  bucket: TimelineBucket;
+  /** Distinct tweets in this bucket (rows are deduped to their first sighting). */
   seen: number;
   replied: number;
   /** replied/seen, null under the gate — "33% capture" off 3 tweets is a lie. */
@@ -968,7 +789,7 @@ export interface FunnelCell {
 }
 
 export interface TimelineFunnel {
-  /** One cell per non-empty band, in TIMELINE_BAND_ORDER. */
+  /** One cell per non-empty bucket, in TIMELINE_BUCKET_ORDER. */
   cells: FunnelCell[];
   totalSeen: number;
   totalReplied: number;
@@ -976,24 +797,23 @@ export interface TimelineFunnel {
 
 /** Of the tweets the algorithm actually showed me, how many did I reply to?
  *  The denominator only exists because passive capture records EVERY parseable
- *  article including band 'skip' — a funnel over the hot cell alone would be a
- *  tautology.
+ *  article, filtered ones included — a funnel over the qualifying cell alone
+ *  would be a tautology.
  *
- *  First sighting per tweet is the band that mattered (the moment it was still
- *  replyable); later re-sightings of the same id are the longitudinal view curve
- *  and must never re-band it, so rows are deduped by earliest capture here as
- *  well as in the loader's SQL.
+ *  First sighting per tweet is the reading that mattered (the moment it was
+ *  still replyable); later re-sightings of the same id are the longitudinal view
+ *  curve and must never re-bucket it, so rows are deduped by earliest capture
+ *  here as well as in the loader's SQL.
  *
- *  UI.7: the band is derived at read time (§7.12 — never stored), so it takes
- *  the CONFIGURED thresholds. This cell measures how well you capture what the
- *  badge highlights, and it would describe a badge you never saw if it stayed
- *  on the shipped defaults after you tuned them. The band CROSSTAB above is the
- *  opposite case — see scoreReplyOutcome. */
+ *  The bucket is derived at read time (§7.12 — never stored) from the CONFIGURED
+ *  sweep, so tightening the filters re-labels the whole 30-day history on the
+ *  next request. That is the intended behaviour: the cell answers "how much of
+ *  what my current filters would admit did I actually reply to". */
 export function buildTimelineFunnel(
   rows: TimelineSeenRow[],
   repliedTweetIds: Set<string>,
   minN = DEFAULT_MIN_CELL_N,
-  thresholds: BandThresholds = BAND,
+  cfg: SweepConfig = SWEEP,
 ): TimelineFunnel {
   const firstByTweet = new Map<string, TimelineSeenRow>();
   for (const r of rows) {
@@ -1001,28 +821,27 @@ export function buildTimelineFunnel(
     if (!prev || r.capturedAtMs < prev.capturedAtMs) firstByTweet.set(r.tweetId, r);
   }
 
-  const byBand = new Map<TimelineBand, { seen: number; replied: number }>();
+  const byBucket = new Map<TimelineBucket, { seen: number; replied: number }>();
   let totalReplied = 0;
   for (const [tweetId, row] of firstByTweet) {
-    const band = deriveTimelineBand(row, thresholds);
-    const cell = byBand.get(band) ?? { seen: 0, replied: 0 };
+    const bucket = deriveTimelineBucket(row, cfg);
+    const cell = byBucket.get(bucket) ?? { seen: 0, replied: 0 };
     cell.seen++;
     if (repliedTweetIds.has(tweetId)) {
       cell.replied++;
       totalReplied++;
     }
-    byBand.set(band, cell);
+    byBucket.set(bucket, cell);
   }
 
-  const cells: FunnelCell[] = TIMELINE_BAND_ORDER.filter((b) => byBand.has(b)).map((band) => {
-    const { seen, replied } = byBand.get(band) as { seen: number; replied: number };
+  const cells: FunnelCell[] = TIMELINE_BUCKET_ORDER.filter((b) => byBucket.has(b)).map((bucket) => {
+    const { seen, replied } = byBucket.get(bucket) as { seen: number; replied: number };
     const sufficient = seen >= minN;
-    return { band, seen, replied, rate: sufficient ? round2(replied / seen) : null, sufficient };
+    return { bucket, seen, replied, rate: sufficient ? round2(replied / seen) : null, sufficient };
   });
 
   return { cells, totalSeen: firstByTweet.size, totalReplied };
 }
-
 // -------------------------------------- 13. post format effectiveness (SC.5)
 
 /** One own ORIGINAL post. `text` is `posts_published.text` RAW — both

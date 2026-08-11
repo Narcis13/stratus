@@ -16,7 +16,7 @@ import {
   api,
 } from './api.ts';
 import { COMING_SOON, comingSoonMatches } from './comingSoon.ts';
-import { filterSettingGroups, groupResetTarget, visibleSettingGroups } from './settingsClient.ts';
+import { filterSettingGroups, groupResetTarget } from './settingsClient.ts';
 import { useSettingsEditor } from './settingsEditor.ts';
 import {
   DEFAULT_DENSITY,
@@ -391,9 +391,10 @@ function TuningPanel({ settings }: { settings: Settings }): JSX.Element {
     resetGroupId,
   } = useSettingsEditor(settings);
   const [query, setQuery] = useState('');
-  // RS.7 — the reply-band group is no longer rendered here (settingsClient's
-  // HIDDEN_GROUPS); the Radar's Sweep gear owns queue admission alone.
-  const groups = allGroups === null ? null : visibleSettingGroups(allGroups);
+  // Every group in the registry renders. The one hidden group (the reply band,
+  // hidden at RS.7) is gone from the registry entirely, so there is nothing left
+  // to filter — the Radar's Sweep gear owns queue admission alone.
+  const groups = allGroups;
 
   if (groups === null) {
     return (

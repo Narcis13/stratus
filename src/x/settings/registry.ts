@@ -401,161 +401,6 @@ const DIGEST: SettingDef[] = [
   },
 ];
 
-// Reply band (UI.7) — the classifier behind the on-page badge AND the
-// /x/replies/generate gate. Every knob is `mirrored`: the badge and the gate
-// must never disagree about what "hot" means, which is the whole reason
-// src/shared/replyBand.ts is one module shared by server and page (§7.27).
-// §7.19 still stands — these are calibration numbers, not a gate you can wish
-// away, so every description carries the >=100-measured warning. Ordering
-// (baitViews < bigViews, earlyReplies < midReplies, baitVPM < risingVPM) is
-// meaning, not validation: the registry validates per key, so an inverted pair
-// classifies oddly rather than erroring.
-const RECAL = 'Recalibrate only with >=100 measured replies — see the Playbook band table.';
-
-const BAND_KNOBS: SettingDef[] = [
-  {
-    key: 'x.band.bigViews',
-    group: 'band',
-    label: 'View floor',
-    description: `Views a post needs before it is worth a reply at all. ${RECAL}`,
-    type: 'number',
-    default: 300,
-    min: 50,
-    max: 5000,
-    unit: 'views',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.baitViews',
-    group: 'band',
-    label: 'View floor (reply-bait)',
-    description: `The lower view floor a question/poll/take-bait post gets — bait pulls the threads where an early sharp reply is seen. Keep it below the main view floor. ${RECAL}`,
-    type: 'number',
-    default: 180,
-    min: 20,
-    max: 5000,
-    unit: 'views',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.earlyReplies',
-    group: 'band',
-    label: 'Early-reply ceiling',
-    description: `Replies already on the post below which you are still near the top of the thread (the hot/warm split). ${RECAL}`,
-    type: 'number',
-    default: 40,
-    min: 1,
-    max: 500,
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.midReplies',
-    group: 'band',
-    label: 'Buried-at',
-    description: `Replies past which the thread is too deep to be seen — the post bands as "buried" whatever its size. ${RECAL}`,
-    type: 'number',
-    default: 120,
-    min: 5,
-    max: 1000,
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.freshMin',
-    group: 'band',
-    label: 'Freshness window',
-    description: `Minutes a post counts as fresh, which is the only window where velocity alone can clear the view floor. ${RECAL}`,
-    type: 'number',
-    default: 15,
-    min: 1,
-    max: 240,
-    unit: 'min',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.risingVPM',
-    group: 'band',
-    label: 'Rising velocity',
-    description: `Views per minute that project a fresh post into the band before it has the views. ${RECAL}`,
-    type: 'number',
-    default: 20,
-    min: 1,
-    max: 500,
-    unit: 'v/min',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.baitVPM',
-    group: 'band',
-    label: 'Rising velocity (reply-bait)',
-    description: `The relaxed rising bar for reply-bait posts. Keep it below the plain rising velocity. ${RECAL}`,
-    type: 'number',
-    default: 12,
-    min: 1,
-    max: 500,
-    unit: 'v/min',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.watchVPM',
-    group: 'band',
-    label: 'Watch velocity',
-    description: `Views per minute that make a fresh post promising-but-unproven — it bands "watch" rather than "reply now". ${RECAL}`,
-    type: 'number',
-    default: 8,
-    min: 1,
-    max: 500,
-    unit: 'v/min',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.watchReplyCeiling',
-    group: 'band',
-    label: 'Watch reply ceiling',
-    description: `Replies past which promising velocity stops earning a "watch" — the thread already has a crowd. ${RECAL}`,
-    type: 'number',
-    default: 25,
-    min: 1,
-    max: 500,
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.tooSmallAgeMin',
-    group: 'band',
-    label: 'Dead-zone age',
-    description: `Minutes after which a small, slow, non-bait post is written off as "will not grow" (with the two knobs below — all three must hold). ${RECAL}`,
-    type: 'number',
-    default: 20,
-    min: 1,
-    max: 1440,
-    unit: 'min',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.tooSmallViews',
-    group: 'band',
-    label: 'Dead-zone views',
-    description: `Views under which an aged, slow, non-bait post is written off. Shipped equal to the view floor; raising the floor does NOT widen the dead zone unless you raise this too. ${RECAL}`,
-    type: 'number',
-    default: 300,
-    min: 0,
-    max: 5000,
-    unit: 'views',
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.band.tooSmallVpm',
-    group: 'band',
-    label: 'Dead-zone velocity',
-    description: `Views per minute under which an aged, small, non-bait post is written off. ${RECAL}`,
-    type: 'number',
-    default: 15,
-    min: 0,
-    max: 500,
-    unit: 'v/min',
-    scope: 'mirrored',
-  },
-];
-
 // Stat gates (§7.19) — the minimum-sample bars below which a measured cell is
 // "no data", never advice. The knob exists so exploration is possible; the
 // doctrine lives in the description copy, not in a lock.
@@ -627,14 +472,14 @@ const RADAR: SettingDef[] = [
 // Sweep (RS.1) — what an armed sweep is allowed to put into the Radar queue.
 // The Radar is manual by default; these eleven numbers are the ONLY admission
 // rule while a sweep runs, which is why every one of them is `mirrored`: the
-// content script decides capture with `passesSweep` and the server has no
-// consumer at all (the `x.display.*` precedent — a server-scoped knob here would
-// never reach the code that reads it). The defaults ARE `SWEEP` (never retyped),
+// content script decides capture with `passesSweep`; the server reads them too,
+// through `sweepConfigFromSettings`, so the Playbook's timeline funnel can
+// bucket against the same rule the page captured with. The defaults ARE `SWEEP` (never retyped),
 // and a group-shape test asserts the group is exactly `keyof SweepConfig`, so a
 // knob cannot be half-exposed. Provenance for each number is in the header of
-// src/shared/radarSweep.ts — two of them restate BAND's numbers rather than
-// importing them (§7.33), so the sweep can be tuned without moving the
-// classifier that draws the on-page border.
+// src/shared/radarSweep.ts. These are now the ONLY knobs that decide what a
+// tweet qualifies for — the twelve `x.band.*` thresholds that used to compete
+// with them are deleted, not hidden.
 const SWEEP_RECAL = 'An opening guess — recalibrate at n >= 100 swept rows, never by feel.';
 const NO_CEILING = '0 means no ceiling.';
 
@@ -1206,7 +1051,6 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...FOLLOWUPS,
   ...PINNED,
   ...DIGEST,
-  ...BAND_KNOBS,
   ...GATES,
   ...RADAR,
   ...SWEEP_KNOBS,
@@ -1227,7 +1071,6 @@ export const GROUP_LABELS: Record<string, string> = {
   followups: 'Follow-ups',
   pinned: 'Pinned watch',
   digest: 'Digest',
-  band: 'Reply band',
   gates: 'Stat gates',
   radar: 'Radar',
   sweep: 'Sweep',

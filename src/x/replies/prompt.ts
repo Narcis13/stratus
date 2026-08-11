@@ -8,7 +8,6 @@
 
 import type { GrokMessage } from '../../grok/index.ts';
 import type { LanguageProfile } from '../../shared/language.ts';
-import type { Band } from '../../shared/replyBand.ts';
 import {
   type PersonaUse,
   REPLY_ANGLES,
@@ -24,14 +23,13 @@ import { type PillarDef, renderPillars } from '../posts/pillars.ts';
 // shape mode.ts already uses for `ReplyVariant`.
 import type { ReplyWinner } from './winners.ts';
 
-// Band verdict + the exact classifier inputs, frozen at capture time by the
-// extension (src/shared/replyBand.ts). Optional in the request: older
-// extension builds don't send it, and the band gate stamps a server-derived
-// one when absent (§7.3). Never rendered into the prompt — it exists so every
-// draft persisted via contextSnapshot is a labeled row for recalibrating BAND
-// from own outcomes (OVERHAUL-PLAN §6.2, evals/analyze-own-replies.ts).
+// The tweet's reading at capture time, frozen by the extension
+// (src/shared/replyBand.ts). Optional in the request; the route stamps a
+// server-derived one when absent. Never rendered into the prompt — it exists so
+// every draft persisted via contextSnapshot carries what the post looked like
+// when it was drafted, and the Playbook's latency table reads `ageMin` back off
+// it. (It used to carry a `band` verdict too; that classifier is gone.)
 export interface PostSignals {
-  band: Band;
   views: number;
   replies: number;
   ageMin: number;
@@ -70,19 +68,6 @@ export interface PostContext {
    *  Playbook's me-lift cell (ME.5) can split drafts that saw it from cold ones.
    *  Injected at the variable tail, order relationship → me → guidance. */
   me?: string;
-  /** Why a refused band still drafted (GT.6). Server-stamped on the gate's
-   *  exemption path only — parseContext never accepts it from the client, same
-   *  discipline as relationship/guidance/niche/me — and deliberately NOT
-   *  rendered into the prompt: it changes nothing the model sees (the C3
-   *  relationship block already carries the person context). It is bookkeeping,
-   *  so contextSnapshot can tell a roster-exempt draft apart from a human
-   *  `override` when the band cohorts are compared.
-   *
-   *  `'roster'` = the GT.6 reciprocity lane (people I already reply to + the
-   *  2–10x targets); `'cannon'` = the CQ.3 camped roster. Two VALUES, not one
-   *  boolean, because the two carve-outs are different bets on different sets
-   *  and grading them together would hide whichever one is losing. */
-  gateBypass?: 'roster' | 'cannon';
   /** ML.3: the language this draft was actually written in, and which rule
    *  picked it. Server-RESOLVED, never client-supplied — a body `language` is a
    *  top-level field the route validates, and parseContext's whitelist keeps

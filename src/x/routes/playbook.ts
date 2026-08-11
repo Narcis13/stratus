@@ -25,7 +25,7 @@ import {
 } from '../../llm/index.ts';
 import { OpenRouterApiError } from '../../openrouter/index.ts';
 import { type JudgeVerdictLabel, isJudgeVerdictLabel } from '../../shared/judge.ts';
-import { BAND, type BandThresholds } from '../../shared/replyBand.ts';
+import { SWEEP, type SweepConfig } from '../../shared/radarSweep.ts';
 import {
   accountSnapshots,
   cannonTargets,
@@ -62,7 +62,6 @@ import {
   type StructureRow,
   type TimelineFunnel,
   buildAngleEffectiveness,
-  buildBandCalibration,
   buildBatchVsSingle,
   buildCoachScoreEffectiveness,
   buildFormatEffectiveness,
@@ -81,14 +80,13 @@ import {
   classifyReplyOrigin,
   normalizeReplyText,
   resolveAgeMin,
-  scoreReplyOutcome,
   topAngles,
   topStructures,
 } from '../playbook.ts';
 import { loadPromptSafe, renderPrompt } from '../prompts/registry.ts';
 import type { PostContext, ReplyVariant } from '../replies/prompt.ts';
-import { bandThresholdsFromSettings } from '../settings/bandThresholds.ts';
 import { getSetting } from '../settings/registry.ts';
+import { sweepConfigFromSettings } from '../settings/sweepConfig.ts';
 import {
   TEMPLATE_EXTRACT_MAX_OUTPUT_TOKENS,
   TEMPLATE_SCHEMA,
@@ -228,8 +226,7 @@ function toAngleRows(rows: ReplyRow[], followers: Map<string, number>): AngleRow
 }
 
 /** Reply rows keyed by tweet-age-at-draft (§S0.5). ageMin comes from the
- *  capture-stamped signal first, else the post-time→draft-time gap (same ladder
- *  as scoreReplyOutcome). */
+ *  capture-stamped signal first, else the post-time→draft-time gap. */
 function toLatencyRows(rows: ReplyRow[]): LatencyRow[] {
   return rows.map((r) => ({
     ageMin: resolveAgeMin({
@@ -457,13 +454,14 @@ const PASSIVE_HARVEST_MODE = 'timeline';
 /** Seen-vs-replied over the passive corpus. `min(captured_at)` with bare columns
  *  is SQLite's documented first-sighting-per-tweet form (with exactly one
  *  min/max aggregate, every bare column comes from the matching input row) — the
- *  band that mattered is the one at first sighting, not at the tenth re-scroll.
+ *  reading that mattered is the one at first sighting, not at the tenth
+ *  re-scroll.
  *  Unwindowed row volume is structurally bounded (HV.1's 2,000-rows/day cap ×
  *  the 30-day window), so no extra limit is worth a truncated denominator.
  *  $0: nothing on this path can reach xFetch. */
 export async function loadTimelineFunnel(
   minN = DEFAULT_MIN_CELL_N,
-  thresholds: BandThresholds = BAND,
+  cfg: SweepConfig = SWEEP,
 ): Promise<TimelineFunnel> {
   const since = new Date(Date.now() - TIMELINE_FUNNEL_WINDOW_MS);
   const seen = await db
@@ -472,13 +470,15 @@ export async function loadTimelineFunnel(
       capturedAt: sql<number>`min(${harvestRows.capturedAt})`,
       views: harvestRows.views,
       comments: harvestRows.comments,
+      // RS: the funnel buckets on `passesSweep`, which reads likes.
+      likes: harvestRows.likes,
       text: harvestRows.text,
       tweetTime: harvestRows.tweetTime,
     })
     .from(harvestRows)
     .where(and(eq(harvestRows.mode, PASSIVE_HARVEST_MODE), gte(harvestRows.capturedAt, since)))
     .groupBy(harvestRows.tweetId);
-  if (seen.length === 0) return buildTimelineFunnel([], new Set(), minN, thresholds);
+  if (seen.length === 0) return buildTimelineFunnel([], new Set(), minN, cfg);
 
   // Posted drafts only — the paste-time reading every other cell uses. The set
   // is unwindowed; intersecting it with `seen` is what bounds it.
@@ -492,13 +492,14 @@ export async function loadTimelineFunnel(
       tweetId: r.tweetId,
       views: r.views,
       comments: r.comments,
+      likes: r.likes,
       text: r.text,
       tweetTimeMs: r.tweetTime === null ? null : r.tweetTime.getTime(),
       capturedAtMs: Number(r.capturedAt),
     })),
     new Set(replied.map((r) => r.sourceTweetId)),
     minN,
-    thresholds,
+    cfg,
   );
 }
 
@@ -791,19 +792,6 @@ playbook.get('/playbook', async (c) => {
   const followers = await loadFollowersByHandle([...new Set(replyRows.map((r) => r.handle))]);
   const angleRows = toAngleRows(replyRows, followers);
 
-  const scored = replyRows
-    .map((r) =>
-      scoreReplyOutcome({
-        signals: r.signals ?? null,
-        sourceMetrics: r.sourceMetrics,
-        sourceText: r.sourceText,
-        sourcePostedAt: r.sourcePostedAt,
-        draftCreatedAt: r.createdAt,
-        outcome: r.outcome,
-      }),
-    )
-    .filter((s) => s !== null);
-
   const structures = buildStructureEffectiveness(await loadStructureRows(), minN);
   const origins = await loadOriginRows();
   // One load, four cells — media / format / coach score / judge band all read
@@ -824,7 +812,6 @@ playbook.get('/playbook', async (c) => {
       ...buildBatchVsSingle(origins.rows, minN),
       unattributed: origins.unattributed,
     },
-    bandCalibration: buildBandCalibration(scored, minN),
     relationshipLift: buildRelationshipLift(
       replyRows.map((r) => ({ hasRelationship: r.hasRelationship, outcome: r.outcome })),
       minN,
@@ -840,7 +827,7 @@ playbook.get('/playbook', async (c) => {
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),
     modelEffectiveness: buildModelEffectiveness(toModelRows(replyRows), minN),
-    timelineFunnel: await loadTimelineFunnel(minN, bandThresholdsFromSettings()),
+    timelineFunnel: await loadTimelineFunnel(minN, sweepConfigFromSettings()),
     // Age-at-POST over every harvested reply — a different instrument from
     // `latencyEffectiveness` above (age-at-DRAFT over reply_drafts), never one
     // number (decision 5).

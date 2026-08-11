@@ -38,7 +38,15 @@ import { Section } from './ui/Section.tsx';
 const PLAYBOOK_SETTING_KEYS = ['x.gates.minCellN'];
 
 const GATE_NOTE =
-  'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. Band thresholds are NOT here, and RS.7 took them out of Settings too — the band is a fixed classifier now. What enters the Radar queue is the sweep gear on the Radar tab.';
+  'The gate re-reads this page and also decides whether the two measured guidance lines above may speak. It is a sample-size bar, never a filter on what qualifies — the only thing that decides that is the sweep gear on the Radar tab.';
+
+// The funnel's row labels. The stored keys are the predicate's own vocabulary;
+// these are what they mean on a page about your own scrolling.
+const FUNNEL_BUCKET_LABEL: Record<string, string> = {
+  qualifies: 'would sweep in',
+  filtered: 'filtered out',
+  unknown: 'no age',
+};
 
 // Every top-level slice of the response, in render order. Only used to NAME what
 // an out-of-date server left out — the per-section `slice()` guard is what
@@ -46,7 +54,6 @@ const GATE_NOTE =
 const SLICE_KEYS: ReadonlyArray<keyof Playbook> = [
   'guidance',
   'angleEffectiveness',
-  'bandCalibration',
   'batchVsSingle',
   'relationshipLift',
   'meEffectiveness',
@@ -235,67 +242,6 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 two populations. Compare within a side of the boundary, never across it, and read a
                 thin observation/question cell as young, not as losing.
               </div>
-            </Section>
-          ))}
-
-          {slice(data.bandCalibration, 'Band calibration', () => (
-            <Section title={`Band calibration (${data.bandCalibration.totalMeasured} measured)`}>
-              {data.bandCalibration.totalMeasured === 0 ? (
-                <EmptyState
-                  line="No measured replies yet."
-                  hint="Mark a reply posted with its tweet link and the 03:00 UTC pass measures it — then this table can grade the hot/warm labels."
-                />
-              ) : (
-                <>
-                  <table className="pb-table">
-                    <thead>
-                      <tr>
-                        <th>band</th>
-                        <th>n</th>
-                        <th>med views</th>
-                        <th>hit-rate</th>
-                        <th>≥1 like</th>
-                        <th>clicks</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.bandCalibration.bands.map((b) => (
-                        <tr key={String(b.band)} className={b.sufficient ? '' : 'pb-thin'}>
-                          <td>{b.band ?? 'null'}</td>
-                          <td>{b.n}</td>
-                          <td>{fmtN(b.medianViews)}</td>
-                          <td>{fmtPct(b.hitRate)}</td>
-                          <td>{fmtPct(b.likeRate)}</td>
-                          <td>{b.meanProfileClicks ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <div className="status-line">
-                    hit = ≥{fmtN(data.bandCalibration.hitThresholdViews)} views (my p75) ·
-                    actionable {data.bandCalibration.actionable.n} (med{' '}
-                    {fmtN(data.bandCalibration.actionable.medianViews)}) vs passed{' '}
-                    {data.bandCalibration.passed.n} (med{' '}
-                    {fmtN(data.bandCalibration.passed.medianViews)})
-                  </div>
-                  <div className="status-line">
-                    bait{' '}
-                    <ResultCell
-                      cell={baitAsCell(data.bandCalibration.bait?.bait)}
-                      minN={data.minN}
-                    />{' '}
-                    · non-bait{' '}
-                    <ResultCell
-                      cell={baitAsCell(data.bandCalibration.bait?.nonBait)}
-                      minN={data.minN}
-                    />
-                  </div>
-                  <div className="muted pb-note">
-                    BAND thresholds move only by hand at ≥100 measured — this table is the evidence,
-                    not the trigger. (The ⚙ above moves the sample gate, never a threshold.)
-                  </div>
-                </>
-              )}
             </Section>
           ))}
 
@@ -560,7 +506,7 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                 <table className="pb-table">
                   <thead>
                     <tr>
-                      <th>band when seen</th>
+                      <th>my filters</th>
                       <th>seen</th>
                       <th>replied</th>
                       <th>capture</th>
@@ -568,11 +514,8 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
                   </thead>
                   <tbody>
                     {data.timelineFunnel.cells.map((c) => (
-                      <tr
-                        key={String(c.band)}
-                        className={c.band === 'hot' || c.band === 'warm' ? '' : 'pb-thin'}
-                      >
-                        <td>{c.band === null ? 'no band' : c.band}</td>
+                      <tr key={c.bucket} className={c.bucket === 'qualifies' ? '' : 'pb-thin'}>
+                        <td>{FUNNEL_BUCKET_LABEL[c.bucket] ?? c.bucket}</td>
                         <td>{c.seen}</td>
                         <td>{c.replied}</td>
                         <td>
@@ -591,8 +534,10 @@ export function PlaybookPanel({ settings }: { settings: Settings }): JSX.Element
               )}
               <div className="muted pb-note">
                 of the tweets the algorithm actually put in front of you, how many you replied to —
-                banded at first sighting, 30-day window. A cell stays silent until n≥{data.minN}{' '}
-                seen; "unknown" means the tweet's time never rendered, not a verdict.
+                split by your CURRENT sweep filters, evaluated at first sighting, 30-day window. A
+                cell stays silent until n≥{data.minN} seen. The verified-only filter is not applied
+                here (the passive corpus never recorded the badge); "no age" means the tweet's time
+                never rendered, so the age bound couldn't be checked at all.
               </div>
             </Section>
           ))}
@@ -1354,25 +1299,6 @@ function ResultCell({ cell, minN }: { cell: PlaybookCell | undefined; minN: numb
   const parts = [`med ${fmtN(cell.medianViews)} views`];
   if (cell.medianProfileVisits !== null) parts.push(`${cell.medianProfileVisits} clicks`);
   return <>{`${parts.join(' · ')} (n=${cell.n})`}</>;
-}
-
-function baitAsCell(
-  b:
-    | {
-        n: number;
-        medianViews: number | null;
-        sufficient: boolean;
-      }
-    | undefined,
-): PlaybookCell | undefined {
-  if (b === undefined) return undefined;
-  return {
-    posted: b.n,
-    n: b.n,
-    medianViews: b.medianViews,
-    medianProfileVisits: null,
-    sufficient: b.sufficient,
-  };
 }
 
 function fmtN(n: number | null): string {

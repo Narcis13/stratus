@@ -268,9 +268,6 @@ describe('playbook route', () => {
     expect(body.batchVsSingle.radar.n).toBe(1);
     expect(body.batchVsSingle.radar.medianViews).toBe(50);
 
-    expect(body.bandCalibration.totalMeasured).toBeGreaterThanOrEqual(2);
-    expect(body.bandCalibration.bands.length).toBeGreaterThanOrEqual(1);
-
     expect(body.relationshipLift.withRelationship.n).toBe(1);
     expect(body.relationshipLift.withoutRelationship.n).toBe(1);
     expect(body.relationshipLift.viewsLift).toBeNull(); // gated
@@ -790,7 +787,7 @@ describe('loadTimelineFunnel (HV.5)', () => {
   const DRAFT_ID = 'd0000000-0000-4000-8000-0000000000f2';
 
   async function funnel(minN?: number): Promise<{
-    cells: Array<{ band: string | null; seen: number; replied: number; rate: number | null }>;
+    cells: Array<{ bucket: string; seen: number; replied: number; rate: number | null }>;
     totalSeen: number;
     totalReplied: number;
   }> {
@@ -806,10 +803,13 @@ describe('loadTimelineFunnel (HV.5)', () => {
       .insert(harvestRuns)
       .values({ id: RUN_ID, handle: 'timeline', mode: 'timeline', scope: 'passive' })
       .onConflictDoNothing();
+    // Defaults sit inside SWEEP (300..2000 views, ..20 likes, ..40 replies,
+    // ..60 min old) so an untouched row reads `qualifies`.
     const row = (o: {
       tweetId: string;
       views?: number;
       comments?: number;
+      likes?: number;
       tweetTime?: Date | null;
       capturedAt: Date;
     }) => ({
@@ -818,19 +818,21 @@ describe('loadTimelineFunnel (HV.5)', () => {
       handle: 'hv5_author',
       mode: 'timeline',
       text: 'a plain statement about shipping',
-      views: o.views ?? 5000,
+      views: o.views ?? 1000,
       comments: o.comments ?? 3,
+      likes: o.likes ?? 5,
       tweetTime:
         o.tweetTime === undefined ? new Date(o.capturedAt.getTime() - 30 * 60_000) : o.tweetTime,
       capturedAt: o.capturedAt,
     });
     await db.insert(harvestRows).values([
-      // hv5_a: hot at first sighting, re-scrolled 3h later as a buried thread.
+      // hv5_a: qualifies at first sighting, re-scrolled 3h later as a buried,
+      // far-too-big thread.
       row({ tweetId: 'hv5_a', capturedAt: at(300) }),
       row({ tweetId: 'hv5_a', views: 300_000, comments: 900, capturedAt: at(120) }),
-      // hv5_b: hot, and the one I actually replied to.
+      // hv5_b: qualifies, and the one I actually replied to.
       row({ tweetId: 'hv5_b', capturedAt: at(240) }),
-      // hv5_c: no tweet time → unknown, never the null band.
+      // hv5_c: no tweet time → unknown, never `filtered`.
       row({ tweetId: 'hv5_c', tweetTime: null, capturedAt: at(200) }),
       // Outside the 30-day window.
       row({ tweetId: 'hv5_old', capturedAt: at(40 * 24 * 60) }),
@@ -859,16 +861,16 @@ describe('loadTimelineFunnel (HV.5)', () => {
     await db.delete(replyDrafts).where(eq(replyDrafts.id, DRAFT_ID));
   });
 
-  test('bands at first sighting, counts distinct tweets, windows at 30 days', async () => {
+  test('buckets at first sighting, counts distinct tweets, windows at 30 days', async () => {
     const f = await funnel(1);
     expect(f.totalSeen).toBe(3); // hv5_a (twice) + hv5_b + hv5_c, hv5_old excluded
     expect(f.totalReplied).toBe(1);
-    // The 900-reply re-sighting of hv5_a must not re-band it into 'skip'.
-    expect(f.cells.map((c) => c.band)).toEqual(['hot', 'unknown']);
-    const hot = f.cells.find((c) => c.band === 'hot');
-    expect(hot?.seen).toBe(2);
-    expect(hot?.replied).toBe(1);
-    expect(hot?.rate).toBe(0.5);
+    // The 300k-view / 900-reply re-sighting of hv5_a must not re-bucket it.
+    expect(f.cells.map((c) => c.bucket)).toEqual(['qualifies', 'unknown']);
+    const ok = f.cells.find((c) => c.bucket === 'qualifies');
+    expect(ok?.seen).toBe(2);
+    expect(ok?.replied).toBe(1);
+    expect(ok?.rate).toBe(0.5);
   });
 
   test('a posted draft on a tweet I never saw is not credited', async () => {
@@ -897,7 +899,7 @@ describe('x.gates.minCellN is the default playbook gate', () => {
       .insert(harvestRuns)
       .values({ id: RUN_ID, handle: 'timeline', mode: 'timeline', scope: 'passive' })
       .onConflictDoNothing();
-    // 12 distinct sightings, all banding the same way — one cell, n = 12.
+    // 12 distinct sightings, all bucketing the same way — one cell, n = 12.
     await db.insert(harvestRows).values(
       Array.from({ length: 12 }, (_, i) => ({
         runId: RUN_ID,
@@ -905,8 +907,9 @@ describe('x.gates.minCellN is the default playbook gate', () => {
         handle: 'ui4_author',
         mode: 'timeline',
         text: 'a plain statement about shipping',
-        views: 5000,
+        views: 1000,
         comments: 3,
+        likes: 5,
         tweetTime: at(150 + i),
         capturedAt: at(120 + i),
       })),
@@ -935,12 +938,12 @@ describe('x.gates.minCellN is the default playbook gate', () => {
 
   async function funnelCells(
     minN?: number,
-  ): Promise<Array<{ band: string | null; seen: number; rate: number | null }>> {
+  ): Promise<Array<{ bucket: string; seen: number; rate: number | null }>> {
     const res = await app.request(`/x/playbook${minN === undefined ? '' : `?minN=${minN}`}`);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       minN: number;
-      timelineFunnel: { cells: Array<{ band: string | null; seen: number; rate: number | null }> };
+      timelineFunnel: { cells: Array<{ bucket: string; seen: number; rate: number | null }> };
     };
     expect(body.minN).toBe(minN ?? getSetting<number>('x.gates.minCellN'));
     return body.timelineFunnel.cells;

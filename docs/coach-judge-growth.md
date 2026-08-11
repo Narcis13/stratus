@@ -108,13 +108,11 @@ finding, turned into surfaces — with X API spend at $0 throughout.
 
 Replying to a quiet post by someone you already have a relationship with used to require the
 "dead post — force" dance. Backwards: reach is not the point of those replies, the relationship is.
-Now the band gate steps aside when the author is **someone you've actually posted a reply to before
-(stage engaged or better, not archived) or someone on your 2–10× target roster**. Everyone else —
-including people you merely hovered on the timeline — still gets the refusal.
+GT.6 made the band gate step aside for people you had actually replied to before.
 
-The exemption is decided **on the server, from your own data**; nothing the page sends can claim
-it, and every draft that used it is tagged in its stored context so exempt replies stay a cohort
-you can measure separately later. Details: **[Replies → Your people are exempt](./replies-tab.md#your-people-are-exempt)**.
+**Superseded on 2026-08-11:** the band gate itself is gone, so there is no refusal left to carve
+out of and the exemption was deleted with it. Reply Master now drafts on whatever you click.
+Details: **[Replies → There is no band gate any more](./replies-tab.md#there-is-no-band-gate-any-more)**.
 
 ### The reciprocity quest and the `your circle` radar lane
 
@@ -125,11 +123,11 @@ someone into the set and then count itself, and the quest would just repeat the 
 wearing a relationship label. `0/5` with *"today went to new faces — circle back to someone"* is a
 correct reading.
 
-Feeding the habit: a **fresh (<24 h) post by someone in your circle enters the Radar queue even
-when the band says skip**, with a muted `your circle` chip. It ranks below hot and warm, a hot
-re-sight upgrades it, and under queue pressure circle rows are dropped first — a talkative circle
-can't push the day's loudest opportunity out. On confirm the label is bookkeeping only; it never
-enters the Playbook's hot/warm analytics as a band.
+Feeding the habit: a **fresh post by someone in your circle can enter the Radar queue even when
+your sweep filters would pass on it** (the *circle bypass* switch), with a muted `your circle`
+chip. A later sweep that admits it on its own numbers upgrades it, and under queue pressure circle
+rows are dropped first — a talkative circle can't push out the rows your filters caught. The label
+is bookkeeping only; it never reaches the reply snapshot.
 
 ### Launch seeding and the milestone nudge
 

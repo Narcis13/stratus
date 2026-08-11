@@ -29,7 +29,7 @@ function sighting(id: string, over: Partial<RadarSighting> = {}): RadarSighting 
     handle: 'someone',
     author: 'Someone',
     text: `tweet ${id}`,
-    band: 'warm',
+    band: 'sweep',
     signals: { views: 500, replies: 5, ageMin: 20, vpm: 25, bait: false },
     firstSeenAt: '2026-06-10T10:00:00.000Z',
     lastSeenAt: '2026-06-10T10:00:00.000Z',
@@ -46,14 +46,14 @@ describe('mergeSightings', () => {
   test('re-sighting updates signals/band/lastSeenAt but keeps firstSeenAt', () => {
     const first = sighting('1');
     const again = sighting('1', {
-      band: 'hot',
+      band: 'cannon',
       signals: { views: 2000, replies: 12, ageMin: 45, vpm: 44, bait: false },
       firstSeenAt: '2026-06-10T11:00:00.000Z',
       lastSeenAt: '2026-06-10T11:00:00.000Z',
     });
     const merged = mergeSightings([first], [again], []);
     expect(merged).toHaveLength(1);
-    expect(merged[0]?.band).toBe('hot');
+    expect(merged[0]?.band).toBe('cannon');
     expect(merged[0]?.signals.views).toBe(2000);
     expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z');
     expect(merged[0]?.firstSeenAt).toBe('2026-06-10T10:00:00.000Z');
@@ -161,9 +161,9 @@ describe('mergeSightings', () => {
     expect(ids.has('fresh-2')).toBe(true);
   });
 
-  test('a manual add (RU.8) is never downgraded by a hot re-sight', () => {
+  test('a manual add (RU.8) is never downgraded by an auto re-sight', () => {
     const pinned = sighting('1', { band: 'manual' });
-    const resighted = sighting('1', { band: 'hot' });
+    const resighted = sighting('1', { band: 'sweep' });
     const merged = mergeSightings([pinned], [resighted], []);
     expect(merged[0]?.band).toBe('manual');
   });
@@ -185,19 +185,20 @@ describe('mergeSightings', () => {
     expect(merged.some((s) => s.tweetId === 'pinned')).toBe(true);
   });
 
-  test('a roster row (GT.8) is UPGRADED by a hot re-sight — the tweet caught fire', () => {
+  test('a roster row (GT.8) is UPGRADED when a sweep later admits it on its numbers', () => {
     const quiet = sighting('1', { band: 'roster' });
-    const loud = sighting('1', { band: 'hot' });
-    expect(mergeSightings([quiet], [loud], [])[0]?.band).toBe('hot');
+    const loud = sighting('1', { band: 'sweep' });
+    expect(mergeSightings([quiet], [loud], [])[0]?.band).toBe('sweep');
   });
 
-  test('a roster re-sight never DOWNGRADES a real verdict (vpm decays with age)', () => {
-    // Same tweet, later scroll: it was hot at capture, has since gone quiet, and
-    // its author is in my circle. The queue must keep the verdict it earned.
-    const hot = sighting('1', { band: 'hot' });
+  test('a roster re-sight never DOWNGRADES a swept row', () => {
+    // Same tweet, later scroll: the filters admitted it at capture, it has since
+    // aged past them, and its author is in my circle. The queue keeps the
+    // stronger reason it is here.
+    const swept = sighting('1', { band: 'sweep' });
     const nowQuiet = sighting('1', { band: 'roster', lastSeenAt: '2026-06-10T11:00:00.000Z' });
-    const merged = mergeSightings([hot], [nowQuiet], []);
-    expect(merged[0]?.band).toBe('hot');
+    const merged = mergeSightings([swept], [nowQuiet], []);
+    expect(merged[0]?.band).toBe('sweep');
     expect(merged[0]?.lastSeenAt).toBe('2026-06-10T11:00:00.000Z'); // everything else still refreshes
   });
 
@@ -208,38 +209,38 @@ describe('mergeSightings', () => {
     );
   });
 
-  test('eviction drops roster captures before real verdicts (GT.8 queue pressure)', () => {
+  test('eviction drops roster captures before swept rows (GT.8 queue pressure)', () => {
     // The roster row is the FRESHEST of the lot and still goes first: a chatty
-    // circle must not push the day's loudest opportunities out of the buffer.
+    // circle must not push the rows my own filters admitted out of the buffer.
     const roster = sighting('roster-1', {
       band: 'roster',
       lastSeenAt: '2026-06-10T23:59:00.000Z',
     });
-    const warm = Array.from({ length: RADAR_CAP }, (_, i) =>
-      sighting(`warm-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
+    const swept = Array.from({ length: RADAR_CAP }, (_, i) =>
+      sighting(`swept-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
     );
-    const merged = mergeSightings([roster], warm, []);
+    const merged = mergeSightings([roster], swept, []);
     expect(merged).toHaveLength(RADAR_CAP);
     expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
   });
 
-  test('cannon and hot share a stickiness rung — the fresher re-sight wins both ways', () => {
-    // CQ.4: unlike 'roster', a cannon capture IS a reason to be here (a measured
-    // score, or a roster camped on purpose), so it behaves like every hot/warm
-    // pair: no upgrade, no downgrade, just the fresher verdict.
-    const cannonThenHot = mergeSightings(
+  test('cannon and sweep share a stickiness rung — the fresher re-sight wins both ways', () => {
+    // CQ.4/RS.2: unlike 'roster', both are reasons the user armed on purpose (a
+    // camped roster, or their own filters), so neither upgrades or downgrades
+    // the other — the fresher capture simply wins.
+    const cannonThenSweep = mergeSightings(
       [sighting('1', { band: 'cannon' })],
-      [sighting('1', { band: 'hot' })],
+      [sighting('1', { band: 'sweep' })],
       [],
     );
-    expect(cannonThenHot[0]?.band).toBe('hot');
+    expect(cannonThenSweep[0]?.band).toBe('sweep');
 
-    const hotThenCannon = mergeSightings(
-      [sighting('1', { band: 'hot' })],
+    const sweepThenCannon = mergeSightings(
+      [sighting('1', { band: 'sweep' })],
       [sighting('1', { band: 'cannon' })],
       [],
     );
-    expect(hotThenCannon[0]?.band).toBe('cannon');
+    expect(sweepThenCannon[0]?.band).toBe('cannon');
   });
 
   test('a manual pin still outranks a cannon re-sight', () => {
@@ -261,27 +262,20 @@ describe('mergeSightings', () => {
       band: 'cannon',
       lastSeenAt: '2026-06-10T00:00:00.000Z',
     });
-    const warm = Array.from({ length: RADAR_CAP - 1 }, (_, i) =>
-      sighting(`warm-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
+    const swept = Array.from({ length: RADAR_CAP - 1 }, (_, i) =>
+      sighting(`swept-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
     );
-    const merged = mergeSightings([roster, cannon], warm, []);
+    const merged = mergeSightings([roster, cannon], swept, []);
     expect(merged).toHaveLength(RADAR_CAP);
     expect(merged.some((s) => s.tweetId === 'roster-1')).toBe(false);
     expect(merged.some((s) => s.tweetId === 'cannon-1')).toBe(true);
   });
 
   test('a sweep admission is never demoted by a roster re-sight (RS.2)', () => {
-    // Same rung as hot/warm/cannon: the user's own filters admitted this row, so
+    // Same rung as cannon: the user's own filters admitted this row, so
     // "someone I know posted it" is not new information that should replace it.
     const swept = sighting('1', { band: 'sweep' });
     expect(mergeSightings([swept], [sighting('1', { band: 'roster' })], [])[0]?.band).toBe('sweep');
-  });
-
-  test('a sweep row takes a fresher hot verdict (RS.2 shares the hot/warm rung)', () => {
-    const swept = sighting('1', { band: 'sweep' });
-    expect(mergeSightings([swept], [sighting('1', { band: 'hot' })], [])[0]?.band).toBe('hot');
-    // …and back the other way, which is what "same rung" means.
-    expect(mergeSightings([sighting('1', { band: 'hot' })], [swept], [])[0]?.band).toBe('sweep');
   });
 
   test('a manual pin still outranks a sweep re-sight', () => {
@@ -334,38 +328,62 @@ describe('appendDismissed', () => {
 });
 
 describe('rankSightings', () => {
-  test('orders by band, then vpm, then recency', () => {
+  test('orders by vpm, then recency', () => {
     const rows = [
-      sighting('warm-fast', {
-        band: 'warm',
+      sighting('mid', {
         signals: { views: 900, replies: 3, ageMin: 10, vpm: 90, bait: false },
       }),
-      sighting('hot-slow', {
-        band: 'hot',
+      sighting('slow', {
         signals: { views: 1500, replies: 8, ageMin: 100, vpm: 15, bait: false },
       }),
-      sighting('hot-fast', {
-        band: 'hot',
+      sighting('fast', {
         signals: { views: 1200, replies: 4, ageMin: 12, vpm: 100, bait: true },
       }),
-      sighting('hot-fast-newer', {
-        band: 'hot',
+      sighting('fast-newer', {
         signals: { views: 1200, replies: 4, ageMin: 12, vpm: 100, bait: false },
         lastSeenAt: '2026-06-10T11:30:00.000Z',
       }),
     ];
     expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
-      'hot-fast-newer',
-      'hot-fast',
-      'hot-slow',
-      'warm-fast',
+      'fast-newer',
+      'fast',
+      'mid',
+      'slow',
     ]);
   });
 
-  test('a manual add (RU.8) ranks first, above roster tier and band', () => {
+  // The capture reason does NOT sort the queue: with the classifier gone every
+  // band says how a row arrived, not how loud it is, and vpm already measures
+  // loudness. A ⊕ pin is the one exception, asserted next.
+  test('capture reason does not break a vpm tie-break at equal tier', () => {
     const rows = [
-      sighting('hot-ally', {
-        band: 'hot',
+      sighting('roster-fast', {
+        band: 'roster',
+        personTier: 'target',
+        signals: { views: 900, replies: 1, ageMin: 3, vpm: 300, bait: false },
+      }),
+      sighting('sweep-slow', {
+        band: 'sweep',
+        personTier: 'target',
+        signals: { views: 600, replies: 4, ageMin: 120, vpm: 5, bait: false },
+      }),
+      sighting('cannon-mid', {
+        band: 'cannon',
+        personTier: 'target',
+        signals: { views: 900, replies: 9, ageMin: 30, vpm: 30, bait: false },
+      }),
+    ];
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
+      'roster-fast',
+      'cannon-mid',
+      'sweep-slow',
+    ]);
+  });
+
+  test('a manual add (RU.8) ranks first, above roster tier and vpm', () => {
+    const rows = [
+      sighting('loud-ally', {
+        band: 'sweep',
         personTier: 'ally',
         signals: { views: 5000, replies: 40, ageMin: 5, vpm: 1000, bait: false },
       }),
@@ -374,76 +392,19 @@ describe('rankSightings', () => {
         signals: { views: 0, replies: 0, ageMin: 3, vpm: 0, bait: false },
       }),
     ];
-    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['manual-cold', 'hot-ally']);
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['manual-cold', 'loud-ally']);
   });
 
   test('does not mutate its input', () => {
-    const rows = [sighting('1', { band: 'warm' }), sighting('2', { band: 'hot' })];
+    const rows = [sighting('1', { band: 'sweep' }), sighting('2', { band: 'cannon' })];
     rankSightings(rows);
     expect(rows[0]?.tweetId).toBe('1');
   });
 
-  test('a roster capture (GT.8) ranks below warm WITHIN the same tier', () => {
-    // Same person, same tier — so the only thing separating these is the band,
-    // and the quiet one that is here for who posted it goes last. vpm would say
-    // the opposite if band didn't lead it.
+  test('a roster capture from an ally still outranks a loud stranger (tier leads vpm)', () => {
     const rows = [
-      sighting('roster-fast', {
-        band: 'roster',
-        personTier: 'target',
-        signals: { views: 80, replies: 0, ageMin: 1, vpm: 80, bait: false },
-      }),
-      sighting('warm-slow', {
-        band: 'warm',
-        personTier: 'target',
-        signals: { views: 600, replies: 4, ageMin: 120, vpm: 5, bait: false },
-      }),
-      sighting('hot-slow', {
-        band: 'hot',
-        personTier: 'target',
-        signals: { views: 900, replies: 9, ageMin: 200, vpm: 4, bait: false },
-      }),
-    ];
-    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
-      'hot-slow',
-      'warm-slow',
-      'roster-fast',
-    ]);
-  });
-
-  test('a sweep admission ranks below hot and under a manual pin (RS.2)', () => {
-    // Weight 0, unlike its stickiness rung: the main Queue is tier-first and a
-    // filter admission must not outrank a verdict inside it. Same tier on all
-    // three so band is the only thing being read here, and the swept row has the
-    // best vpm so a wrong weight would surface as a pass.
-    const rows = [
-      sighting('sweep-fast', {
+      sighting('loud-rando', {
         band: 'sweep',
-        personTier: 'target',
-        signals: { views: 900, replies: 1, ageMin: 3, vpm: 300, bait: false },
-      }),
-      sighting('hot-slow', {
-        band: 'hot',
-        personTier: 'target',
-        signals: { views: 900, replies: 9, ageMin: 200, vpm: 4, bait: false },
-      }),
-      sighting('manual-cold', {
-        band: 'manual',
-        personTier: 'target',
-        signals: { views: 0, replies: 0, ageMin: 2, vpm: 0, bait: false },
-      }),
-    ];
-    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
-      'manual-cold',
-      'hot-slow',
-      'sweep-fast',
-    ]);
-  });
-
-  test('a roster capture from an ally still outranks a hot stranger (tier leads band)', () => {
-    const rows = [
-      sighting('hot-rando', {
-        band: 'hot',
         signals: { views: 9000, replies: 60, ageMin: 6, vpm: 1500, bait: false },
       }),
       sighting('roster-ally', {
@@ -452,80 +413,49 @@ describe('rankSightings', () => {
         signals: { views: 40, replies: 0, ageMin: 12, vpm: 3, bait: false },
       }),
     ];
-    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['roster-ally', 'hot-rando']);
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['roster-ally', 'loud-rando']);
   });
 
-  test('roster tier leads band/vpm/recency (S0.3)', () => {
+  test('roster tier leads vpm/recency (S0.3)', () => {
     const rows = [
-      sighting('hot-rando', {
-        band: 'hot',
+      sighting('loud-rando', {
         signals: { views: 5000, replies: 20, ageMin: 8, vpm: 200, bait: false },
       }),
-      sighting('warm-mutual', {
-        band: 'warm',
+      sighting('quiet-mutual', {
         personTier: 'mutual',
         signals: { views: 300, replies: 2, ageMin: 30, vpm: 10, bait: false },
       }),
-      sighting('warm-target', {
-        band: 'warm',
+      sighting('slow-target', {
         personTier: 'target',
         signals: { views: 400, replies: 3, ageMin: 25, vpm: 16, bait: false },
       }),
-      sighting('hot-target', {
-        band: 'hot',
+      sighting('fast-target', {
         personTier: 'target',
         signals: { views: 1200, replies: 5, ageMin: 12, vpm: 100, bait: false },
       }),
     ];
-    // ally/mutual first, then target (hot target beats warm target on band),
-    // then the loud rando last.
+    // ally/mutual first, then target (the faster target leads on vpm), then the
+    // loud rando last — a 200 vpm stranger still loses to a 10 vpm mutual.
     expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
-      'warm-mutual',
-      'hot-target',
-      'warm-target',
-      'hot-rando',
+      'quiet-mutual',
+      'fast-target',
+      'slow-target',
+      'loud-rando',
     ]);
   });
 
-  test('ally and mutual share the top tier; band/vpm break the tie', () => {
+  test('ally and mutual share the top tier; vpm breaks the tie', () => {
     const rows = [
-      sighting('ally-warm', {
-        band: 'warm',
+      sighting('ally-quiet', {
         personTier: 'ally',
         signals: { views: 200, replies: 1, ageMin: 40, vpm: 5, bait: false },
       }),
-      sighting('mutual-hot', {
-        band: 'hot',
+      sighting('mutual-loud', {
         personTier: 'mutual',
         signals: { views: 900, replies: 6, ageMin: 15, vpm: 60, bait: false },
       }),
     ];
-    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['mutual-hot', 'ally-warm']);
-  });
-
-  test('a cannon capture (CQ.4) ranks below hot at equal tier, and manual still leads', () => {
-    // The main Queue is the reciprocity lane: an arbitrage capture must not
-    // outrank a real verdict here however dense it is. That ordering lives in
-    // the Cannon view, which reads the same buffer through its own sort.
-    const rows = [
-      sighting('cannon-dense', {
-        band: 'cannon',
-        signals: { views: 200_000, replies: 6, ageMin: 4, vpm: 50_000, bait: false },
-      }),
-      sighting('hot-modest', {
-        band: 'hot',
-        signals: { views: 1200, replies: 5, ageMin: 12, vpm: 100, bait: false },
-      }),
-      sighting('manual-cold', {
-        band: 'manual',
-        signals: { views: 0, replies: 0, ageMin: 3, vpm: 0, bait: false },
-      }),
-    ];
-    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual([
-      'manual-cold',
-      'hot-modest',
-      'cannon-dense',
-    ]);
+    expect(rankSightings(rows).map((s) => s.tweetId)).toEqual(['mutual-loud', 'ally-quiet']);
   });
 });
 
@@ -634,7 +564,7 @@ describe('cannonQueue (CQ.5)', () => {
     const minsSinceSeen = over.minsSinceSeen ?? 0;
     const seen = new Date(NOW - minsSinceSeen * 60_000).toISOString();
     return sighting(id, {
-      band: over.band ?? 'hot',
+      band: over.band ?? 'sweep',
       signals: {
         views: over.views ?? 6000,
         replies: over.replies ?? 4,
@@ -671,16 +601,16 @@ describe('cannonQueue (CQ.5)', () => {
     expect(out.hidden).toBe(0);
   });
 
-  test('a hot row above the floor is included without being re-banded', () => {
-    const hot = cannonSighting('hot-1', { band: 'hot', views: 5000, replies: 3 });
-    const [row] = cannonQueue([hot], NOW, T).rows;
-    expect(row?.s.tweetId).toBe('hot-1');
-    expect(row?.s.band).toBe('hot');
+  test('a swept row above the floor is included without being re-banded', () => {
+    const dense = cannonSighting('swept-1', { band: 'sweep', views: 5000, replies: 3 });
+    const [row] = cannonQueue([dense], NOW, T).rows;
+    expect(row?.s.tweetId).toBe('swept-1');
+    expect(row?.s.band).toBe('sweep');
     expect(row?.score).toBeCloseTo(1250, 5);
   });
 
   test('a row under the floor and not cannon-banded never enters', () => {
-    const quiet = cannonSighting('quiet', { band: 'warm', views: 400, replies: 9 });
+    const quiet = cannonSighting('quiet', { band: 'sweep', views: 400, replies: 9 });
     expect(cannonQueue([quiet], NOW, T)).toEqual({ rows: [], hidden: 0 });
   });
 
@@ -731,15 +661,15 @@ describe('partitionForCurate (RC.4)', () => {
   test('manual pins are never scored; every other band is', () => {
     const fresh = [
       sighting('pin-1', { band: 'manual' }),
-      sighting('hot-1', { band: 'hot' }),
-      sighting('warm-1', { band: 'warm' }),
+      sighting('sweep-1', { band: 'sweep' }),
+      sighting('cannon-1', { band: 'cannon' }),
       // GT.8 roster rows ARE scored: they are in the queue for WHO posted them,
       // and whether the post is worth replying to is a different question.
       sighting('roster-1', { band: 'roster' }),
     ];
     const { pinned, scoreable, skipped } = partitionForCurate(fresh);
     expect(pinned.map((s) => s.tweetId)).toEqual(['pin-1']);
-    expect(scoreable.map((s) => s.tweetId)).toEqual(['hot-1', 'warm-1', 'roster-1']);
+    expect(scoreable.map((s) => s.tweetId)).toEqual(['sweep-1', 'cannon-1', 'roster-1']);
     expect(skipped).toEqual([]);
   });
 
@@ -751,18 +681,18 @@ describe('partitionForCurate (RC.4)', () => {
       sighting('img-1', { text: '' }),
       sighting('img-2', { text: '   ' }),
       sighting('pin-blank', { band: 'manual', text: '' }),
-      sighting('warm-1'),
+      sighting('sweep-1'),
     ];
     const { pinned, scoreable, skipped } = partitionForCurate(fresh);
     expect(pinned).toEqual([]);
-    expect(scoreable.map((s) => s.tweetId)).toEqual(['warm-1']);
+    expect(scoreable.map((s) => s.tweetId)).toEqual(['sweep-1']);
     expect(skipped.map((s) => s.tweetId)).toEqual(['img-1', 'img-2', 'pin-blank']);
   });
 
   test('the three buckets always sum to the input — a row can never vanish here', () => {
     const fresh = [
       sighting('a', { band: 'manual' }),
-      sighting('b', { band: 'hot' }),
+      sighting('b', { band: 'cannon' }),
       sighting('c', { text: '' }),
       sighting('d', { band: 'roster' }),
     ];
@@ -810,6 +740,13 @@ describe('coerceSightings', () => {
     // dropped it would silently empty the queue of everything the sweep caught.
     const swept = sighting('3', { band: 'sweep', likes: 12, verified: true });
     expect(coerceSightings([swept])).toEqual([swept]);
+    // A session buffer written before the reply-band classifier was removed
+    // still holds 'hot'/'warm' rows. They are folded onto 'sweep', not dropped:
+    // an extension upgrade must not silently empty the working queue.
+    for (const legacy of ['hot', 'warm']) {
+      const old = { ...sighting('4'), band: legacy };
+      expect(coerceSightings([old])).toEqual([{ ...sighting('4'), band: 'sweep' }]);
+    }
     expect(coerceSightings(undefined)).toEqual([]);
     expect(coerceSightings('not an array')).toEqual([]);
     expect(coerceSightings([])).toEqual([]);
@@ -847,7 +784,7 @@ describe('draftRowToSighting (C0 rehydration)', () => {
     handle: 'alice',
     author: 'Alice',
     snippet: 'shipping beats planning',
-    band: 'hot',
+    band: 'sweep',
     signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
     replyText: 'my drafted reply',
     angle: 'contrarian',
@@ -865,7 +802,7 @@ describe('draftRowToSighting (C0 rehydration)', () => {
       handle: 'alice',
       author: 'Alice',
       text: 'shipping beats planning',
-      band: 'hot',
+      band: 'sweep',
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
       firstSeenAt: '2026-07-01T10:00:00.000Z',
       lastSeenAt: '2026-07-01T10:00:00.000Z',

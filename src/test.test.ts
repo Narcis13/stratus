@@ -5,7 +5,6 @@ import { beat, heartbeatStatus, registerHeartbeat, unregisterHeartbeat } from '.
 import { matchOrigin } from './middleware/cors.ts';
 import type { ActiveTimesGrid } from './shared/activeTimes.ts';
 import { resolveLanguageProfile } from './shared/language.ts';
-import { classifyBand } from './shared/replyBand.ts';
 import { buildAuthorizeUrl, generatePkcePair } from './x/auth.ts';
 import {
   metricsSnapshots,
@@ -101,7 +100,12 @@ import {
 } from './x/routes/metrics.ts';
 import { type RadarBatchTweet, buildRadarDraftRows, radarDraftExpired } from './x/routes/radar.ts';
 import { parseBatchTweets, replyLlmDefaults } from './x/routes/replies.ts';
-import { buildReplyOutcomes, gateSignalsFor, parseContext, replies } from './x/routes/replies.ts';
+import {
+  buildReplyOutcomes,
+  captureSignalsFor,
+  parseContext,
+  replies,
+} from './x/routes/replies.ts';
 import {
   type FollowerSnapshotPoint,
   authorMomentum,
@@ -993,11 +997,11 @@ describe('batch replies (Radar §7.2)', () => {
   test('parseBatchTweets carries band + signals through (C0) and rejects junk', () => {
     const signals = { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false };
     const ok = parseBatchTweets([
-      { tweetId: '111', handle: 'alice', text: 'a', band: 'hot', signals },
+      { tweetId: '111', handle: 'alice', text: 'a', band: 'sweep', signals },
       { tweetId: '222', handle: 'bob', text: 'b' },
     ]);
     if ('error' in ok) throw new Error(ok.error);
-    expect(ok.tweets[0]?.band).toBe('hot');
+    expect(ok.tweets[0]?.band).toBe('sweep');
     expect(ok.tweets[0]?.signals).toEqual(signals);
     expect('band' in (ok.tweets[1] ?? {})).toBe(false);
 
@@ -1024,11 +1028,14 @@ describe('batch replies (Radar §7.2)', () => {
     if ('error' in cannon) throw new Error(cannon.error);
     expect(cannon.tweets[0]?.band).toBe('cannon');
 
-    // RS.2: a sweep admission — the fourth. The wire has to accept it or a swept
-    // row can't be drafted at all, which is the whole queue under manual-first.
-    const sweep = parseBatchTweets([{ tweetId: '666', handle: 'gina', text: 'g', band: 'sweep' }]);
-    if ('error' in sweep) throw new Error(sweep.error);
-    expect(sweep.tweets[0]?.band).toBe('sweep');
+    // Legacy verdict bands from a pre-removal extension build are still accepted
+    // — an old queue must keep posting — but fold onto 'sweep' rather than
+    // writing a classifier verdict into a column that no longer has any.
+    for (const legacy of ['hot', 'warm']) {
+      const old = parseBatchTweets([{ tweetId: '666', handle: 'gina', text: 'g', band: legacy }]);
+      if ('error' in old) throw new Error(old.error);
+      expect(old.tweets[0]?.band).toBe('sweep');
+    }
 
     expect(parseBatchTweets([{ tweetId: '1', handle: 'a', text: 'x', band: 'cold' }])).toEqual({
       error: 'invalid_tweet_band_0',
@@ -1110,7 +1117,7 @@ describe('radar drafts (C0)', () => {
       author: 'Alice',
       text: 'shipping beats planning',
       url: 'https://x.com/alice/status/111',
-      band: 'hot',
+      band: 'sweep',
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
     },
     // author fell back to handle at parse time → stored as null, not duplicated
@@ -1153,7 +1160,7 @@ describe('radar drafts (C0)', () => {
       handle: 'alice',
       author: 'Alice',
       snippet: 'shipping beats planning',
-      band: 'hot',
+      band: 'sweep',
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
       replyText: 'my reply',
       angle: 'contrarian',
@@ -1250,7 +1257,7 @@ describe('replies parseContext signals', () => {
     metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
     topComments: [],
   };
-  const signals = { band: 'hot', views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false };
+  const signals = { views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false };
 
   test('context without signals stays valid and carries no signals key', () => {
     const out = parseContext(baseCtx);
@@ -1258,27 +1265,29 @@ describe('replies parseContext signals', () => {
     expect('signals' in out).toBe(false);
   });
 
-  test('valid signals are preserved verbatim (band null allowed)', () => {
+  test('valid signals are preserved verbatim', () => {
     const out = parseContext({ ...baseCtx, signals });
     if ('error' in out) throw new Error(out.error);
     expect(out.signals).toEqual({
-      band: 'hot',
       views: 1500,
       replies: 8,
       ageMin: 22.5,
       vpm: 66.7,
       bait: false,
     });
-
-    const nullBand = parseContext({ ...baseCtx, signals: { ...signals, band: null } });
-    if ('error' in nullBand) throw new Error(nullBand.error);
-    expect(nullBand.signals?.band).toBeNull();
   });
 
-  test('rejects unknown band, negative numbers, non-boolean bait', () => {
-    expect(parseContext({ ...baseCtx, signals: { ...signals, band: 'meh' } })).toEqual({
-      error: 'invalid_context_signals_band',
-    });
+  // A pre-removal extension build still stamps a `band` verdict. It is dropped,
+  // not 400'd: a stale build has to keep drafting, and the classifier that would
+  // have given the value meaning is gone.
+  test('a legacy band on the signals is accepted and dropped', () => {
+    const out = parseContext({ ...baseCtx, signals: { ...signals, band: 'hot' } });
+    if ('error' in out) throw new Error(out.error);
+    expect(out.signals).not.toHaveProperty('band');
+    expect(out.signals?.views).toBe(1500);
+  });
+
+  test('rejects negative numbers, non-boolean bait', () => {
     expect(parseContext({ ...baseCtx, signals: { ...signals, views: -1 } })).toEqual({
       error: 'invalid_context_signals_views',
     });
@@ -1604,7 +1613,7 @@ describe('mentions refresh limiter (§7.5)', () => {
   });
 });
 
-describe('replies band gate (§7.3)', () => {
+describe('captureSignalsFor — the draft-time reading stamped on a reply', () => {
   const now = Date.parse('2026-06-10T09:00:00Z');
   const ctx = (over: Partial<PostContext> = {}): PostContext => ({
     tweetId: '123456',
@@ -1618,266 +1627,28 @@ describe('replies band gate (§7.3)', () => {
     ...over,
   });
 
-  test('capture-time signals win, but the band is recomputed server-side', () => {
-    const stamped = { band: null, views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false };
-    const sig = gateSignalsFor(ctx({ signals: stamped }), now);
-    expect(sig).toEqual({ views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false });
-    // The extension stamped null; current thresholds say hot — the gate must
-    // trust its own classifyBand, not the stale verdict.
-    expect(classifyBand(sig)).toBe('hot');
+  test('capture-time signals are preserved verbatim', () => {
+    const stamped = { views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false };
+    // The page's age is the exact one; a postedAt-derived age would say 60.
+    expect(captureSignalsFor(ctx({ signals: stamped }), now)).toEqual(stamped);
   });
 
   test('without signals, inputs derive from metrics + postedAt + text bait', () => {
-    const sig = gateSignalsFor(ctx(), now);
+    const sig = captureSignalsFor(ctx(), now);
     expect(sig.views).toBe(1500);
     expect(sig.replies).toBe(8);
     expect(sig.ageMin).toBe(60);
     expect(sig.vpm).toBe(25);
     expect(sig.bait).toBe(false);
-    expect(classifyBand(sig)).toBe('hot');
 
-    const baity = gateSignalsFor(ctx({ text: 'agree or disagree' }), now);
+    const baity = captureSignalsFor(ctx({ text: 'agree or disagree' }), now);
     expect(baity.bait).toBe(true);
   });
 
   test('future postedAt clamps age to 0 instead of going negative', () => {
-    const sig = gateSignalsFor(ctx({ postedAt: '2026-06-10T10:00:00Z' }), now);
+    const sig = captureSignalsFor(ctx({ postedAt: '2026-06-10T10:00:00Z' }), now);
     expect(sig.ageMin).toBe(0);
     expect(sig.vpm).toBe(1500);
-  });
-
-  test('dead and buried posts land in the refused bands', () => {
-    const dead = gateSignalsFor(
-      ctx({ metrics: { views: 40, replies: 1, reposts: 0, likes: 2 } }),
-      now,
-    );
-    expect(classifyBand(dead)).toBeNull();
-    const buried = gateSignalsFor(
-      ctx({ metrics: { views: 70000, replies: 168, reposts: 50, likes: 900 } }),
-      now,
-    );
-    expect(classifyBand(buried)).toBe('skip');
-  });
-
-  // Route-level wiring, through the real Hono handler. Safe to call in tests:
-  // the gate refuses BEFORE any Grok call or DB write.
-  const post = (body: unknown) =>
-    replies.request('/replies/generate', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-  test('generate refuses a dead post with 422 band_gate', async () => {
-    // Old + tiny + slow + not bait → null band whatever "now" is.
-    const res = await post({
-      context: ctx({
-        postedAt: '2026-06-08T08:00:00Z',
-        metrics: { views: 40, replies: 1, reposts: 0, likes: 2 },
-      }),
-    });
-    expect(res.status).toBe(422);
-    const out = (await res.json()) as { error: string; band: unknown; signals: { bait: boolean } };
-    expect(out.error).toBe('band_gate');
-    expect(out.band).toBeNull();
-    expect(out.signals.bait).toBe(false);
-  });
-
-  test('generate refuses a buried post (skip band) regardless of age', async () => {
-    const res = await post({
-      context: ctx({ metrics: { views: 70000, replies: 168, reposts: 50, likes: 900 } }),
-    });
-    expect(res.status).toBe(422);
-    const out = (await res.json()) as { error: string; band: unknown };
-    expect(out.error).toBe('band_gate');
-    expect(out.band).toBe('skip');
-  });
-
-  test('non-boolean override is a 400', async () => {
-    const res = await post({ context: ctx(), override: 'yes' });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_override');
-  });
-
-  // UI.7: the gate classifies with the CONFIGURED thresholds, read per request.
-  // Both assertions stay on the refusal side of the ladder on purpose — the
-  // loosening direction would run the real Grok call, so "a PATCH lets a post
-  // through" is proven in replyBand.test.ts (pure) and by the browser check,
-  // never by spending here. The store is process-global across test files, so
-  // the override is reset in `finally` (UI.2 gotcha).
-  describe('configurable thresholds (UI.7)', () => {
-    // 1500 views / 8 replies / 60 min: 'hot' under the shipped defaults, as the
-    // pure cases above assert. Raising the view floor past it must gate it.
-    test('a raised view floor turns a hot post into a 422', async () => {
-      try {
-        setSettings({ 'x.band.bigViews': 5000 });
-        const res = await post({ context: ctx() });
-        expect(res.status).toBe(422);
-        const out = (await res.json()) as { error: string; band: unknown };
-        expect(out.error).toBe('band_gate');
-        expect(out.band).toBeNull();
-      } finally {
-        resetSettings({ group: 'band' });
-      }
-    });
-
-    // The same context, two refusals, a different VERDICT each time — which is
-    // what proves the route read the store rather than a constant.
-    test('the buried cutoff moves the reported band without spending', async () => {
-      const buried = ctx({ metrics: { views: 50, replies: 150, reposts: 0, likes: 1 } });
-      const bandOf = async (): Promise<unknown> => {
-        const res = await post({ context: buried });
-        expect(res.status).toBe(422);
-        return ((await res.json()) as { band: unknown }).band;
-      };
-      expect(await bandOf()).toBe('skip');
-      try {
-        setSettings({ 'x.band.midReplies': 200 });
-        expect(await bandOf()).toBeNull();
-      } finally {
-        resetSettings({ group: 'band' });
-      }
-    });
-  });
-
-  // GT.6: the people-layer carve-out. The exempt case is proven by how FAR it
-  // gets — both LLM keys are force-unset (the drafter.test.ts trick) so a draft
-  // that clears the gate lands on `llm_not_configured` instead of spending a
-  // real Grok call inside `bun run test`. The refusals need no such care: they
-  // return before anything is loaded.
-  describe('reciprocity exemption (GT.6)', () => {
-    const dead = { views: 40, replies: 1, reposts: 0, likes: 2 };
-    const deadCtx = (handle: string) =>
-      ctx({ handle, postedAt: '2026-06-08T08:00:00Z', metrics: dead });
-
-    // `fn` returns `Response | Promise<Response>` — app.request's own type (NT.7).
-    const keyless = async <T>(fn: () => T | Promise<T>): Promise<T> => {
-      const xai = process.env.XAI_API_KEY;
-      const openrouter = process.env.OPENROUTER_API_KEY;
-      process.env.XAI_API_KEY = '';
-      process.env.OPENROUTER_API_KEY = '';
-      try {
-        return await fn();
-      } finally {
-        process.env.XAI_API_KEY = xai ?? '';
-        process.env.OPENROUTER_API_KEY = openrouter ?? '';
-      }
-    };
-
-    test('a dead post by someone I reply to clears the gate before any spend', async () => {
-      try {
-        await db.insert(people).values({ handle: 'gt6person', stage: 'engaged' });
-        const res = await keyless(() => post({ context: deadCtx('gt6person') }));
-        // Past the 422 and into the LLM layer — the gate opened, nothing was paid.
-        expect(res.status).toBe(503);
-        expect(((await res.json()) as { error: string }).error).toBe('llm_not_configured');
-      } finally {
-        await db.delete(people).where(eq(people.handle, 'gt6person'));
-      }
-    });
-
-    test('a retired person is not my people — the dead post still 422s', async () => {
-      try {
-        await db.insert(people).values({ handle: 'gt6gone', stage: 'engaged', retired: true });
-        const res = await post({ context: deadCtx('gt6gone') });
-        expect(res.status).toBe(422);
-        expect(((await res.json()) as { error: string }).error).toBe('band_gate');
-      } finally {
-        await db.delete(people).where(eq(people.handle, 'gt6gone'));
-      }
-    });
-
-    test('an unknown handle keeps the refusal default', async () => {
-      const res = await post({ context: deadCtx('gt6stranger') });
-      expect(res.status).toBe(422);
-      const out = (await res.json()) as { error: string; band: unknown };
-      expect(out.error).toBe('band_gate');
-      expect(out.band).toBeNull();
-    });
-
-    test('gateBypass is never accepted from the client', () => {
-      const out = parseContext({
-        tweetId: '123456',
-        handle: 'someone',
-        author: 'Some One',
-        text: 'hello',
-        url: 'https://x.com/someone/status/123456',
-        postedAt: '2026-06-10T08:00:00Z',
-        metrics: { views: 1, replies: 0, reposts: 0, likes: 0 },
-        topComments: [],
-        gateBypass: 'roster',
-      });
-      expect('error' in out).toBe(false);
-      expect(out).not.toHaveProperty('gateBypass');
-    });
-  });
-
-  // GT.3 fallout: the LaunchRoom seed comment replies to MY OWN post under the
-  // placeholder handle 'me'. The posted flip must not upsert that into the CRM —
-  // a phantom stage-`engaged` row would join the reciprocity set (the gate, the
-  // quest AND the glance map). "Own post" is a posts_published lookup, so a
-  // reply to anyone real still tracks normally.
-  describe('posted flip skips the CRM for replies to my own post', () => {
-    const OWN_TWEET = '890000000000000777';
-    const OTHER_TWEET = '890000000000000778';
-
-    const seedDraft = async (sourceTweetId: string, handle: string): Promise<string> => {
-      const [row] = await db
-        .insert(replyDrafts)
-        .values({
-          sourceTweetId,
-          sourceAuthorUsername: handle,
-          sourceText: 'gt3 seed source',
-          sourceUrl: `https://x.com/${handle}/status/${sourceTweetId}`,
-          contextSnapshot: {},
-          replyText: 'gt3 seed reply',
-          model: 'test',
-        })
-        .returning({ id: replyDrafts.id });
-      if (!row) throw new Error('seed insert failed');
-      return row.id;
-    };
-
-    const flip = (id: string) =>
-      replies.request(`/replies/${id}`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ status: 'posted' }),
-      });
-
-    afterAll(async () => {
-      await db
-        .delete(replyDrafts)
-        .where(inArray(replyDrafts.sourceTweetId, [OWN_TWEET, OTHER_TWEET]));
-      await db.delete(postsPublished).where(eq(postsPublished.tweetId, OWN_TWEET));
-      await db.delete(personEvents).where(inArray(personEvents.handle, ['me', 'gt3realperson']));
-      await db.delete(people).where(inArray(people.handle, ['me', 'gt3realperson']));
-    });
-
-    test("the seed comment's placeholder 'me' never becomes a person", async () => {
-      // retired + long-posted so the daily *billed* metrics pass can't see it.
-      await db.insert(postsPublished).values({
-        tweetId: OWN_TWEET,
-        text: 'gt3 launched post',
-        postedAt: new Date(Date.now() - 400 * 24 * 3600_000),
-        isReply: false,
-        source: 'test',
-        retired: true,
-      });
-      const id = await seedDraft(OWN_TWEET, 'me');
-      expect((await flip(id)).status).toBe(200);
-      const rows = await db.select().from(people).where(eq(people.handle, 'me'));
-      expect(rows.length).toBe(0);
-      const events = await db.select().from(personEvents).where(eq(personEvents.handle, 'me'));
-      expect(events.length).toBe(0);
-    });
-
-    test('a reply to someone else still tracks the person', async () => {
-      const id = await seedDraft(OTHER_TWEET, 'gt3realperson');
-      expect((await flip(id)).status).toBe(200);
-      const rows = await db.select().from(people).where(eq(people.handle, 'gt3realperson'));
-      expect(rows.length).toBe(1);
-    });
   });
 });
 
@@ -1891,7 +1662,7 @@ describe('buildReplyOutcomes', () => {
     sourcePostedAt: new Date('2026-06-09T10:00:00Z'),
     contextSnapshot: {
       metrics: { views: 900, replies: 4, reposts: 1, likes: 12 },
-      signals: { band: 'hot', views: 900, replies: 4, ageMin: 30, vpm: 30, bait: false },
+      signals: { views: 900, replies: 4, ageMin: 30, vpm: 30, bait: false },
     },
     replyText: 'drafted reply',
     replyTextEdited: null,
@@ -1928,7 +1699,7 @@ describe('buildReplyOutcomes', () => {
       ],
     );
     expect(row?.replyText).toBe('edited reply'); // the human edit is what went out
-    expect(row?.signals?.band).toBe('hot');
+    expect(row?.signals?.ageMin).toBe(30);
     expect(row?.measuredAt).toEqual(new Date('2026-06-11T03:00:00Z'));
     expect(row?.outcome).toEqual({
       views: 480,
@@ -1960,7 +1731,7 @@ describe('buildReplyOutcomes', () => {
     expect(rows[0]?.signals).toBeNull(); // pre-stamping draft
     expect(rows[1]?.outcome).toBeNull(); // discovered but not yet snapshotted
     expect(rows[1]?.postedAt).toEqual(new Date('2026-06-10T12:00:00Z'));
-    expect(rows[1]?.signals?.band).toBe('hot');
+    expect(rows[1]?.signals?.ageMin).toBe(30);
   });
 });
 

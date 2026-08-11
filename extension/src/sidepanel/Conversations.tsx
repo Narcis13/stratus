@@ -392,10 +392,7 @@ function OpenLoopActions({
     setBusy(true);
     onError(null);
     try {
-      const d = await api.replies.generate(settings, {
-        context: contextFor(t, owed),
-        override: true,
-      });
+      const d = await api.replies.generate(settings, { context: contextFor(t, owed) });
       setDraft(d);
       setVariantIdx(0);
       // Best-effort link so the draft is findable from the mention later.

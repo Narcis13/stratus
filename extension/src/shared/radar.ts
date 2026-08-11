@@ -1,8 +1,8 @@
-// The Radar (OVERHAUL-PLAN §7.2) — band verdicts used to evaporate as you
-// scrolled past them. The content script streams every hot/warm sighting to
-// the background, which keeps a session-scoped ring buffer in
+// The Radar (OVERHAUL-PLAN §7.2) — sightings used to evaporate as you scrolled
+// past them. The content script streams every captured sighting to the
+// background, which keeps a session-scoped ring buffer in
 // chrome.storage.session; the side panel's Today tab renders it as a ranked
-// worked queue. $0 — pure presentation of what the badge already computes.
+// worked queue. $0 — pure presentation of what the page already read.
 //
 // This module is the pure, unit-testable core (merge + cap + rank). The
 // chrome plumbing lives in background.ts (single writer) and
@@ -13,54 +13,38 @@ import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyModeId } from '../replyMode.ts';
 import type { ReplyModeSource, ReplyVariant } from './types.ts';
 
-// 'manual' = the user pinned this tweet into the queue via the ⊕ button (RU.8).
-// 'roster' = a fresh post by someone already in my circle, captured despite a
-// null/skip verdict (GT.8) — the reciprocity lane is about who posted it, not
-// how it's doing.
-// 'cannon' = a fresh post that clears the arbitrage bar (CQ.4): either its
-// views-per-reply score is in the top decile (src/shared/cannon.ts) or its
-// author is on the camped cannon roster. Unlike 'roster' this one IS partly a
-// claim about the tweet — but it is the Cannon view's own reading, not the
-// band classifier's, so it stays queue metadata like the other two.
-// 'sweep' = an armed sweep's filters admitted this post (RS.2) and the band
-// classifier had no opinion on it — your own min/max impressions/likes/replies,
-// age and verified-only rules are the entire reason it is here. A tweet the
-// classifier DID call hot/warm keeps that verdict; 'sweep' is only ever the
-// else-branch.
-// All four are queue/UX metadata, not classifier verdicts — none ever enters
-// the Playbook's hot/warm band cells (their reply_drafts signals keep the real
-// computed band, null when uncomputed; the confirm endpoint coerces all four
-// away).
-export type RadarBand = 'hot' | 'warm' | 'manual' | 'roster' | 'cannon' | 'sweep';
+// WHY a row is in the queue. Four values, and there is no longer any other kind
+// of band: the reply-band classifier that produced 'hot'/'warm' verdicts is
+// deleted, so every band here is a statement about how the row got captured, not
+// a judgement about the tweet.
+//
+// 'manual' = the user pinned this tweet via the ⊕ button (RU.8).
+// 'sweep'  = an armed sweep's filters admitted it (RS.2) — your own min/max
+//            impressions/likes/replies, age and verified-only rules are the
+//            entire reason it is here. The ordinary way a row arrives.
+// 'cannon' = a camped-roster capture (CQ.4), metric filters bypassed.
+// 'roster' = a fresh post by someone already in my circle (GT.8), metric filters
+//            bypassed — the reciprocity lane is about who posted it.
+export type RadarBand = 'manual' | 'roster' | 'cannon' | 'sweep';
 
-// How strongly a stored band resists being overwritten by a re-sighting. A
-// human pin outranks everything; a real classifier verdict outranks a roster
-// capture, which only says "someone I know posted this". Equal stickiness → the
-// fresher incoming band wins, which is the pre-GT.8 behaviour for every
-// hot/warm pair. This is also the eviction preference under cap pressure —
+// How strongly a stored band resists being overwritten by a re-sighting. A human
+// pin outranks everything; a sweep or cannon capture — filters the user wrote
+// and armed, or a roster they camp on purpose — outranks a circle capture, which
+// only says "someone I know posted this". Equal stickiness → the fresher
+// incoming band wins. This is also the eviction preference under cap pressure:
 // keep-longest is the same order as deserves-the-slot.
 //
-// 'cannon' sits on the hot/warm rung, NOT the roster one: an arbitrage capture
-// is a real reason to be in the queue (a measured score, or a roster I camp on
-// purpose), so between a cannon and a hot sighting the fresher one wins — the
-// pre-existing behaviour for every hot/warm pair. Only 'roster', which says
-// nothing about the tweet, sits below.
-//
-// 'sweep' takes the same split as 'cannon' for the same reason: filters the user
-// wrote and armed on purpose are a real reason to hold the row.
-//
-// The asymmetry matters in both directions: a roster row that catches fire takes
-// the fresher hot/warm verdict (the upgrade), while a tweet that EARNED hot and
-// then went quiet is never demoted to 'roster' on the next scroll past it — vpm
-// decays with age, so hot → skip is a live transition, not a hypothetical.
+// The asymmetry matters in both directions: a 'roster' row that a later sweep
+// admits on its numbers takes the upgrade, while a swept row is never demoted to
+// 'roster' on the next scroll past it.
 function bandStickiness(b: RadarBand): number {
   if (b === 'manual') return 2;
   if (b === 'roster') return 0;
-  return 1; // hot / warm / cannon / sweep
+  return 1; // sweep / cannon
 }
 
-// Who the author is, as far as the people layer knows (S0.3). A warm post from
-// an ally/mutual compounds a real relationship; a hot post from a rando is a
+// Who the author is, as far as the people layer knows (S0.3). A post from an
+// ally/mutual compounds a real relationship; the same post from a rando is a
 // lottery ticket — so tier beats band/vpm in the queue order.
 export type PersonTier = 'ally' | 'mutual' | 'target';
 
@@ -190,8 +174,8 @@ export function mergeSightings(
     // the capture that admitted this row actually saw.
     const likes = s.likes ?? prev.likes;
     const verified = s.verified ?? prev.verified;
-    // The stickier band survives (RU.8 human pin > classifier verdict > GT.8
-    // roster capture); at equal stickiness the fresher incoming band wins.
+    // The stickier band survives (RU.8 human pin > sweep/cannon capture > GT.8
+    // circle capture); at equal stickiness the fresher incoming band wins.
     const band = bandStickiness(prev.band) > bandStickiness(s.band) ? prev.band : s.band;
     const merged: RadarSighting = { ...s, band, firstSeenAt: prev.firstSeenAt };
     if (reply !== undefined) merged.reply = reply;
@@ -208,10 +192,9 @@ export function mergeSightings(
   if (all.length <= RADAR_CAP) return all;
   // Evict least-recently-seen within a stickiness rung: the least sticky rows
   // sort to the front (dropped first), the stickiest to the back (kept). A
-  // manual pin (RU.8) outlives any auto-capture, and a GT.8 roster capture goes
-  // before a real hot/warm verdict — otherwise a chatty circle could push the
-  // loudest opportunities of the day out of a cap-100 buffer. slice() keeps the
-  // tail.
+  // manual pin (RU.8) outlives any auto-capture, and a GT.8 circle capture goes
+  // before a swept one — otherwise a chatty circle could push the rows your own
+  // filters admitted out of a cap-100 buffer. slice() keeps the tail.
   all.sort((a, b) => {
     const sa = bandStickiness(a.band);
     const sb = bandStickiness(b.band);
@@ -266,28 +249,17 @@ function tierWeight(t: PersonTier | undefined): number {
   return 0;
 }
 
-// How loud the tweet itself is. hot > warm > roster: a roster capture (GT.8) is
-// in the queue for who posted it, and the tier comparison above has already had
-// its say about that — so within a tier it sits below a real verdict.
-//
-// 'cannon' weighs 0 here on purpose, unlike its stickiness rung above: the main
-// Queue is the reciprocity lane, ranked tier-first, and an arbitrage capture
-// must not outrank a hot one inside it. The cannon ordering (by score, by age)
-// lives in the Cannon view and nowhere else.
-//
-// 'sweep' (RS.2) takes the identical split for the identical reason — see the
-// stickiness note above.
-function bandWeight(b: RadarBand): number {
-  if (b === 'hot') return 2;
-  if (b === 'warm') return 1;
-  // roster / cannon / sweep — and 'manual', which never reaches here against a non-pin
-  return 0;
-}
-
 // Queue order: a manual add (the human pinned it, RU.8) tops everything; then
-// (S0.3) who the author is (roster tier), THEN band (hot over warm over the
-// GT.8 roster capture), then views-per-minute, then recency — the original
-// order preserved within a rung.
+// (S0.3) who the author is (roster tier), then views-per-minute, then recency —
+// the original order preserved within a rung.
+//
+// There is no band rung any more. One existed to sort a 'hot' verdict above a
+// 'warm' one; with the classifier gone every remaining band is a capture REASON
+// (sweep/cannon/roster), and the tier comparison above has already said what
+// there is to say about who posted it. Sorting those three against each other
+// would be inventing a preference the user never expressed — how loud the tweet
+// is, is exactly what `vpm` measures one line below. Cannon ordering (by score,
+// by age) still lives in the Cannon view and nowhere else.
 export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
   return [...sightings].sort((a, b) => {
     const am = a.band === 'manual' ? 1 : 0;
@@ -295,8 +267,6 @@ export function rankSightings(sightings: RadarSighting[]): RadarSighting[] {
     if (am !== bm) return bm - am;
     const tw = tierWeight(b.personTier) - tierWeight(a.personTier);
     if (tw !== 0) return tw;
-    const bw = bandWeight(b.band) - bandWeight(a.band);
-    if (bw !== 0) return bw;
     if (a.signals.vpm !== b.signals.vpm) return b.signals.vpm - a.signals.vpm;
     return b.lastSeenAt.localeCompare(a.lastSeenAt);
   });
@@ -476,18 +446,29 @@ export function draftRowToSighting(row: RadarDraftRow): RadarSighting | null {
   return s;
 }
 
+/** Verdict bands from a build that still ran the reply-band classifier. A
+ *  session buffer written by the old build outlives the extension reload that
+ *  installs this one, so they are RECOGNISED and folded onto 'sweep' rather than
+ *  dropped — an upgrade must not silently empty the user's working queue. */
+const LEGACY_BANDS: ReadonlySet<string> = new Set(['hot', 'warm']);
+
+function isRadarBand(v: unknown): boolean {
+  return (
+    v === 'manual' ||
+    v === 'roster' ||
+    v === 'cannon' ||
+    v === 'sweep' ||
+    LEGACY_BANDS.has(v as string)
+  );
+}
+
 export function isRadarSighting(v: unknown): v is RadarSighting {
   if (!v || typeof v !== 'object') return false;
   const r = v as Record<string, unknown>;
   return (
     typeof r.tweetId === 'string' &&
     typeof r.url === 'string' &&
-    (r.band === 'hot' ||
-      r.band === 'warm' ||
-      r.band === 'manual' ||
-      r.band === 'roster' ||
-      r.band === 'cannon' ||
-      r.band === 'sweep') &&
+    isRadarBand(r.band) &&
     typeof r.signals === 'object' &&
     r.signals !== null
   );
@@ -504,7 +485,10 @@ export function isRadarSightings(v: unknown): v is RadarSighting[] {
 // turning a single bad row into a wiped queue. A reader that can only ever
 // delete the rows it can't parse cannot do that.
 export function coerceSightings(v: unknown): RadarSighting[] {
-  return Array.isArray(v) ? v.filter(isRadarSighting) : [];
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter(isRadarSighting)
+    .map((s) => (LEGACY_BANDS.has(s.band) ? { ...s, band: 'sweep' as const } : s));
 }
 
 // Drop sightings last seen more than `ttlMs` ago (see RADAR_TTL_MS). An

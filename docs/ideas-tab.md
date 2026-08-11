@@ -124,7 +124,7 @@ When the draft is created from a dropdown-picked idea, stratus does two things b
 
 ### A failed or refused draft leaves the idea open
 
-Consumption only happens **after** a draft is actually created. If the draft generation fails — for example the request errors out, or a reply is refused by the safety/band gate before anything is written — the idea is **not** consumed. It stays `open` and ready to try again. You never lose an idea to a failed attempt.
+Consumption only happens **after** a draft is actually created. If the draft generation fails — for example the request errors out, or the request is refused as malformed before anything is written — the idea is **not** consumed. It stays `open` and ready to try again. You never lose an idea to a failed attempt.
 
 (One convenience worth knowing: in Reply Master, a picked idea is a one-shot steer — it's used on the very next generate and then cleared, so it doesn't silently carry over into your next, unrelated reply.)
 

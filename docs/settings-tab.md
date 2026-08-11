@@ -7,7 +7,7 @@ The **Settings** tab is where you connect the stratus extension to your stratus 
 Settings is split into four subtabs across the top:
 
 - **General** — the connection fields, the behavior/privacy toggles, the reply humanizer, appearance, your niche, daily commitments, and harvest cursors. This is the default subtab.
-- **Tuning** — every tunable number the server has, in one searchable list: doctrine, quests, people, follow-ups, the reply band, stat gates, budgets, workers and more. See [Tuning](#tuning-the-tuning-subtab).
+- **Tuning** — every tunable number the server has, in one searchable list: doctrine, quests, people, follow-ups, the sweep filters, stat gates, budgets, workers and more. See [Tuning](#tuning-the-tuning-subtab).
 - **AI** — which LLM provider drafts your content (Grok or OpenRouter), and the model/temperature/token/effort knobs. See [AI provider](#ai-provider-the-ai-subtab).
 - **Prompts** — the editable text of every AI prompt behind the app, with a one-click "Restore Default Prompts". See [Prompts editor](#prompts-editor-the-prompts-subtab).
 
@@ -130,13 +130,13 @@ These three are stored locally in the extension, like the connection fields — 
 
 ## Tuning (the Tuning subtab)
 
-**Tuning** is every number stratus makes a decision with, in one place. Doctrine cadence, quest targets, follow-up windows, the sweep filters, stat gates, budgets, worker schedules, display limits — all of it, live-editable, with the bounds and the reasoning attached to each row. (One group is deliberately absent — see *[The reply band left this tab](#the-reply-band-left-this-tab)*.)
+**Tuning** is every number stratus makes a decision with, in one place. Doctrine cadence, quest targets, follow-up windows, the sweep filters, stat gates, budgets, worker schedules, display limits — all of it, live-editable, with the bounds and the reasoning attached to each row. (Every group in the registry renders here — see *[The reply band is gone](#the-reply-band-is-gone)* for the one that used to be missing.)
 
 The list is rendered entirely from what the server reports, so a knob added in a stratus update simply appears here — no extension update needed.
 
 ### The sixteen groups
 
-The registry holds **79 knobs in 17 groups**; this tab renders **67 of them in 16 groups**. The missing one is **Reply band** — since 2026-08-10 those twelve classifier thresholds are not editable from the panel at all (see *[The reply band left this tab](#the-reply-band-left-this-tab)* below). This is the map of what's here — what each group decides, and where you see it change.
+The registry holds **67 knobs in 16 groups** and this tab renders **all of them** — the twelve `x.band.*` thresholds that used to make it 79-in-17 were deleted on 2026-08-11 (see *[The reply band is gone](#the-reply-band-is-gone)* below). This is the map of what's here — what each group decides, and where you see it change.
 
 | Group | Knobs | What it decides | Where the change shows |
 |---|---|---|---|
@@ -157,7 +157,7 @@ The registry holds **79 knobs in 17 groups**; this tab renders **67 of them in 1
 | **Mentions** | 3 | How often the mention inbox may refresh from the server and from the panel, and how many mentions one pull may read. | The Replies inbox. This group is a **cost** control. |
 | **Display** | 10 | List sizes: sparkline days, leaderboard rows, Do-next cap and snooze, Top-fans amber count, radar draft cap, dossier rows, channel posts, Voice and Replies list lengths. | The lists themselves — nothing here changes a decision. |
 
-Forty-four of the 79 are also **mirrored** to the extension (Identity, all of Doctrine, the hidden Reply band, **Sweep** and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number. The Sweep group is the one whose mirroring is not a convenience but the mechanism: no server route reads those eleven numbers at all — the content script does, off the mirrored blob.
+Thirty-two of the 67 are also **mirrored** to the extension (Identity, all of Doctrine, **Sweep** and Cannon, most of Display), which is what lets the side panel and the injected on-page UI show the same numbers the server decides with. The rest are server-only, because the panel already receives their effect rather than the number. The Sweep group is the one whose mirroring is not a convenience but the mechanism: no server route reads those eleven numbers at all — the content script does, off the mirrored blob.
 
 ### How a row works
 
@@ -194,20 +194,20 @@ There is no second store and no second copy: a gear edits the same key with the 
 A few numbers you might expect in Tuning deliberately live somewhere else, because each setting has exactly one owner:
 
 - **Your reply quota, week reply %, and the 2–10× target-follower window** belong to your **active niche** — edit them under **General → Niche**. Tuning says so at the top of the affected groups.
-- **The Cannon group is not a second reply band.** The band classifier decides *hot / warm / skip*; the Cannon floor decides *is there an open slot under this post*. They read the same signals and answer different questions, and neither overrides the other — a `skip`-banded post can be a perfectly good cannon shot. The shipped floor (**120**) is the measured p90 of your own harvest corpus, not a number borrowed from someone else's account; recalibrate it from a replay of that corpus, never by feel.
+- **The Cannon group is not a second set of sweep filters.** The sweep decides *does this tweet qualify at all*; the Cannon floor decides *is there an open slot under this post*, and it is a DISPLAY rule over rows already in the queue. They read the same signals and answer different questions — a post your filters would pass on can be a perfectly good cannon shot. The shipped floor (**120**) is the measured p90 of your own harvest corpus, not a number borrowed from someone else's account; recalibrate it from a replay of that corpus, never by feel.
 - **The Sweep group is the only thing that decides your queue.** Since 2026-08-10 the Radar is manual by default and the eleven Sweep filters are the only rule an armed sweep admits by. Every Sweep default is an **opening guess**; recalibrate at 100+ swept rows from the SQL in the **[Radar doc](./radar-tab.md#tips-and-good-to-know)**, never by feel.
 - **The 2–10× target-follower window has nothing to do with the cannon roster.** They're separate lists chosen on separate criteria — relationship versus reach — and widening the 2–10× band does not add anyone to the cannon.
 - **AI calls is the lower of two tiers.** Those knobs are the per-surface defaults; whatever you set in **Settings → AI** is a *global* override that wins over them. The blank fields in the AI subtab are what fall back to this group. The AI subtab links straight here.
 
 > A caution worth repeating from the descriptions themselves: the Sweep filters and the stat gates ship as **opening guesses**. They're worth recalibrating from measurements — not from a hunch — and the descriptions tell you how much data each one wants first.
 
-### The reply band left this tab
+### The reply band is gone
 
-Until 2026-08-10 a **Reply band** group sat here: twelve classifier thresholds (view floors, reply ceilings, freshness, views-per-minute, the too-small floors). It's gone from the panel, on purpose.
+Until 2026-08-10 a **Reply band** group sat here: twelve classifier thresholds (view floors, reply ceilings, freshness, views-per-minute, the too-small floors). That day they stopped rendering. On 2026-08-11 they were **deleted outright**, along with the classifier they fed.
 
-- **Why.** After the Radar went manual-first, those twelve stopped deciding what enters the queue — the eleven **Sweep** filters do. Two look-alike sets of numbers a tab apart, only one of which does the job you're trying to do, is a trap. There is now exactly **one** place to set what a tweet must clear: the **⚙ next to Start sweep** on the Radar (the same eleven knobs also appear as the **Sweep** group above).
-- **What still happens.** The band classifier itself is untouched. It still draws the hot/warm/skip border stratus paints on a tweet as you scroll, and it still gates a single Reply Master draft — server and page reading the identical numbers, so the border can never promise a draft the server then refuses. It runs on whatever those twelve are set to today; nothing changed values.
-- **If you ever need to move one.** They're still real settings (`x.band.*`) — reachable over the API (`PATCH /x/settings`) or through the MCP `x_update_setting` tool, just not from a control in the panel. That's deliberate: they're a calibration surface that wants **≥100 measured replies** behind a change, not a knob for a Tuesday.
+- **Why.** After the Radar went manual-first, those twelve stopped deciding what enters the queue — the eleven **Sweep** filters do. Hiding them wasn't enough: the classifier was still running behind your back, painting a green/amber rail down the timeline and refusing the occasional Reply Master draft on numbers you had no way to change. A second admission rule you can't tune is worse than no second rule. There is now exactly **one** place that decides what a tweet qualifies for: the **⚙ next to Start sweep** on the Radar (the same eleven knobs also appear as the **Sweep** group above).
+- **What changed for you.** No more coloured left border or dimmed rows on x.com — the timeline renders as X drew it. **Reply Master no longer refuses a draft**: click it on anything and you get one (so a draft on a dead post now costs the usual ~$0.002–0.01 instead of being refused for free — the sweep is what keeps you off dead posts, and the click is yours). The Playbook's **Band calibration** table is gone with it, and its **Timeline funnel** now buckets by *your sweep filters* instead of by band. Stored `x.band.*` override rows are simply ignored; nothing reads them.
+- **Nothing replaced it.** There is no hidden classifier, no API-only knob, no MCP path. If you want fewer dead posts in the queue, tighten the Sweep filters.
 
 ### Coming soon
 
@@ -222,7 +222,7 @@ The **Niche** card is where "who you are" lives. A niche bundles the four things
 ### The active-niche editor
 
 - **Persona / beliefs / reply persona / description:** free-text fields. Save commits them; Reset discards unsaved edits. The next `/x/posts/draft` and `/x/replies/generate` immediately ground on the new text (nothing is cached across an edit).
-- **Doctrine (6 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces), and **replies to my people · min** (default 5 — how many of the day's replies should go to accounts you already have a relationship with; see [Your people are exempt](replies-tab.md#your-people-are-exempt)) — which is also the target of Today's *replies to your people* quest. These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
+- **Doctrine (6 numbers):** reply quota **min/max** (default 10–20 a day), the **week reply %** (70/30 doctrine → 70), the **target band** multipliers **min/max** (2–10× your follower count — who the target roster surfaces), and **replies to my people · min** (default 5 — how many of the day's replies should go to accounts you already have a relationship with; see [People](people-tab.md)) — which is also the target of Today's *replies to your people* quest. These drive the Today brief's quota and ratio, and the voice **Targets** roster's band. Changing them is instant on the next read.
 - **Saving doctrine sends all six numbers.** The server replaces the stored block rather than merging it, so a knob you never touched still travels with the save — that is why the card always shows every field filled in.
 
 ### Niches list & activation

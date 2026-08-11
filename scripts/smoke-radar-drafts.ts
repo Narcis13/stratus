@@ -44,7 +44,7 @@ await persistRadarDrafts(
       author: 'Smoke Alice',
       text: 'smoke tweet one',
       url: `https://x.com/smoke_alice/status/${T1}`,
-      band: 'hot',
+      band: 'sweep',
       signals: { views: 1500, replies: 8, ageMin: 22, vpm: 68, bait: false },
     },
     { tweetId: T2, handle: 'smoke_bob', author: 'smoke_bob', text: 'smoke tweet two' },

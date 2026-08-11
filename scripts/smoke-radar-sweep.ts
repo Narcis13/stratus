@@ -15,10 +15,10 @@
 //       `max*` meaning "no ceiling", `maxAgeMin: 0` meaning the opposite (always
 //       enforced, no sentinel), and `verified: null` refused under `verifiedOnly`.
 //   (d) a `radar_drafts` row with `band: 'sweep'` confirmed into `reply_drafts`,
-//       then READ BACK FROM THE DB to prove `contextSnapshot.signals.band` is
-//       `null`. `persistRadarDrafts`-class writes are best-effort, so a green call
-//       proves nothing (RC.5) — and a coercion that only held in the response body
-//       would still write a capture reason into a Playbook band cell (§7.19).
+//       then READ BACK FROM THE DB to prove `contextSnapshot.signals` carries no
+//       band at all. `persistRadarDrafts`-class writes are best-effort, so a green
+//       call proves nothing (RC.5) — and a rule that only held in the response
+//       body would still persist a capture reason as a fact about the tweet.
 //
 // **$0, and there is NO `--live` flag — the absence is the finding** (D171c, a
 // fifth time). Nothing on any path this feature touches can reach `xFetch` or
@@ -341,7 +341,7 @@ console.log('(c) passesSweep boundaries');
 }
 
 // ============================================================================
-// (d) A swept row confirms with band: null in the STORED snapshot
+// (d) A swept row confirms with NO band in the STORED snapshot
 // ============================================================================
 console.log("(d) radar_drafts band:'sweep' → confirm → reply_drafts");
 {
@@ -363,7 +363,7 @@ console.log("(d) radar_drafts band:'sweep' → confirm → reply_drafts");
   const [inserted] = db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, T_SWEEP)).all();
   if (!inserted) fail('the radar_drafts row never landed (persistRadarDrafts is best-effort)');
   if (inserted.band !== 'sweep') fail(`stored band is ${String(inserted.band)}, not 'sweep'`);
-  ok("a radar_drafts row stored with band:'sweep' (the sixth band survives the column)");
+  ok("a radar_drafts row stored with band:'sweep' (the capture reason survives the column)");
 
   const confirmed = await req(`/x/radar/drafts/${T_SWEEP}/confirm`, 'POST');
   if (confirmed.status !== 201)
@@ -373,21 +373,21 @@ console.log("(d) radar_drafts band:'sweep' → confirm → reply_drafts");
 
   // READ BACK FROM THE DB. What a later Playbook read sees is the persisted
   // snapshot, and a coercion that only held in the response body would pass a
-  // body-only check while still writing a capture reason into a band cell.
+  // body-only check while still writing a capture reason into the snapshot.
   const [reply] = db.select().from(replyDrafts).where(eq(replyDrafts.id, replyId)).all();
   if (!reply) fail('confirm returned 201 but no reply_drafts row is on disk');
   const snapshot = reply.contextSnapshot as {
-    signals?: { band: unknown; views: number };
+    signals?: { views: number };
     metrics: { views: number };
   };
   if (!snapshot.signals) fail('the stored snapshot carries no signals at all');
-  if (snapshot.signals.band !== null)
+  if ('band' in snapshot.signals)
     fail(
-      `stored contextSnapshot.signals.band is ${JSON.stringify(snapshot.signals.band)}, not null`,
+      `stored contextSnapshot.signals still carries a band: ${JSON.stringify(snapshot.signals)}`,
     );
   if (snapshot.metrics.views !== 610)
     fail(`the snapshot lost its metrics: ${snapshot.metrics.views}`);
-  ok('the STORED contextSnapshot.signals.band is null (QUEUE_META_BANDS coercion, §7.19)');
+  ok('the STORED contextSnapshot.signals carries no band — the reason stays in its column');
 
   // …and the coercion is snapshot-only: the queue must still be able to say WHY
   // it held this row, so radar_drafts.band is untouched.

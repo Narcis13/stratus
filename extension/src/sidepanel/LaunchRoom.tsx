@@ -230,11 +230,7 @@ function SeedComment({
         metrics: { views: 0, replies: 0, reposts: 0, likes: 0 },
         topComments: [],
       };
-      const d = await api.replies.generate(settings, {
-        context,
-        idea: SEED_STEER,
-        override: true,
-      });
+      const d = await api.replies.generate(settings, { context, idea: SEED_STEER });
       setDraft(d);
       setVariantIdx(0);
       setCopied(false);
@@ -331,7 +327,7 @@ function EarlyReplierRow({
         topComments: [],
         parent: { text: postText },
       };
-      setDraft(await api.replies.generate(settings, { context, override: true }));
+      setDraft(await api.replies.generate(settings, { context }));
     } catch (e) {
       onError(e instanceof ApiError ? `Draft failed: ${e.message}` : 'Draft failed');
     } finally {

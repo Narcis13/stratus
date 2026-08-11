@@ -35,8 +35,8 @@ import {
   sweepMinutesLeft,
   sweepNeedsVerified,
 } from './radarSweep.ts';
-import { classifyBand, textLooksLikeReplyBait } from './replyBand.ts';
-import type { BandThresholds, TweetSignals } from './replyBand.ts';
+import { textLooksLikeReplyBait } from './replyBand.ts';
+import type { TweetSignals } from './replyBand.ts';
 import {
   type ExtractedActiveTimes,
   extractActiveTimesSection,
@@ -566,9 +566,6 @@ function injectStyles(): void {
     @media (prefers-reduced-motion: reduce) {
       .${SWEEP_CHIP_DOT_CLASS} { animation: none; }
     }
-    article[data-testid="tweet"][data-stratus-band="hot"]  { box-shadow: inset 4px 0 0 var(--stratus-hot); }
-    article[data-testid="tweet"][data-stratus-band="warm"] { box-shadow: inset 4px 0 0 var(--stratus-warm); }
-    article[data-testid="tweet"][data-stratus-band="skip"] { opacity: 0.45; }
     .${PERSON_CHIPS_CLASS} {
       display: inline-flex;
       align-items: center;
@@ -1484,7 +1481,7 @@ function parseMetricsLabel(label: string): PostContext['metrics'] {
 //
 // PERF CONTRACT: this is a per-CLICK cost and must stay one. A
 // showOriginalButton lookup on every article of every scan would put a new DOM
-// query on the timeline's hot path (`applyBand` re-runs on every mutation
+// query on the timeline's hot path (`applyCapture` re-runs on every mutation
 // burst) — so this is only ever called for the articles being read for one
 // reply, never from the scan loop. It is also deliberately NOT the harvester's
 // whole-page `revealOriginals()` sweep: that clicks every button on the page,
@@ -1545,9 +1542,9 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     if (topComments.length >= REPLY_TOP_COMMENTS_MAX) break;
   }
 
-  // Stamp the band verdict + classifier inputs at capture time, via the same
-  // readTweetSignals path the badge uses — the draft row becomes a labeled
-  // training example for recalibrating BAND from own outcomes (plan §6.2).
+  // Stamp the tweet's reading at capture time — exact age and DOM-aware bait,
+  // which the server can only approximate from postedAt. The draft row keeps it
+  // so the Playbook's latency table can read age-at-draft back off it.
   const sig = readTweetSignals(focusedArticle);
 
   return {
@@ -1559,7 +1556,7 @@ function scrapePostContext(focusedArticle: Element, focusedTweetId: string): Pos
     postedAt,
     metrics,
     topComments,
-    ...(sig ? { signals: { band: classifyBand(sig, bandThresholds), ...sig } } : {}),
+    ...(sig ? { signals: sig } : {}),
   };
 }
 
@@ -1575,18 +1572,12 @@ function setReplyState(
 function scheduleReplyReset(btn: HTMLButtonElement, ms = STATUS_PERSIST_MS): void {
   setTimeout(() => {
     if (!btn.isConnected) return;
-    delete btn.dataset.force; // band-gate override expires with the prompt
     setReplyState(btn, 'idle', REPLY_BTN_LABEL);
   }, ms);
 }
 
 async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
   if (btn.dataset.state === 'working') return;
-
-  // Set when the previous click was refused by the server band gate (§7.3);
-  // a deliberate re-click inside the prompt window forces the draft.
-  const force = btn.dataset.force === '1';
-  delete btn.dataset.force;
 
   const focusedId = focusedTweetIdFromUrl();
   if (!focusedId) {
@@ -1644,7 +1635,6 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
       ...(systemPromptOverride ? { systemPromptOverride } : {}),
       ...(idea ? { idea } : {}),
       ...(ideaId ? { ideaId } : {}),
-      ...(force ? { override: true } : {}),
     },
   };
 
@@ -1657,14 +1647,6 @@ async function onReplyMasterClick(btn: HTMLButtonElement): Promise<void> {
 
   if (!res || !res.ok) {
     const code = res && !res.ok ? res.code : 'no_response';
-    if (code === 'band_gate') {
-      // Server refused a dead (null/skip-band) target. Arm a short window in
-      // which a second deliberate click resends with override: true.
-      btn.dataset.force = '1';
-      setReplyState(btn, 'failed', 'Dead post — click to force');
-      scheduleReplyReset(btn, STATUS_PERSIST_MS * 2);
-      return;
-    }
     setReplyState(btn, 'failed', `Failed: ${code}`);
     scheduleReplyReset(btn);
     return;
@@ -2277,24 +2259,23 @@ function attachCannedButton(article: Element, focusedTweetId: string): void {
   cannedHandled.add(actionRow);
 }
 
-// --------------------------------------------------------- reply-target band
+// ------------------------------------------------------- timeline capture
 
-// Highlight timeline tweets that sit in the 1k–8k-view sweet spot worth
-// replying to early. Every signal is read from the DOM ($0). The scoring model
-// lives in replyBand.ts; the rationale is in evals/reply-eval-*.md.
+// What a scroll may put into the Radar queue. Every signal is read from the DOM
+// ($0); the admission rule itself lives in radarSweep.ts.
+//
+// This section used to also run the reply-band classifier, which painted a
+// green/amber rail down the left of every timeline tweet and dimmed the ones it
+// judged dead. That is gone: `passesSweep` is the only rule that decides what a
+// tweet qualifies for, and the sweep gear on the Radar tab is the only place it
+// is tuned. Do not add a second, untunable opinion back onto the timeline.
 
-// UI.7: the thresholds come from the mirrored settings blob the background
-// writes (§7.24/7.25 — the page never fetches them itself), so the badge and
-// the server's /x/replies/generate gate classify with the same twelve numbers.
-// Baked defaults until the first read resolves: an unconfigured, offline or
-// half-loaded profile bands exactly as it did before this knob existed, never
+// RS.3: the eleven sweep knobs come from the mirrored settings blob the
+// background writes (§7.24/7.25 — the page never fetches them itself), so the
+// page captures with exactly the numbers the panel shows. Baked
+// SERVER_DEFAULTS.sweep until the first read resolves: an unconfigured, offline
+// or half-loaded profile sweeps exactly as the shipped defaults do, never
 // blank.
-let bandThresholds: BandThresholds = SERVER_DEFAULTS.band;
-
-// RS.3: the eleven sweep knobs, mirrored the same way and from the same blob —
-// one read and one listener serve both, because a second listener over the same
-// key would be two subscriptions to one fact. Baked SERVER_DEFAULTS.sweep until
-// the first read resolves, same degradation.
 //
 // (CQ.4's `cannonCfg` lived here too until RS.3 took the capture decision off
 // the score model: the camped arm now takes its age bound from
@@ -2307,9 +2288,7 @@ function initMirroredConfig(): void {
   chrome.storage.local
     .get(SERVER_SETTINGS_KEY)
     .then((out) => {
-      const cfg = readServerConfig(out[SERVER_SETTINGS_KEY]);
-      bandThresholds = cfg.band;
-      sweepCfg = cfg.sweep;
+      sweepCfg = readServerConfig(out[SERVER_SETTINGS_KEY]).sweep;
     })
     .catch(() => {
       /* keep defaults */
@@ -2318,9 +2297,7 @@ function initMirroredConfig(): void {
     if (area !== 'local') return;
     const change = changes[SERVER_SETTINGS_KEY];
     if (!change) return;
-    const cfg = readServerConfig(change.newValue);
-    bandThresholds = cfg.band;
-    sweepCfg = cfg.sweep;
+    sweepCfg = readServerConfig(change.newValue).sweep;
   });
 }
 
@@ -2504,7 +2481,7 @@ function readTweetSignals(article: Element): TweetSignals | null {
 }
 
 // Does a tweet the classifier passed on still belong in the queue because of WHO
-// posted it (GT.8)? Cheap gates first — applyBand re-runs on every mutation
+// posted it (GT.8)? Cheap gates first — applyCapture re-runs on every mutation
 // burst, so the free age check comes before the DOM read that yields the handle
 // (one querySelector, the same one applyPersonChips already pays per article).
 //
@@ -2541,20 +2518,14 @@ function isCampedSighting(article: Element, sig: TweetSignals, glance: GlanceMap
   return isCannonPerson(glance[permalink.username.toLowerCase()]);
 }
 
-function applyBand(article: HTMLElement, glance: GlanceMap): void {
+function applyCapture(article: HTMLElement, glance: GlanceMap): void {
   const cap = readTweetCapture(article);
   const sig = cap?.sig ?? null;
-  const band = sig ? classifyBand(sig, bandThresholds) : null;
-  // NOT gated by the sweep, and must not become gated: the border/dim is how you
-  // decide what to ⊕, so it has to be drawn on a manual (i.e. normal) scroll.
-  if (band) article.dataset.stratusBand = band;
-  else delete article.dataset.stratusBand;
 
   // RS.3 — the whole capture decision. Manual is the default state: with no
   // armed sweep NOTHING here enters the queue, and the ⊕ is the only door.
   // While a sweep IS armed, three arms, first match wins:
-  //   1. the filters (the user's own numbers) — keeps a hot/warm verdict when
-  //      the classifier happened to agree, otherwise bands the row 'sweep';
+  //   1. the filters (the user's own numbers) — the row is banded 'sweep';
   //   2. a camped cannon account, metric gates bypassed (ahead of the roster arm
   //      because a handle on both lists is queued for the reach, and that is the
   //      queue it should be workable from);
@@ -2578,7 +2549,7 @@ function applyBand(article: HTMLElement, glance: GlanceMap): void {
     };
     const extras = { likes: cap.likes, verified: candidate.verified };
     if (passesSweep(candidate, sweepCfg)) {
-      recordRadarSighting(article, band === 'hot' || band === 'warm' ? band : 'sweep', sig, extras);
+      recordRadarSighting(article, 'sweep', sig, extras);
     } else if (sweepCfg.campedBypass && isCampedSighting(article, sig, glance)) {
       recordRadarSighting(article, 'cannon', sig, extras);
     } else if (sweepCfg.circleBypass && isRosterSighting(article, sig, glance)) {
@@ -2586,8 +2557,9 @@ function applyBand(article: HTMLElement, glance: GlanceMap): void {
     }
   }
 
-  // Every band, including skip — the opportunity funnel needs the denominator.
-  // A null sig is an ad/promoted row (no metrics label), which filters itself.
+  // EVERY parseable article, filtered ones included — the opportunity funnel
+  // needs the denominator. A null sig is an ad/promoted row (no metrics label),
+  // which filters itself.
   // NOT gated by the sweep either, and must not become gated: this is the HV.2
   // corpus feed, and a gated one would make buildTimelineFunnel measure your
   // button-pressing instead of your timeline.
@@ -3013,7 +2985,7 @@ function syncContextPanel(focusedId: string | null): void {
 // Hot/warm verdicts used to evaporate as you scrolled past. Stream them to the
 // background's session ring buffer so the side panel can show a worked queue.
 // Batched (one message per flush window, deduped by tweetId) and per-tweet
-// throttled — applyBand re-runs on every mutation burst, but the queue only
+// throttled — applyCapture re-runs on every mutation burst, but the queue only
 // needs a fresh number once a minute, sooner if the band itself changes.
 
 const RADAR_FLUSH_MS = 2000;
@@ -3410,7 +3382,7 @@ function recordPassiveHarvest(article: Element): void {
   if (!isHomeTimelinePath(location.pathname)) return;
   if (isHarvestActive()) return;
 
-  // Cheap gate first — applyBand re-runs on every mutation burst, so the
+  // Cheap gate first — applyCapture re-runs on every mutation burst, so the
   // throttle is settled off one querySelector before extractArticle's full read.
   const permalink = findPermalink(article);
   if (!permalink) return;
@@ -4023,7 +3995,7 @@ function scan(root: ParentNode): void {
   for (const article of root.querySelectorAll<HTMLElement>('article[data-testid="tweet"]')) {
     attachButton(article);
     attachRadarAddButton(article);
-    applyBand(article, glance);
+    applyCapture(article, glance);
     applyPersonChips(article, glance);
     if (focusedId) {
       attachReplyMasterButton(article, focusedId);

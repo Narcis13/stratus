@@ -15,17 +15,16 @@
 // `GET /x/settings/values?scope=mirrored` before adding one, and add the
 // matching baked fallback in the same edit.
 //
-// The imports here are shims over shared pure modules — `../replyBand.ts`
-// (UI.7), `../cannon.ts` and `../radarSweep.ts` — and nothing else: content.ts
-// already inlines all three into the IIFE, and BAND/CANNON/SWEEP are the
-// canonical owners of their defaults on BOTH sides of the wire, so re-typing
-// those numbers here would be the second-owner bug this file exists to prevent. The rule this module actually
-// lives by is "nothing that can't be inlined into the content-script IIFE"
-// (§7.26) — no React, no sidepanel module, nothing with its own dependencies.
+// The imports here are shims over shared pure modules — `../cannon.ts` and
+// `../radarSweep.ts` — and nothing else: content.ts already inlines both into
+// the IIFE, and CANNON/SWEEP are the canonical owners of their defaults on BOTH
+// sides of the wire, so re-typing those numbers here would be the second-owner
+// bug this file exists to prevent. The rule this module actually lives by is
+// "nothing that can't be inlined into the content-script IIFE" (§7.26) — no
+// React, no sidepanel module, nothing with its own dependencies.
 
 import { CANNON, type CannonThresholds } from '../cannon.ts';
 import { SWEEP, type SweepConfig } from '../radarSweep.ts';
-import { BAND, type BandThresholds } from '../replyBand.ts';
 
 /** chrome.storage.local key the background writes the flat blob to. */
 export const SERVER_SETTINGS_KEY = 'settings:server';
@@ -47,16 +46,14 @@ export interface ServerConfig {
    *  Deliberately NOT the server's own cap: that one is the real limit, this is
    *  only the panel's budget, so a missing blob still degrades gracefully. */
   panelRefreshCap: number;
-  /** x.band.* — every threshold the on-page badge classifies with (UI.7). The
-   *  server gate reads the same twelve knobs, so one number moves both sides. */
-  band: BandThresholds;
   /** x.cannon.* — every threshold the Cannon view filters and tints with. The
    *  server's cannon routes read the same four knobs, so one number moves both
    *  sides; `scoreMin` is a MEASURED floor (see src/shared/cannon.ts). */
   cannon: CannonThresholds;
-  /** x.sweep.* — the eleven numbers an armed sweep admits on (RS.1). The server
-   *  has NO consumer for these: capture is the content script's job, so this is
-   *  the only side that reads them, and a `0` on any `max*` means no ceiling. */
+  /** x.sweep.* — the eleven numbers an armed sweep admits on (RS.1), and now the
+   *  ONLY rule that decides what a tweet qualifies for. The server reads them
+   *  too (`sweepConfigFromSettings`, for the Playbook's timeline funnel), so one
+   *  number moves both sides; a `0` on any `max*` means no ceiling. */
   sweep: SweepConfig;
   /** x.display.doNextCap — rows the Today "Do next" strip shows before the
    *  overflow line (UI.12). */
@@ -109,7 +106,6 @@ export const SERVER_DEFAULTS: ServerConfig = {
   ladderSwitchAt: 4,
   bestTimeMinN: 3,
   panelRefreshCap: 4,
-  band: BAND,
   cannon: CANNON,
   sweep: SWEEP,
   doNextCap: 5,
@@ -170,28 +166,7 @@ function readHours(blob: ServerSettingsBlob, key: string, fallback: number[]): n
   return v;
 }
 
-// Same per-key discipline as the scalars above: a corrupt `bigViews` must not
-// drop the other eleven thresholds back to baked, because a half-configured
-// band would classify differently from the server's gate — the one thing the
-// mirror exists to prevent.
-function readBand(blob: ServerSettingsBlob): BandThresholds {
-  return {
-    bigViews: readNumber(blob, 'x.band.bigViews', BAND.bigViews),
-    baitViews: readNumber(blob, 'x.band.baitViews', BAND.baitViews),
-    earlyReplies: readNumber(blob, 'x.band.earlyReplies', BAND.earlyReplies),
-    midReplies: readNumber(blob, 'x.band.midReplies', BAND.midReplies),
-    freshMin: readNumber(blob, 'x.band.freshMin', BAND.freshMin),
-    risingVPM: readNumber(blob, 'x.band.risingVPM', BAND.risingVPM),
-    baitVPM: readNumber(blob, 'x.band.baitVPM', BAND.baitVPM),
-    watchVPM: readNumber(blob, 'x.band.watchVPM', BAND.watchVPM),
-    watchReplyCeiling: readNumber(blob, 'x.band.watchReplyCeiling', BAND.watchReplyCeiling),
-    tooSmallAgeMin: readNumber(blob, 'x.band.tooSmallAgeMin', BAND.tooSmallAgeMin),
-    tooSmallViews: readNumber(blob, 'x.band.tooSmallViews', BAND.tooSmallViews),
-    tooSmallVpm: readNumber(blob, 'x.band.tooSmallVpm', BAND.tooSmallVpm),
-  };
-}
-
-// Same per-key discipline as `readBand`, for the same reason: the page's Cannon
+// Per-key discipline, the same one every resolver here follows: the page's Cannon
 // view and the server's cannon routes filter on these four, so a corrupt
 // `scoreMin` must not also drop the age cutoff back to baked.
 function readCannon(blob: ServerSettingsBlob): CannonThresholds {
@@ -239,7 +214,6 @@ export function readServerConfig(raw: unknown): ServerConfig {
       'x.mentions.panelRefreshCap',
       SERVER_DEFAULTS.panelRefreshCap,
     ),
-    band: readBand(blob),
     cannon: readCannon(blob),
     sweep: readSweep(blob),
     doNextCap: readNumber(blob, 'x.display.doNextCap', SERVER_DEFAULTS.doNextCap),

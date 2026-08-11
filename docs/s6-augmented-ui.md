@@ -11,7 +11,7 @@
 
 While you scroll and read on x.com, stratus decorates the page with what it already knows about the people behind the handles — no side panel round-trip required to decide whether (and how) to reply:
 
-- **On the timeline:** the old green stats pill is **gone** (the hot/warm/skip left border stays). In its place, tweets from people stratus knows carry small chips right of the name/handle line.
+- **On the timeline:** the old green stats pill is **gone** (and so, since 2026-08-11, is the hot/warm/skip left border — the classifier behind both was deleted). In its place, tweets from people stratus knows carry small chips right of the name/handle line.
 - **On a tweet page** (`/status/…`): below the tweet sits a collapsible **stratus context panel** — who this person is to you, whether you already replied to this very tweet, open loops you owe them, your last measured replies with outcomes, and your notes.
 - **Everywhere:** clicking a chip or the panel header opens that person's **dossier** in the side panel.
 

@@ -1,7 +1,8 @@
-// The Radar (OVERHAUL-PLAN §7.2): hot/warm band sightings the content script
-// streamed to chrome.storage.session while the user browsed X, ranked as a
-// worked queue — band, then views-per-minute, then recency. Each row shows the
-// "why" (views · replies · age · bait) so judgment stays with the human.
+// The Radar (OVERHAUL-PLAN §7.2): sightings the content script streamed to
+// chrome.storage.session while the user browsed X, ranked as a worked queue —
+// manual pins, then author tier, then views-per-minute, then recency. Each row
+// shows the "why" (views · replies · age · bait) so judgment stays with the
+// human.
 //
 // Its own Operate tab (RD.1) — it used to be the sixth section of Today, but
 // it's the surface with the longest dwell time in the daily loop and the only
@@ -98,12 +99,11 @@ const SWEEP_KEYS = [
 ];
 
 // The ownership split, stated where the confusion lands. RS.3 took queue
-// admission off the twelve Reply-band thresholds and RS.7 took those thresholds
-// out of Settings entirely, so this gear is now the ONLY place admission is
-// configured. The band still exists — it draws the on-page border and gates a
-// single reply draft — it is just not a control any more.
+// admission off the twelve Reply-band thresholds, RS.7 hid them, and they are
+// now deleted along with the classifier they fed — so this gear is the only
+// place admission is configured anywhere in the product.
 const SWEEP_NOTE =
-  'These numbers are the only thing that decides what an armed sweep admits into the queue — nothing in Settings competes with them. The reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune. A max of 0 means "no ceiling"; the age bound is enforced on every arm, including the two bypasses.';
+  'These numbers are the only thing that decides what a tweet qualifies for — nothing in Settings competes with them, and nothing marks up the timeline behind your back any more. A max of 0 means "no ceiling"; the age bound is enforced on every arm, including the two bypasses.';
 
 // How long "Sweep ended" stays up after the panel WATCHES a session expire, then
 // the row falls back to the manual line. An auto-stop the user never saw is the
@@ -1642,35 +1642,29 @@ function rowAngles(
   return s.reply ? [{ angle: null, text: s.reply, gloss: null }] : [];
 }
 
-// The band chip's face. Two need a translation: the stored value is the cohort
-// key the server records, "your circle" (GT.8) and "swept" (RS.2) are what they
-// mean to a human.
+// The band chip's face — every value now says HOW the row was captured. Two need
+// a translation: the stored value is the cohort key the server records, "your
+// circle" (GT.8) and "swept" (RS.2) are what they mean to a human.
 const BAND_LABEL: Record<RadarSighting['band'], string> = {
-  hot: 'hot',
-  warm: 'warm',
   manual: 'manual',
   roster: 'your circle',
   cannon: 'cannon',
   sweep: 'swept',
 };
 
-// A band carries a tooltip when its reason ISN'T visible in the numbers under
-// it (the GT.8 rule). Three qualify: a roster capture says nothing about the
-// tweet, a cannon capture is a claim the band chip alone can't distinguish
-// from the read-time score — the tweet may be here because of who posted it —
-// and a sweep admission is the user's own filters talking, some of which
-// (likes, verified) aren't in the numbers on the card at all.
-// hot/warm/manual are self-explaining and stay bare.
+// A band carries a tooltip when its reason ISN'T visible in the numbers under it
+// (the GT.8 rule). Three qualify: a roster capture says nothing about the tweet,
+// a cannon capture may be here because of who posted it rather than how it is
+// doing, and a sweep admission is the user's own filters talking — some of which
+// (likes, verified) aren't in the numbers on the card at all. 'manual' is
+// self-explaining and stays bare.
 const BAND_TITLE: Record<RadarSighting['band'], string | undefined> = {
-  hot: undefined,
-  warm: undefined,
   manual: undefined,
   roster:
-    'Below the reply band, but in the queue anyway: you have replied to them before, or they are on your 2–10x target roster. Same rule the reply gate uses.',
+    'Your filters passed on it, but it is in the queue anyway: you have replied to them before, or they are on your 2–10x target roster.',
   cannon:
-    'Captured for the cannon: either it cleared the views-per-reply floor when it was sighted, or its author is on your camped cannon roster. Work it in the Cannon view — the slot closes fast.',
-  sweep:
-    'Your sweep filters admitted this one — the band classifier had no opinion. Tune the numbers in the gear next to Start sweep.',
+    'Captured for the cannon: its author is on your camped cannon roster, so the metric filters were bypassed. Work it in the Cannon view — the slot closes fast.',
+  sweep: 'Your sweep filters admitted this one. Tune the numbers in the gear next to Start sweep.',
 };
 
 // S0.3 chip tooltip — why this author outranks a louder rando.

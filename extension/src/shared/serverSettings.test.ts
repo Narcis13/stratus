@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { CANNON } from '../cannon.ts';
 import { SWEEP } from '../radarSweep.ts';
-import { BAND } from '../replyBand.ts';
 import {
   SERVER_DEFAULTS,
   curatedBatchSize,
@@ -37,7 +36,6 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       ladderSwitchAt: 3,
       bestTimeMinN: 8,
       panelRefreshCap: 1,
-      band: BAND,
       cannon: CANNON,
       sweep: SWEEP,
       doNextCap: 8,
@@ -112,7 +110,6 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
     expect(Object.keys(cfg).sort()).toEqual([
       'anchors3',
       'anchors4',
-      'band',
       'batchReplyCap',
       'bestTimeMinN',
       'cannon',
@@ -208,65 +205,10 @@ describe('curatedBatchSize — the curated size clamped to the same server cap',
   });
 });
 
-// UI.7 — the band knobs are the first mirrored keys the CONTENT SCRIPT reads,
-// and the badge they drive has to agree with the server's gate. Every fallback
-// here is BAND itself, so an unreachable server bands exactly as the shipped
-// build did.
-describe('readServerConfig — band thresholds (UI.7)', () => {
-  test('a configured band arrives whole', () => {
-    const cfg = readServerConfig({
-      'x.band.bigViews': 1000,
-      'x.band.baitViews': 600,
-      'x.band.earlyReplies': 20,
-      'x.band.midReplies': 200,
-      'x.band.freshMin': 30,
-      'x.band.risingVPM': 40,
-      'x.band.baitVPM': 25,
-      'x.band.watchVPM': 15,
-      'x.band.watchReplyCeiling': 10,
-      'x.band.tooSmallAgeMin': 45,
-      'x.band.tooSmallViews': 500,
-      'x.band.tooSmallVpm': 20,
-    });
-    expect(cfg.band).toEqual({
-      bigViews: 1000,
-      baitViews: 600,
-      earlyReplies: 20,
-      midReplies: 200,
-      freshMin: 30,
-      risingVPM: 40,
-      baitVPM: 25,
-      watchVPM: 15,
-      watchReplyCeiling: 10,
-      tooSmallAgeMin: 45,
-      tooSmallViews: 500,
-      tooSmallVpm: 20,
-    });
-  });
-
-  test('no band keys at all = the shipped classifier, unchanged', () => {
-    expect(readServerConfig({}).band).toEqual(BAND);
-    expect(readServerConfig(undefined).band).toEqual(BAND);
-  });
-
-  test('one corrupt threshold falls back alone', () => {
-    // A half-applied band would classify differently from the server gate,
-    // which is the exact failure the mirror exists to prevent — so the fallback
-    // is per key, never "drop the whole band".
-    const cfg = readServerConfig({ 'x.band.bigViews': 'lots', 'x.band.midReplies': 200 });
-    expect(cfg.band.bigViews).toBe(BAND.bigViews);
-    expect(cfg.band.midReplies).toBe(200);
-  });
-
-  test('0 is a real threshold — it switches the dead-zone rule off', () => {
-    expect(readServerConfig({ 'x.band.tooSmallViews': 0 }).band.tooSmallViews).toBe(0);
-  });
-});
-
-// RS.1 — the sweep filters. Unlike the band, these eleven have NO server
-// consumer: the content script is the only reader, so this resolver is the whole
-// path from a PATCH to what a scroll captures. It also holds the mirror's first
-// booleans, which is why the fallback discipline is asserted on those too — a
+// RS.1 — the sweep filters, and since the reply band was deleted the ONLY rule
+// that decides what a tweet qualifies for. The content script is the reader that
+// matters, so this resolver is the whole path from a PATCH to what a scroll
+// captures. It also holds the mirror's first booleans, which is why the fallback discipline is asserted on those too — a
 // `'false'` string reaching `campedBypass` as truthy would re-open a bypass the
 // user switched off.
 describe('readServerConfig — sweep filters (RS.1)', () => {

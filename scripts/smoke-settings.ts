@@ -298,18 +298,20 @@ if (!eqArray(briefed.today.anchors, SMOKE_ANCHORS))
   );
 ok(`today's cadence anchors follow the setting: ${JSON.stringify(briefed.today.anchors)}`);
 
-// ------------------------- 5. consumer C: the band blob the extension mirrors
+// ------------------------ 5. consumer C: the sweep blob the extension mirrors
+//
+// Was `x.band.*` until the reply band was deleted. The sweep filters inherited
+// the role this step exists to prove: a mirrored knob is the SAME number on
+// both sides of the wire, so what the panel shows is what a scroll captures on.
 
-console.log('5. consumer — x.band.* → the mirrored blob the badge reads');
-const bandBefore = Number(mirrored['x.band.bigViews']);
-const bandNext = bandBefore === 500 ? 400 : 500;
-await patch({ 'x.band.bigViews': bandNext });
+console.log('5. consumer — x.sweep.* → the mirrored blob the content script reads');
+const sweepBefore = Number(mirrored['x.sweep.minViews']);
+const sweepNext = sweepBefore === 500 ? 400 : 500;
+await patch({ 'x.sweep.minViews': sweepNext });
 const mirrorAfter = await getJson<Record<string, unknown>>('/x/settings/values?scope=mirrored');
-if (mirrorAfter['x.band.bigViews'] !== bandNext)
-  fail(`mirror still reports bigViews ${JSON.stringify(mirrorAfter['x.band.bigViews'])}`);
-ok(
-  `bigViews ${bandBefore} → ${bandNext} in the same payload the badge and the server gate both read`,
-);
+if (mirrorAfter['x.sweep.minViews'] !== sweepNext)
+  fail(`mirror still reports minViews ${JSON.stringify(mirrorAfter['x.sweep.minViews'])}`);
+ok(`minViews ${sweepBefore} → ${sweepNext} in the same payload the page captures with`);
 
 // ------------------------------------------ 6. the money ceiling actually bites
 

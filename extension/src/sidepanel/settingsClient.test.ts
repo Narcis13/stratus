@@ -6,7 +6,6 @@ import {
   filterSettingGroups,
   flattenSettings,
   groupResetTarget,
-  visibleSettingGroups,
 } from './settingsClient.ts';
 
 function entry(over: Partial<SettingEntry> & { key: string }): SettingEntry {
@@ -32,36 +31,24 @@ const GROUPS: SettingsGroup[] = [
     ],
   },
   {
-    id: 'band',
-    label: 'Reply band',
+    id: 'sweep',
+    label: 'Sweep',
     settings: [
       entry({
-        key: 'x.band.bigViews',
-        group: 'band',
-        label: 'Big views',
-        description: 'Views that make a post worth a reply.',
+        key: 'x.sweep.minViews',
+        group: 'sweep',
+        label: 'Min views',
+        description: 'Impressions a tweet needs to be swept in.',
       }),
       entry({
-        key: 'x.band.freshMin',
-        group: 'band',
-        label: 'Fresh window',
-        description: 'Minutes a post still counts as fresh.',
+        key: 'x.sweep.maxAgeMin',
+        group: 'sweep',
+        label: 'Max age',
+        description: 'Minutes old past which nothing is swept.',
       }),
     ],
   },
 ];
-
-describe('visibleSettingGroups', () => {
-  test('drops the reply-band group (RS.7 — the sweep gear owns admission)', () => {
-    const res = visibleSettingGroups(GROUPS);
-    expect(res.map((g) => g.id)).toEqual(['budgets']);
-  });
-
-  test('every other group survives, untouched', () => {
-    const res = visibleSettingGroups(GROUPS);
-    expect(res[0]).toBe(GROUPS[0] as SettingsGroup);
-  });
-});
 
 describe('filterSettingGroups', () => {
   test('an empty query returns the groups untouched', () => {
@@ -79,25 +66,25 @@ describe('filterSettingGroups', () => {
   });
 
   test('a group-id match keeps the whole group too', () => {
-    const res = filterSettingGroups(GROUPS, 'band');
+    const res = filterSettingGroups(GROUPS, 'sweep');
     expect(res.length).toBe(1);
     expect(res[0]?.settings.length).toBe(2);
   });
 
   test('otherwise filters rows by key, label or description', () => {
-    expect(filterSettingGroups(GROUPS, 'bigViews')[0]?.settings.map((s) => s.key)).toEqual([
-      'x.band.bigViews',
+    expect(filterSettingGroups(GROUPS, 'minViews')[0]?.settings.map((s) => s.key)).toEqual([
+      'x.sweep.minViews',
     ]);
-    expect(filterSettingGroups(GROUPS, 'Fresh window')[0]?.settings.map((s) => s.key)).toEqual([
-      'x.band.freshMin',
+    expect(filterSettingGroups(GROUPS, 'Max age')[0]?.settings.map((s) => s.key)).toEqual([
+      'x.sweep.maxAgeMin',
     ]);
-    expect(filterSettingGroups(GROUPS, 'worth a reply')[0]?.settings.map((s) => s.key)).toEqual([
-      'x.band.bigViews',
+    expect(filterSettingGroups(GROUPS, 'swept in')[0]?.settings.map((s) => s.key)).toEqual([
+      'x.sweep.minViews',
     ]);
   });
 
   test('is case-insensitive', () => {
-    expect(filterSettingGroups(GROUPS, 'BIGVIEWS').length).toBe(1);
+    expect(filterSettingGroups(GROUPS, 'MINVIEWS').length).toBe(1);
     expect(filterSettingGroups(GROUPS, 'bUdGeTs').length).toBe(1);
   });
 
@@ -107,7 +94,7 @@ describe('filterSettingGroups', () => {
 
   test('does not mutate the input groups', () => {
     const before = JSON.stringify(GROUPS);
-    filterSettingGroups(GROUPS, 'bigViews');
+    filterSettingGroups(GROUPS, 'minViews');
     expect(JSON.stringify(GROUPS)).toBe(before);
   });
 });
@@ -117,8 +104,8 @@ describe('flattenSettings', () => {
     expect(flattenSettings(GROUPS).map((s) => s.key)).toEqual([
       'x.budgets.imageDailyUsd',
       'x.budgets.xSoftDailyUsd',
-      'x.band.bigViews',
-      'x.band.freshMin',
+      'x.sweep.minViews',
+      'x.sweep.maxAgeMin',
     ]);
   });
 });
@@ -131,27 +118,27 @@ describe('entriesForKeys', () => {
     // A gear's rows are a curated sequence — "cap, then snooze" — and it pulls
     // them from groups that know nothing about each other.
     expect(
-      entriesForKeys(GROUPS, ['x.band.freshMin', 'x.budgets.imageDailyUsd']).map((s) => s.key),
-    ).toEqual(['x.band.freshMin', 'x.budgets.imageDailyUsd']);
+      entriesForKeys(GROUPS, ['x.sweep.maxAgeMin', 'x.budgets.imageDailyUsd']).map((s) => s.key),
+    ).toEqual(['x.sweep.maxAgeMin', 'x.budgets.imageDailyUsd']);
   });
 
   test('an unknown key is skipped, not faked', () => {
     // Gears name keys as string literals; if one is renamed server-side the row
     // should vanish rather than render a control over nothing.
-    expect(entriesForKeys(GROUPS, ['x.gone.away', 'x.band.bigViews']).map((s) => s.key)).toEqual([
-      'x.band.bigViews',
+    expect(entriesForKeys(GROUPS, ['x.gone.away', 'x.sweep.minViews']).map((s) => s.key)).toEqual([
+      'x.sweep.minViews',
     ]);
     expect(entriesForKeys(GROUPS, [])).toEqual([]);
-    expect(entriesForKeys([], ['x.band.bigViews'])).toEqual([]);
+    expect(entriesForKeys([], ['x.sweep.minViews'])).toEqual([]);
   });
 });
 
 describe('applyOptimisticValue', () => {
   test('the edited row moves and every other row is untouched', () => {
-    const next = applyOptimisticValue(GROUPS, 'x.band.bigViews', 900);
+    const next = applyOptimisticValue(GROUPS, 'x.sweep.minViews', 900);
     const edited = next[1]?.settings[0];
     expect([edited?.key, edited?.value, edited?.isDefault]).toEqual([
-      'x.band.bigViews',
+      'x.sweep.minViews',
       900,
       false,
     ]);
@@ -164,8 +151,8 @@ describe('applyOptimisticValue', () => {
   test('editing back TO the default clears the reset dot', () => {
     // isDefault drives the accent dot, and it has to track a slider dragged all
     // the way home — otherwise the dot claims an override that no longer exists.
-    const moved = applyOptimisticValue(GROUPS, 'x.band.bigViews', 900);
-    const home = applyOptimisticValue(moved, 'x.band.bigViews', 1);
+    const moved = applyOptimisticValue(GROUPS, 'x.sweep.minViews', 900);
+    const home = applyOptimisticValue(moved, 'x.sweep.minViews', 1);
     expect(home[1]?.settings[0]?.isDefault).toBe(true);
   });
 

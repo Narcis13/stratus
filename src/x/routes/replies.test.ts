@@ -15,14 +15,13 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { inArray, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { classifyBand } from '../../shared/replyBand.ts';
 import { GENERAL_MODE, REPLY_MODES } from '../../shared/replyMode.ts';
 import { cannonTargets, radarDrafts } from '../db/schema.ts';
 import { MAX_CURATE_TWEETS } from '../replies/curate.ts';
 import { resolveReplyLanguage } from '../replies/language.ts';
 import { type PostContext, REPLY_ANGLES } from '../replies/prompt.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
-import { curateKeepTarget, gateSignalsFor, replies } from './replies.ts';
+import { curateKeepTarget, replies } from './replies.ts';
 
 const app = new Hono();
 app.route('/x', replies);
@@ -170,104 +169,13 @@ describe('POST /x/replies/curate guards (RC.3) — all refuse before any spend',
   });
 });
 
-// CQ.3: the cannon roster's band-gate carve-out. Same proof shape as the GT.6
-// reciprocity cases in src/test.test.ts (which this describe deliberately sits
-// beside rather than inside — the two carve-outs are one `if` ladder and their
-// tests should read the same): the exempt case is proven by HOW FAR it gets.
-// Both provider keys are force-unset, so a draft that clears the gate lands on
-// `llm_not_configured` (503) instead of buying a real LLM call inside
-// `bun test`. The refusals need no such care — they return before anything is
-// loaded.
-//
-// What is NOT asserted here, and why: the persisted `contextSnapshot.gateBypass
-// === 'cannon'` needs an `INSERT` that only happens after a successful, PAID
-// call, so it is a live/browser check (VERIFY-DEBT), not a unit test. The stamp
-// itself is one assignment on the branch these tests do reach, and
-// `parseContext` refusing a client-sent `gateBypass` is pinned in test.test.ts.
-describe('cannon roster exemption (CQ.3)', () => {
-  const H_CANNON = 'cq3camped';
-  const H_BENCH = 'cq3benched';
-  const H_STRANGER = 'cq3stranger';
-  const HANDLES = [H_CANNON, H_BENCH];
-
-  // Old + tiny + slow + not bait → null band whatever "now" is.
-  const deadCtx = (handle: string): PostContext => ({
-    tweetId: '990000000000000001',
-    handle,
-    author: 'Camped Account',
-    text: 'a plain statement tweet.',
-    url: `https://x.com/${handle}/status/990000000000000001`,
-    postedAt: '2026-06-08T08:00:00Z',
-    metrics: { views: 40, replies: 1, reposts: 0, likes: 2 },
-    topComments: [],
-  });
-
-  const generate = async (body: unknown): Promise<{ status: number; body: unknown }> => {
-    const res = await app.request('/x/replies/generate', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    return { status: res.status, body: await res.json() };
-  };
-
-  afterAll(async () => {
-    await db.delete(cannonTargets).where(inArray(cannonTargets.handle, HANDLES));
-  });
-
-  test('a dead post by a camped target clears the gate before any spend', async () => {
-    await db.insert(cannonTargets).values({ handle: H_CANNON, active: true });
-    const { status, body } = await withNoLlm(() => generate({ context: deadCtx(H_CANNON) }));
-    // Past the 422 and into the LLM layer — the gate opened, nothing was paid.
-    expect(status).toBe(503);
-    expect((body as { error: string }).error).toBe('llm_not_configured');
-  });
-
-  test('a benched target does not open the gate — the dead post still 422s', async () => {
-    await db.insert(cannonTargets).values({ handle: H_BENCH, active: false });
-    const { status, body } = await generate({ context: deadCtx(H_BENCH) });
-    expect(status).toBe(422);
-    expect((body as { error: string }).error).toBe('band_gate');
-  });
-
-  test('an unknown handle keeps the refusal default', async () => {
-    const { status, body } = await generate({ context: deadCtx(H_STRANGER) });
-    expect(status).toBe(422);
-    const out = body as { error: string; band: unknown };
-    expect(out.error).toBe('band_gate');
-    expect(out.band).toBeNull();
-  });
-
-  // A hot post must never pay for the membership lookup (§7.4) — the carve-out
-  // lives INSIDE the refusal `if`. That is decidable at the level of the
-  // condition guarding it, which is what this asserts: a hot band means the
-  // branch holding both lookups is not entered, so no `gateBypass` can be
-  // stamped no matter who the author is. (Observing the absence of the $0
-  // SELECT itself would need DB mocking, which this suite doesn't do.)
-  test('a hot post from a camped target never reaches the carve-out', async () => {
-    // Capture-time signals, so the band doesn't drift with the wall clock the
-    // way a `postedAt`-derived age would (gateSignalsFor returns them verbatim).
-    const hot: PostContext = {
-      ...deadCtx(H_CANNON),
-      metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
-      signals: { band: null, views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false },
-    };
-    expect(classifyBand(gateSignalsFor(hot, Date.now()))).toBe('hot');
-
-    const { status, body } = await withNoLlm(() => generate({ context: hot }));
-    expect(status).toBe(503);
-    expect((body as { error: string }).error).toBe('llm_not_configured');
-  });
-});
-
 // CQ.7 — the optional reply language. Every case here is a refusal BEFORE the
 // call (§7.4): the validation sits with the rest of the body ladder, above the
-// band gate on the single path and above the relationship lookups on the batch
-// one. The accept cases walk to `llm_not_configured`, which is the same
-// "got all the way there for free" proof the CQ.3 block uses.
+// relationship lookups on the batch path. The accept cases walk to
+// `llm_not_configured`, which is the "got all the way there for free" proof.
 describe('reply language validation (CQ.7) — refuses before any spend', () => {
-  // Deliberately HOT: a post that would otherwise buy a Grok call. A 400 here
-  // (not a 422, not a 503) is what proves the language check outranks the gate.
+  // A post that would otherwise buy a Grok call. A 400 here (not a 503) is what
+  // proves the language check refuses before anything is loaded or spent.
   const hotCtx: PostContext = {
     tweetId: '990000000000000042',
     handle: 'cq7author',
@@ -277,7 +185,7 @@ describe('reply language validation (CQ.7) — refuses before any spend', () => 
     postedAt: '2026-06-08T08:00:00Z',
     metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
     topComments: [],
-    signals: { band: null, views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false },
+    signals: { views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false },
   };
 
   const generate = async (body: unknown): Promise<{ status: number; body: unknown }> => {
@@ -574,8 +482,8 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     postedAt: '2026-06-08T08:00:00Z',
     metrics: { views: 1500, replies: 8, reposts: 2, likes: 30 },
     topComments: [],
-    // Capture-time signals so the band is HOT whatever the wall clock says.
-    signals: { band: 'hot', views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false },
+    // Capture-time signals so the age is stable whatever the wall clock says.
+    signals: { views: 1500, replies: 8, ageMin: 22.5, vpm: 66.7, bait: false },
   });
 
   const generate = async (body: unknown): Promise<{ status: number; body: unknown }> => {
@@ -682,22 +590,6 @@ describe('generate — the single-extends trim and the specificity-gate skip (ML
     expect(row.mode).toBe('general');
     expect(row.variants).toHaveLength(2);
     expect(calls[0]?.angles).toEqual([...GENERAL_MODE.angles]);
-  });
-
-  // §7.4 is about ORDER, not amount: a refused post pays for nothing at all —
-  // not the LLM call (asserted here by the empty stub log), and not the roster
-  // SELECT, which sits after the `return` and is therefore decidable from the
-  // placement rather than observable (the CQ.3 block makes the same note).
-  test('a band-refused post 422s before the resolution — nothing consulted, nothing spent', async () => {
-    const dead: PostContext = {
-      ...post('ml3dead', '評価の設計を直したほうがいい。'),
-      metrics: { views: 40, replies: 1, reposts: 0, likes: 2 },
-      signals: { band: null, views: 40, replies: 1, ageMin: 900, vpm: 0.04, bait: false },
-    };
-    const { out, calls } = await withStubbedGrok(THREE_VARIANTS, () => generate({ context: dead }));
-    expect(out.status).toBe(422);
-    expect((out.body as { error: string }).error).toBe('band_gate');
-    expect(calls).toHaveLength(0);
   });
 
   test('the batch trims PER TWEET and every tweet still appears', async () => {

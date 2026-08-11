@@ -67,7 +67,7 @@ await persistRadarDrafts(
       author: 'Smoke Target',
       text: 'the tweet we are replying to',
       url: `https://x.com/smoke_target/status/${SRC}`,
-      band: 'hot',
+      band: 'sweep',
       signals: { views: 1800, replies: 9, ageMin: 18, vpm: 100, bait: false },
     },
   ],
@@ -90,7 +90,7 @@ if (!Array.isArray(seeded.variants) || seeded.variants.length !== 3) {
 ok('radar draft seeded with 3 variants; GET ?tweetId= returns it');
 
 // 3. Confirm → new reply_drafts row (source='radar', status='copied', variants,
-//    contextSnapshot rebuilt from the captured snippet/signals/band).
+//    contextSnapshot rebuilt from the captured snippet/signals).
 r = await app.request(`/x/radar/drafts/${SRC}/confirm`, { method: 'POST' });
 if (r.status !== 201) fail(`first confirm returned ${r.status} (want 201)`);
 const draft = (await r.json()) as {
@@ -102,7 +102,7 @@ const draft = (await r.json()) as {
   contextSnapshot: {
     tweetId?: string;
     metrics?: { views: number; replies: number };
-    signals?: { band: string | null } | undefined;
+    signals?: { ageMin: number } | undefined;
   };
 };
 if (draft.source !== 'radar') fail(`confirmed draft source=${draft.source} (want 'radar')`);
@@ -112,10 +112,12 @@ if (draft.replyText !== PRIMARY_TEXT) fail('confirmed replyText is not the prima
 if (draft.contextSnapshot?.tweetId !== SRC) fail('contextSnapshot.tweetId mismatch');
 if (draft.contextSnapshot?.metrics?.views !== 1800)
   fail('contextSnapshot.metrics.views not rebuilt');
-// band='hot' stays hot in the snapshot (only a 'manual' pin is coerced to null,
-// so it never lands in the Playbook's hot/warm band cells — §7.19 / RU.8).
-if (draft.contextSnapshot?.signals?.band !== 'hot')
-  fail('contextSnapshot.signals.band not preserved');
+// The band is queue metadata and stays in its own column: the rebuilt snapshot
+// carries the captured signals and never a band (the classifier is gone).
+if ('band' in (draft.contextSnapshot?.signals ?? {}))
+  fail('contextSnapshot.signals must not carry a band');
+if (draft.contextSnapshot?.signals?.ageMin !== 18)
+  fail('contextSnapshot.signals.ageMin not preserved');
 ok(`confirm 201: reply_drafts ${draft.id.slice(0, 8)}… source=radar status=copied variants=3`);
 
 // 4. Confirm again → idempotent (200, same reply_drafts id, no second row).

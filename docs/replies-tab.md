@@ -10,7 +10,6 @@ stratus is a side panel for growing on X/Twitter. The guiding doctrine behind it
 
 Replying well, many times a day, is exhausting to do by hand: you have to find the right tweets (big enough to matter, early enough that you're not buried), then write something that isn't a generic "Great post!". Reply Master automates both halves:
 
-- It **scores tweets** so you spend effort only where a reply can actually be seen (the *band gate*, below).
 - It **drafts the reply** in your voice, giving you three distinct angles to choose from.
 
 The tab has **two subtabs**: **Reply Master** (everything below, up to "Relationship-aware drafting") and **Lists** — your premade canned replies, documented in its own section further down. Reply Master is for the replies worth writing fresh; Lists is for the fast, warm acknowledgments you send over and over.
@@ -30,11 +29,10 @@ When you're browsing X with the extension installed, open any tweet's own page (
 Click it and stratus will:
 
 1. **Read the tweet** — its text, author, metrics (views, likes, replies, reposts), the top replies already under it, and how old it is.
-2. **Check the band gate** (see below) — is this tweet even worth a reply?
-3. **Ask Grok for two replies**, then **copy the best one to your clipboard automatically**.
-4. **Drop the draft into the Replies tab**, so when you open the side panel the editor is already loaded with it.
+2. **Ask Grok for the replies**, then **copy the best one to your clipboard automatically**.
+3. **Drop the draft into the Replies tab**, so when you open the side panel the editor is already loaded with it.
 
-The button shows its progress right on the page: `Drafting…` while it works, then `Copied ✓` when the reply is on your clipboard and ready to paste. (If the tweet is a dead end, it says `Dead post — click to force` instead — that's the band gate talking; see below.)
+The button shows its progress right on the page: `Drafting…` while it works, then `Copied ✓` when the reply is on your clipboard and ready to paste. It no longer refuses anything — see *[There is no band gate any more](#there-is-no-band-gate-any-more)*.
 
 > The button only appears on a tweet's *own* status page, on the focused tweet — not on every tweet in a scrolling timeline. If you don't see it, click into the tweet first.
 
@@ -44,76 +42,32 @@ When you open the Replies tab and no draft is loaded yet, it reminds you of exac
 
 Other tabs in stratus surface tweets that already deserve a reply, and each has its own one-click draft button that uses the **same Grok reply engine**:
 
-- **[Radar](./radar-tab.md)** (its own tab, under Operate) — a live queue of hot/warm tweets stratus spotted while you browsed (plus any tweet you manually pinned with the plus-in-a-circle button). Its "Draft replies" action writes the three-variant set for the whole queue at once, and each row shows those angles as tabs: clicking the one you want copies it and opens the tweet. The same three angles also appear as chips on the tweet's own action row on x.com — clicking a chip copies that variant (it does *not* type into X's reply box) and **marks the draft posted**, so it becomes a measured `reply_drafts` row exactly like a Reply Master draft.
+- **[Radar](./radar-tab.md)** (its own tab, under Operate) — a live queue of tweets your sweep filters admitted while you browsed (plus any tweet you manually pinned with the plus-in-a-circle button). Its "Draft replies" action writes the three-variant set for the whole queue at once, and each row shows those angles as tabs: clicking the one you want copies it and opens the tweet. The same three angles also appear as chips on the tweet's own action row on x.com — clicking a chip copies that variant (it does *not* type into X's reply box) and **marks the draft posted**, so it becomes a measured `reply_drafts` row exactly like a Reply Master draft.
 - **Conversations / Inbox** — threads where someone mentioned or replied to *you* and you owe them an answer. Each open loop has a one-click Grok draft button; you Copy, paste on X, and mark it done.
 
 These surfaces draft *in place* (right there in their own tab) rather than loading the Replies-tab editor. The Replies tab itself is fed by the Reply Master button and is where you go to **edit, re-generate, and review the full history** of your drafts. Think of that button as "start a fresh draft from the tweet I'm looking at," and the other tabs as "work through a ready-made list of opportunities."
 
-> **A note on replies to mentions:** when the tweet is someone replying to *you*, the band gate is skipped automatically (a mention is always worth answering, and its metrics are usually zeros anyway). Reply Master also feeds Grok your original post as context — labeled "the tweet below is a reply to it" — so the draft understands the thread.
+> **A note on replies to mentions:** Reply Master feeds Grok your original post as context — labeled "the tweet below is a reply to it" — so the draft understands the thread.
 
 ---
 
-## The band gate — is this tweet worth a reply?
+## There is no band gate any more
 
-Before stratus spends anything on Grok, it **scores the target tweet** into one of four verdicts. This is the *band gate*, and it exists to stop you from wasting a reply (and a fraction of a cent) on a tweet nobody will see it under.
+Until 2026-08-11 this section described a **band gate**: before spending anything on Grok, stratus scored the target tweet into `hot` / `warm` / `skip` / `(none)` and **refused to draft** on the bottom two — the red `Dead post — click to force` button, the second-click override, and two server-side carve-outs for "your people". That whole mechanism is gone, along with the classifier behind it.
 
-### hot / warm / skip explained
+**Why it went.** After the Radar became manual-first, the twelve thresholds behind that score stopped deciding what enters your queue — [the sweep filters](./radar-tab.md#the-sweep-filters) do. What was left was a second opinion you couldn't tune, in a second place, capable of refusing a tweet your own filters had just admitted. One rule, one place, is the whole point.
 
-The score is based on a few plain signals about the tweet:
+**What this means for you now:**
 
-- **Views** — how big is it? (The sweet spot is roughly 1,000–8,000 views. There's a floor around 300 views to be "worth a reply" at all — a bit lower, ~180, if the tweet is *reply-bait*.)
-- **Replies already on it** — are you early, or buried? Under ~40 replies you're near the top; past ~120 you're lost in the pile.
-- **Age and velocity** — how fresh it is, and how fast views are accumulating (views per minute). A brand-new tweet that's climbing fast can be worth jumping on before it's even big.
-- **Reply-bait** — is it a question, a poll, or a "hot take, agree or disagree?" format? Those pull threads where a sharp early reply gets seen, so they earn a slightly lower bar.
-
-From those, the tweet lands in a band:
-
-| Band | Badge says | What it means |
-|---|---|---|
-| **hot** | *reply now* | Big enough to matter and early enough to be seen. Reply immediately. |
-| **warm** | *watch* | Good size but mid-pack, or promising-but-unproven. Worth a reply, less urgent. |
-| **skip** | *buried* | The thread is too deep (100+ replies) — your reply would be lost. |
-| **(none)** | — | Too small and not growing — it won't get views. |
-
-**hot** and **warm** pass the gate. **skip** and **(none)** are refused.
-
-### Why a "skip" is refused
-
-When the tweet scores **skip** or **(none)**, Reply Master **refuses to draft** — no Grok call, no cost, no reply slot spent on a dead post. On the page, the sparkle button turns red and spells out **`Dead post — click to force`**. This is deliberate: your time and daily reply budget are finite, and a reply that lands under a buried or tiny tweet is effort thrown away.
-
-### Your people are exempt
-
-There is one case where a refused score drafts anyway, with no force click: the tweet's author is **someone you already have a relationship with**. Concretely, that means either
-
-- a person in your CRM at stage **engaged or better** — you have posted at least one reply to them — and not archived, or
-- an account on the current **target roster** (the 2–10× follower band the Targets list shows).
-
-Replying to your people on a quiet day *is* the point of the reciprocity half of the doctrine, so the gate steps aside for them. Everyone else — including someone whose profile card you happened to hover on the timeline — still gets the refusal, because that is the case where the gate is protecting your attention rather than getting in its way.
-
-The exemption is decided **on the server**, from your own data. Nothing the page sends can claim it, and each draft that used it is tagged in its stored context, so exempt replies stay a group you can measure separately later.
-
-### Forcing it anyway (the override)
-
-Sometimes you *know* better — maybe it's a small account you specifically want to nurture, or a tweet you have a perfect reply for regardless of reach. The refusal isn't a wall:
-
-- On the **page**, the `Dead post — click to force` message stays up for a few seconds. **Click the button a second time within that window** and stratus resends the request with an override, forcing the draft through.
-- If you wait too long, the button resets to normal and you'd start over.
-
-The override is meant to be a *deliberate* second action, not an accident — so a stale score can never quietly burn a Grok call, but you're never locked out of a tweet you genuinely want to reply to.
-
-### It saves you money
-
-The whole point of the gate is cost discipline. Grok drafting isn't free (a few tenths of a cent per draft), and the gate runs *before* any spend. Over hundreds of replies, skipping the dead posts adds up — and, more importantly, it keeps your attention on the tweets where a reply actually earns you views and profile visits.
-
-### The same score powers the on-page badge
-
-While you browse X with the extension on, stratus quietly badges tweets that sit in the reply sweet spot — a little **hot / warm / skip** tag (labelled *reply now* / *watch* / *buried*). That badge is computed by the **exact same classifier** as the band gate. So a tweet the badge calls "reply now" is a tweet Reply Master will happily draft for; a "buried" badge is the same verdict that triggers the force prompt. One scoring model, everywhere.
-
----
+- **Reply Master drafts whatever you click it on.** No refusal, no red button, no force click, no `override`.
+- **Nothing marks up your timeline.** The green/amber left border and the dimmed rows on x.com are gone with the classifier that drew them.
+- **The click is the gate.** What reaches the drafter is already a deliberate selection — a tweet your sweep admitted, a row you ⊕ pinned, or a tweet you opened and pressed the button on. The thing that keeps you off dead posts is your sweep filters, upstream, where you can see and change them.
+- **It costs a little more when you're careless.** A draft on a dead tweet used to be refused for free; now it costs the usual ~$0.002–0.01. Refusing *before* spending is still the rule everywhere else (a malformed request, a bad language, a budget ceiling all still refuse before any paid call) — there is simply no longer a machine opinion about whether the tweet deserves it.
+- **"Your people are exempt" no longer needs to exist.** With no refusal to carve out of, the reciprocity and camped-roster exemptions were deleted too. Your people still matter everywhere else — the Radar's circle bypass, the daily quests, the relationship block in the prompt.
 
 ## Generating replies
 
-Once a target passes the gate (or you force it), stratus asks Grok for the replies.
+When you press the button, stratus asks Grok for the replies.
 
 ### The idea steer (optional)
 
@@ -346,7 +300,7 @@ Two honest caveats: the bucket stays at zero until that daily pass runs (a canne
 
 ### Work a Radar opportunity into a posted reply
 
-1. Open the **[Radar](./radar-tab.md)** tab (Operate, right under Today). It's a ranked queue of hot/warm tweets stratus caught while you browsed.
+1. Open the **[Radar](./radar-tab.md)** tab (Operate, right under Today). It's a ranked queue of swept tweets stratus caught while you browsed.
 2. Use Radar's **Draft replies** to draft the whole queue, then click the angle you want on a row — it's copied and the tweet opens.
 3. On X, paste, post.
 4. Mark it done. The reply is now tracked, and the person moves along in your People CRM.
@@ -354,7 +308,7 @@ Two honest caveats: the bucket stays at zero until that daily pass runs (a canne
 ### Reply to a mention (someone replied to you)
 
 1. Open **Conversations / Inbox** (top of the Today tab). Threads where the last word is *theirs* float to the top — those are the ones you owe.
-2. On an open loop, click the one-click **Grok draft** button. The band gate is skipped (mentions are always worth answering) and your original post is fed in as context.
+2. On an open loop, click the one-click **Grok draft** button — your original post is fed in as context.
 3. **Copy**, paste your reply on X, and mark the thread **Done** — that clears it from the inbox and records the exchange.
 4. Watch for a **chain**: if they reply to *your* reply, that's the momentum you're after.
 
@@ -379,7 +333,7 @@ Two honest caveats: the bucket stays at zero until that daily pass runs (a canne
 ## Tips and good to know
 
 - **Posting is always manual.** stratus drafts and copies; you paste and post. It will never tweet for you. This is by design — it keeps you in control of everything that goes out under your name.
-- **The band gate saves real money and attention.** Trust it. If it refuses a tweet, that tweet probably wasn't going to earn you views. Force it only when you have a specific reason.
+- **Nothing screens the tweet for you any more.** Reply Master drafts on whatever you click. What keeps you off dead posts is the [sweep filters](./radar-tab.md#the-sweep-filters) upstream — set them, and work the queue they fill.
 - **Drafts are cheap (~$0.002–$0.004), but not free.** They run on Grok, separate from your X spend. The cost shows on every draft.
 - **Three variants, three angles.** Always glance at the other chips before you post — the *contrarian* or *debate* take often out-performs the safe *extends* one.
 - **Idea steers are one-shot.** They aim a single draft, then vanish. Re-type to reuse.

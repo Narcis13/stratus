@@ -2,6 +2,7 @@
 // min-sample gate and the guidance helpers' refusal to speak under it.
 
 import { describe, expect, test } from 'bun:test';
+import { SWEEP } from '../shared/radarSweep.ts';
 import {
   type AngleRow,
   type IdeaRow,
@@ -12,12 +13,10 @@ import {
   type OriginalPostRow,
   type OwnReplyRosterEntry,
   type OwnReplyRow,
-  type ScoredReply,
-  type TimelineBand,
+  type TimelineBucket,
   type TimelineSeenRow,
   authorSizeBucket,
   buildAngleEffectiveness,
-  buildBandCalibration,
   buildBatchVsSingle,
   buildCoachScoreEffectiveness,
   buildFormatEffectiveness,
@@ -35,7 +34,7 @@ import {
   buildTimelineFunnel,
   classifyReplyOrigin,
   classifyRosterBand,
-  deriveTimelineBand,
+  deriveTimelineBucket,
   latencyBucket,
   median,
   normalizeReplyText,
@@ -46,7 +45,6 @@ import {
   ownReplyMode,
   ownReplyOpening,
   resolveAgeMin,
-  scoreReplyOutcome,
   topAngles,
   topStructures,
 } from './playbook.ts';
@@ -275,89 +273,6 @@ describe('buildBatchVsSingle', () => {
   test('an empty canned bucket is a zero cell, not a missing key', () => {
     const r = buildBatchVsSingle([{ origin: 'single', outcome: out(100, 2) }], 2);
     expect(r.canned).toMatchObject({ n: 0, medianViews: null, sufficient: false });
-  });
-});
-
-describe('scoreReplyOutcome', () => {
-  test('unmeasured rows score null', () => {
-    expect(
-      scoreReplyOutcome({
-        signals: { band: 'hot', views: 1000, replies: 5, ageMin: 10, vpm: 100, bait: false },
-        sourceMetrics: null,
-        sourceText: 'x',
-        sourcePostedAt: null,
-        draftCreatedAt: new Date(),
-        outcome: null,
-      }),
-    ).toBeNull();
-  });
-
-  test('stamped signals pass through', () => {
-    const s = scoreReplyOutcome({
-      signals: { band: 'warm', views: 1000, replies: 5, ageMin: 10, vpm: 100, bait: true },
-      sourceMetrics: null,
-      sourceText: 'x',
-      sourcePostedAt: null,
-      draftCreatedAt: new Date(),
-      outcome: { views: 80, likes: 2, profileVisits: 1 },
-    });
-    expect(s).toMatchObject({ band: 'warm', bait: true, views: 80, likes: 2, profileClicks: 1 });
-  });
-
-  test('derives band + bait when signals are absent', () => {
-    const posted = new Date('2026-07-01T10:00:00Z');
-    const created = new Date('2026-07-01T10:10:00Z');
-    const s = scoreReplyOutcome({
-      signals: null,
-      sourceMetrics: { views: 5000, replies: 10 },
-      sourceText: 'Agree or disagree?',
-      sourcePostedAt: posted,
-      draftCreatedAt: created,
-      outcome: { views: 40, likes: 0, profileVisits: null },
-    });
-    // 5000 views, 10 replies, 10 min old → hot per the BAND model.
-    expect(s).toMatchObject({ band: 'hot', bait: true, views: 40, likes: 0, profileClicks: null });
-  });
-
-  test('derived path without source metrics scores null', () => {
-    expect(
-      scoreReplyOutcome({
-        signals: null,
-        sourceMetrics: null,
-        sourceText: 'x',
-        sourcePostedAt: new Date(),
-        draftCreatedAt: new Date(),
-        outcome: { views: 40, likes: 0, profileVisits: null },
-      }),
-    ).toBeNull();
-  });
-});
-
-describe('buildBandCalibration', () => {
-  const scored: ScoredReply[] = [
-    { band: 'hot', bait: false, views: 400, likes: 2, profileClicks: 3 },
-    { band: 'hot', bait: false, views: 300, likes: 1, profileClicks: null },
-    { band: 'warm', bait: true, views: 100, likes: 0, profileClicks: 0 },
-    { band: null, bait: false, views: 10, likes: 0, profileClicks: 0 },
-  ];
-
-  test('hit bar is the account p75; bands carry rates', () => {
-    const r = buildBandCalibration(scored, 2);
-    expect(r.totalMeasured).toBe(4);
-    expect(r.hitThresholdViews).toBe(400);
-    const hot = r.bands.find((b) => b.band === 'hot');
-    expect(hot).toMatchObject({
-      n: 2,
-      medianViews: 350,
-      hitRate: 0.5,
-      likeRate: 1,
-      meanProfileClicks: 3,
-      sufficient: true,
-    });
-    expect(r.actionable.n).toBe(3);
-    expect(r.passed.n).toBe(1);
-    expect(r.bait.bait.n).toBe(1);
-    expect(r.bait.nonBait.n).toBe(3);
   });
 });
 
@@ -883,31 +798,50 @@ describe('buildModelEffectiveness', () => {
 
 describe('buildTimelineFunnel (HV.5)', () => {
   const NOW = 1_800_000_000_000;
+  // Defaults sit inside SWEEP: 1000 views (300..2000), 5 likes (..20),
+  // 3 replies (..40), 30 min old (..60).
   const seenRow = (id: string, o: Partial<TimelineSeenRow> = {}): TimelineSeenRow => ({
     tweetId: id,
-    views: 5000,
+    views: 1000,
     comments: 3,
+    likes: 5,
     text: 'a plain statement about shipping',
     tweetTimeMs: NOW - 30 * 60_000,
     capturedAtMs: NOW,
     ...o,
   });
-  const bandOf = (o: Partial<TimelineSeenRow>): TimelineBand => deriveTimelineBand(seenRow('t', o));
+  const bucketOf = (o: Partial<TimelineSeenRow>): TimelineBucket =>
+    deriveTimelineBucket(seenRow('t', o));
 
-  test('a row without a tweet time is unknown, never the null band', () => {
-    expect(bandOf({ tweetTimeMs: null })).toBe('unknown');
-    // Same metrics WITH a time classify as a real band — unknown is only ever
-    // about the missing timestamp.
-    expect(bandOf({})).toBe('hot');
+  test('a row without a tweet time is unknown, never `filtered`', () => {
+    expect(bucketOf({ tweetTimeMs: null })).toBe('unknown');
+    // Same numbers WITH a time get a real verdict — unknown is only ever about
+    // the missing timestamp, because the age gate cannot be evaluated without it.
+    expect(bucketOf({})).toBe('qualifies');
   });
 
-  test('bait text flips a would-be-null row into a band', () => {
-    const small = { views: 200, comments: 2, capturedAtMs: NOW, tweetTimeMs: NOW - 60 * 60_000 };
-    expect(bandOf({ ...small, text: 'shipped the thing today.' })).toBeNull();
-    expect(bandOf({ ...small, text: 'shipped the thing today. am i wrong?' })).toBe('hot');
+  test('each sweep filter can move a row to `filtered`', () => {
+    expect(bucketOf({ views: 299 })).toBe('filtered'); // under minViews
+    expect(bucketOf({ views: 2001 })).toBe('filtered'); // over maxViews
+    expect(bucketOf({ likes: 21 })).toBe('filtered'); // over maxLikes
+    expect(bucketOf({ comments: 41 })).toBe('filtered'); // over maxReplies
+    expect(bucketOf({ tweetTimeMs: NOW - 61 * 60_000 })).toBe('filtered'); // over maxAgeMin
   });
 
-  test('first sighting bands the tweet; re-sightings never re-band or double-count', () => {
+  test('verifiedOnly is not applied — the passive corpus never recorded the badge', () => {
+    // SWEEP ships verifiedOnly: true, and passesSweep refuses on unknown. If the
+    // funnel asked the real config every harvest row would read `filtered`.
+    expect(SWEEP.verifiedOnly).toBe(true);
+    expect(bucketOf({})).toBe('qualifies');
+  });
+
+  test('a configured filter re-buckets the same row', () => {
+    const row = seenRow('t', { views: 1000 });
+    expect(deriveTimelineBucket(row, { ...SWEEP, minViews: 2000 })).toBe('filtered');
+    expect(deriveTimelineBucket(row, { ...SWEEP, minViews: 100 })).toBe('qualifies');
+  });
+
+  test('first sighting buckets the tweet; re-sightings never re-bucket or double-count', () => {
     const r = buildTimelineFunnel(
       [
         // Later re-scroll first in the array on purpose: order must not matter.
@@ -919,7 +853,8 @@ describe('buildTimelineFunnel (HV.5)', () => {
     );
     expect(r.totalSeen).toBe(1);
     expect(r.cells).toHaveLength(1);
-    expect(r.cells[0]?.band).toBe('hot'); // not 'skip' from the 900-reply re-sighting
+    // not 'filtered' from the 300k-view re-sighting
+    expect(r.cells[0]?.bucket).toBe('qualifies');
     expect(r.cells[0]?.seen).toBe(1);
   });
 
@@ -946,18 +881,18 @@ describe('buildTimelineFunnel (HV.5)', () => {
     expect(full.cells[0]?.rate).toBe(0.05);
   });
 
-  test('cells stay in band order and the gate is per band', () => {
+  test('cells stay in bucket order and the gate is per bucket', () => {
     const r = buildTimelineFunnel(
       [
         seenRow('a'),
         seenRow('b'),
-        seenRow('c', { comments: 300 }), // deep thread → skip
+        seenRow('c', { comments: 300 }), // deep thread → filtered
         seenRow('d', { tweetTimeMs: null }),
       ],
       new Set(),
       2,
     );
-    expect(r.cells.map((c) => c.band)).toEqual(['hot', 'skip', 'unknown']);
+    expect(r.cells.map((c) => c.bucket)).toEqual(['qualifies', 'filtered', 'unknown']);
     expect(r.cells[0]?.sufficient).toBe(true);
     expect(r.cells[1]?.sufficient).toBe(false);
   });
