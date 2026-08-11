@@ -6,7 +6,7 @@ import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
 import type { TweetSignals } from '../replyBand.ts';
-import type { ReplyAngle, ReplyModeId } from '../replyMode.ts';
+import type { ReplyAngle, ReplyGoal, ReplyModeId } from '../replyMode.ts';
 
 export type PostStatus =
   | 'draft'
@@ -832,7 +832,7 @@ export type ReplyModeSource = 'explicit' | 'curated' | 'roster' | 'detected' | '
  *  video are a report risk. Re-exported from the shared taxonomy rather than
  *  spelled out here: a second copy of the union is how the panel starts
  *  rejecting an angle the server just started sending. */
-export type { ReplyAngle };
+export type { ReplyAngle, ReplyGoal };
 
 export interface ReplyVariant {
   text: string;
@@ -952,6 +952,12 @@ export interface BatchReplyGenerateBody {
   // The server validates it (1–40 chars, single-line) and renders the clause —
   // this string never reaches a prompt template.
   language?: string;
+  // NW.1 — which objective this click drafts for. `reach` (absent) is the
+  // shipped three-variant impressions prompt; `network` swaps in the prompt
+  // written to the AUTHOR and comes back with exactly one variant per post, on
+  // the `network` angle. Per CALL, like `language` and unlike `mode`: it is the
+  // switch beside the button, not a property of any tweet in the queue.
+  goal?: ReplyGoal;
 }
 
 export interface BatchReplyItem {
@@ -980,6 +986,10 @@ export interface BatchReplyResponse {
   // name a language the panel never sent. Both `null` on an English batch.
   language: string | null;
   languageSource: ReplyLanguageSource | null;
+  // NW.1 — the objective that actually drafted this batch, echoed back for the
+  // same reason `language` is: read the server's answer rather than assuming the
+  // switch arrived (§7.4c). Absent from a server older than NW.1.
+  goal?: ReplyGoal;
   costUsd: number;
   model: string;
   requestId: string | null;

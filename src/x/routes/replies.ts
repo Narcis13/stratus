@@ -24,7 +24,13 @@ import {
   llmErrorPayload,
 } from '../../llm/index.ts';
 import { type TweetSignals, textLooksLikeReplyBait } from '../../shared/replyBand.ts';
-import { GENERAL_MODE, REPLY_ANGLES, type ReplyAngle } from '../../shared/replyMode.ts';
+import {
+  GENERAL_MODE,
+  REPLY_ANGLES,
+  type ReplyAngle,
+  type ReplyGoal,
+  isReplyGoal,
+} from '../../shared/replyMode.ts';
 import { metricsSnapshots, postsPublished, replyDrafts } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
 import {
@@ -50,6 +56,7 @@ import {
 } from '../replies/curate.ts';
 import { resolveReplyLanguage, trimToSingleVariant } from '../replies/language.ts';
 import { type ResolvedReplyMode, resolveReplyMode, trimToModeAngles } from '../replies/mode.ts';
+import { toNetworkVariants } from '../replies/networkPrompt.ts';
 import {
   type PostContext,
   type PostSignals,
@@ -623,6 +630,11 @@ interface BatchBody {
   // but an OVERRIDE is a human saying "draft this queue as banter", which is a
   // property of the click, not of a tweet. Same shape as `language`.
   mode?: unknown;
+  // NW.1: which OBJECTIVE this click is drafting for — `reach` (default, the
+  // shipped three-variant impressions prompt) or `network` (one reply written to
+  // the author). Per CALL and never per tweet: it is the switch the human threw
+  // beside the button, not a property of any post in the queue.
+  goal?: unknown;
 }
 
 replies.post('/replies/generate-batch', async (c) => {
@@ -697,6 +709,16 @@ replies.post('/replies/generate-batch', async (c) => {
   if ('error' in modeOrErr) return c.json({ error: modeOrErr.error }, 400);
   const modeOverride = modeOrErr.mode;
 
+  // NW.1: same slot again (refuse before spend, §7.4). Absent/null is `reach` —
+  // every CLI caller, MCP tool and un-updated panel build keeps the behaviour it
+  // had, and only an unrecognized STRING is an error.
+  let goal: ReplyGoal = 'reach';
+  if (body.goal !== undefined && body.goal !== null) {
+    if (!isReplyGoal(body.goal)) return c.json({ error: 'invalid_goal' }, 400);
+    goal = body.goal;
+  }
+  const network = goal === 'network';
+
   // Relationship briefs (C3): same block per tweet, capped to 2 lines/person
   // (renderRelationshipBrief) to protect the token budget. One lookup per
   // distinct handle; best-effort.
@@ -715,12 +737,23 @@ replies.post('/replies/generate-batch', async (c) => {
     if (brief) t.relationship = brief;
   }
 
-  const pillarDefs = applyPillars ? await getActivePillars() : undefined;
+  // NW.1: every ME-shaped block below is skipped on the networking pass, and the
+  // skip lives HERE rather than in the builder so the work is never done at all
+  // (loadMeContextSafe and getActivePillars are DB reads). What they have in
+  // common is that each one pulls the reply back toward my subject — pillars pick
+  // my stance, the me-brief supplies my facts, the Playbook guidance names the
+  // angles that earned ME views, the persona is my biography, and the winners
+  // few-shot is a corpus selected by IMPRESSIONS with the punctuation habits to
+  // match. Under a first contact with the author, all five are the failure mode,
+  // not the grounding. `relationship` above is the deliberate exception: it is
+  // history with THEM, and it is what stops "congrats on the launch" going to
+  // someone I have already spoken to five times.
+  const pillarDefs = applyPillars && !network ? await getActivePillars() : undefined;
   // Playbook guidance (C4): one gated line for the whole batch, variable tail.
-  const guidance = (await loadReplyGuidanceSafe()) ?? undefined;
+  const guidance = network ? undefined : ((await loadReplyGuidanceSafe()) ?? undefined);
   // M1 (ME.3): the personal-context brief, loaded once for the whole batch (it
   // describes me, not the 25 targets). Same 'reply' brief as the single path.
-  const meBrief = (await loadMeContextSafe('reply')) ?? undefined;
+  const meBrief = network ? undefined : ((await loadMeContextSafe('reply')) ?? undefined);
   // N0.4: same niche grounding as the single path — single and batch can't drift.
   const niche = loadActiveNicheSafe();
   // ML.3: one language for the whole CALL, resolved by the same function the
@@ -743,14 +776,25 @@ replies.post('/replies/generate-batch', async (c) => {
   // the resolved mode itself is never accepted from the client — only RC.8's
   // `curatedMode` HINT is, one rung down the precedence, where an unrecognized
   // value costs the rung and nothing else.
-  const resolvedModes = await resolveReplyMode({
-    ...(modeOverride !== undefined ? { explicit: modeOverride } : {}),
-    targets: tweets.map((t) => ({
-      handle: t.handle,
-      text: t.text,
-      ...(t.curatedMode !== undefined ? { curated: t.curatedMode } : {}),
-    })),
-  });
+  //
+  // NW.1: not resolved at all on the networking pass, and that is honest rather
+  // than lazy. A mode is a bundle of three things — how much persona is allowed,
+  // which angles the room permits, how long a reply runs — and the networking
+  // prompt owns all three itself (no persona ever, one `network` angle, its own
+  // two-line budget). Rendering the legend would hand the model a second,
+  // contradicting spec; resolving it silently and not rendering it would put a
+  // room chip on the panel row that had no effect on the draft it labels. So the
+  // wire says `mode: null` here, which the panel already renders as "no room".
+  const resolvedModes = network
+    ? []
+    : await resolveReplyMode({
+        ...(modeOverride !== undefined ? { explicit: modeOverride } : {}),
+        targets: tweets.map((t) => ({
+          handle: t.handle,
+          text: t.text,
+          ...(t.curatedMode !== undefined ? { curated: t.curatedMode } : {}),
+        })),
+      });
   for (const [i, t] of tweets.entries()) {
     const r = resolvedModes[i];
     if (r) t.mode = r.mode;
@@ -761,18 +805,32 @@ replies.post('/replies/generate-batch', async (c) => {
   // tweet: a 25-post queue camped on football would otherwise pay for the same
   // five `banter` winners 25 times. $0, same slot in the ladder as the single
   // path, best-effort.
-  const winners = await loadReplyWinnersSafe([...new Set(resolvedModes.map((r) => r.mode.id))], {
-    profile: resolvedLanguage.profile,
-  });
+  const winners = network
+    ? []
+    : await loadReplyWinnersSafe([...new Set(resolvedModes.map((r) => r.mode.id))], {
+        profile: resolvedLanguage.profile,
+      });
   // Registry prompt (AI.5): the standalone batch default, DB-overridable like
   // the single-reply key; a per-request systemPromptOverride still beats it.
-  const batchPrompt = loadPromptSafe('reply-batch');
+  // NW.1: the goal picks WHICH registry key, so both objectives stay separately
+  // editable in the prompts UI and a customized reach prompt never silently
+  // becomes the networking one.
+  const batchPrompt = loadPromptSafe(network ? 'reply-batch-network' : 'reply-batch');
   const messages = buildBatchGrokInput(tweets, idea, systemOverride, pillarDefs, guidance, {
-    replyPersona: niche.replyPersona,
+    ...(network ? {} : { replyPersona: niche.replyPersona }),
     template: batchPrompt.body,
     ...(meBrief !== undefined ? { meBrief } : {}),
+    // NW.1: the language still resolves and still ships — a Japanese post gets a
+    // Japanese reply on either objective — but the PROFILE is withheld here,
+    // because its clause ends in "in this language, produce only the extends
+    // variant" and this pass has already produced exactly one, on `network`. The
+    // bare sentence (write in X, match the parent's register) is all that is
+    // wanted; the profile's char budget is superseded by the prompt's own.
     ...(resolvedLanguage.language !== undefined
-      ? { language: resolvedLanguage.language, languageProfile: resolvedLanguage.profile }
+      ? {
+          language: resolvedLanguage.language,
+          languageProfile: network ? null : resolvedLanguage.profile,
+        }
       : {}),
     winners,
   });
@@ -782,7 +840,12 @@ replies.post('/replies/generate-batch', async (c) => {
   // precedence) — clear the setting if batches start truncating. The cap stays
   // COMPUTED (not `x.ai.replyMaxOutputTokens`, which sizes one reply): it must
   // grow with the batch or a 25-tweet call truncates.
-  const maxOutputTokens = Math.min(9000, 200 + tweets.length * 420);
+  //
+  // NW.1: a networking pass returns ONE variant per post, so its per-post budget
+  // is a third of the reach path's — still well above what a ≤180-character reply
+  // plus its JSON wrapper costs, because a truncated batch wastes the whole call
+  // while a slack cap costs nothing (output tokens are billed as used).
+  const maxOutputTokens = Math.min(9000, 200 + tweets.length * (network ? 180 : 420));
 
   let result: AskLlmResult;
   try {
@@ -798,10 +861,13 @@ replies.post('/replies/generate-batch', async (c) => {
         // of their angles — still a real narrowing (a football-and-grief batch
         // never offers `debate`), and the per-tweet trim below is what holds
         // each post to its own room.
+        // NW.1: the networking goal narrows hardest of the three — one angle,
+        // so a room angle is unrepresentable rather than merely unasked-for. The
+        // count still needs `toNetworkVariants` below (no `maxItems`, D164b).
         jsonSchema: {
           name: 'batch_replies',
           schema: batchReplySchema({
-            angles: singleAngle ? ['extends'] : unionAngles(resolvedModes),
+            angles: network ? ['network'] : singleAngle ? ['extends'] : unionAngles(resolvedModes),
           }),
         },
         // Sha of the effective batch body + niche suffix (grok-only) — busts
@@ -844,12 +910,17 @@ replies.post('/replies/generate-batch', async (c) => {
     // RC.5: on the English path the per-tweet trim is the ROOM's angle set —
     // the one place a per-post rule can be enforced, since the schema could
     // only carry the union.
+    // NW.1: the networking trim runs FIRST and unconditionally — its one-variant
+    // contract is the objective itself, not a per-room narrowing, and on this
+    // path there is no resolved mode to trim by anyway.
     const resolved = modeByTweetId.get(r.tweetId);
-    const variants = singleAngle
-      ? trimToSingleVariant(r.variants)
-      : resolved
-        ? trimToModeAngles(r.variants, resolved.mode)
-        : r.variants;
+    const variants = network
+      ? toNetworkVariants(r.variants)
+      : singleAngle
+        ? trimToSingleVariant(r.variants)
+        : resolved
+          ? trimToModeAngles(r.variants, resolved.mode)
+          : r.variants;
     const primary = variants[0];
     if (!primary) continue;
     seen.add(r.tweetId);
@@ -878,6 +949,10 @@ replies.post('/replies/generate-batch', async (c) => {
     // of re-deriving the rule. Both null on an English batch.
     language: resolvedLanguage.language ?? null,
     languageSource: resolvedLanguage.source ?? null,
+    // NW.1: which objective actually drafted this batch. Echoed for the same
+    // reason `language` is — a switch whose effect is invisible in the response
+    // is a switch you find out about by reading the replies (§7.4c).
+    goal,
     costUsd: result.costUsd,
     model: result.model,
     requestId: result.requestId,

@@ -135,6 +135,13 @@ export interface RadarSighting {
 export const RADAR_SIGHTINGS_KEY = 'radar:sightings';
 export const RADAR_DISMISSED_KEY = 'radar:dismissed';
 
+// NW.1 — the drafting objective the Reach|Network switch last sat on, so a panel
+// reopened tomorrow drafts what it drafted today. A CONTROL, not part of the
+// buffer, so §7.24's single-writer rule does not apply (the `passiveCapture`
+// precedent); only the panel ever writes or reads it. Any unrecognized value
+// reads as `reach`, which is also what a fresh profile gets.
+export const REPLY_GOAL_KEY = 'radar:replyGoal';
+
 // How many sightings the buffer holds. 100 through RS.*, and that number is what
 // made a real sweep silently lossy: an armed 30-minute sweep on a busy timeline
 // admits more than 100 tweets, and the surplus was evicted before the human ever

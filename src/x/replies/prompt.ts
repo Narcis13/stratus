@@ -11,6 +11,7 @@ import type { LanguageProfile } from '../../shared/language.ts';
 import {
   type PersonaUse,
   REPLY_ANGLES,
+  ROOM_ANGLES,
   type ReplyAngle,
   type ReplyMode,
   type ReplyModeId,
@@ -189,7 +190,10 @@ function andList(items: readonly string[]): string {
 function angleNarrowing(mode: ReplyMode): string {
   const n = mode.angles.length;
   const only = `In this room produce exactly ${n} variant${n === 1 ? '' : 's'}, one per angle: ${andList(mode.angles)}.`;
-  const excluded = REPLY_ANGLES.filter((a) => !mode.angles.includes(a));
+  // ROOM_ANGLES, not REPLY_ANGLES (NW.1): `network` belongs to the other
+  // objective and no room can ever ask for it, so naming it here would spend a
+  // clause per call telling the model not to do something it was never offered.
+  const excluded = ROOM_ANGLES.filter((a) => !mode.angles.includes(a));
   return excluded.length === 0 ? only : `${only} No ${andList(excluded)}.`;
 }
 

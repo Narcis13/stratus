@@ -1091,6 +1091,27 @@ button.danger:hover:not(:disabled) {
   font-size: 11px;
   padding: 2px 8px;
 }
+/* NW.1 — the objective switch. Reads as one segmented control rather than two
+   buttons: it is a single either/or, and two separate pills next to two separate
+   spending buttons is four things to parse before a click that costs money. */
+.radar-goal {
+  display: inline-flex;
+  border: 1px solid var(--strat-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.radar-goal-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--strat-muted);
+}
+.radar-goal-btn.active {
+  color: var(--strat-text);
+  background: color-mix(in srgb, var(--strat-accent) 18%, transparent);
+}
 .radar-tabs {
   display: flex;
   gap: 4px;

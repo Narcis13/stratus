@@ -947,3 +947,184 @@ describe('curateKeepTarget (RC.3) — the knob clamped by the batch cap', () => 
     expect(curateKeepTarget()).toBe(25);
   });
 });
+
+// NW.1 — the Reach|Network switch, end to end on the batch route.
+//
+// Its own stub rather than a lift of the ML.3 block's: this one only needs the
+// prompt text and the schema's angle enum, and the two blocks assert opposite
+// things about the same call (that one narrows to a room's angles, that the other
+// has no room at all), so sharing a helper would only couple them.
+//
+// Nothing here spends: the provider is a stubbed `globalThis.fetch`, and the
+// refusal cases never reach it at all.
+describe('drafting goal (NW.1) — one switch, two objectives', () => {
+  interface GoalCall {
+    angles: string[];
+    prompt: string;
+  }
+
+  async function withStub<T>(
+    replyJson: string,
+    fn: () => Promise<T>,
+  ): Promise<{ out: T; calls: GoalCall[] }> {
+    const realFetch = globalThis.fetch;
+    const key = process.env.XAI_API_KEY;
+    const calls: GoalCall[] = [];
+    process.env.XAI_API_KEY = 'stub-key-not-a-real-one';
+    globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as {
+        input: { content: string }[];
+        text?: { format?: { schema?: Record<string, unknown> } };
+      };
+      const schema = body.text?.format?.schema as
+        | {
+            properties?: {
+              replies?: {
+                items?: {
+                  properties?: {
+                    variants?: { items?: { properties?: { angle?: { enum?: string[] } } } };
+                  };
+                };
+              };
+            };
+          }
+        | undefined;
+      calls.push({
+        angles:
+          schema?.properties?.replies?.items?.properties?.variants?.items?.properties?.angle
+            ?.enum ?? [],
+        prompt: body.input.map((m) => m.content).join('\n'),
+      });
+      return new Response(
+        JSON.stringify({
+          id: 'resp_stub_nw1',
+          model: 'grok-4.3',
+          output_text: replyJson,
+          usage: { input_tokens: 12, output_tokens: 34, total_tokens: 46 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    }) as unknown as typeof fetch;
+    try {
+      return { out: await fn(), calls };
+    } finally {
+      globalThis.fetch = realFetch;
+      process.env.XAI_API_KEY = key ?? '';
+    }
+  }
+
+  const draft = async (body: unknown): Promise<{ status: number; body: unknown }> => {
+    const res = await app.request('/x/replies/generate-batch', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ provider: 'grok', model: 'grok-4.3', ...(body as object) }),
+    });
+    return { status: res.status, body: await res.json() };
+  };
+
+  const nwTweet = {
+    tweetId: '990000000000000901',
+    handle: 'nw1author',
+    author: 'NW1 Author',
+    text: 'Cut the config from 400 lines to 12 and shipped the rewrite on Sunday.',
+    url: 'https://x.com/nw1author/status/990000000000000901',
+  };
+
+  // What a compliant networking answer looks like, plus the failure the trim
+  // exists for: a model that shipped a second variant anyway.
+  const TWO_BACK = JSON.stringify({
+    replies: [
+      {
+        id: '990000000000000901',
+        variants: [
+          {
+            text: '12 lines is the part people will argue about\n\nwhat came out first',
+            angle: 'network',
+            gloss: null,
+          },
+          { text: 'a second take nobody asked for', angle: 'network', gloss: null },
+        ],
+      },
+    ],
+  });
+
+  test('an unrecognized goal is refused before anything is loaded or spent', async () => {
+    for (const goal of ['networking', 'REACH', 42, {}]) {
+      const { status, body } = await withNoLlm(() => draft({ tweets: [tweet(0)], goal }));
+      expect(status).toBe(400);
+      expect((body as { error: string }).error).toBe('invalid_goal');
+    }
+  });
+
+  test('absent and null both mean reach — no CLI caller changes behaviour', async () => {
+    for (const body of [{ tweets: [tweet(0)] }, { tweets: [tweet(0)], goal: null }]) {
+      const { status, body: out } = await withNoLlm(() => draft(body));
+      expect(status).toBe(503);
+      expect((out as { error: string }).error).toBe('llm_not_configured');
+    }
+  });
+
+  test('goal=network: one variant on the network angle, and the room is not claimed', async () => {
+    const { out, calls } = await withStub(TWO_BACK, () =>
+      draft({ tweets: [nwTweet], goal: 'network' }),
+    );
+    expect(out.status).toBe(200);
+    const res = out.body as {
+      goal: string;
+      replies: {
+        variants: { text: string; angle: string }[];
+        angle: string;
+        mode: string | null;
+        modeSource: string | null;
+      }[];
+    };
+    expect(res.goal).toBe('network');
+    // The schema offers exactly one angle, and the trim is what makes the COUNT
+    // a contract (no `maxItems`, D164b) — two came back, one ships.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.angles).toEqual(['network']);
+    expect(res.replies).toHaveLength(1);
+    expect(res.replies[0]?.variants).toHaveLength(1);
+    expect(res.replies[0]?.variants[0]?.angle).toBe('network');
+    expect(res.replies[0]?.angle).toBe('network');
+    // No mode is resolved on this path, so none is claimed on the wire: the
+    // networking prompt owns persona, angles and length itself, and a room chip
+    // that shaped nothing is a chip that lies.
+    expect(res.replies[0]?.mode).toBeNull();
+    expect(res.replies[0]?.modeSource).toBeNull();
+  });
+
+  test('goal=network withholds every ME-shaped block, and the reach default keeps them', async () => {
+    const { calls } = await withStub(TWO_BACK, () =>
+      draft({ tweets: [nwTweet], goal: 'network', applyPillars: true }),
+    );
+    const prompt = calls[0]?.prompt ?? '';
+    expect(prompt).toContain('recognition, not praise');
+    // The five blocks the objective refuses. `applyPillars: true` is sent on
+    // purpose: the goal outranks the toggle, since a pillar picks MY stance.
+    expect(prompt).not.toContain('Content pillars to honor');
+    expect(prompt).not.toContain('Replies of mine that actually worked');
+    expect(prompt).not.toContain("This post's room is");
+    expect(prompt).not.toContain('Each post above carries a MODE line');
+    expect(prompt).not.toContain('Who I am');
+
+    const reach = await withStub(
+      JSON.stringify({
+        replies: [
+          {
+            id: '990000000000000901',
+            variants: [{ text: 'Postgres does that in 4 lines', angle: 'extends', gloss: null }],
+          },
+        ],
+      }),
+      () => draft({ tweets: [nwTweet] }),
+    );
+    const reachPrompt = reach.calls[0]?.prompt ?? '';
+    expect(reachPrompt).toContain('Who I am');
+    expect(reachPrompt).toContain('Each post above carries a MODE line');
+    expect(reachPrompt).not.toContain('recognition, not praise');
+    expect((reach.out.body as { goal: string }).goal).toBe('reach');
+    // The room still narrows the reach schema — the switch changed one path only.
+    expect(reach.calls[0]?.angles).not.toEqual(['network']);
+  });
+});

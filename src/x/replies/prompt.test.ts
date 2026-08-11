@@ -81,7 +81,11 @@ describe('ML.2 reply schemas', () => {
   // ONE list, owned by src/shared/replyMode.ts, because the mode table narrows
   // the schema to `mode.angles` — a second copy here could offer an angle the
   // schema cannot represent, and the call would fail in strict mode.
-  test('RC.4: the vocabulary is the shared one, five wide, and both schemas carry it', () => {
+  // NW.1 widened it to six: `network` is the networking objective's only angle
+  // (src/x/replies/networkPrompt.ts). It rides in the LABEL vocabulary, so both
+  // schemas can represent it and every crosstab splits the two objectives for
+  // free — and in no room's `angles`, so a reach call can never offer it.
+  test('RC.4: the vocabulary is the shared one, six wide, and both schemas carry it', () => {
     expect([...REPLY_ANGLES]).toEqual([...SHARED_REPLY_ANGLES]);
     expect([...REPLY_ANGLES]).toEqual([
       'extends',
@@ -89,6 +93,7 @@ describe('ML.2 reply schemas', () => {
       'debate',
       'observation',
       'question',
+      'network',
     ]);
     expect(variantItemOf(REPLY_VARIANTS_SCHEMA).properties.angle.enum).toEqual([...REPLY_ANGLES]);
     expect(batchVariantItemOf(BATCH_REPLY_SCHEMA).properties.angle.enum).toEqual([...REPLY_ANGLES]);

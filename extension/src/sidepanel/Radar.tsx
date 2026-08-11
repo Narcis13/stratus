@@ -26,6 +26,7 @@ import {
   sweepMinutesLeft,
 } from '../radarSweep.ts';
 import { formatCount } from '../replyBand.ts';
+import { type ReplyGoal, isReplyGoal } from '../replyMode.ts';
 import type {
   RadarClick,
   RadarConfirm,
@@ -37,6 +38,7 @@ import {
   CURATE_REQUEST_CAP,
   type CannonRow,
   RADAR_SIGHTINGS_KEY,
+  REPLY_GOAL_KEY,
   type RadarSighting,
   cannonQueue,
   coerceSightings,
@@ -131,8 +133,22 @@ type BatchOutcome =
       // language no click here chose. `null` = English.
       language: string | null;
       languageSource: ReplyLanguageSource | null;
+      // NW.1 — the objective the SERVER drafted for, same discipline as the
+      // language above: read the echo, never assume the switch arrived. Absent
+      // from a server older than NW.1, which reads as the reach path it is.
+      goal?: ReplyGoal;
     }
   | { ok: false; detail: string | null };
+
+// NW.1 — the note says WHICH objective spent the money, and only when it wasn't
+// the default. `reach` is what every note has silently meant since the Radar
+// shipped, so announcing it is the same noise `languageNote` refuses to make for
+// English. A `network` batch is worth a word every single time: it is the one
+// state where the drafts in the queue answer a different question, and finding
+// that out by reading them is finding out too late.
+function goalNote(out: { goal?: ReplyGoal }): string {
+  return out.goal === 'network' ? ' · networking' : '';
+}
 
 // The note's language clause, built from what came BACK. A `null` language is
 // English and says nothing — English is the default and announcing it is noise.
@@ -332,6 +348,36 @@ export function RadarSection({
   // curated flow dismisses rows the other one is mid-way through drafting.
   const [busy, setBusy] = useState<'draft' | 'curate' | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // NW.1 — which objective BOTH spending buttons draft for. Panel state, not a
+  // server setting: it is a decision about the click in front of you (this queue
+  // is people I want to know / this queue is reach), and a server setting would
+  // silently apply it to the MCP tools and the CLI too. Persisted all the same,
+  // because a switch that resets on every panel open is a switch you forget to
+  // throw — `chrome.storage.local`, the same place the sweep session and the
+  // Harvest send-toggle live. Defaults to `reach` on a fresh profile and on any
+  // unreadable value, so nothing changes until it is thrown on purpose.
+  const [goal, setGoal] = useState<ReplyGoal>('reach');
+  useEffect(() => {
+    let alive = true;
+    void chrome.storage.local
+      .get(REPLY_GOAL_KEY)
+      .then((out) => {
+        if (alive && isReplyGoal(out[REPLY_GOAL_KEY])) setGoal(out[REPLY_GOAL_KEY]);
+      })
+      .catch(() => {
+        // reach — the default, already set.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const pickGoal = (next: ReplyGoal): void => {
+    setGoal(next);
+    setNote(null);
+    void chrome.storage.local.set({ [REPLY_GOAL_KEY]: next }).catch(() => {
+      // The click still applies to this session; only the memory is lost.
+    });
+  };
   // HM.3: the project humanizer config (`GET /x/humanizer`, $0). `null` means
   // "not loaded" — the checkbox is then disabled and every pick is byte-identical
   // to the pre-HM.3 path, because decoration must never block the worked queue.
@@ -627,8 +673,14 @@ export function RadarSection({
     try {
       // CQ.7: one language for the call, never a per-tweet field — the server's
       // whitelist would drop it there, and the prompt has one instruction block.
+      // NW.1: the objective rides on every batch from here, so BOTH buttons
+      // honour the switch — "Curate & draft" grades the queue the same way it
+      // always did and then drafts the survivors for whichever goal is set.
+      // Sent even when it is `reach` (the server's default): a request that says
+      // what it wants is what makes the response's `goal` echo worth reading.
       const res = await api.replies.generateBatch(settings, {
         tweets,
+        goal,
         ...(language !== undefined ? { language } : {}),
       });
       if (res.replies.length > 0) {
@@ -656,6 +708,7 @@ export function RadarSection({
         cost: res.costUsd,
         language: res.language,
         languageSource: res.languageSource,
+        ...(res.goal !== undefined ? { goal: res.goal } : {}),
       };
     } catch (e) {
       return { ok: false, detail: e instanceof ApiError ? e.message : null };
@@ -712,7 +765,7 @@ export function RadarSection({
             : '';
         const cleared = consumeQueue(pass, out.draftedIds);
         setNote(
-          `${out.drafted}/${out.requested} drafted${clearedNote(cleared)} · $${out.cost.toFixed(4)}${languageNote(out)}${why}`,
+          `${out.drafted}/${out.requested} drafted${clearedNote(cleared)} · $${out.cost.toFixed(4)}${goalNote(out)}${languageNote(out)}${why}`,
         );
       } else {
         // The queue is untouched — say so, or the empty-queue rule makes a
@@ -831,7 +884,7 @@ export function RadarSection({
         // reads). Silent on English.
         const cleared = consumeQueue(rest, out.draftedIds);
         setNote(
-          `${prefix} · drafted ${out.drafted}/${out.requested}${clearedNote(cleared)} · $${(res.costUsd + out.cost).toFixed(4)}${languageNote(out)}`,
+          `${prefix} · drafted ${out.drafted}/${out.requested}${clearedNote(cleared)} · $${(res.costUsd + out.cost).toFixed(4)}${goalNote(out)}${languageNote(out)}`,
         );
       } else {
         // The drops stand: they were dismissed on their own merit, not as a
@@ -858,6 +911,34 @@ export function RadarSection({
       title="Radar"
       actions={
         <>
+          {/* NW.1 — the objective switch, immediately left of the buttons it
+              governs, because it changes what they BUY and not how much. Both
+              spending buttons read it; the curate pass in front of one of them
+              does not (its rubric grades whether a post has a hook to grab,
+              which is the same question either way). Hidden in Clicked for the
+              same reason "Draft replies" is: nothing there spends. */}
+          {view !== 'clicked' && (
+            <span className="radar-goal">
+              <button
+                type="button"
+                className={`radar-goal-btn${goal === 'reach' ? ' active' : ''}`}
+                onClick={() => pickGoal('reach')}
+                disabled={busy !== null}
+                title="Reach: three angle variants per tweet, written for the strangers scrolling the reply stack. Lean spicy, split the room, earn impressions."
+              >
+                Reach
+              </button>
+              <button
+                type="button"
+                className={`radar-goal-btn${goal === 'network' ? ' active' : ''}`}
+                onClick={() => pickGoal('network')}
+                disabled={busy !== null}
+                title="Network: ONE reply per tweet, written to the author — a line proving one specific thing in their post landed, then something they can answer. No persona, no pillars, no winners: the reply is about their post, not about me."
+              >
+                Network
+              </button>
+            </span>
+          )}
           {view !== 'clicked' && (
             <button
               type="button"

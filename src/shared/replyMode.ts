@@ -70,9 +70,55 @@ export type ReplyModeId = 'expertise' | 'hot-take' | 'news' | 'wholesome' | 'ban
  * move in the reference templates, but under `personaUse: 'off'` it would
  * require inventing a life, and the persona block's hardest rule is that a
  * fabricated anecdote is worse than no specific at all.
+ *
+ * `network` is the odd one and it is deliberately outside the table below: no
+ * `ReplyMode` lists it, because it is not a way of answering a post, it is the
+ * whole output of a different OBJECTIVE (goal `network`, src/x/replies/
+ * networkPrompt.ts — recognition plus an invitation, written to the author
+ * rather than to the reply stack). Keeping it in the vocabulary is what makes
+ * the two objectives separable in every later angle crosstab for free; keeping
+ * it out of every mode's `angles` is what stops `trimToModeAngles` from ever
+ * offering it on a reach draft.
  */
-export const REPLY_ANGLES = ['extends', 'contrarian', 'debate', 'observation', 'question'] as const;
+export const REPLY_ANGLES = [
+  'extends',
+  'contrarian',
+  'debate',
+  'observation',
+  'question',
+  'network',
+] as const;
 export type ReplyAngle = (typeof REPLY_ANGLES)[number];
+
+/**
+ * The angles a ROOM can ask for — `REPLY_ANGLES` minus `network`.
+ *
+ * Two vocabularies, because they answer two different questions. `REPLY_ANGLES`
+ * is what a variant may be LABELLED (the structured-output enums, the storage
+ * column, every crosstab). This is what the mode table may CHOOSE FROM, and it
+ * exists so the reach prompt's angle narrowing lists the angles a room excluded
+ * without also announcing "no network" — a rule about the other objective, in
+ * every clause, on a call that could never produce one.
+ */
+export const ROOM_ANGLES: readonly ReplyAngle[] = REPLY_ANGLES.filter((a) => a !== 'network');
+
+/**
+ * Which objective a reply is being drafted for — the switch that sits beside the
+ * Radar's drafting buttons.
+ *
+ * `reach` is the shipped behaviour and the default everywhere: impressions off
+ * strangers scrolling the reply stack, three angle variants per post, the author
+ * incidental. `network` targets the author instead — one variant, recognition
+ * plus an invitation, nothing about me. A missing goal is always `reach`, so
+ * every CLI caller, MCP tool and un-updated panel build keeps drafting exactly
+ * what it drafted before.
+ */
+export const REPLY_GOALS = ['reach', 'network'] as const;
+export type ReplyGoal = (typeof REPLY_GOALS)[number];
+
+export function isReplyGoal(value: unknown): value is ReplyGoal {
+  return typeof value === 'string' && (REPLY_GOALS as readonly string[]).includes(value);
+}
 
 /**
  * The day the vocabulary above went from three angles to five (RC.4) — a HARD

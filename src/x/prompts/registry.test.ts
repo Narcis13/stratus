@@ -59,6 +59,7 @@ describe('prompt registry (AI.3)', () => {
     expect(PROMPT_KEYS).toEqual([
       'reply',
       'reply-batch',
+      'reply-batch-network',
       'post',
       'thread',
       'rewrite',

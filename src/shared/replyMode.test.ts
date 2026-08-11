@@ -3,10 +3,13 @@ import {
   GENERAL_MODE,
   OPENING_BANS,
   REPLY_ANGLES,
+  REPLY_GOALS,
   REPLY_MODES,
+  ROOM_ANGLES,
   type ReplyModeId,
   containsLaneNoun,
   detectReplyMode,
+  isReplyGoal,
   resolveModeId,
 } from './replyMode.ts';
 
@@ -446,7 +449,7 @@ describe('REPLY_MODES', () => {
   });
 
   test('the angle union is the five the overhaul settled on, story deliberately absent', () => {
-    expect([...REPLY_ANGLES]).toEqual([
+    expect([...ROOM_ANGLES]).toEqual([
       'extends',
       'contrarian',
       'debate',
@@ -454,6 +457,21 @@ describe('REPLY_MODES', () => {
       'question',
     ]);
     expect(REPLY_ANGLES).not.toContain('story' as never);
+  });
+
+  // NW.1: two vocabularies. The label set is six wide (it has to carry the other
+  // objective's output); the set a ROOM may choose from is still the five, and
+  // nothing in the table may reach for `network` — a mode that did would put a
+  // networking reply in the schema of a reach call.
+  test('network is in the label vocabulary and in no room', () => {
+    expect([...REPLY_ANGLES]).toEqual([...ROOM_ANGLES, 'network']);
+    expect(REPLY_GOALS).toEqual(['reach', 'network']);
+    expect(isReplyGoal('network')).toBe(true);
+    expect(isReplyGoal('networking')).toBe(false);
+    expect(isReplyGoal(undefined)).toBe(false);
+    for (const m of [...REPLY_MODES, GENERAL_MODE]) {
+      expect(m.angles).not.toContain('network');
+    }
   });
 
   test('the opening bans are prose, present, and cover the four measured classes', () => {
