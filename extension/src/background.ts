@@ -65,11 +65,15 @@ import {
   type RadarDraftRow,
   type RadarSighting,
   type RankMap,
+  type Tombstone,
   appendDismissed,
+  coerceDismissed,
   coerceSightings,
+  dismissedIds,
   draftRowToSighting,
   mergeSightings,
   pruneStale,
+  purgeDismissed,
   stampTiers,
 } from './shared/radar.ts';
 import { SERVER_SETTINGS_KEY } from './shared/serverSettings.ts';
@@ -316,7 +320,7 @@ async function refreshRankMap(): Promise<void> {
 // shared/radar.ts): session state is dropped on an extension reload/update or a
 // browser-process restart, and the queue was losing whole scroll sessions to it.
 // One-time carry-over below so a queue that is live right now survives the move.
-async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: string[] }> {
+async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: Tombstone[] }> {
   const out = await chrome.storage.local.get([RADAR_SIGHTINGS_KEY, RADAR_DISMISSED_KEY]);
   let s = out[RADAR_SIGHTINGS_KEY];
   let d = out[RADAR_DISMISSED_KEY];
@@ -333,15 +337,26 @@ async function readRadar(): Promise<{ sightings: RadarSighting[]; dismissed: str
     // coerce (drop bad ROWS), never the old all-or-nothing guard: one unreadable
     // row must not read as an empty queue that the next write then persists.
     sightings: pruneStale(coerceSightings(s), Date.now()),
-    dismissed: Array.isArray(d) ? d.filter((x): x is string => typeof x === 'string') : [],
+    // Same lenience, plus the TTL and the legacy `string[]` migration — every
+    // reader of this key goes through it, so an expired tombstone can never
+    // block a capture anywhere.
+    dismissed: coerceDismissed(d, Date.now()),
   };
 }
 
 async function addSightings(incoming: RadarSighting[]): Promise<void> {
   const { sightings, dismissed } = await readRadar();
-  const merged = mergeSightings(sightings, incoming, dismissed);
+  const merged = mergeSightings(sightings, incoming, dismissedIds(dismissed));
+  // A ⊕ pin overrides its own tombstone (mergeSightings' one exception), so the
+  // burial has to go with it — otherwise the next re-sighting of that tweet is
+  // filtered out again and the pinned row flickers away. Written only when a
+  // pin actually resurrected something, so an ordinary sweep flush stays a
+  // one-key write.
+  const unburied = incoming.flatMap((s) => (s.band === 'manual' ? [s.tweetId] : []));
+  const kept = purgeDismissed(dismissed, unburied);
   await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
+    ...(kept.length !== dismissed.length ? { [RADAR_DISMISSED_KEY]: kept } : {}),
   });
 }
 
@@ -350,7 +365,7 @@ async function dismissSightings(tweetIds: string[]): Promise<void> {
   const gone = new Set(tweetIds);
   await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: sightings.filter((s) => !gone.has(s.tweetId)),
-    [RADAR_DISMISSED_KEY]: appendDismissed(dismissed, tweetIds),
+    [RADAR_DISMISSED_KEY]: appendDismissed(dismissed, tweetIds, Date.now()),
   });
 }
 
@@ -508,21 +523,30 @@ async function pasteVariant(tweetId: string, text: string): Promise<void> {
 // Fire-and-forget: mirror a click/dismiss onto the server rows so a worked
 // tweet doesn't resurrect at the next rehydrate. Losing this write only costs
 // a duplicate queue entry after a restart, never a wrong live queue.
+// `MAX_PATCH_IDS` in `src/x/routes/radar.ts`, restated: the route REFUSES an
+// over-long id list rather than truncating it, and since RQ.1 one click can
+// dismiss a whole 500-row sweep — an unchunked PATCH would 400 the lot and leave
+// every server row `ready`, resurrecting the queue at the next rehydrate.
+const MAX_DRAFT_PATCH_IDS = 200;
+
 function markDraftsOnServer(tweetIds: string[], status: 'clicked' | 'expired'): void {
   if (tweetIds.length === 0) return;
-  void handleApiRequest({
-    type: 'stratus/api',
-    method: 'PATCH',
-    path: '/x/radar/drafts',
-    body: { tweetIds, status },
-  }).then(
-    (res) => {
-      if (!res.ok && res.code !== 'unconfigured') {
-        console.warn('[stratus] radar draft status sync failed', res.code);
-      }
-    },
-    (err) => console.warn('[stratus] radar draft status sync failed', err),
-  );
+  for (let i = 0; i < tweetIds.length; i += MAX_DRAFT_PATCH_IDS) {
+    const chunk = tweetIds.slice(i, i + MAX_DRAFT_PATCH_IDS);
+    void handleApiRequest({
+      type: 'stratus/api',
+      method: 'PATCH',
+      path: '/x/radar/drafts',
+      body: { tweetIds: chunk, status },
+    }).then(
+      (res) => {
+        if (!res.ok && res.code !== 'unconfigured') {
+          console.warn('[stratus] radar draft status sync failed', res.code);
+        }
+      },
+      (err) => console.warn('[stratus] radar draft status sync failed', err),
+    );
+  }
 }
 
 // Merge server drafts into the buffer and re-stamp every row's tier from the
@@ -534,7 +558,7 @@ function markDraftsOnServer(tweetIds: string[], status: 'clicked' | 'expired'): 
 async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
   const { sightings, dismissed } = await readRadar();
   const have = new Set(sightings.map((s) => s.tweetId));
-  const gone = new Set(dismissed);
+  const gone = new Set(dismissedIds(dismissed));
   const incoming: RadarSighting[] = [];
   for (const row of rows) {
     if (have.has(row.tweetId) || gone.has(row.tweetId)) continue;
@@ -545,7 +569,9 @@ async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
   // RADAR_TTL_MS — without this, a day-old draft would be re-added on every panel
   // mount and pruned again on the next write, flashing in and out of the queue.
   const fresh = pruneStale(incoming, Date.now());
-  const merged = fresh.length ? mergeSightings(sightings, fresh, dismissed) : sightings;
+  const merged = fresh.length
+    ? mergeSightings(sightings, fresh, dismissedIds(dismissed))
+    : sightings;
   await chrome.storage.local.set({
     [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
   });

@@ -40,7 +40,13 @@ import {
   substituteReplyPersona,
 } from './prompt.ts';
 
-/** The radar ring-buffer cap — the panel can never hold more than this. */
+/** How many posts ONE curate call may carry. It used to be justified as "the
+ *  radar ring-buffer cap — the panel can never hold more than this"; that stopped
+ *  being true at RQ.1, when the buffer went to 500 so an armed sweep could ingest
+ *  a whole session. This is now a cost/latency bound on one scoring call and
+ *  nothing else, mirrored panel-side as `CURATE_REQUEST_CAP`
+ *  (`extension/src/shared/radar.ts`) — the route refuses an over-long batch
+ *  rather than truncating it, so the two must move together. */
 export const MAX_CURATE_TWEETS = 100;
 
 /** A reason longer than this is display metadata run amok; clipped, not rejected. */

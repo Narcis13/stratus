@@ -34,8 +34,8 @@ import type {
   RadarReplies,
 } from '../shared/messages.ts';
 import {
+  CURATE_REQUEST_CAP,
   type CannonRow,
-  RADAR_CAP,
   RADAR_SIGHTINGS_KEY,
   type RadarSighting,
   cannonQueue,
@@ -120,6 +120,10 @@ type BatchOutcome =
       ok: true;
       drafted: number;
       requested: number;
+      // RQ.1 — WHICH tweets came back with a reply, not just how many. The
+      // consume step needs the ids: a batch can answer for fewer posts than it
+      // was asked about, and "drafted 18/20" doesn't say which two to clear.
+      draftedIds: string[];
       cost: number;
       // ML.5 — the language the SERVER settled on, echoed back. Not the same
       // thing as the one this panel sent: the server also resolves from the
@@ -568,11 +572,14 @@ export function RadarSection({
   // CQ.5 — the same button in the Cannon view, over the cannon rows instead:
   // score-desc, un-drafted, capped by the same knob. One click still means one
   // Grok call at the same price — this only changes which rows it sends.
-  const cannonUndrafted = cannon.rows
-    .filter((r) => !r.s.reply)
-    .map((r) => r.s)
-    .slice(0, radarBatchSize(server));
+  const cannonFresh = cannon.rows.filter((r) => !r.s.reply).map((r) => r.s);
+  const cannonUndrafted = cannonFresh.slice(0, radarBatchSize(server));
   const draftSet = view === 'cannon' ? cannonUndrafted : undrafted;
+  // RQ.1 — what the pass CONSUMES, which is wider than what it sends: the whole
+  // undrafted set of the view, cap or no cap. The Cannon view consumes only its
+  // own rows even though a dismiss is global — it is a filtered read of the same
+  // buffer, and a button in a filtered view must not clear rows it isn't showing.
+  const passSet = view === 'cannon' ? cannonFresh : fresh;
   // RC.4 — how many survive a curated pass, and therefore whether curating is
   // worth a second call at all: below this size "Draft replies" already covers
   // the whole queue.
@@ -645,6 +652,7 @@ export function RadarSection({
         ok: true,
         drafted: res.replies.length,
         requested: res.requested,
+        draftedIds: res.replies.map((r) => r.tweetId),
         cost: res.costUsd,
         language: res.language,
         languageSource: res.languageSource,
@@ -654,7 +662,31 @@ export function RadarSection({
     }
   };
 
-  const draftReplies = async (rows: RadarSighting[]): Promise<void> => {
+  // RQ.1 — a drafting pass CONSUMES the queue. Every row the pass covered that
+  // did not come back with a reply is dismissed: the ones the model silently
+  // skipped, the ones past the batch cap that were never sent, and ⊕ pins that
+  // didn't make the cut. Nothing undrafted survives a pass, so the fresh block is
+  // empty when it ends and the next sweep starts from a clean slate — which is
+  // the whole point of letting a sweep ingest without a queue ceiling.
+  //
+  // Deliberately NOT called when the CALL itself failed (an unreachable server, a
+  // 500, a bad token). That is not a verdict on any tweet, and wiping a whole
+  // sweep because the network blinked is the only failure on this surface that
+  // can't be undone by one more click. Per-row misses are cleared; a dead call
+  // keeps the queue and the note says so.
+  const consumeQueue = (pass: RadarSighting[], draftedIds: string[]): number => {
+    const drafted = new Set(draftedIds);
+    const leftovers = pass.flatMap((s) => (drafted.has(s.tweetId) ? [] : [s.tweetId]));
+    if (leftovers.length > 0) dismiss(leftovers);
+    return leftovers.length;
+  };
+
+  // How the note reports it. Silent at zero: a pass that drafted everything it
+  // covered cleared nothing, and saying "cleared 0" invites the reader to wonder
+  // what was lost.
+  const clearedNote = (n: number): string => (n > 0 ? ` · cleared ${n}` : '');
+
+  const draftReplies = async (rows: RadarSighting[], pass: RadarSighting[]): Promise<void> => {
     if (rows.length === 0) return;
     setBusy('draft');
     setNote(null);
@@ -678,10 +710,17 @@ export function RadarSection({
           out.language === null && pick === 'mixed'
             ? ' · mixed languages — drafted in English'
             : '';
+        const cleared = consumeQueue(pass, out.draftedIds);
         setNote(
-          `${out.drafted}/${out.requested} drafted · $${out.cost.toFixed(4)}${languageNote(out)}${why}`,
+          `${out.drafted}/${out.requested} drafted${clearedNote(cleared)} · $${out.cost.toFixed(4)}${languageNote(out)}${why}`,
         );
-      } else setNote(out.detail ? `Draft failed: ${out.detail}` : 'Draft failed');
+      } else {
+        // The queue is untouched — say so, or the empty-queue rule makes a
+        // failed click look like it silently threw the sweep away.
+        setNote(
+          out.detail ? `Draft failed: ${out.detail} · queue kept` : 'Draft failed · queue kept',
+        );
+      }
     } finally {
       setBusy(null);
     }
@@ -729,11 +768,17 @@ export function RadarSection({
     }
     setBusy('curate');
     setNote(null);
+    // RQ.1 — snapshot the set this pass consumes BEFORE any await: `fresh` is
+    // recomputed from the buffer on every render, and a sweep still running
+    // underneath would otherwise have rows admitted mid-pass swept away by a
+    // consume step that never covered them.
+    const pass = fresh;
     try {
-      // RADAR_CAP is the server's MAX_CURATE_TWEETS by construction (the ring
-      // buffer is *why* that constant is 100). Clamp before asking — the server
-      // refuses an over-long batch, it does not truncate one.
-      const graded = await runCurate(scoreable.slice(0, RADAR_CAP));
+      // The server's MAX_CURATE_TWEETS — no longer RADAR_CAP, which is five times
+      // larger since RQ.1. Clamp before asking: the route refuses an over-long
+      // batch, it does not truncate one. Rows past the clamp are never scored;
+      // the consume step below clears them with everything else undrafted.
+      const graded = await runCurate(scoreable.slice(0, CURATE_REQUEST_CAP));
       if (!graded.ok) {
         // Nothing was dismissed: a failed grade must not cost queue rows.
         setNote(graded.detail ? `Curate failed: ${graded.detail}` : 'Curate failed');
@@ -741,8 +786,13 @@ export function RadarSection({
       }
       const res = graded.res;
       if (res.drop.length > 0) dismiss(res.drop);
+      // What the consume step still has to answer for. The drops are already
+      // gone on the scorer's verdict, and counting them twice would make the
+      // note claim a clear that had nothing to do with the drafting call.
+      const dropped = new Set(res.drop);
+      const rest = pass.filter((s) => !dropped.has(s.tweetId));
 
-      const byId = new Map(fresh.map((s) => [s.tweetId, s]));
+      const byId = new Map(pass.map((s) => [s.tweetId, s]));
       // `keep` comes back best-first (D176c), so ⊕ pins first + survivors in
       // that order means the trim below takes the WEAKEST survivors — never a
       // tweet the human pinned by hand (decision 4).
@@ -762,7 +812,12 @@ export function RadarSection({
       // how a per-click surface starts feeling free.
       const gradedCost = `$${res.costUsd.toFixed(4)}`;
       if (set.length === 0) {
-        setNote(`${prefix} · nothing left to draft · ${gradedCost}`);
+        // The grading call ANSWERED — this is a completed pass that happens to
+        // have kept nothing, so it consumes like any other (the leftovers here
+        // are the textless and unscored rows, exactly the ones that used to sit
+        // in the queue forever because no button could ever draft them).
+        const cleared = consumeQueue(rest, []);
+        setNote(`${prefix} · nothing left to draft${clearedNote(cleared)} · ${gradedCost}`);
         return;
       }
       // Jitter is NOT applied here (D172): curated rows are drafted and then
@@ -774,15 +829,17 @@ export function RadarSection({
         // This path never sends a language — and since ML.3 the server can still
         // resolve one, so the note says which (the same echo the plain button
         // reads). Silent on English.
+        const cleared = consumeQueue(rest, out.draftedIds);
         setNote(
-          `${prefix} · drafted ${out.drafted}/${out.requested} · $${(res.costUsd + out.cost).toFixed(4)}${languageNote(out)}`,
+          `${prefix} · drafted ${out.drafted}/${out.requested}${clearedNote(cleared)} · $${(res.costUsd + out.cost).toFixed(4)}${languageNote(out)}`,
         );
       } else {
         // The drops stand: they were dismissed on their own merit, not as a
-        // side effect of the draft that failed after them. Say so — and still
-        // report the grading spend.
+        // side effect of the draft that failed after them. Everything else does
+        // NOT — same rule as the plain button: a dead call is not a verdict, and
+        // the survivors are one retry away from being drafted.
         const why = out.detail ? `draft failed: ${out.detail}` : 'draft failed';
-        setNote(`${prefix} · ${why} · ${gradedCost}`);
+        setNote(`${prefix} · ${why} · rest of the queue kept · ${gradedCost}`);
       }
     } finally {
       setBusy(null);
@@ -805,9 +862,13 @@ export function RadarSection({
             <button
               type="button"
               className="radar-draft"
-              onClick={() => void draftReplies(draftSet)}
+              onClick={() => void draftReplies(draftSet, passSet)}
               disabled={busy !== null || draftSet.length === 0}
-              title="One Grok call drafts a reply for each un-drafted tweet"
+              title={`One Grok call drafts a reply for each un-drafted tweet${
+                passSet.length > draftSet.length
+                  ? ` — and clears the ${passSet.length - draftSet.length} it can't fit, so the queue ends empty`
+                  : ''
+              }`}
             >
               {busy === 'draft'
                 ? 'Drafting…'
@@ -829,7 +890,7 @@ export function RadarSection({
               className="radar-curate"
               onClick={() => void curateAndDraft()}
               disabled={busy !== null}
-              title="One cheap scoring call grades the whole queue for reply payoff, dismisses the filler, then drafts the best of what's left. ⊕ pins are never scored away."
+              title="One cheap scoring call grades the whole queue for reply payoff, dismisses the filler, then drafts the best of what's left. ⊕ pins are never scored away — but anything still undrafted when the pass ends is cleared, so the queue empties."
             >
               {busy === 'curate' ? 'Curating…' : `Curate & draft (${curatedSize})`}
             </button>
@@ -847,7 +908,7 @@ export function RadarSection({
             editor={editor}
             keys={RADAR_KEYS}
             label="Configure radar drafting"
-            note="One click, one Grok call — a plain batch is the lower of the first two. The third sizes a Curate & draft pass instead: it grades every fresh tweet, dismisses what scores as filler, and drafts that many survivors (still capped by the batch cap). What lands on the radar at all is the sweep gear next to Start sweep; ⊕ pins and fresh posts by your circle get in regardless — and a pin is never scored away."
+            note="One click, one Grok call — a plain batch is the lower of the first two. The third sizes a Curate & draft pass instead: it grades every fresh tweet, dismisses what scores as filler, and drafts that many survivors (still capped by the batch cap). Either way the pass EMPTIES the queue: whatever it didn't draft is cleared, ⊕ pins included, so the next sweep starts clean. What lands on the radar at all is the sweep gear next to Start sweep; ⊕ pins and fresh posts by your circle get in regardless."
           />
         </>
       }

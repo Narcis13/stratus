@@ -1,14 +1,18 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  CURATE_REQUEST_CAP,
   RADAR_CAP,
   RADAR_DISMISSED_CAP,
+  RADAR_DISMISSED_TTL_MS,
   RADAR_TTL_MS,
   type RadarDraftRow,
   type RadarSighting,
   type RankMap,
   appendDismissed,
   cannonQueue,
+  coerceDismissed,
   coerceSightings,
+  dismissedIds,
   displayAgeMin,
   draftRowToSighting,
   groupQueue,
@@ -16,7 +20,9 @@ import {
   mergeSightings,
   partitionForCurate,
   personTierFor,
+  pruneDismissed,
   pruneStale,
+  purgeDismissed,
   rankSightings,
   splitClicked,
   stampTiers,
@@ -62,6 +68,13 @@ describe('mergeSightings', () => {
   test('dismissed ids never re-enter (the content script keeps re-sighting them)', () => {
     const merged = mergeSightings([sighting('1')], [sighting('2'), sighting('3')], ['2']);
     expect(merged.map((s) => s.tweetId).sort()).toEqual(['1', '3']);
+  });
+
+  test('a ⊕ pin overrides its own tombstone — a human changing their mind', () => {
+    const pinned = sighting('2', { band: 'manual' });
+    expect(mergeSightings([], [pinned], ['2']).map((s) => s.tweetId)).toEqual(['2']);
+    // …and only the pin: the auto arms stay blocked by the same tombstone.
+    expect(mergeSightings([], [sighting('2', { band: 'sweep' })], ['2'])).toHaveLength(0);
   });
 
   test('a re-sighting without a reply keeps the one the background attached (§7.2)', () => {
@@ -159,6 +172,34 @@ describe('mergeSightings', () => {
     const ids = new Set(merged.map((s) => s.tweetId));
     expect(ids.has('fresh-1')).toBe(true);
     expect(ids.has('fresh-2')).toBe(true);
+  });
+
+  test('eviction keeps a drafted row over fresher un-drafted captures (RQ.1)', () => {
+    // A Grok call was already spent on this row. A scroll that admits a hundred
+    // fresh strangers must not be what throws it away.
+    const drafted = sighting('drafted', {
+      reply: 'the paid draft',
+      lastSeenAt: '2026-06-10T00:00:00.000Z',
+    });
+    const clicked = sighting('clicked', {
+      reply: 'worked',
+      clickedAt: '2026-06-10T00:30:00.000Z',
+      lastSeenAt: '2026-06-10T00:00:00.000Z',
+    });
+    const fresh = Array.from({ length: RADAR_CAP }, (_, i) =>
+      sighting(`fresh-${i}`, { lastSeenAt: `2026-06-10T1${i % 10}:0${i % 6}:00.000Z` }),
+    );
+    const merged = mergeSightings([drafted, clicked], fresh, []);
+    expect(merged).toHaveLength(RADAR_CAP);
+    expect(merged.some((s) => s.tweetId === 'drafted')).toBe(true);
+    expect(merged.some((s) => s.tweetId === 'clicked')).toBe(true);
+  });
+
+  test('a whole sweep session lands — the buffer is not a 100-row ceiling (RQ.1)', () => {
+    // The reported bug: an armed sweep on a busy timeline admits more tweets
+    // than the old buffer held, and the surplus vanished before it was seen.
+    const swept = Array.from({ length: 400 }, (_, i) => sighting(`swept-${i}`));
+    expect(mergeSightings([], swept, [])).toHaveLength(400);
   });
 
   test('a manual add (RU.8) is never downgraded by an auto re-sight', () => {
@@ -313,17 +354,109 @@ describe('mergeSightings', () => {
   });
 });
 
+describe('the caps', () => {
+  test('the curate request cap is the SERVER’s, not the buffer’s (RQ.1)', () => {
+    // They were one constant while both were 100. `MAX_CURATE_TWEETS` in
+    // `src/x/replies/curate.ts` is still 100 and the route REFUSES an over-long
+    // batch — sending RADAR_CAP rows would 400 the whole pass.
+    expect(CURATE_REQUEST_CAP).toBe(100);
+    expect(RADAR_CAP).toBeGreaterThan(CURATE_REQUEST_CAP);
+  });
+});
+
 describe('appendDismissed', () => {
-  test('dedups and appends', () => {
-    expect(appendDismissed(['a', 'b'], ['b', 'c'])).toEqual(['a', 'b', 'c']);
+  const NOW = Date.parse('2026-08-11T12:00:00.000Z');
+
+  test('dedups and appends, stamping the moment of the dismissal', () => {
+    const out = appendDismissed([{ id: 'a', at: NOW - 1000 }], ['b', 'b'], NOW);
+    expect(dismissedIds(out).sort()).toEqual(['a', 'b']);
+    expect(out.find((t) => t.id === 'b')?.at).toBe(NOW);
+  });
+
+  test('re-dismissing an id re-stamps it — the TTL runs from the last "no"', () => {
+    const stale = [{ id: 'a', at: NOW - RADAR_DISMISSED_TTL_MS + 60_000 }];
+    const out = appendDismissed(stale, ['a'], NOW);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.at).toBe(NOW);
+  });
+
+  test('appending prunes tombstones past the TTL', () => {
+    // The bug this whole shape exists for: an id buried yesterday must not block
+    // today's capture just because nothing has dismissed 500 tweets since.
+    const old = [{ id: 'yesterday', at: NOW - RADAR_DISMISSED_TTL_MS - 1 }];
+    expect(dismissedIds(appendDismissed(old, ['today'], NOW))).toEqual(['today']);
   });
 
   test('caps by dropping the oldest dismissals', () => {
-    const full = Array.from({ length: RADAR_DISMISSED_CAP }, (_, i) => `id-${i}`);
-    const out = appendDismissed(full, ['new']);
+    const full = Array.from({ length: RADAR_DISMISSED_CAP }, (_, i) => ({
+      id: `id-${i}`,
+      at: NOW - RADAR_DISMISSED_CAP + i,
+    }));
+    const out = appendDismissed(full, ['new'], NOW);
     expect(out).toHaveLength(RADAR_DISMISSED_CAP);
-    expect(out[0]).toBe('id-1');
-    expect(out[out.length - 1]).toBe('new');
+    expect(out[0]?.id).toBe('id-1');
+    expect(out[out.length - 1]?.id).toBe('new');
+  });
+
+  test('a tweet dismissed today can be re-swept tomorrow', () => {
+    const buried = appendDismissed([], ['1'], NOW);
+    const tomorrow = NOW + RADAR_DISMISSED_TTL_MS + 1;
+    const live = pruneDismissed(buried, tomorrow);
+    expect(mergeSightings([], [sighting('1')], dismissedIds(live))).toHaveLength(1);
+  });
+});
+
+describe('purgeDismissed', () => {
+  test('un-buries the named ids and leaves the rest', () => {
+    const dismissed = [
+      { id: 'a', at: 1 },
+      { id: 'b', at: 2 },
+    ];
+    expect(dismissedIds(purgeDismissed(dismissed, ['a']))).toEqual(['b']);
+  });
+
+  test('an empty id list is the identity (no needless rewrite)', () => {
+    const dismissed = [{ id: 'a', at: 1 }];
+    expect(purgeDismissed(dismissed, [])).toBe(dismissed);
+  });
+});
+
+describe('coerceDismissed', () => {
+  const NOW = Date.parse('2026-08-11T12:00:00.000Z');
+
+  test('migrates the legacy string[] by stamping it now', () => {
+    const out = coerceDismissed(['a', 'b'], NOW);
+    expect(out).toEqual([
+      { id: 'a', at: NOW },
+      { id: 'b', at: NOW },
+    ]);
+  });
+
+  test('drops entries past the TTL and keeps live ones', () => {
+    const out = coerceDismissed(
+      [
+        { id: 'old', at: NOW - RADAR_DISMISSED_TTL_MS - 1 },
+        { id: 'live', at: NOW - 1000 },
+      ],
+      NOW,
+    );
+    expect(dismissedIds(out)).toEqual(['live']);
+  });
+
+  test('keeps what parses and drops what does not — never all-or-nothing', () => {
+    const out = coerceDismissed([{ id: 'good', at: NOW }, null, 42, { at: NOW }], NOW);
+    expect(dismissedIds(out)).toEqual(['good']);
+  });
+
+  test('an unreadable timestamp reads as now, never as 1970', () => {
+    // A 0 would un-dismiss the row on the very next read, which is the one
+    // direction this must not fail in.
+    expect(coerceDismissed([{ id: 'a', at: 'nope' }], NOW)).toEqual([{ id: 'a', at: NOW }]);
+  });
+
+  test('a non-array (missing key, corrupted blob) is an empty set', () => {
+    expect(coerceDismissed(undefined, NOW)).toEqual([]);
+    expect(coerceDismissed({ a: 1 }, NOW)).toEqual([]);
   });
 });
 

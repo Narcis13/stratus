@@ -37,7 +37,9 @@ That's the Radar's whole job:
 | **Angle** | How a reply engages: **extends** (build on the point), **contrarian** (take the other side), **debate** (open an argument), **observation** (notice one concrete detail), or **question** (ask something the author would want to answer). The room narrows the menu: banter gets two safe angles; wholesome and news get observation/question; expertise keeps the original argument-heavy set. |
 | **Tier** | What the people layer knows about the author: **ally**, **mutual**, or **target** (on your 2–10× roster). A warm tweet from an ally beats a hot tweet from a stranger. |
 
-**The queue only grows while you browse.** It's stored in the extension's own local storage, so it survives a browser restart, an extension reload and a service-worker recycle — it used to live in *session* memory, which Chrome drops on any of those, and a queue that collapsed mid-scroll was the result. Two things take a tweet out, and only two: **you dismiss it** (the ✕, Clear, or a curated pass's drops), or it **ages out after 24 hours** — a tweet you first saw yesterday isn't a reply opportunity today. Beyond 100 rows the least-recently-seen are evicted (pins last).
+**The queue only grows while you browse.** It's stored in the extension's own local storage, so it survives a browser restart, an extension reload and a service-worker recycle — it used to live in *session* memory, which Chrome drops on any of those, and a queue that collapsed mid-scroll was the result. Three things take a tweet out: **you dismiss it** (the ✕ or Clear), **a drafting pass consumes it** (see *A pass empties the queue*, below), or it **ages out after 24 hours** — a tweet you first saw yesterday isn't a reply opportunity today. It holds **500 rows**, which is a storage bound rather than a policy: a whole sweep session lands, and the 100-row ceiling that used to drop tweets your own filters had admitted is gone.
+
+**A dismissal now expires after 24 hours.** The dismissed list used to be a permanent blocklist of the last 500 ids — dismiss enough and tweets stopped entering the queue for reasons you couldn't see. A tombstone only has to outlive the tweet it buries (a sweep won't re-admit anything older than your age bound anyway), so it lasts a day and then stops mattering. **A ⊕ pin overrides its own tombstone**: dismissing something and then deliberately pinning it is you changing your mind, and it used to be answered with silence.
 
 Drafted replies are also saved server-side and rehydrate into the queue the next time you open the panel, with the variants the room allowed intact.
 
@@ -79,7 +81,7 @@ Press **Start sweep** in the Radar header. While it runs, a tweet you scroll pas
 
 **Row order:** manually pinned first (you asked for it), then who the author is (ally / mutual / target outranks a stranger), then how fast the tweet is gaining views, then recency. **The capture reason does not sort the queue** — with the classifier gone every band says how a row arrived, not how loud it is, and how loud it is, is exactly what views-per-minute measures. **The Queue is deliberately not re-sorted by cannon score** — that ordering exists in the Cannon view and nowhere else, because the Queue is the relationship lane and an arbitrage shot must not push an ally off the top of it.
 
-**Under pressure the queue keeps what you asked for.** It holds 100 rows; when it overflows, `your circle` captures are dropped first, then the oldest `swept` / `cannon` sightings, and a ⊕ pin is dropped last.
+**Under pressure the queue keeps what you asked for.** It holds 500 rows; when it overflows, `your circle` captures are dropped first, then the oldest `swept` / `cannon` sightings, then **anything already carrying a drafted or copied reply** (a Grok call was spent on it — a scroll past a hundred strangers must not be what throws it away), and a ⊕ pin is dropped last.
 
 **"Your circle" means *stage `engaged` or better*** — someone you have actually posted a reply to — plus your target roster. It deliberately does **not** mean everyone stratus has a row for: simply hovering someone's name on the timeline files them away, and treating that as a relationship would put most of x.com in this queue.
 
@@ -117,10 +119,20 @@ Directly under the Queue / Cannon / Clicked strip, in **all three views** (a swe
 
 ## Header actions
 
-- **Draft replies (N)** — makes **one** Grok call for every un-drafted tweet in the queue (**20 at a time by default**). Each post is resolved into its own room and receives that room's angle set: 2 or 3 variants in English, or one `extends` variant when the batch resolves to another language. The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded. In the **Cannon** view the same button drafts the cannon rows instead.
+- **Draft replies (N)** — makes **one** Grok call for every un-drafted tweet in the queue (**20 at a time by default**). Each post is resolved into its own room and receives that room's angle set: 2 or 3 variants in English, or one `extends` variant when the batch resolves to another language. The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded — and **clears everything it didn't draft** (see below). In the **Cannon** view the same button drafts the cannon rows instead, and consumes only those.
 - **Curate & draft (N)** — the same thing, but it grades first. See below. **These two are the only buttons on the tab that spend money.** It renders in the **Queue view only** — see *The Cannon*, below, for why.
-- **Clear** — dismisses everything currently shown in the view you're looking at. In the Cannon view that means exactly the rows on screen, never the ones the 30-minute cutoff is hiding. Dismissed tweets never re-enter the queue, even though the page keeps re-sighting them while they're on screen.
+- **Clear** — dismisses everything currently shown in the view you're looking at. In the Cannon view that means exactly the rows on screen, never the ones the 30-minute cutoff is hiding. Dismissed tweets don't re-enter the queue for 24 hours, even though the page keeps re-sighting them while they're on screen — and a ⊕ pin puts one back immediately if you change your mind.
 - **⚙** (next to the header buttons) — the batch sizes. Three numbers live in there: the radar's own **draft cap**, the **batch cap the server enforces**, and the **curated batch size**. A plain click sends the *lower of the first two*, so raising one past the other can't buy you a refused click; the third sizes a curated pass and is itself capped by the server's batch cap. What lands on the radar at all isn't here — that's the sweep ⚙ next to **Start sweep**. (⊕ pins and fresh posts by your circle get in regardless of the sweep filters — see the three ways in, above.)
+
+### A pass empties the queue
+
+**Either drafting button consumes the whole fresh queue, not just the rows it sends.** When the call comes back, every un-drafted row the pass covered is cleared: the ones the model silently skipped, the ones past the batch cap that were never sent, and **⊕ pins that didn't make the cut**. Nothing undrafted survives a pass. What's left is the reply-ready rows and nothing else, so the next sweep starts from a clean slate — that is the trade for letting a sweep ingest without a ceiling. The note says how many went: `18/20 drafted · cleared 37 · $0.0512`.
+
+Cleared rows are dismissed the same way the ✕ dismisses, so they don't re-enter while you keep scrolling — and, like every dismissal now, that tombstone expires after a day.
+
+**A failed call clears nothing.** If the drafting call itself fails — server unreachable, a 500, a bad token — the queue is untouched and the note ends in `· queue kept`. A dead call is not a verdict on any tweet, and it's the one failure on this tab that couldn't be undone. Retry is one click.
+
+**In the Cannon view a pass consumes only the cannon rows**, never the queue rows the view isn't showing.
 
 ---
 
@@ -134,7 +146,7 @@ After a long scroll session the queue holds 40+ tweets, and "Draft replies" spen
 2. Everything below the cut is dismissed too. Only the **top 25** (or whatever the knob says) survive.
 3. Those survivors get the normal room-specific batch draft — one Grok call, exactly as before.
 
-**Your ⊕ pins are never scored away.** A tweet you pinned by hand isn't sent for grading at all, and it's always in the draft set, ahead of the curated survivors. A deliberate human click outranks the model. `roster`, `hot` and `warm` rows all get graded — content quality is exactly the thing the band numbers can't see.
+**Your ⊕ pins are never scored away.** A tweet you pinned by hand isn't sent for grading at all, and it's always in the draft set, ahead of the curated survivors. A deliberate human click outranks the model. (It can still be *cleared* at the end of the pass if the batch cap couldn't fit it — no row survives a pass undrafted.) `roster`, `hot` and `warm` rows all get graded — content quality is exactly the thing the band numbers can't see.
 
 **The button only appears when the queue is bigger than the curated size.** Below that, "Draft replies" already covers everything and grading would be a second call that changes nothing.
 
@@ -143,15 +155,17 @@ After a long scroll session the queue holds 40+ tweets, and "Draft replies" spen
 | You see | It means |
 |---|---|
 | `scored 42 · dropped 17 · drafted 25/25 · $0.0491` | The normal, good outcome. |
-| `scored 38 · 4 unscored · dropped 17 · drafted 21/21 · $0.0463` | The model's answer came back short. **The 4 it never graded are neither drafted nor dismissed** — they stay in the queue. A degraded answer costs you coverage, never queue rows. |
+| `scored 38 · 4 unscored · dropped 17 · drafted 21/21 · cleared 4 · $0.0463` | The model's answer came back short. The 4 it never graded weren't *dismissed on a verdict* — they were **cleared with everything else the pass didn't draft**, because a pass empties the queue. A degraded answer costs you coverage, not a mystery row that sits there forever. |
 | `scored 42 · dropped 42 · nothing left to draft · $0.0051` | Everything graded as filler. You paid for the grading only. |
-| `scored 42 · dropped 17 · draft failed: … · $0.0051` | The drafting call failed *after* the drops. **The drops stand** — they were dismissed on their own merit, not as a side effect. The grading spend is still reported. |
+| `scored 42 · dropped 17 · draft failed: … · rest of the queue kept · $0.0051` | The drafting call failed *after* the drops. **The drops stand** — they were dismissed on their own merit — but nothing else is cleared, because the pass never got an answer. The grading spend is still reported. |
 | `Curate failed: …` | The grading call itself failed. **Nothing was dismissed and nothing was drafted** — you can't lose queue rows to a call that never answered. |
 | `nothing to grade — 4 ⊕ pinned, 31 with no text · use Draft replies` | The queue is long enough for the button, but none of it is gradeable: every fresh row is either a ⊕ pin (never scored, by design) or has no text to score. **Nothing was spent** — the call was never made. |
 
-**Dismissal is permanent.** Dropped tweets go onto the same dismissed list the **✕** button uses, so they don't come back when you scroll past them again. That's the point — but it does mean a curated pass is a decision, not a filter you can undo. If the queue feels over-culled, the size knob is in **⚙** (**Curated batch size**, also in **[Settings → Tuning → Radar](./settings-tab.md)**): 5 to 50, default 25, and the effective size is always the *lower* of it and the batch reply cap.
+**Dismissal lasts a day.** Dropped tweets go onto the same dismissed list the **✕** button uses, so they don't come back while you keep scrolling. That's the point — a curated pass is a decision, not a filter you can undo within the session — but the tombstone expires after 24 hours, so the list can never become a blocklist that quietly stops your queue from filling. If the queue feels over-culled, the size knob is in **⚙** (**Curated batch size**, also in **[Settings → Tuning → Radar](./settings-tab.md)**): 5 to 50, default 25, and the effective size is always the *lower* of it and the batch reply cap.
 
-**Rows with no text are left alone.** An image-only sighting has nothing to grade and nothing to reply to, so it's skipped by both halves of the pass and stays in the queue.
+**Rows with no text aren't graded — but they don't survive the pass either.** An image-only sighting has nothing to grade and nothing to reply to, so it's skipped by both halves of the pass and then cleared with everything else undrafted.
+
+**Only the top 100 of the queue are ever graded in one pass.** That's the server's limit on a single scoring call, and it's separate from the buffer's 500. On a queue longer than that, the rest is never scored — and, like everything else the pass didn't draft, it's cleared when the pass ends.
 
 The rubric itself — what earns a high score, and the exact list of what counts as filler — is an editable prompt: **[Settings → Prompts → reply curation](./settings-tab.md#prompts-editor-the-prompts-subtab)**. It now scores the **concrete hook** a reply can grab — a named thing, number, visible detail, claim, or moment — regardless of whether the topic is in your professional lane. The scorer also returns a room label for free, which outranks detection when the survivors are drafted. It's the only prompt in stratus that *removes* things rather than writing them, so widening its filler list throws more of your queue away. Both the default size and that list are **opening guesses**; change them from what you see in your own measured reply outcomes, not on a hunch.
 

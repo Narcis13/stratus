@@ -31,8 +31,7 @@ export type RadarBand = 'manual' | 'roster' | 'cannon' | 'sweep';
 // pin outranks everything; a sweep or cannon capture — filters the user wrote
 // and armed, or a roster they camp on purpose — outranks a circle capture, which
 // only says "someone I know posted this". Equal stickiness → the fresher
-// incoming band wins. This is also the eviction preference under cap pressure:
-// keep-longest is the same order as deserves-the-slot.
+// incoming band wins.
 //
 // The asymmetry matters in both directions: a 'roster' row that a later sweep
 // admits on its numbers takes the upgrade, while a swept row is never demoted to
@@ -41,6 +40,17 @@ function bandStickiness(b: RadarBand): number {
   if (b === 'manual') return 2;
   if (b === 'roster') return 0;
   return 1; // sweep / cannon
+}
+
+// What survives cap pressure. Used to be `bandStickiness` itself, and that was
+// wrong in one expensive way: a row carrying a DRAFTED reply sat on the same rung
+// as an unworked capture, so a long scroll could evict a tweet a Grok call was
+// already spent on while keeping a row nobody has looked at. Money beats
+// freshness — a drafted or clicked row is only ever displaced by a human pin.
+function evictionWeight(s: RadarSighting): number {
+  if (s.band === 'manual') return 3;
+  if (s.reply !== undefined || s.clickedAt !== undefined) return 2;
+  return s.band === 'roster' ? 0 : 1; // sweep / cannon
 }
 
 // Who the author is, as far as the people layer knows (S0.3). A post from an
@@ -125,8 +135,47 @@ export interface RadarSighting {
 export const RADAR_SIGHTINGS_KEY = 'radar:sightings';
 export const RADAR_DISMISSED_KEY = 'radar:dismissed';
 
-export const RADAR_CAP = 100;
-export const RADAR_DISMISSED_CAP = 500;
+// How many sightings the buffer holds. 100 through RS.*, and that number is what
+// made a real sweep silently lossy: an armed 30-minute sweep on a busy timeline
+// admits more than 100 tweets, and the surplus was evicted before the human ever
+// saw it — a filter the user wrote, quietly overruled by a buffer size. 500 is a
+// STORAGE bound, not a policy: at ~1 KB a row it is well under half a megabyte
+// against `chrome.storage.local`'s multi-megabyte quota, and RADAR_TTL_MS +
+// "a drafting pass empties the queue" are what actually bound the queue's size.
+// Raise it before you reintroduce a policy that drops admitted rows.
+export const RADAR_CAP = 500;
+
+// What ONE curate call may carry. **Restated, not imported** (§7.33): it is the
+// server's `MAX_CURATE_TWEETS` (`src/x/replies/curate.ts`) and the extension has
+// no way to import a server module — the route REFUSES an over-long batch, it
+// does not truncate one, so a panel that sent `RADAR_CAP` rows would 400 the
+// whole pass. These two were the same constant while both were 100; they are
+// different numbers now and must never be conflated again.
+export const CURATE_REQUEST_CAP = 100;
+
+// A dismissal, with the moment it happened. It used to be a bare id in a
+// 500-long FIFO, which made the dismissed set a PERMANENT blocklist bounded only
+// by how much you dismissed: every "Clear", every curated drop and (since RQ.1)
+// every drafting pass writes into it, so ids from days ago sat there blocking
+// tweets whose only crime was sharing an id with something you scrolled past
+// last week — while the ONE thing a tombstone is for (not re-admitting a tweet
+// you just worked, on the very next scroll) needs to hold for hours, not weeks.
+export interface Tombstone {
+  id: string;
+  /** Epoch ms. */
+  at: number;
+}
+
+// A tombstone outlives the tweet it buries and nothing more. 24h = RADAR_TTL_MS:
+// past it a sighting is pruned from the queue anyway and a sweep can no longer
+// admit the tweet (every arm enforces `x.sweep.maxAgeMin`, default 60), so an
+// older tombstone can only ever block something it was never meant to.
+export const RADAR_DISMISSED_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Purely a storage bound now that the TTL does the real work — high enough that
+// a day of heavy sweeping never reaches it. Eviction is oldest-first, same as
+// before; hitting this at all means the TTL is not being applied.
+export const RADAR_DISMISSED_CAP = 5000;
 
 // How long a sighting stays queueable. Replacing "until the browser closes",
 // and 24h because a tweet you first saw yesterday is not a reply opportunity
@@ -143,7 +192,13 @@ export const RADAR_TTL_MS = 24 * 60 * 60 * 1000;
 // signals/band/lastSeenAt win, firstSeenAt survives from the earlier entry.
 // Dismissed ids never re-enter — the content script keeps re-sighting a tweet
 // for as long as it's rendered, so a worked item must stay gone. Past the cap,
-// least-recently-seen entries are evicted.
+// the least valuable entries are evicted (`evictionWeight`, then oldest).
+//
+// ONE exception, and it is the human: a `manual` ⊕ pin is admitted even when the
+// tweet is tombstoned. Dismissing something and then deliberately pinning it is
+// a person changing their mind, and the old behaviour answered that click with
+// silence — the row simply never appeared. The caller drops the tombstone too
+// (`purgeDismissed`), or the next re-sighting would bury it again.
 export function mergeSightings(
   existing: RadarSighting[],
   incoming: RadarSighting[],
@@ -152,7 +207,7 @@ export function mergeSightings(
   const byId = new Map(existing.map((s) => [s.tweetId, s]));
   const gone = new Set(dismissed);
   for (const s of incoming) {
-    if (gone.has(s.tweetId)) continue;
+    if (gone.has(s.tweetId) && s.band !== 'manual') continue;
     const prev = byId.get(s.tweetId);
     if (!prev) {
       byId.set(s.tweetId, s);
@@ -190,27 +245,82 @@ export function mergeSightings(
   }
   const all = [...byId.values()];
   if (all.length <= RADAR_CAP) return all;
-  // Evict least-recently-seen within a stickiness rung: the least sticky rows
-  // sort to the front (dropped first), the stickiest to the back (kept). A
-  // manual pin (RU.8) outlives any auto-capture, and a GT.8 circle capture goes
-  // before a swept one — otherwise a chatty circle could push the rows your own
-  // filters admitted out of a cap-100 buffer. slice() keeps the tail.
+  // Evict least-recently-seen within an eviction rung: the cheapest rows sort to
+  // the front (dropped first), the dearest to the back (kept). A manual pin
+  // (RU.8) outlives everything, a paid draft outlives an unworked capture, and a
+  // GT.8 circle capture goes before a swept one — otherwise a chatty circle
+  // could push the rows your own filters admitted out. slice() keeps the tail.
   all.sort((a, b) => {
-    const sa = bandStickiness(a.band);
-    const sb = bandStickiness(b.band);
-    if (sa !== sb) return sa - sb;
+    const wa = evictionWeight(a);
+    const wb = evictionWeight(b);
+    if (wa !== wb) return wa - wb;
     return a.lastSeenAt.localeCompare(b.lastSeenAt);
   });
   return all.slice(all.length - RADAR_CAP);
 }
 
-// Append ids to the dismissed set; past the cap, the oldest dismissals fall
-// off (their tweets are long out of the buffer anyway).
-export function appendDismissed(dismissed: string[], ids: string[]): string[] {
-  const merged = [...new Set([...dismissed, ...ids])];
-  return merged.length <= RADAR_DISMISSED_CAP
-    ? merged
-    : merged.slice(merged.length - RADAR_DISMISSED_CAP);
+// Read the stored dismissed set at `nowMs`, in one place, leniently — the same
+// instinct as `coerceSightings`: keep what parses, drop what doesn't, never let
+// one bad entry read as "nothing was ever dismissed".
+//
+// It also OWNS the migration off the legacy `string[]` shape: those ids carry no
+// timestamp, so they are stamped `nowMs` — one extra TTL window of blocking, in
+// the safe direction (a tweet you already worked stays gone), where the other
+// choice would resurrect the whole worked set on the upgrade.
+export function coerceDismissed(v: unknown, nowMs: number): Tombstone[] {
+  if (!Array.isArray(v)) return [];
+  const out: Tombstone[] = [];
+  for (const entry of v) {
+    if (typeof entry === 'string') {
+      out.push({ id: entry, at: nowMs });
+      continue;
+    }
+    if (!entry || typeof entry !== 'object') continue;
+    const { id, at } = entry as { id?: unknown; at?: unknown };
+    if (typeof id !== 'string') continue;
+    // An unreadable timestamp is treated as "just now" for the same reason as
+    // the legacy branch — never as 1970, which would silently un-dismiss it.
+    out.push({ id, at: typeof at === 'number' && Number.isFinite(at) ? at : nowMs });
+  }
+  return capDismissed(pruneDismissed(out, nowMs));
+}
+
+/** Drop tombstones past `RADAR_DISMISSED_TTL_MS`. A tombstone from the future
+ *  (a clock jump) is KEPT — same reasoning as `pruneStale`'s: a suspect clock is
+ *  not a reason to un-dismiss a tweet the human already worked. */
+export function pruneDismissed(dismissed: Tombstone[], nowMs: number): Tombstone[] {
+  return dismissed.filter((t) => nowMs - t.at < RADAR_DISMISSED_TTL_MS);
+}
+
+function capDismissed(dismissed: Tombstone[]): Tombstone[] {
+  if (dismissed.length <= RADAR_DISMISSED_CAP) return dismissed;
+  // Newest-last, so the tail is what survives — oldest tombstones bury tweets
+  // that are already past the queue's own TTL.
+  const sorted = [...dismissed].sort((a, b) => a.at - b.at);
+  return sorted.slice(sorted.length - RADAR_DISMISSED_CAP);
+}
+
+// Tombstone these ids at `nowMs`. A re-dismiss RE-STAMPS rather than keeping the
+// first burial: the id is being pushed out of the queue again right now, and the
+// TTL should run from the last time the human said no.
+export function appendDismissed(dismissed: Tombstone[], ids: string[], nowMs: number): Tombstone[] {
+  const byId = new Map(dismissed.map((t) => [t.id, t]));
+  for (const id of ids) byId.set(id, { id, at: nowMs });
+  return capDismissed(pruneDismissed([...byId.values()], nowMs));
+}
+
+/** Un-bury these ids — the ⊕ pin's half of `mergeSightings`'s manual exception.
+ *  Without it the pin lands and the very next re-sighting of the same tweet is
+ *  filtered out again, which reads as a row that flickers and vanishes. */
+export function purgeDismissed(dismissed: Tombstone[], ids: string[]): Tombstone[] {
+  if (ids.length === 0) return dismissed;
+  const drop = new Set(ids);
+  return dismissed.filter((t) => !drop.has(t.id));
+}
+
+/** The id list `mergeSightings` filters on. */
+export function dismissedIds(dismissed: Tombstone[]): string[] {
+  return dismissed.map((t) => t.id);
 }
 
 // The roster tier for a rankmap entry (S0.3). ally/mutual are relationships
