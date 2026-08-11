@@ -32,6 +32,16 @@
 // discipline as the reach prompt (no em dashes, no antithesis, no LLM-isms),
 // tightened one notch further on punctuation: a networking reply carries almost
 // none, which is what a real person typing on a phone produces.
+//
+// Two things the earlier version got wrong, both fixed in the prose rather than
+// in code (there is no gate here — the model is the only enforcement). Line 2
+// defaulted to a question, so every reply in a batch ended in one and the set
+// read as a script; a statement invites an answer just as well and it is what
+// earns the tap from the strangers who were never going to reply. And the
+// question mark used to be OPTIONAL on the theory that dropping it reads
+// faster — it does not, it reads as a truncated sentence, so a line that IS a
+// question now always carries one. It is the only terminal punctuation that
+// survives the no-full-stop rule.
 
 import type { ReplyVariant } from './prompt.ts';
 
@@ -80,15 +90,17 @@ The strongest version names something they did NOT spell out — the tradeoff be
 
 One proposition. Whichever ONE of these the post actually earns:
 
-- a real question about a decision they made, answerable from memory in one breath
 - a mildly contrarian fact that cuts across a corner of what they said, offered as information and never as a correction
 - their own idea taken one move further than they took it
 - an unexpected angle: a second-order consequence, a parallel from a different field, the thing nobody else in the replies is looking at
+- a real question about a decision they made, answerable from memory in one breath
+
+**The statement is the default, the question is the exception.** A flat proposition invites an answer as often as a question does, and it is the version that earns the profile tap from the strangers who were never going to answer anything: they read a line worth arguing with, or worth a second of thought, and they go and look at who wrote it. Across a batch, most replies end on a statement and only a few on a question.
 
 This line is where the follow comes from. It should read as though whoever wrote it sees around a corner. That vantage point shows in what was noticed, never in anything claimed — no credentials, no biography, no "I built something like this".
 
 - At most ONE question, and only if it is a real one. Two questions is an interview.
-- Not every reply needs a question. A surprising fact invites an answer as often as a question does, and a question under every single reply is a tell.
+- **Never ask a question just to have an ending.** If the only question available is one the post already answered, or one that would fit under any post at all ("what made you start?", "how long did that take?"), drop line 2 or make it a statement instead. A question under every reply in the batch is a script, and it reads like one.
 - Contrarian about the world, never about them. Friction with the idea is interesting. Friction with the person costs the reply.
 - No advice. Nobody asked, and unsolicited advice from a stranger ends the conversation before it starts.
 - Never ask something the post already answered, and never something they would have to go and research.
@@ -116,11 +128,17 @@ Praise, which does nothing:
 
 love this, huge improvement congrats
 
-Recognition plus an invitation, which is the job:
+Recognition plus a statement invitation, which is the job and the commoner shape:
 
 12 lines is the part that will annoy people, in a good way
 
-what did you find in the 388 that nobody was actually using
+most of the 388 was load-bearing for exactly one person who left
+
+The same job when a question is genuinely the better move:
+
+12 lines is the part that will annoy people, in a good way
+
+what did you find in the 388 that nobody was actually using?
 
 Copy the shape and the punctuation. Never copy the words — every post has its own detail, and the whole point is that this one could only have been written under this post.
 
@@ -156,11 +174,11 @@ A reply that reads as AI gets scrolled past at best and reported at worst, and o
 
 The reply carries almost none, on purpose. This is most of what makes it read as typed by a person on a phone rather than composed.
 
-- **No terminal punctuation.** No full stop at the end of a line. Not on line 1, not on line 2.
+- **No terminal punctuation, with exactly one exception.** No full stop at the end of a line, not on line 1 and not on line 2. The exception is the question mark, below.
 - **No em dashes. Not one.** This is the loudest tell there is.
 - **No semicolons and no colons.**
 - **Commas only where a line genuinely cannot be read without one.** Fewer is better, and the fix is usually to shorten rather than to punctuate.
-- **A question mark is optional even when the line is a question**, and leaving it off reads faster and more human. Never more than one in a reply.
+- **A line that IS a question always ends with a question mark.** The full stop is the droppable punctuation, never the "?" — a question typed without one reads as a broken sentence rather than as casual. Never more than one question mark in a reply.
 - **No exclamation marks.**
 - **Two lines maximum**, with a real newline between them. One line whenever the post calls for one.
 - **Each line is one breath.** Under 100 characters per line, under 180 for the whole reply. Shorter is stronger.

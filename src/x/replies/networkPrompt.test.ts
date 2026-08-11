@@ -49,10 +49,28 @@ describe('the networking template (NW.1)', () => {
   // in a later edit: the reply reads as typed rather than composed, and the OP —
   // not the reply stack — is who it is written to.
   test('the punctuation floor and the audience are both stated', () => {
-    expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain('No terminal punctuation.');
+    expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain('No terminal punctuation');
     expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain('No em dashes. Not one.');
     expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain('a real newline between them');
     expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain('recognition, not praise');
+  });
+
+  // The question rules, both directions. They reverse an earlier deliberate
+  // decision (line 2 defaulting to a question, and the "?" being optional), so a
+  // silent revert to either is worth failing a test over.
+  test('the statement is the default ending, and a question keeps its "?"', () => {
+    expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain(
+      '**The statement is the default, the question is the exception.**',
+    );
+    expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain(
+      '**A line that IS a question always ends with a question mark.**',
+    );
+    expect(NETWORK_BATCH_PROMPT_TEMPLATE).not.toContain('A question mark is optional');
+    // The worked contrast is what the model actually copies, so its question
+    // example has to obey the rule the prose just stated.
+    expect(NETWORK_BATCH_PROMPT_TEMPLATE).toContain(
+      'what did you find in the 388 that nobody was actually using?',
+    );
   });
 });
 

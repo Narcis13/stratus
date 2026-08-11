@@ -592,6 +592,11 @@ describe('reply prompt (§7.1)', () => {
       expect(template).toContain('**No em dashes. Not one.**');
       expect(template).toContain('**Never open a reply with:**');
       expect(template).toContain('**Length: aim for 40–90 characters. 140 is the ceiling.**');
+      // A closing question is an option, never the default shape — and when a
+      // reply does close on one, the "?" is the punctuation that survives the
+      // drop-the-terminal-period habit two bullets above it.
+      expect(template).toContain('**A question is not the default ending.**');
+      expect(template).toContain('**A reply that ends on a question ends with a question mark.**');
       // The 280-char machinery is retired: at 40–90 chars the reply IS the hook
       // (0 of 180 harvested Cannon replies are multi-line).
       expect(template).not.toContain('~280 chars');
