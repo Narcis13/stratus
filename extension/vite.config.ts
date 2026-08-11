@@ -22,6 +22,10 @@ export default defineConfig({
     emptyOutDir: false,
     target: 'esnext',
     minify: false,
+    // Extension pages log "cross-world extension resource mismatch" for
+    // <link rel="modulepreload" crossorigin> — the preload is fetched, then
+    // discarded and re-requested. The lazy chunk loads fine on demand.
+    modulePreload: false,
     rollupOptions: contentBuild
       ? {
           input: { content: resolve(import.meta.dirname, 'src/content.ts') },
