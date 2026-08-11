@@ -54,15 +54,18 @@ import {
 import { radarDrafts, replyDrafts } from '../src/x/db/schema.ts';
 import { persistRadarDrafts, radar } from '../src/x/routes/radar.ts';
 import { settingsRouter } from '../src/x/routes/settings.ts';
+import { sweepPresetsRouter } from '../src/x/routes/sweepPresets.ts';
 import {
   resetSettings,
   resolveSetting,
   setSettings,
   settingsByGroup,
 } from '../src/x/settings/registry.ts';
+import { deleteSweepPreset, listSweepPresets } from '../src/x/settings/sweepPresets.ts';
 
 const app = new Hono();
 app.route('/x', settingsRouter);
+app.route('/x', sweepPresetsRouter);
 app.route('/x', radar);
 
 // The eleven keys, derived from the predicate's own shape rather than typed out:
@@ -75,6 +78,14 @@ const SWEEP_KEYS = SWEEP_FIELDS.map((f) => `x.sweep.${f}`);
 // an impression ceiling would ever land on. See the header on why it exists.
 const SENTINEL_KEY = 'x.sweep.maxViews';
 const SENTINEL_VALUE = 987_654;
+
+// SP.1 — the preset this run creates and deletes. Bracketed so it sorts and reads
+// as machine-made: the presets row is a LIST, so unlike the settings rows it can
+// hold ours alongside the operator's, and cleanup only has to remove this name.
+const SMOKE_PRESET = '__smoke-sweep-preset__';
+// The value the preset carries. Distinct from SENTINEL_VALUE so step (b2) proves
+// the LOAD moved the number, not the PATCH that preceded it.
+const PRESET_VALUE = 876_543;
 
 // 18 digits: real tweet ids are 19-digit snowflakes, so these can never collide.
 const T_SWEEP = '986000000000000001';
@@ -112,6 +123,20 @@ function restore(): void {
   restored = true;
   resetSettings({ group: 'sweep' });
   if (baseline.size > 0) setSettings(Object.fromEntries(baseline));
+  dropSmokePreset();
+}
+
+// The presets row needs no snapshot/restore dance: it is a LIST keyed by name, so
+// this run adds exactly one entry and removes exactly that entry. An operator's
+// own presets are never read, rewritten or reordered by this script — which is
+// why the sentinel discipline the x.sweep.* rows need does not apply here.
+function dropSmokePreset(): void {
+  try {
+    deleteSweepPreset(SMOKE_PRESET);
+  } catch {
+    // Best-effort, like every other cleanup arm: a failure here must not mask
+    // the assertion that sent us into cleanup.
+  }
 }
 
 function deleteOwnRows(): void {
@@ -225,6 +250,78 @@ console.log('(b) GET /x/settings/values?scope=mirrored');
   const stillEleven = SWEEP_KEYS.every((k) => k in after.body);
   if (!stillEleven) fail('an edit dropped a sibling key from the mirrored blob');
   ok(`an edited ${SENTINEL_KEY} rides out on the same blob; the other ten are untouched`);
+}
+
+// ============================================================================
+// (b2) SP.1 — a named preset is a round trip through the MIRRORED blob
+// ============================================================================
+// The claim worth a smoke: loading a preset moves what the PAGE will sweep on,
+// not just what the panel renders. Everything below is asserted through
+// `?scope=mirrored` for that reason — a preset that only moved the override rows
+// would pass a settings-tab check while the content script kept admitting on the
+// old filters until its next TTL.
+console.log('(b2) sweep presets');
+{
+  const before = listSweepPresets().length;
+
+  // Save from a KNOWN live config, so what lands in the preset is checkable.
+  const set = await req('/x/settings', 'PATCH', { [SENTINEL_KEY]: PRESET_VALUE });
+  if (set.status !== 200) fail(`PATCH before save → ${set.status}`);
+  const saved = await req('/x/sweep/presets', 'POST', { name: SMOKE_PRESET });
+  if (saved.status !== 200) fail(`save preset → ${saved.status} ${JSON.stringify(saved.body)}`);
+
+  const presets = saved.body.presets as Array<{ name: string; values: Record<string, unknown> }>;
+  const mine = presets.find((p) => p.name === SMOKE_PRESET);
+  if (!mine) fail('the saved preset is not in the returned list');
+  if (mine.values.maxViews !== PRESET_VALUE)
+    fail(`the preset snapshotted maxViews=${String(mine.values.maxViews)}, not ${PRESET_VALUE}`);
+  for (const field of SWEEP_FIELDS) {
+    if (!(field in mine.values)) fail(`the preset is missing ${field} — a preset owns all eleven`);
+  }
+  if (presets.length !== before + 1)
+    fail(`saving one preset moved the count from ${before} to ${presets.length}`);
+  ok(`a preset snapshots all ${SWEEP_FIELDS.length} live values and leaves the others alone`);
+
+  // Move the live config elsewhere, then load the preset back and check the PAGE's
+  // view of it.
+  const moved = await req('/x/settings', 'PATCH', { [SENTINEL_KEY]: SENTINEL_VALUE });
+  if (moved.status !== 200) fail(`PATCH between save and load → ${moved.status}`);
+  const drifted = await req('/x/settings/values?scope=mirrored');
+  if (drifted.body[SENTINEL_KEY] !== SENTINEL_VALUE)
+    fail('the mirror did not follow the PATCH between save and load');
+
+  const loaded = await req('/x/sweep/presets/load', 'POST', { name: SMOKE_PRESET.toUpperCase() });
+  if (loaded.status !== 200) fail(`load preset → ${loaded.status} ${JSON.stringify(loaded.body)}`);
+  const mirrored = await req('/x/settings/values?scope=mirrored');
+  if (mirrored.body[SENTINEL_KEY] !== PRESET_VALUE)
+    fail(
+      `after the load the mirror reads ${String(mirrored.body[SENTINEL_KEY])}, not the preset's ${PRESET_VALUE}`,
+    );
+  if (!SWEEP_KEYS.every((k) => k in mirrored.body))
+    fail('a preset load dropped a sibling key from the mirrored blob');
+  ok('a load (matched case-insensitively) reaches the mirrored blob the page sweeps on');
+
+  // The refusals. Both are the point of the feature having a server side at all:
+  // a name that is gone must not silently no-op, and the registry bounds are
+  // still the guard even for a value that once passed them.
+  const ghost = await req('/x/sweep/presets/load', 'POST', { name: 'no-such-preset-here' });
+  if (ghost.status !== 404) fail(`loading an unknown preset → ${ghost.status}, expected 404`);
+  const unnamed = await req('/x/sweep/presets', 'POST', { name: '   ' });
+  if (unnamed.status !== 400) fail(`saving a blank name → ${unnamed.status}, expected 400`);
+  ok('an unknown name 404s and a blank name 400s — neither is a silent no-op');
+
+  const removed = await req('/x/sweep/presets', 'DELETE', { name: SMOKE_PRESET });
+  if (removed.status !== 200) fail(`delete preset → ${removed.status}`);
+  if ((removed.body.presets as unknown[]).length !== before)
+    fail('delete did not put the list back to its pre-run length');
+  const again = await req('/x/sweep/presets', 'DELETE', { name: SMOKE_PRESET });
+  if (again.status !== 404) fail(`deleting it twice → ${again.status}, expected 404`);
+  // The filters themselves survive the delete — a preset is a bookmark, not the
+  // config, and deleting one must never re-aim a live sweep.
+  const afterDelete = await req('/x/settings/values?scope=mirrored');
+  if (afterDelete.body[SENTINEL_KEY] !== PRESET_VALUE)
+    fail('deleting a preset moved the live filters');
+  ok('delete is idempotent-by-404 and leaves the live filters exactly where they were');
 }
 
 // Every settings write is done — restore now rather than at exit, so the window

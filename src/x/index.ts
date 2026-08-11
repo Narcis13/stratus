@@ -47,6 +47,7 @@ import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
 import { replyListsRouter } from './routes/replyLists.ts';
 import { settingsRouter } from './routes/settings.ts';
+import { sweepPresetsRouter } from './routes/sweepPresets.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
 import { getSetting } from './settings/registry.ts';
@@ -145,6 +146,11 @@ export function mountX(app: Hono): void {
   // §7.20-safe anywhere; always mounted, $0. Lands INERT — no consumer reads the
   // store yet (UI.2+ wire brief/quests/people/… through it).
   app.route('/x', settingsRouter);
+  // SP.1: named sweep presets — saved combinations of the eleven x.sweep.* knobs.
+  // Rides on the settings platform above (it snapshots and re-applies registry
+  // values, never its own copies) and is mounted right after it for that reason.
+  // Static paths only, $0.
+  app.route('/x', sweepPresetsRouter);
   // C5: follow-up queue + Top Fans. MUST mount before peopleRouter —
   // 'followups'/'fans' are valid usernames, so GET /people/:handle would
   // otherwise swallow these static paths as dossier lookups.

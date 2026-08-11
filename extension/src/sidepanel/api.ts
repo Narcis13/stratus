@@ -209,6 +209,8 @@ import {
   type SettingsPatchResult,
   type SettingsResetResult,
   type SettingsResponse,
+  type SweepPresetLoadResponse,
+  type SweepPresetsResponse,
   type ThreadDraftBody,
   type ThreadDraftResponse,
   type TimelineAffinityAuthor,
@@ -796,6 +798,44 @@ export const api = {
 
     reset(s: Settings, opts: { keys?: string[]; group?: string }): Promise<SettingsResetResult> {
       return request<SettingsResetResult>(s, '/x/settings/reset', { method: 'POST', body: opts });
+    },
+  },
+
+  // SP.1 — named sweep presets. Sits beside `settings` rather than inside it
+  // because it is a raw `app_settings` row, not a registry key (same reason
+  // `humanizer` and `llm` sit apart). All four calls are $0.
+  //
+  // Only a NAME ever travels: `save` snapshots the live registry values
+  // server-side, and `load` writes them back through the registry's own
+  // validation. The panel deliberately holds no copy of the eleven numbers.
+  sweepPresets: {
+    list(s: Settings): Promise<SweepPresetsResponse> {
+      return request<SweepPresetsResponse>(s, '/x/sweep/presets');
+    },
+
+    // Overwrites an existing name in place; a genuinely new one past the cap
+    // 400s `too_many_presets` rather than silently evicting the oldest.
+    save(s: Settings, name: string): Promise<SweepPresetsResponse & { saved: string }> {
+      return request<SweepPresetsResponse & { saved: string }>(s, '/x/sweep/presets', {
+        method: 'POST',
+        body: { name },
+      });
+    },
+
+    // 404 `unknown_preset` when the name is gone; 400 when a stored value no
+    // longer clears the registry bounds (all-or-nothing — nothing lands).
+    load(s: Settings, name: string): Promise<SweepPresetLoadResponse> {
+      return request<SweepPresetLoadResponse>(s, '/x/sweep/presets/load', {
+        method: 'POST',
+        body: { name },
+      });
+    },
+
+    remove(s: Settings, name: string): Promise<SweepPresetsResponse> {
+      return request<SweepPresetsResponse>(s, '/x/sweep/presets', {
+        method: 'DELETE',
+        body: { name },
+      });
     },
   },
 

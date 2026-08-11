@@ -22,6 +22,12 @@ interface Props {
   /** Per-key refusal codes (UI.12). The registry bounds are the money guard, so
    *  a rejected value must be visibly rejected rather than left looking saved. */
   errors?: Record<string, string> | undefined;
+  /** SP.1 — an optional control strip between the note and the rows, for a card
+   *  that can act on its whole key set at once (today: the sweep's named
+   *  presets). It renders ABOVE the rows on purpose: a preset load moves every
+   *  row underneath it, so cause has to sit above effect. Presentational like
+   *  the rest of this component — the caller owns whatever it does. */
+  head?: JSX.Element | null | undefined;
 }
 
 /** GearPopover — the inline-config affordance: a `⚙` glyph button opening a
@@ -36,6 +42,7 @@ export function GearPopover({
   label = 'Configure',
   note,
   errors,
+  head,
 }: Props): JSX.Element {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -73,6 +80,7 @@ export function GearPopover({
       {open && (
         <div className="ui-gear-pop">
           {note && <p className="ui-gear-note">{note}</p>}
+          {head}
           {settings.map((entry) => (
             <div key={entry.key}>
               <SettingRow

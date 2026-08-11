@@ -5,6 +5,7 @@ import type { HumanizerConfig } from '../humanize.ts';
 import type { JudgeVerdict, JudgeVerdictLabel } from '../judge.ts';
 import type { CoachBand } from '../postCoach.ts';
 import type { PostFormat } from '../postFormat.ts';
+import type { SweepConfig } from '../radarSweep.ts';
 import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyAngle, ReplyGoal, ReplyModeId } from '../replyMode.ts';
 
@@ -2589,6 +2590,34 @@ export interface HumanizerSettings extends HumanizerConfig {
 /** PATCH is strict per field server-side — a bad value 400s (`invalid_enabled`,
  *  `invalid_prefixes`, `invalid_typo_chance`, …), it never silently falls back. */
 export type HumanizerPatchBody = Partial<HumanizerSettings>;
+
+// SP.1 — named sweep presets: saved combinations of the eleven `x.sweep.*` knobs
+// (`GET/POST/DELETE /x/sweep/presets`, `POST /x/sweep/presets/load`). A second
+// server-owned `app_settings` row alongside the humanizer above, and the same
+// discipline: the panel never posts VALUES, only a name — the server snapshots
+// what the registry currently holds, so a preset can only ever contain numbers
+// the registry already accepted.
+export interface SweepPreset {
+  name: string;
+  /** The whole config. Re-exported from the `../radarSweep.ts` shim rather than
+   *  re-declared, for the HumanizerConfig reason: the panel and the content
+   *  script both run against `SweepConfig`, so a hand-mirrored copy could drift
+   *  from the module doing the admitting. */
+  values: SweepConfig;
+  updatedAt: string;
+}
+
+export interface SweepPresetsResponse {
+  presets: SweepPreset[];
+}
+
+/** What a load answers with. The panel re-reads `GET /x/settings` afterwards
+ *  rather than trusting these values into its editor state — the server is the
+ *  one that just wrote them, and a load moves eleven rows at once. */
+export interface SweepPresetLoadResponse {
+  loaded: string;
+  values: SweepConfig;
+}
 
 export type ReplyTemplateVar = 'name' | 'first_name' | 'handle';
 export type ReplyListItemSource = 'manual' | 'ai';

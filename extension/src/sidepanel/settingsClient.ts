@@ -12,7 +12,12 @@ import type { Settings } from './storage.ts';
 // the mirrored blob, so each one asks the background (the single fetcher) to
 // re-pull immediately instead of waiting out its TTL. Best-effort: a failed
 // message just means the knob lands on the next sync, never a failed save.
-function requestSettingsSync(): void {
+//
+// SP.1 exported it: loading a sweep preset writes the same eleven mirrored keys
+// through its own route rather than through `patchSetting`, and a config the
+// content script won't see until the next TTL is a sweep that keeps admitting on
+// the OLD filters — the one failure this call exists to prevent.
+export function requestSettingsSync(): void {
   const msg: SettingsSync = { type: 'stratus/settings-sync' };
   void chrome.runtime.sendMessage(msg).catch(() => {});
 }

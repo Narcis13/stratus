@@ -64,6 +64,7 @@ import type {
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { CoachChip } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
+import { SweepPresets } from './SweepPresets.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
 import { cannonTargetChip } from './chips.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
@@ -1052,6 +1053,10 @@ export function RadarSection({
           keys={SWEEP_KEYS}
           label="Configure what a sweep admits"
           note={SWEEP_NOTE}
+          // SP.1 — the named presets sit ABOVE the rows they overwrite. `reload`
+          // and not the optimistic path: a load moves all eleven rows server-side
+          // at once, so the truth has to come back from the server that wrote it.
+          head={<SweepPresets settings={settings} onApplied={editor.reload} />}
         />
       </div>
 

@@ -27,9 +27,15 @@ interface Props {
   label: string;
   /** Ownership/context line above the rows — see GearPopover's `note`. */
   note?: string | undefined;
+  /** SP.1 — an optional control strip between the note and the rows, for a card
+   *  that acts on its whole key set at once (the sweep's named presets). Passed
+   *  straight through; a gear that renders nothing renders this nothing too,
+   *  which is right — a preset picker over an unreachable registry would offer
+   *  to load numbers it can't show. */
+  head?: JSX.Element | null | undefined;
 }
 
-export function SettingsGear({ editor, keys, label, note }: Props): JSX.Element | null {
+export function SettingsGear({ editor, keys, label, note, head }: Props): JSX.Element | null {
   const entries = editor.groups === null ? [] : entriesForKeys(editor.groups, keys);
   if (entries.length === 0) return null;
   return (
@@ -42,6 +48,7 @@ export function SettingsGear({ editor, keys, label, note }: Props): JSX.Element 
       onResetAll={() => editor.resetKeyList(entries.map((e) => e.key))}
       label={label}
       note={note}
+      head={head}
       errors={editor.rowErrors}
     />
   );

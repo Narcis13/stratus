@@ -4023,6 +4023,76 @@ button.chip[aria-pressed="true"] {
   cursor: default;
 }
 
+/* SP.1 — the named-preset strip in the sweep gear's `head` slot. It sits above
+   the rows a Load overwrites, separated by a rule for the same reason the reset
+   footer has one: it acts on the whole card, not on any single row. Two lines
+   (pick/act, then name/save) rather than one, because the popover is 300px at
+   its widest and a four-control row there collapses into unreadable stubs. */
+.sweep-presets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--strat-space-2);
+  margin-bottom: var(--strat-space-4);
+  padding-bottom: var(--strat-space-4);
+  border-bottom: 1px solid var(--strat-border);
+}
+.sweep-presets-row {
+  display: flex;
+  align-items: center;
+  gap: var(--strat-space-2);
+}
+.sweep-presets-select,
+.sweep-presets-name {
+  flex: 1 1 auto;
+  /* Without this a long preset name stretches the popover past its max-width
+     instead of ellipsing inside it. */
+  min-width: 0;
+  background: var(--strat-bg);
+  border: 1px solid var(--strat-border);
+  border-radius: var(--strat-radius-sm);
+  color: var(--strat-text);
+  font-size: var(--strat-text-xs);
+  line-height: 1.4;
+  padding: var(--strat-space-2) var(--strat-space-3);
+}
+.sweep-presets-select:disabled,
+.sweep-presets-name:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.sweep-presets-btn {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--strat-border);
+  color: var(--strat-text);
+  padding: var(--strat-space-2) var(--strat-space-4);
+  font-size: var(--strat-text-xs);
+  line-height: 1.4;
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.sweep-presets-btn:hover:not(:disabled) {
+  background: var(--strat-bg-hover);
+  border-color: var(--strat-accent);
+}
+.sweep-presets-btn.subtle {
+  color: var(--strat-muted);
+}
+.sweep-presets-btn.subtle:hover:not(:disabled) {
+  color: var(--strat-text);
+  border-color: var(--strat-warn);
+}
+.sweep-presets-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.sweep-presets-note {
+  margin: 0;
+  font-size: var(--strat-text-xs);
+  line-height: 1.45;
+  color: var(--strat-muted);
+}
+
 /* ============================================================================
    Me / My Profile (M1) — goals, quick log, entry library, AI-view preview.
    ========================================================================= */
