@@ -3678,7 +3678,7 @@ const NOTIF_CTX_CLASS = 'stratus-notif-ctx';
 const NOTIF_TIERS_CLASS = 'stratus-notif-tiers';
 const NOTIF_TIER_CLASS = 'stratus-notif-tier';
 const NOTIF_SYNC_CLASS = 'stratus-notif-sync';
-const NOTIF_SYNC_LABEL = 'stratus: sync replies';
+const NOTIF_SYNC_LABEL = 'stratus: reload inbox';
 
 const NOTIF_CONTEXT_THROTTLE_MS = 60_000;
 const NOTIF_PARENT_MAX = 90;
@@ -3951,33 +3951,20 @@ async function onSyncChipClick(btn: HTMLButtonElement): Promise<void> {
   btn.dataset.state = 'working';
   btn.textContent = 'syncing…';
 
-  const request: ApiRequest = {
-    type: 'stratus/api',
-    method: 'POST',
-    path: '/x/mentions/refresh',
-    body: {},
-  };
-  let res: ApiResponse | undefined;
+  // This used to fire POST /x/mentions/refresh — a billed X pull, rationed
+  // 6/day. That route is gone (2026-08-12): nothing the extension does can
+  // spend on a read anymore. The chip now just forces past the background's
+  // 5-min mentions cache so the stored inbox re-reads immediately. $0, no cap.
   try {
-    res = (await chrome.runtime.sendMessage(request)) as ApiResponse | undefined;
+    await fetchNotifContext(true);
   } catch (err) {
-    warnErr('[stratus] mentions refresh failed', err);
-  }
-
-  if (!res?.ok) {
-    // The server's 6/day cap is the real limit and stays the only one — no
-    // client-side bypass, and no retry loop that would spend on its own.
-    const limited = res?.status === 429 || res?.code === 'refresh_limit';
+    warnErr('[stratus] notif context refresh failed', err);
     btn.dataset.state = 'failed';
-    btn.textContent = limited ? 'limit reached' : 'sync failed';
+    btn.textContent = 'sync failed';
     resetSyncChip(btn);
     return;
   }
 
-  // The pull is already paid for: force past the background's 5-min mentions
-  // cache (it drains any in-flight pull first) so the rows it just fetched show
-  // up now rather than up to five minutes from now.
-  await fetchNotifContext(true);
   btn.dataset.state = 'done';
   btn.textContent = 'synced';
   resetSyncChip(btn);

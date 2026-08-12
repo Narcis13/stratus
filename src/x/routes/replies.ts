@@ -1325,9 +1325,9 @@ replies.get('/replies', async (c) => {
 
 // First-party calibration data (OVERHAUL-PLAN §6.2): every posted draft joined
 // to its published row and latest metrics snapshot via postedTweetId. All $0 —
-// pure SQL over already-billed dailyMetrics reads. `signals` is the band
-// verdict stamped at capture time; `outcome` stays null until the 03:00 UTC
-// pass has snapshotted the reply (or while postedTweetId is unlinked).
+// pure SQL over snapshots the deleted daily pass already paid for. `signals` is
+// the band verdict stamped at capture time; `outcome` is null for every reply
+// posted after 2026-08-12, since nothing snapshots them anymore.
 // Registered before `/replies/:id` so "outcomes" isn't parsed as an id.
 
 interface OutcomeDraftRow {

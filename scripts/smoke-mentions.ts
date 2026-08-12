@@ -1,12 +1,12 @@
 // One-shot smoke test for §7.5 (mention inbox). Mounts the mentions router
-// in-process (no port, no workers) against the real DB. The default path is
-// $0 — seeds a fake mention + fake parent post, checks the list join, PATCH
-// transitions, and the answered backfill, then cleans up after itself.
+// in-process (no port, no workers) against the real DB. Seeds a fake mention +
+// fake parent post, checks the list join, PATCH transitions, and the answered
+// backfill, then cleans up after itself.
 //
-// `--live` additionally runs one real POST /x/mentions/refresh capped at
-// maxResults=10 (≤ $0.01, owned reads) AFTER cleanup — fake ids sit above
-// every real snowflake and would poison the since_id checkpoint otherwise.
-// Run: bun run scripts/smoke-mentions.ts [--live]
+// Fully $0 and there is no --live variant anymore: the mention pull was deleted
+// 2026-08-12 with the rest of the billed X reads (CLAUDE.md invariant #8), so
+// every route this exercises is SQL over local rows.
+// Run: bun run scripts/smoke-mentions.ts
 
 import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
@@ -15,24 +15,15 @@ import { mentions, postsPublished } from '../src/x/db/schema.ts';
 import { backfillAnswered } from '../src/x/mentions.ts';
 import { createMentionsRouter } from '../src/x/routes/mentions.ts';
 
-const LIVE = process.argv.includes('--live');
-
-// Inside bigint range (pullMentions casts tweet_id::bigint) but far above any
-// real 2026 snowflake (~1.9e18), so they can't collide with real tweets.
+// Inside bigint range but far above any real 2026 snowflake (~1.9e18), so they
+// can't collide with real tweets.
 const FAKE_MENTION = '9000000000000000001';
 const FAKE_MENTION_2 = '9000000000000000002';
 const FAKE_PARENT = '9000000000000000003';
 const FAKE_MY_REPLY = '9000000000000000004';
 
 const app = new Hono();
-app.route(
-  '/x',
-  createMentionsRouter({
-    selfXUserId: process.env.SELF_X_USER_ID ?? '0',
-    clientId: process.env.X_CLIENT_ID ?? '',
-    clientSecret: process.env.X_CLIENT_SECRET ?? '',
-  }),
-);
+app.route('/x', createMentionsRouter());
 
 function fail(msg: string): never {
   console.error(`FAIL: ${msg}`);
@@ -49,7 +40,7 @@ async function cleanup(): Promise<void> {
 await cleanup(); // a previous crashed run must not poison this one
 
 // Seed: my (fake) post, a mention replying to it, and a second mention that my
-// (fake) published reply targets — retired so dailyMetrics never bills a read.
+// (fake) published reply targets.
 await db.insert(postsPublished).values([
   {
     tweetId: FAKE_PARENT,
@@ -140,19 +131,6 @@ if (bad.status !== 400) fail(`bad id returned ${bad.status}`);
 
 await cleanup();
 console.log('cleanup: fake rows removed');
-
-if (LIVE) {
-  // One real pull, capped at 10 results (≤ $0.01). Whatever it inserts is real
-  // inbox data — exactly what the feature exists to hold, so it stays.
-  const r = await app.request('/x/mentions/refresh', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ maxResults: 10 }),
-  });
-  if (r.status !== 200) fail(`live refresh returned ${r.status}: ${await r.text()}`);
-  const result = await r.json();
-  console.log(`live refresh: ${JSON.stringify(result)}`);
-}
 
 console.log('SMOKE OK');
 process.exit(0);

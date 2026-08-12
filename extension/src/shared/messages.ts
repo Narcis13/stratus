@@ -297,10 +297,11 @@ export function isSettingsSync(msg: unknown): msg is SettingsSync {
 // scrolling a long notifications page never fans out requests, and the
 // background stays the only Authorization owner.
 //
-// `force: true` rides on the click of the injected sync-replies chip, which
-// has just spent a capped `POST /x/mentions/refresh` — it drops the mentions
-// cache so the freshly pulled rows show up immediately instead of up to 5 min
-// later. Nothing else should send it: a page visit is not consent to spend.
+// `force: true` rides on the click of the injected reload-inbox chip: it drops
+// the mentions cache so a status change made elsewhere shows up immediately
+// instead of up to 5 min later. Since 2026-08-12 this spends nothing at all —
+// the billed pull behind that chip is gone — but it stays click-driven, because
+// a page visit is not a reason to re-query the server on every scroll.
 
 export interface NotifContextEntry {
   /** My published post the mention replies to — null when it isn't one of mine. */

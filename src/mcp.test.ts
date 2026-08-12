@@ -266,7 +266,7 @@ describe.if(authed)('MCP settings tools', () => {
       // Past the registry ceiling: the route's 400 is surfaced as an error result.
       const bad = await rpc('tools/call', {
         name: 'x_update_setting',
-        arguments: { key: 'x.workers.winnerRereadCap', value: 500 },
+        arguments: { key: 'x.workers.publisherIntervalSec', value: 5000 },
       });
       const badPayload = toolPayload(bad.env);
       expect(badPayload.isError).toBe(true);

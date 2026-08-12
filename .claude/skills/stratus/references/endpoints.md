@@ -13,7 +13,6 @@ Full request/response shapes for the core routes. All paths are relative to `$ST
 - [Threads](#threads)
 - [Post drafter (Grok)](#post-drafter-grok)
 - [Content pillars](#content-pillars-86)
-- [Published posts (reconcile)](#published-posts-reconcile)
 - [Metrics (own tweets)](#metrics-own-tweets)
 - [Metrics — aggregates & insight](#metrics--aggregates--insight)
 - [Voice — scrape & enrich (ingest)](#voice--scrape--enrich-ingest)
@@ -48,12 +47,11 @@ No auth. `200` if the DB round-trips AND every registered worker heartbeat is fr
   "gitSha": "45aa395",
   "workers": [
     { "name": "x.publisher",    "lastBeatAt": "...", "staleAfterMs": 300000,   "stale": false },
-    { "name": "x.dailyMetrics", "lastBeatAt": "...", "staleAfterMs": 90000000, "stale": false }
   ]
 }
 ```
 
-`gitSha` is stamped by `scripts/deploy.sh` — use it to confirm which build is live. On failure adds `"error"` (a generic `db_unreachable` — raw DB errors are not echoed) and/or `"staleWorkers": ["x.publisher"]`. Publisher is stale after >5 min without a tick, dailyMetrics after >25 h without a run. `workers` is empty when hit without `startXWorkers` (tests).
+`gitSha` is stamped by `scripts/deploy.sh` — use it to confirm which build is live. On failure adds `"error"` (a generic `db_unreachable` — raw DB errors are not echoed) and/or `"staleWorkers": ["x.publisher"]`. The publisher is the only worker (stale after >3× its interval, floor 5 min); `x.dailyMetrics` was deleted 2026-08-12. `workers` is empty when hit without `startXWorkers` (tests).
 
 ---
 
@@ -134,7 +132,7 @@ Key operator facts:
 
 DB-backed CRUD over `scheduled_posts`. The publisher worker drains `status='pending'` rows whose `scheduledFor <= now()` every 60 s. Rows carry `threadId`/`threadPosition` (threads), `pillar` (content pillar, from the drafter), and `quoteTweetId` (self-quote re-ups).
 
-Status lifecycle: `draft → pending → publishing → posted` (worker) | `publishing → failed` (worker, definite X 4xx) | `* → cancelled` (user PATCH) | `* → DELETE` (user, except `posted`/`publishing`). `segment` marks thread tail rows (see [Threads](#threads)). A row stuck in `publishing` means the X outcome is unknown (5xx/network mid-call) — it is never auto-retried; the publisher logs it every tick and the daily reconcile picks the tweet up if it actually shipped.
+Status lifecycle: `draft → pending → publishing → posted` (worker) | `publishing → failed` (worker, definite X 4xx) | `* → cancelled` (user PATCH) | `* → DELETE` (user, except `posted`/`publishing`). `segment` marks thread tail rows (see [Threads](#threads)). A row stuck in `publishing` means the X outcome is unknown (5xx/network mid-call) — it is never auto-retried; the publisher logs it every tick, and since the reconcile pass was deleted (2026-08-12) **resolving it means checking X by hand** and editing the row.
 
 URL guard: rows that are (or would become) `pending` with a URL in `text` are rejected with `400 {"error":"url_in_text","hint":...}` — a URL post bills at $0.20 instead of $0.015, so `createPost` would refuse it at the scheduled minute anyway (a silently lost slot). Drafts may hold URLs; the check re-runs when promoting to `pending`.
 
@@ -271,18 +269,9 @@ Replies can optionally honor pillars: `/x/replies/generate` + `/generate-batch` 
 
 ---
 
-## Published posts (reconcile)
+## Published posts — no reconcile route
 
-### POST /x/posts/reconcile
-
-One-shot run of the **daily `dailyMetrics` pass** (the in-process timer fires at 03:00 UTC unless `DAILY_METRICS_ENABLED=false`): account snapshot, own-timeline discovery, once-only metrics snapshots, winner re-reads, mentions pull. Picks up tweets posted from the X app and inserts them into `posts_published`.
-
-Body (all optional):
-
-- `fullScan` (bool, default false) — ignore the `since_id` checkpoint and rescan from the top.
-- `maxResults` (number, default 500, hard cap 3200) — max tweets to discover this pass.
-
-Response: `{ scanned, discovered, snapshotted, retired, failed, accountSnapshotted, mentionsScanned, mentionsNew, mentionsAnswered, rereadWinners }`. Cost ≈ `$0.001 × (scanned + snapshotted + mentionsScanned)` (owned reads).
+`POST /x/posts/reconcile` and `POST /x/posts/backfill` were **deleted 2026-08-12** along with the `dailyMetrics` pass they ran. Nothing re-reads own tweets anymore: `createPost` (publisher) is the only billed X call in the service. Tweets typed by hand in the X app no longer enter `posts_published` at all — post performance comes from the extension's $0 DOM harvest (`POST /x/harvest/rows`).
 
 ---
 
@@ -512,15 +501,11 @@ Batched insert. Body: `{ "runId": "<uuid>", "rows": [ ... ] }`, max 500 rows per
 
 ## Mentions inbox
 
-Mentions of me (§7.5) — owned reads at $0.001/result. Pulled by the daily 03:00 UTC pass and on demand. Replying stays **manual paste**: draft via `/x/replies/generate` (send `override: true` — mention metrics are zeros — and `context.parent` with my post's text), copy, post on X, then PATCH the mention.
+Mentions of me (§7.5) — **frozen history**. The pull that filled this table (daily pass + `POST /x/mentions/refresh`) was deleted 2026-08-12; these routes read and edit the rows that already exist. Replying stays **manual paste**: draft via `/x/replies/generate` (send `override: true` — mention metrics are zeros — and `context.parent` with my post's text), copy, post on X, then PATCH the mention.
 
 ### GET /x/mentions
 
 Query (optional): `status` (`unanswered|answered|dismissed`), `limit` (default 50, max 200). Rows newest-first, each with `parentText` left-joined from `posts_published` (my post the mention replies to — the thread context). Returns `{ counts: { unanswered }, mentions: [rows] }`.
-
-### POST /x/mentions/refresh
-
-Body (optional): `{ "maxResults": <int ≤200> }`. Incremental pull checkpointed on the max stored mention id — the inserted rows ARE the checkpoint, so an empty pull bills ~$0. Server-side cap **6 refreshes/day** → `429 { error: "refresh_limit", maxPerDay: 6 }`. Returns the pull result plus `refreshesRemaining`.
 
 ### PATCH /x/mentions/:tweetId
 
@@ -765,10 +750,7 @@ Upstream X / Grok: `502 { error, status, type?, code?, message?, requestId? }`.
 |------------------------------------|--------------------------------------------|-------------------------|
 | `POST /x/posts/scheduled` / threads| $0 (DB only)                               | calendar                |
 | Publisher tick → `createPost`      | $0.015 / post ($0.015 per thread segment)  | per published row       |
-| `POST /x/posts/reconcile`          | $0.001 × (scanned + snapshotted + mentions)| dailyMetrics pass       |
-| Daily metrics snapshot             | **$0.001/tweet, once only** (+ at most one $0.001 day-7 winner re-read, cap 5/day) | dailyMetrics worker |
-| Account snapshot (daily getMe)     | $0.001/day                                 | dailyMetrics worker     |
-| Mentions pull / refresh            | $0.001/result (~$0.01–0.03/day)            | dailyMetrics + refresh  |
+| ~~Reconcile / snapshots / account KPI / mentions pull~~ | **deleted 2026-08-12** — routes are 404 | every billed X *read* is gone |
 | `POST /x/posts/draft` / `reup`     | ~$0.006–0.01 (3 drafts)                    | Grok Responses          |
 | `POST /x/voice/scrape`             | $0 (DOM only, no X API)                    | swipe-file ingest       |
 | `PUT  /x/voice/authors/:handle`    | $0 (DOM only, no X API)                    | author enrich           |

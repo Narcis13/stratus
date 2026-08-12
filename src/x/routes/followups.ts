@@ -83,9 +83,10 @@ followups.get('/people/followups', async (c) => {
   const momentumWeeklyPct = getSetting<number>('x.followups.momentumWeeklyPct');
   const reupMinAgeDays = getSetting<number>('x.followups.reupMinAgeDays');
   const reupMaxAgeDays = getSetting<number>('x.followups.reupMaxAgeDays');
-  // Same bar the dailyMetrics winner re-read uses (§8.4) — a post only counts
-  // as a re-up candidate if a snapshot measured it clearing this view count.
-  const reupMinViews = getSetting<number>('x.workers.winnerRereadMinViews');
+  // A post only counts as a re-up candidate if a snapshot measured it clearing
+  // this view count. Reads the snapshots that exist — the pass that used to add
+  // new ones is gone, so this floor now only ever looks backwards.
+  const reupMinViews = getSetting<number>('x.followups.reupMinViews');
 
   const [acct] = await db
     .select({ followersCount: accountSnapshots.followersCount })
@@ -135,8 +136,10 @@ followups.get('/people/followups', async (c) => {
   }));
   const peopleByHandle = new Map(followupPeople.map((p) => [p.handle, p]));
 
-  // Target roster = the same 2–10x band as GET /voice/targets. Empty until the
-  // first daily pass writes an account snapshot (no "my size" to band against).
+  // Target roster = the same 2–10x band as GET /voice/targets. Needs an
+  // account_snapshots row for "my size" to band against — that table stopped
+  // growing when the daily pass was deleted, so this bands against the LAST
+  // follower count ever recorded, and reads empty on a DB that never had one.
   const authors = await db
     .select({
       handle: voiceAuthors.handle,
@@ -267,9 +270,10 @@ followups.get('/people/followups', async (c) => {
 // Own non-reply posts 14–60d old whose peak measured views cleared the winner
 // bar, minus any tweet a scheduled_posts row already quotes (draft, pending, or
 // posted — we don't nag about a re-up that's already queued). Views come from
-// the max snapshot impression_count, same read as the dailyMetrics winner
-// re-read. Retired rows are kept: retire-before-snapshot (invariant #7) means
-// nearly every measured tweet is retired, so filtering on it would find nothing.
+// the max snapshot impression_count over whatever snapshots exist; no new ones
+// arrive since the daily pass was deleted, so this window only ever looks back.
+// Retired rows are kept: retire-before-snapshot (invariant #7) means nearly
+// every measured tweet is retired, so filtering on it would find nothing.
 async function loadReupCandidates(
   now: Date,
   minAgeDays: number,

@@ -442,12 +442,11 @@ describe('followups routes', () => {
     }
   });
 
-  // The re-up view bar is the SAME knob the dailyMetrics winner re-read uses
-  // (x.workers.winnerRereadMinViews), read per request — not a boot-time env
-  // capture. The 250k main fixture can't be excluded (fixture views exceed the
-  // knob's 100k ceiling), so isolate a low-view winner via the age-window knobs
-  // and flip it out with the views knob alone.
-  test('x.workers.winnerRereadMinViews gates re-up candidates per read', async () => {
+  // The re-up view bar (x.followups.reupMinViews) is read per request, not
+  // captured at boot. The 250k main fixture can't be excluded (fixture views
+  // exceed the knob's 100k ceiling), so isolate a low-view winner via the
+  // age-window knobs and flip it out with the views knob alone.
+  test('x.followups.reupMinViews gates re-up candidates per read', async () => {
     const LOW_ID = '95000000000000031';
     await db
       .insert(postsPublished)
@@ -476,7 +475,7 @@ describe('followups routes', () => {
       expect(lowItem(body)).toBeDefined();
 
       // Raise the bar past its views: same window, same request, no candidate.
-      setSettings({ 'x.workers.winnerRereadMinViews': 5000 });
+      setSettings({ 'x.followups.reupMinViews': 5000 });
       ({ body } = await getJson<FollowupsBody>('/x/people/followups'));
       expect(lowItem(body)).toBeUndefined();
     } finally {
@@ -484,7 +483,7 @@ describe('followups routes', () => {
         keys: [
           'x.followups.reupMinAgeDays',
           'x.followups.reupMaxAgeDays',
-          'x.workers.winnerRereadMinViews',
+          'x.followups.reupMinViews',
         ],
       });
       await db.delete(metricsSnapshots).where(eq(metricsSnapshots.tweetId, LOW_ID));

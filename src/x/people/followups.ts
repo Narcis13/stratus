@@ -2,8 +2,9 @@
 // (routes/followups.ts) loads the rows and passes `now`, this module decides
 // who you owe, who to nurture, and who's heating up. Momentum is computed at
 // read time from the snapshot series (deliberate deviation from the plan's
-// "nightly inside dailyMetrics" phrasing: same $0 and the same queue line, but
-// no stored flags to go stale — the C2 "no conversation table" discipline).
+// "nightly inside a worker" phrasing: same $0 and the same queue line, but no
+// stored flags to go stale — the C2 "no conversation table" discipline). That
+// choice aged well: the nightly worker is gone and this still computes.
 //
 // The windows (24h chain, 7d dm-ready/neglected-target, 14d neglected-ally,
 // 5%/week inflection, 30d band-entry horizon) are opening guesses — revisit

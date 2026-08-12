@@ -341,8 +341,9 @@ async function postOne(
         // and every scheduled post is text-only. Derived (not hardcoded) so it
         // stays correct if media upload ever lands. Feeds the has_media baseline.
         hasMedia: (body.media?.media_ids?.length ?? 0) > 0,
-        // Informational only — the daily 03:00 UTC pass snapshots every
-        // non-retired row regardless of age. See workers/dailyMetrics.ts.
+        // Vestigial: the daily pass that consumed next_poll_at was deleted
+        // 2026-08-12 and nothing reads this column now. Kept so the row shape
+        // stays stable for the historical rows around it.
         nextPollAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
       })
       .onConflictDoNothing()

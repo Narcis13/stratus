@@ -233,8 +233,9 @@ export const postTemplates = sqliteTable('post_templates', {
     .notNull(),
 });
 
-// One row per UTC day from the dailyMetrics pass — the follower-growth KPI
-// series. Counts come free on the same $0.001 getMe() owned read.
+// One row per UTC day — the follower-growth KPI series. NO LONGER WRITTEN: the
+// daily pass that called getMe() was deleted 2026-08-12 (CLAUDE.md invariant
+// #8), so this table is frozen history that /x/metrics/account still reads.
 export const accountSnapshots = sqliteTable('account_snapshots', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   snapshotAt: integer('snapshot_at', { mode: 'timestamp_ms' })

@@ -1183,14 +1183,6 @@ export interface MentionsResponse {
   mentions: Mention[];
 }
 
-export interface MentionsRefreshResult {
-  scanned: number;
-  inserted: number;
-  selfSkipped: number;
-  answered: number;
-  refreshesRemaining: number;
-}
-
 export interface MentionPatchBody {
   status?: MentionStatus;
   draftId?: string | null;

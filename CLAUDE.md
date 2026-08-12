@@ -7,7 +7,7 @@
 A single-user service (one human, one bearer token) that does four things on top of a thin typed wrapper over X API v2:
 
 1. **Schedule posts a week ahead** (calendar + 60 s publisher worker).
-2. **Track metrics over time** on every published post (daily 03:00 UTC once-only snapshot pass).
+2. **Track metrics over time** on published posts — **from the extension's $0 DOM harvest only**. The paid 03:00 UTC snapshot pass was deleted 2026-08-12 (see invariant #8); `metrics_snapshots` / `account_snapshots` are frozen history that the read routes still serve.
 3. **Voice library** — stash other people's tweets via $0 DOM scrape for style analysis.
 4. **Circles — the people layer**: CRM stages, conversations/open loops, relationship-aware drafting, the Playbook, warmth.
 
@@ -86,7 +86,10 @@ X bills every result in the response body, not what your JS iterates. Clamp the 
 ### 7. A billed read must be unrepeatable — retire before you snapshot
 `xFetch.onCost` bills the moment a response returns, even if the DB write after it fails. Take rows out of the candidate set (retire/claim in a committed txn) *before* the billed call. Getting this backwards once cost **$3.71 reading one tweet 3,712 times**. Trade-off is at-most-once, never double-billed.
 
-Related standing rules: **refuse before spend** (validation/404/422/gates fire before any paid call); **a side-hook failure never fails the paying path** (`safeLog…`/`persist…` are best-effort); **nothing DOM-scraped ever writes the `mentions` table** (its max tweet_id IS the since_id checkpoint).
+### 8. The only billed X call is `createPost`
+Publishing a scheduled post is the entire X-API budget. On 2026-08-12 every read was deleted — the 03:00 UTC daily pass (account KPI, own-timeline discovery, once-only snapshots, day-7 winner re-reads, mention pull), `POST /posts/reconcile`, `POST /posts/backfill`, `POST /mentions/refresh`, and the `getTweet`/`searchRecent`/`getUserTweets`/`getUserMentions`/`getTweetsByIds` endpoint functions behind them. Two reasons, both measured: the pass billed ~$0.10/day to re-read our own timeline, and the $0 DOM harvest reads the same posts **more accurately** (the once-only snapshot fires ~7h after posting and undercuts a reply's final views by ~50%, and carries none of `orig_views`/`orig_comments`/`orig_time`). `src/app.test.ts::no billed read routes exist` asserts the routes stay 404. Adding a read back means re-deciding this, out loud, not slipping one into a worker. (`getMe` survives in `endpoints.ts` for `scripts/restore-tokens.ts` only — token recovery, by hand, unreachable from the server.)
+
+Related standing rules: **refuse before spend** (validation/404/422/gates fire before any paid call); **a side-hook failure never fails the paying path** (`safeLog…`/`persist…` are best-effort); **nothing DOM-scraped ever writes the `mentions` table** (a rule that now costs nothing to keep — the pull that owned its checkpoint is gone, and one API-provenanced table is worth keeping clean).
 
 ## Cost cheat sheet (Apr 2026 prices, USD)
 
@@ -99,7 +102,7 @@ Related standing rules: **refuse before spend** (validation/404/422/gates fire b
 | **Post create (URL in text)** | **$0.20** | ⚠️ guard in createPost |
 | Like / Repost / Bookmark write | $0.015 | Delete $0.010 |
 
-Steady state: ~$0.001/day account KPI + $0.001/tweet once-only snapshots + ~$0.01–0.03/day mentions + ≤$0.005/day winner re-reads. LLM drafting is per-click (~$0.002–0.01/call), image generation ~$0.02/image behind a hard daily budget. `/cost/today` + `/cost/daily` are the dashboards; budget watchdogs via `X_DAILY_BUDGET_USD` etc.
+Steady state since 2026-08-12: **$0.015 × posts published, and nothing else** — every read line above is now unreachable from the running service (invariant #8), so the whole read column is historical context for pricing old `cost_events` rows. LLM drafting is per-click (~$0.002–0.01/call), image generation ~$0.02/image behind a hard daily budget. `/cost/today` + `/cost/daily` are the dashboards; budget watchdogs via `X_DAILY_BUDGET_USD` etc.
 
 ## Common commands
 

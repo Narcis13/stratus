@@ -12,10 +12,10 @@
 // pull and get a second event under that type — rare, and both are inbound,
 // so the stage math barely moves.)
 //
-// Deliberately NOT touched: the `mentions` table. pullMentions checkpoints on
-// the max stored tweet_id, so inserting a DOM-scraped id here would advance
-// the since_id cursor past mentions the API hasn't returned yet — silently
-// losing inbox entries to save one $0.001 read. People + events only.
+// Deliberately NOT touched: the `mentions` table. The pull that checkpointed on
+// its max stored tweet_id is gone (2026-08-12), but the rule stands on its own —
+// this route's rows are DOM-scraped, and the codebase has exactly one table
+// whose contents are API-provenanced. People + events only.
 
 import { Hono } from 'hono';
 import {

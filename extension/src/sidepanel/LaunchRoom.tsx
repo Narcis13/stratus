@@ -3,9 +3,9 @@
 // the live post, an elapsed clock, the presence checklist, and the early
 // repliers the content script streams in from the open tweet. Each replier
 // gets the one-click Grok draft (same voice pipeline as the mention inbox;
-// posting stays manual paste in X). The optional assist is ONE
-// POST /x/mentions/refresh (~$0.001–0.005, existing 6/day server cap) to
-// catch repliers the user didn't scroll past — best ~20 minutes in.
+// posting stays manual paste in X). There is no longer a paid assist for
+// catching repliers you didn't scroll past: POST /x/mentions/refresh was
+// deleted 2026-08-12, so the open tweet is the only source of repliers.
 //
 // Reader only: the background owns the launch:* session keys; dismiss routes
 // through it (single-writer discipline, same as the radar buffer).
@@ -73,8 +73,6 @@ export function LaunchRoomSection({
 }): JSX.Element | null {
   const { active, replies } = useLaunchState();
   const [now, setNow] = useState(() => Date.now());
-  const [refreshBusy, setRefreshBusy] = useState(false);
-  const [refreshNote, setRefreshNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Panel load re-syncs the alarm schedule ("on panel load and every 15 min").
@@ -97,21 +95,6 @@ export function LaunchRoomSection({
   const dismiss = (): void => {
     const msg: LaunchDismiss = { type: 'stratus/launch-dismiss' };
     chrome.runtime.sendMessage(msg).catch(() => {});
-  };
-
-  // The optional billed assist — one refresh per room is the doctrine.
-  const pullFromX = async (): Promise<void> => {
-    setRefreshBusy(true);
-    setError(null);
-    try {
-      const res = await api.mentions.refresh(settings);
-      setRefreshNote(
-        `${res.inserted} new mention${res.inserted === 1 ? '' : 's'} — see Conversations below`,
-      );
-    } catch (e) {
-      setError(e instanceof ApiError ? `Refresh failed: ${e.message}` : 'Refresh failed');
-      setRefreshBusy(false);
-    }
   };
 
   const elapsedMs = now - Date.parse(active.firedAt);
@@ -150,18 +133,6 @@ export function LaunchRoomSection({
 
       <div className="launch-repliers-head">
         <h4>Early repliers {replies.length > 0 ? `(${replies.length})` : ''}</h4>
-        {refreshNote ? (
-          <span className="launch-refresh-note">{refreshNote}</span>
-        ) : (
-          <button
-            type="button"
-            disabled={refreshBusy}
-            title="One mention pull (~$0.001–0.005, 6/day cap) — catches repliers you didn't scroll past. Best ~20 min in."
-            onClick={() => void pullFromX()}
-          >
-            {refreshBusy ? 'Pulling…' : `Pull from X${minutesIn < 20 ? ' (best at 20m)' : ''}`}
-          </button>
-        )}
       </div>
 
       {replies.length === 0 ? (

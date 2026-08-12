@@ -165,7 +165,8 @@ export function buildAccountSeries(
 
 // The mission KPI: daily follower counts with deltas, each day joined against
 // how many posts/replies went out in that snapshot window so a spike is
-// attributable. One row per UTC day, written by the dailyMetrics 03:00 pass.
+// attributable. One row per UTC day — FROZEN: the 03:00 pass that wrote them was
+// deleted 2026-08-12, so this series ends on its last snapshot date.
 metrics.get('/metrics/account', async (c) => {
   const snaps = await db
     .select({

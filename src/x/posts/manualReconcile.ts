@@ -4,13 +4,17 @@
 // status but deliberately writes NO tweet id (decision 6 — the max stored
 // tweet_id IS discovery's since_id checkpoint; injecting a DOM-known id would
 // park the checkpoint above tweets posted earlier the same day and hide them,
-// the same trap the `mentions` since_id has). The daily discovery pull inserts
-// the pasted tweet as a normal posts_published row; THIS matcher then links the
+// the same trap the `mentions` since_id has). The daily discovery pull inserted
+// the pasted tweet as a normal posts_published row; THIS matcher then linked the
 // two by text + time — the same discipline the harvest replies-reconcile uses
 // (routes/harvest.ts::matchUnlinkedDraft).
 //
-// Pure logic only; the impure DB wrapper `reconcileManualPosts` lives in
-// workers/dailyMetrics.ts. Timing is Date-based, mirroring matchUnlinkedDraft.
+// ⚠️ CURRENTLY UNWIRED (2026-08-12). Its only caller was `reconcileManualPosts`
+// inside the deleted daily pass, and the pass is also what put hand-pasted
+// tweets into posts_published in the first place — so there is nothing left to
+// match. Kept pure and tested because re-homing it onto a $0 harvest-fed
+// discovery path is the obvious way to get calendar linking back; delete it if
+// that never happens. Timing is Date-based, mirroring matchUnlinkedDraft.
 
 /** A scheduled row awaiting reconcile — `manual`/`posted` with no tweet linked
  *  yet. `scheduledFor` is guaranteed non-null by the wrapper's select. */

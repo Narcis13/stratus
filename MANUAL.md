@@ -27,7 +27,7 @@
 stratus is a personal X operations console for one operator. It does four things, all on top of one place that touches the X API (`xFetch`):
 
 1. **Schedule posts a week ahead** — a calendar plus a 60-second publisher worker that ships tweets, threads, and self-quote re-ups.
-2. **Track metrics over time** on every tweet you publish (via the scheduler or by hand from the X app) — a single daily reconcile pass at 03:00 UTC that discovers and snapshots.
+2. **Track metrics over time** on published posts — from the extension's $0 DOM harvest. The paid 03:00 UTC discover+snapshot pass was deleted 2026-08-12; the stored snapshot tables are frozen history the read routes still serve.
 3. **Stash other people's tweets** ("voice library" / swipe file) for style/structure analysis — captured by DOM scrape in the extension, so it costs **$0** of X API spend.
 4. **Know the people behind the handles** — the **Circles** CRM layer: relationships, conversations, open loops, follow-ups, and a closed learning loop, built entirely from data the first three goals already collect.
 
@@ -44,7 +44,7 @@ stratus is a personal X operations console for one operator. It does four things
 │                              │  bearer │                                        │
 │  • on-page capture ($0)      │         │  • xFetch — the ONE place X is called  │
 │  • side-panel control UI     │         │  • Grok (xAI) drafting                 │
-│  • background = token owner   │         │  • publisher + dailyMetrics workers    │
+│  • background = token owner   │         │  • publisher worker (the only one)     │
 └─────────────────────────────┘         │  • SQLite (bun:sqlite + Drizzle)       │
                                           └──────────────────────────────────────┘
                                                         │
@@ -83,7 +83,7 @@ src/
     routes/             calendar, posts, drafter, metrics, voice, voiceExtract, replies, radar,
                         mentions, brief, harvest, channels, pillars, people, followups,
                         conversations, playbook, digest, ideas, launch
-    workers/            publisher.ts (60s), dailyMetrics.ts (03:00 UTC)
+    workers/            publisher.ts (60s) — the only worker
     index.ts            mountX(app) + startXWorkers() — the authoritative wiring list
 extension/              Chrome MV3 side panel (own package.json, Vite + React)
 ```
@@ -241,19 +241,15 @@ Create posts and threads in the **Composer**, browse them in the **Calendar**. S
 - **Threads:** `POST /x/posts/threads` — a head (position 1, schedulable) + N−1 `segment` tails sharing a `threadId`. The publisher posts the chain as self-replies ~500 ms apart. The URL guard applies to segment 1 only; a link in a tail is the **link-in-first-reply** pattern ($0.030 total instead of $0.20).
 - **Self-quote re-up:** `POST /x/posts/reup {tweetId}` verifies the tweet is own (in `posts_published`), then drafts quote takes via the drafter pipeline; the publisher re-verifies ownership at post time.
 
-The **publisher** worker ticks every 60 s: claims the oldest due `pending` row (flips to `publishing`, **commits before the X call**), posts, and finalizes to `posted`/`failed`. A 5xx/network error leaves the row `publishing` (ambiguous — never auto-retried; reconcile finds it if it shipped) and the publisher shouts about stuck rows each tick.
+The **publisher** worker ticks every 60 s: claims the oldest due `pending` row (flips to `publishing`, **commits before the X call**), posts, and finalizes to `posted`/`failed`. A 5xx/network error leaves the row `publishing` (ambiguous — never auto-retried) and the publisher shouts about stuck rows each tick. **Nothing resolves that ambiguity automatically anymore**: the reconcile pass that used to find the tweet if it shipped is gone, so check X by hand and edit the row.
 
 ### 6.2 Tracking metrics (Goal 2)
 
-The **dailyMetrics** worker runs once at **03:00 UTC** (and once on boot):
+**The `dailyMetrics` worker was deleted on 2026-08-12** (invariant #8): account KPI, own-timeline discovery, once-only snapshots, day-7 winner re-reads and the mention pull are all gone, together with `POST /x/posts/reconcile`, `POST /x/posts/backfill` and `POST /x/mentions/refresh`. `createPost` in the publisher is the only billed X call left.
 
-1. `getMe()` → one `account_snapshots` row/UTC day (follower KPI).
-2. **Discover** — incremental `getUserTweets` with `since_id`, inserting new `posts_published` rows so tweets made in the X app are tracked.
-3. **Snapshot** — reads **every non-retired tweet regardless of age** by batched id lookup (≤100/call), **retiring each batch before writing its snapshots** (invariant #7: a billed read must be unrepeatable). Whatever the metrics are at the pass is the single number kept.
-4. **Winner re-read** — tweets whose only snapshot cleared `WINNER_REREAD_MIN_VIEWS` (default 500) get exactly one day-7+ re-read (cap 5/day, claim-before-read).
-5. **Mention pull** (see 6.4).
+It cost ~$0.10/day to re-read our own timeline for numbers the $0 DOM harvest measures **better** — the once-only snapshot fired ~7 h after posting and undercounted a reply's final views by ~50%, and carried none of the parent-tweet variables the Cannon model scores on.
 
-View the results in **Today** (yesterday's numbers, profile-click leaders) and via `GET /x/metrics/*` — best-times heatmap, pillar effectiveness, account KPI series, per-tweet time-series. Manual trigger: `POST /x/posts/reconcile`.
+What that costs you: tweets typed by hand in the X app never enter `posts_published`; `account_snapshots` (follower KPI) and `metrics_snapshots` stop growing; the mention inbox no longer refills. `GET /x/metrics/*` and the **Today** tab keep serving what was already measured — best-times heatmap, pillar effectiveness, account KPI series, per-tweet time-series — they just stop gaining new points. New post performance comes from harvest runs in the extension.
 
 ### 6.3 Voice library / swipe file (Goal 3)
 
@@ -321,7 +317,6 @@ All routes are bearer-guarded except `GET /healthz`. Base is the server origin; 
 | DELETE | `/x/posts/scheduled/:id` | delete (thread deletes via head). |
 | POST | `/x/posts/draft` | `[Grok]` 3 register-distinct original drafts (pillar/idea/remix). |
 | POST | `/x/posts/reup` | `[Grok]` self-quote re-up drafts (verifies own tweet). |
-| POST | `/x/posts/reconcile` | trigger the daily discover+snapshot pass (maxResults ≤3200). |
 
 ### Metrics
 | Method | Path | Purpose |
@@ -361,7 +356,6 @@ All routes are bearer-guarded except `GET /healthz`. Base is the server origin; 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/x/mentions` | inbox (status filter) + parent-post context. |
-| POST | `/x/mentions/refresh` | on-demand pull (server cap 6/day). |
 | PATCH | `/x/mentions/:tweetId` | status / link draft. |
 | GET | `/x/conversations` | ranked Slack-style threads + counts. |
 | PATCH | `/x/conversations/:conversationId` | read / snooze / mute. |
@@ -460,9 +454,8 @@ All X calls go through `xFetch`, which fires `onCost` on every 2xx. `makeOnCost(
 ## 10. Workers & scheduling
 
 - **publisher** (`src/x/workers/publisher.ts`) — `setInterval` every 60 s, single-flight. Claims the oldest due `pending` row and **commits `publishing` before the X call**; success → `posted` (+ `posts_published`), definite 4xx → `failed`, 5xx/network → stays `publishing` (ambiguous, never auto-retried). Threads post as self-replies ~500 ms apart (a failed segment freezes the rest as `thread_frozen`). Heartbeat stale > 5 min.
-- **dailyMetrics** (`src/x/workers/dailyMetrics.ts`) — self-re-arming `setTimeout` to the next 03:00 UTC (runs once on boot). Account snapshot → discover → snapshot (retire-before-snapshot) → winner re-read → mention pull. Heartbeat stale > 25 h. Disable with `DAILY_METRICS_ENABLED=false` (manual `POST /x/posts/reconcile` still works).
 
-Both register heartbeats consumed by `/healthz` (503 when stale) and drain their in-flight tick on graceful shutdown.
+There is no second worker: `dailyMetrics` was deleted 2026-08-12 (see 6.2). The publisher registers a heartbeat consumed by `/healthz` (503 when stale) and drains its in-flight tick on graceful shutdown.
 
 ---
 
@@ -476,7 +469,8 @@ These have already cost real money or locked the account out. Memorize before ch
 4. **One place to call X.** Every X call goes through `xFetch` — not in workers, routes, or scripts. That's where retries, error parsing, rate-limit headers, and `onCost` live.
 5. **`maxItems` does NOT cap cost — `max_results` does.** X bills for every result in the response body, not what JS iterates. Any endpoint wrapping `paginate()` must clamp the URL's per-request page size (burned $0.49 once on a 3-result search).
 6. **Cost middleware dispatches by platform.** `cost_events` rows carry a `platform` column; the shared middleware never hardcodes X assumptions.
-7. **A billed read must be unrepeatable — retire before you snapshot.** `dailyMetrics` retires a whole batch in one committed txn *before* inserting any snapshot. At-most-once snapshots, never a double charge (an earlier version once read one tweet 3,712 times = $3.71).
+7. **A billed read must be unrepeatable — retire before you snapshot.** The rule that killed a $3.71 bug (one tweet read 3,712 times): take rows out of the candidate set in a committed txn *before* the billed call. Now unenforceable-by-absence — see #8.
+8. **The only billed X call is `createPost`.** Every read was deleted 2026-08-12: the daily pass, `POST /x/posts/reconcile`, `POST /x/posts/backfill`, `POST /x/mentions/refresh`, and the read functions in `endpoints.ts`. `src/app.test.ts::no billed read routes exist` keeps them 404. Adding one back is a decision to re-make out loud, not a line to slip into a worker.
 
 ---
 
@@ -484,7 +478,7 @@ These have already cost real money or locked the account out. Memorize before ch
 
 Required: `API_TOKEN` (bearer, shared with the extension), `SELF_X_USER_ID`, `X_CLIENT_ID`, `X_CLIENT_SECRET`. Grok routes/worker-cost: `XAI_API_KEY`.
 
-Optional / tuning: `PORT` (3000), `ALLOWED_ORIGINS`, `SQLITE_PATH` (`./stratus.db`; `:memory:` for tests), `SKIP_MIGRATE`, `X_DAILY_BUDGET_USD` (0.15), `DAILY_METRICS_ENABLED`, `WINNER_REREAD_MIN_VIEWS` (500), `GIT_SHA`, `STRATUS_DEPLOY_HOST` (deploy target). `MENTION_API_REPLIES` documents an unwired carve-out (no auto-replies).
+Optional / tuning: `PORT` (3000), `ALLOWED_ORIGINS`, `SQLITE_PATH` (`./stratus.db`; `:memory:` for tests), `SKIP_MIGRATE`, `X_DAILY_BUDGET_USD` (0.15), `WINNER_REREAD_MIN_VIEWS` (500 — now only seeds `x.followups.reupMinViews`), `GIT_SHA`, `STRATUS_DEPLOY_HOST` (deploy target). `MENTION_API_REPLIES` documents an unwired carve-out (no auto-replies). `DAILY_METRICS_ENABLED` was removed with the pass it gated — delete it from any server `.env`.
 
 ---
 

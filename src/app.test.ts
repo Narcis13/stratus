@@ -174,25 +174,19 @@ describe.if(authed)('pillars guards (§8.6)', () => {
   });
 });
 
-describe.if(authed)('backfill guard', () => {
-  test('non-numeric tweet id → 400 before any read or DB write', async () => {
-    const res = await app.request('/x/posts/backfill', {
-      method: 'POST',
-      headers: AUTH,
-      body: JSON.stringify({ tweetId: 'not-a-tweet-id' }),
-    });
-    expect(res.status).toBe(400);
-    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
-  });
+// Every route that ever bought an X read is gone (2026-08-12, CLAUDE.md
+// invariant #8). This asserts they stay gone: `createPost` in the publisher is
+// the only call allowed to spend, and a route that reintroduces a read would
+// have to consciously delete a test that says so.
+describe.if(authed)('no billed read routes exist', () => {
+  const gone = ['/x/posts/reconcile', '/x/posts/backfill', '/x/mentions/refresh'];
 
-  test('missing tweet id → 400', async () => {
-    const res = await app.request('/x/posts/backfill', {
-      method: 'POST',
-      headers: AUTH,
-      body: JSON.stringify({}),
+  for (const path of gone) {
+    test(`POST ${path} is not mounted`, async () => {
+      const res = await app.request(path, { method: 'POST', headers: AUTH, body: '{}' });
+      expect(res.status).toBe(404);
     });
-    expect(res.status).toBe(400);
-  });
+  }
 });
 
 describe.if(authed && Boolean(process.env.XAI_API_KEY))('pillar draft guard (§8.6)', () => {

@@ -13,9 +13,10 @@
 //      publisher's due-select (pending-only) never claims it, mark-posted flips
 //      it to `posted` writing NO tweet id (decision 6), then link a SECOND manual
 //      row to a synthetic posts_published original via the pure matchManualRows +
-//      the wrapper's atomic stamp (the private reconcileManualPosts wrapper only
-//      runs inside the PAID daily pass / POST /posts/reconcile, so the $0 test
-//      exercises the exported matcher + replays the stamp — D127)
+//      a replay of the old wrapper's atomic stamp. NB since XD.1 (2026-08-12) the
+//      matcher has NO production caller at all — `reconcileManualPosts` and the
+//      daily pass that ran it are deleted — so this section now guards a pure
+//      module kept for a future $0 harvest-fed discovery path, not a live path.
 //   c) DM drafts: the $0 refusal ladder 404 unknown_person → 422 no_shared_context
 //      on a thin throwaway person, and PATCH-sent event idempotency via a
 //      directly-inserted draft row (marking sent twice logs one manual_dm_logged)
@@ -278,9 +279,8 @@ await db.insert(postsPublished).values({
   retired: true,
 });
 
-// Drive the reconcile through the exported pure matcher (the wrapper is private
-// and its route runs the paid daily pass), then replay the wrapper's atomic
-// two-sided stamp (dailyMetrics.ts::reconcileManualPosts).
+// Drive the reconcile through the exported pure matcher, then replay the atomic
+// two-sided stamp the deleted `reconcileManualPosts` wrapper used to do.
 const rowB = await db
   .select({
     id: scheduledPosts.id,

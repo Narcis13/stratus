@@ -274,8 +274,8 @@ peopleRouter.get('/people/glance', async (c) => {
   }
   // A target with no people row (or a retired one) still decorates the timeline
   // as a bare target — same backfill as rankmap. A handle with an unanswered
-  // mention always has a people row (pullMentions upserts it), so openLoops for
-  // these is 0 in practice; `?? 0` keeps it correct if that ever changes.
+  // mention always has a people row (the deleted mention pull upserted one), so
+  // openLoops for these is 0 in practice; `?? 0` keeps it correct regardless.
   for (const h of targetHandles) {
     if (!map[h]) {
       map[h] = {

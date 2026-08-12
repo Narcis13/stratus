@@ -79,7 +79,6 @@ Read the relevant reference before crafting any non-trivial body.
 | POST | `/x/posts/threads` | Thread as one unit (2–25 segments; URL in tails only) |
 | POST | `/x/posts/draft` | Grok: 3 register-distinct drafts (~$0.006; `idea`/`ideaId`/`voiceTweetId` remix) |
 | POST | `/x/posts/reup` | Grok: self-quote re-up drafts of an OWN tweet |
-| POST | `/x/posts/reconcile` | One-shot daily-metrics pass (discovers app-posted tweets) |
 | GET/POST | `/x/pillars` · PATCH/DELETE `/x/pillars/:slug` | Editable content pillars (last-active guarded) |
 | POST | `/x/pillars/draft` | Grok pillar proposal (never auto-saved) |
 
@@ -111,7 +110,7 @@ Read the relevant reference before crafting any non-trivial body.
 
 | Verb | Path | Purpose |
 |---|---|---|
-| GET | `/x/mentions` · POST `/x/mentions/refresh` · PATCH `/x/mentions/:tweetId` | Inbox (refresh capped 6/day) |
+| GET | `/x/mentions` · PATCH `/x/mentions/:tweetId` | Inbox — frozen history; the pull was deleted 2026-08-12 |
 | GET | `/x/conversations` · PATCH `/x/conversations/:id` | Threaded open loops, chain flags; read/snooze/mute |
 | GET | `/x/people` · `/x/people/rankmap` · `/x/people/:handle` | Roster, tier map, **the dossier** |
 | PATCH | `/x/people/:handle` | Notes, tags, stage override, retire |
@@ -162,21 +161,25 @@ corrupts the data that every measurement stands on.
    the user explicitly insists (always for mentions — their metrics are zeros).
    Icebreakers 404/422 before spending. Images 429 at the daily budget. Don't
    "fix" a refusal by hammering it.
-4. **Rate/spend caps are real**: mentions refresh 6/day; drafter ~$0.006/call and
-   extract-batch up to $0.25/call — mention cost before bulk Grok operations;
-   `POST /x/posts/reconcile` bills ~$0.001/tweet scanned.
+4. **The X API bills for exactly one thing: publishing.** Every read was deleted
+   2026-08-12 — no reconcile, no backfill, no mentions refresh, no daily pass.
+   `$0.015/post` is the whole X bill. Spend that remains is LLM: drafter
+   ~$0.006/call, extract-batch up to $0.25/call — mention cost before bulk Grok
+   operations.
 5. **`scheduledFor` is UTC ISO 8601** (`2026-05-15T13:30:00Z`). Convert from the
    user's local timezone; ask if ambiguous. Jitter minutes [5,35], never `:00`.
 6. **The voice library is $0 DOM-only.** Never reintroduce an X-API read to
    "pull" someone's tweets — that capability was deliberately removed (other-user
    reads are 5×). Point the user at the extension's "Save to stratus".
 7. **`posted`/`publishing` rows are worker-owned** — PATCH/DELETE 409. A row
-   stuck in `publishing` means the X outcome is unknown; never retry it manually,
-   the reconcile resolves it.
+   stuck in `publishing` means the X outcome is unknown. Nothing resolves it
+   automatically now that reconcile is gone: tell the user to check X and edit
+   the row; never retry it blind (that risks a double post).
 8. **Statuses ratchet; ids are sacred.** Reply drafts follow
    `generated→copied→posted→discarded`; radar drafts `ready→clicked→expired`;
    person stages only auto-promote. Never invent or insert tweet ids into
-   `mentions` paths — the max stored id IS the since_id checkpoint.
+   `mentions` paths — that table is the one API-provenanced surface and it is
+   now frozen (nothing refills it).
 9. **Honor the stat gates when analyzing** (n≥20 playbook cells, n≥3 best-times,
    ≥100 band recalibration). An insufficient cell is "not enough data", never a
    number you quote as advice.

@@ -12,7 +12,6 @@ export {}; // make this a module so top-level await is allowed
 // Force an ephemeral DB BEFORE app.ts (and its db client) is imported. ESM
 // imports are hoisted, so app.ts must be a DYNAMIC import below this line.
 process.env.SQLITE_PATH = ':memory:';
-process.env.DAILY_METRICS_ENABLED = 'false';
 
 const { app } = await import('../src/app.ts');
 

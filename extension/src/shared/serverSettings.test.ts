@@ -16,7 +16,6 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
         'x.doctrine.anchors4': [7, 11, 15, 21],
         'x.doctrine.ladderSwitchAt': 3,
         'x.gates.bestTimeMinN': 8,
-        'x.mentions.panelRefreshCap': 1,
         'x.display.doNextCap': 8,
         'x.display.doNextSnoozeH': 48,
         'x.display.fansAmberTopN': 25,
@@ -35,7 +34,6 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       anchors4: [7, 11, 15, 21],
       ladderSwitchAt: 3,
       bestTimeMinN: 8,
-      panelRefreshCap: 1,
       cannon: CANNON,
       sweep: SWEEP,
       doNextCap: 8,
@@ -88,8 +86,8 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
     expect(readServerConfig({ 'x.gates.bestTimeMinN': Number.NaN }).bestTimeMinN).toBe(
       SERVER_DEFAULTS.bestTimeMinN,
     );
-    expect(readServerConfig({ 'x.mentions.panelRefreshCap': null }).panelRefreshCap).toBe(
-      SERVER_DEFAULTS.panelRefreshCap,
+    expect(readServerConfig({ 'x.display.doNextCap': null }).doNextCap).toBe(
+      SERVER_DEFAULTS.doNextCap,
     );
     expect(readServerConfig({ 'x.doctrine.ladderSwitchAt': '4' }).ladderSwitchAt).toBe(
       SERVER_DEFAULTS.ladderSwitchAt,
@@ -97,16 +95,16 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
   });
 
   test('zero is a real value, not a missing one', () => {
-    // x.mentions.panelRefreshCap bottoms out at 0 = "the panel offers none".
-    expect(readServerConfig({ 'x.mentions.panelRefreshCap': 0 }).panelRefreshCap).toBe(0);
+    // x.display.fansAmberTopN bottoms out at 0 = "amber nobody".
+    expect(readServerConfig({ 'x.display.fansAmberTopN': 0 }).fansAmberTopN).toBe(0);
   });
 
   test('server-scope keys riding along are ignored', () => {
     const cfg = readServerConfig({
-      'x.mentions.serverRefreshCap': 6,
-      'x.mentions.panelRefreshCap': 2,
+      'x.budgets.xSoftDailyUsd': 0.15,
+      'x.display.doNextCap': 2,
     });
-    expect(cfg.panelRefreshCap).toBe(2);
+    expect(cfg.doNextCap).toBe(2);
     expect(Object.keys(cfg).sort()).toEqual([
       'anchors3',
       'anchors4',
@@ -121,7 +119,6 @@ describe('readServerConfig — the mirrored blob (UI.6)', () => {
       'fansAmberTopN',
       'ladderSwitchAt',
       'neglectedTargetDays',
-      'panelRefreshCap',
       'radarDraftCap',
       'repliesListLimit',
       'selfHandle',

@@ -41,7 +41,6 @@ import { nicheRouter } from './routes/niche.ts';
 import { peopleRouter } from './routes/people.ts';
 import { pillars } from './routes/pillars.ts';
 import { playbook } from './routes/playbook.ts';
-import { createPostsRouter } from './routes/posts.ts';
 import { promptsRouter } from './routes/prompts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
@@ -51,7 +50,6 @@ import { sweepPresetsRouter } from './routes/sweepPresets.ts';
 import { createVoiceRouter } from './routes/voice.ts';
 import { voiceExtract } from './routes/voiceExtract.ts';
 import { getSetting } from './settings/registry.ts';
-import { DAILY_METRICS_HEARTBEAT, startDailyMetrics } from './workers/dailyMetrics.ts';
 import { PUBLISHER_HEARTBEAT, startPublisher } from './workers/publisher.ts';
 
 interface XConfig {
@@ -90,7 +88,6 @@ export function mountX(app: Hono): void {
   // SQL — no Grok, no X). `/x/me` is a static prefix; its only params are on
   // `/me/entries/:id` + `/me/goals/:id`, shadowing nothing (§7.20).
   app.route('/x', me);
-  app.route('/x', createPostsRouter(cfg));
   app.route('/x', createVoiceRouter());
   // CQ.2: the cannon roster. Always mounted, $0 — every route is SQL over the
   // DOM-harvested rows the voice/harvest surfaces already collected, and nothing
@@ -172,7 +169,7 @@ export function mountX(app: Hono): void {
   // C4: the Playbook — pure SQL over measured outcomes, $0; only its
   // extract-winners POST needs an LLM and it checks llmConfigured() at runtime.
   app.route('/x', playbook);
-  app.route('/x', createMentionsRouter(cfg));
+  app.route('/x', createMentionsRouter());
   // S4: image generation is always mounted; POST /x/images/generate checks the
   // XAI key at runtime (503 without it) — images stay xAI-only (Decision 6).
   app.route('/x', images);
@@ -217,11 +214,7 @@ export function startXWorkers(): XWorkers {
   // — decision 10). No hot-reloading timers: a PATCH shows a "takes effect on
   // restart" hint in the Settings tab and lands on the next boot.
   const publisherIntervalSec = getSetting<number>('x.workers.publisherIntervalSec');
-  const dailyMetricsHourUtc = getSetting<number>('x.workers.dailyMetricsHourUtc');
-  console.log(
-    `workers: publisher every ${publisherIntervalSec}s, ` +
-      `daily pass at ${String(dailyMetricsHourUtc).padStart(2, '0')}:00 UTC (restart to change)`,
-  );
+  console.log(`workers: publisher every ${publisherIntervalSec}s (restart to change)`);
 
   // Heartbeats: /healthz flags (503) when a worker stops beating — a dead
   // publisher must page the deploy check, not fail silently.
@@ -235,19 +228,13 @@ export function startXWorkers(): XWorkers {
   heartbeats.push(PUBLISHER_HEARTBEAT);
   stops.push(startPublisher({ ...cfg, intervalMs: publisherIntervalSec * 1000 }));
 
-  // One daily 03:00 UTC pass that discovers own tweets/replies and snapshots
-  // each once at ~24h (replaces the old 60s metricsPoll + 24h ownReconcile).
-  if (process.env.DAILY_METRICS_ENABLED !== 'false') {
-    registerHeartbeat(DAILY_METRICS_HEARTBEAT, 25 * 60 * 60_000);
-    heartbeats.push(DAILY_METRICS_HEARTBEAT);
-    stops.push(startDailyMetrics({ ...cfg, hourUtc: dailyMetricsHourUtc }));
-  } else {
-    console.log(
-      'dailyMetrics: timer disabled via DAILY_METRICS_ENABLED=false (manual POST /x/posts/reconcile still works)',
-    );
-  }
-  // The voice library is a pure DOM-scrape swipe file now — no X-API author
-  // pulls or metrics polling, so there are no voice workers to start.
+  // The publisher is the ONLY worker, because `createPost` is the only X API
+  // call this service makes at all. The old 03:00 UTC dailyMetrics pass (account
+  // KPI + own-timeline discovery + once-only snapshots + winner re-reads +
+  // mention pull) was deleted 2026-08-12: every number it bought is measured
+  // better and for $0 by the extension's DOM harvest, so paying $0.001/result to
+  // re-read our own timeline every night was pure burn. Nothing here may add a
+  // billed X *read* — see invariant #8 in CLAUDE.md.
 
   return {
     async stop() {

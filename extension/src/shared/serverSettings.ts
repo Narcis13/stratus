@@ -42,10 +42,6 @@ export interface ServerConfig {
   ladderSwitchAt: number;
   /** x.gates.bestTimeMinN — measured posts a cell needs to be recommendable. */
   bestTimeMinN: number;
-  /** x.mentions.panelRefreshCap — inbox refreshes the panel offers per day.
-   *  Deliberately NOT the server's own cap: that one is the real limit, this is
-   *  only the panel's budget, so a missing blob still degrades gracefully. */
-  panelRefreshCap: number;
   /** x.cannon.* — every threshold the Cannon view filters and tints with. The
    *  server's cannon routes read the same four knobs, so one number moves both
    *  sides; `scoreMin` is a MEASURED floor (see src/shared/cannon.ts). */
@@ -105,7 +101,6 @@ export const SERVER_DEFAULTS: ServerConfig = {
   anchors4: [8, 12, 16, 20],
   ladderSwitchAt: 4,
   bestTimeMinN: 3,
-  panelRefreshCap: 4,
   cannon: CANNON,
   sweep: SWEEP,
   doNextCap: 5,
@@ -209,11 +204,6 @@ export function readServerConfig(raw: unknown): ServerConfig {
     anchors4: readHours(blob, 'x.doctrine.anchors4', SERVER_DEFAULTS.anchors4),
     ladderSwitchAt: readNumber(blob, 'x.doctrine.ladderSwitchAt', SERVER_DEFAULTS.ladderSwitchAt),
     bestTimeMinN: readNumber(blob, 'x.gates.bestTimeMinN', SERVER_DEFAULTS.bestTimeMinN),
-    panelRefreshCap: readNumber(
-      blob,
-      'x.mentions.panelRefreshCap',
-      SERVER_DEFAULTS.panelRefreshCap,
-    ),
     cannon: readCannon(blob),
     sweep: readSweep(blob),
     doNextCap: readNumber(blob, 'x.display.doNextCap', SERVER_DEFAULTS.doNextCap),

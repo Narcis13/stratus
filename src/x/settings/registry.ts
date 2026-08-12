@@ -340,6 +340,24 @@ const FOLLOWUPS: SettingDef[] = [
     scope: 'server',
   },
   {
+    // Re-homed 2026-08-12 from `x.workers.winnerRereadMinViews`, whose worker no
+    // longer exists. Same number, same default (env WINNER_REREAD_MIN_VIEWS), but
+    // it now bounds nothing but a SELECT: $0 SQL asking which measured post is
+    // worth quoting again. An override row under the old key is orphaned, not
+    // read — re-set it here if the floor was ever tuned in prod.
+    key: 'x.followups.reupMinViews',
+    group: 'followups',
+    label: 'Re-up view floor',
+    description:
+      'Views a post’s snapshot must have measured for it to surface as a quote-tweet re-up candidate. Reads existing snapshots only — $0, nothing here buys a read. Defaults from WINNER_REREAD_MIN_VIEWS when that env var is set.',
+    type: 'number',
+    default: envNumberDefault('WINNER_REREAD_MIN_VIEWS', 500, 100, 100_000),
+    min: 100,
+    max: 100_000,
+    unit: 'views',
+    scope: 'server',
+  },
+  {
     key: 'x.followups.fanUnacknowledgedDays',
     group: 'followups',
     label: 'Fan unacknowledged after',
@@ -668,27 +686,13 @@ const CANNON_KNOBS: SettingDef[] = [
   },
 ];
 
-// Workers — cadence and the bounded winner re-read. The two cadence knobs are
-// `appliesOn:'restart'`: startXWorkers reads them ONCE to arm its timers
-// (decision 10 — no hot-reloading timers). The winner knobs are read at the
-// start of each daily pass instead, so they land on the next 03:00 run without
-// a restart; both are money bounds (≤ cap × $0.001/day) checked before any
-// billed call, and cap 0 disables re-reads entirely.
+// Workers — the publisher is the only one left, so this group is one cadence
+// knob. `appliesOn:'restart'`: startXWorkers reads it ONCE to arm the timer
+// (decision 10 — no hot-reloading timers). The daily-pass hour, the winner
+// re-read floor/cap and the discovery reply-exclusion knob were deleted
+// 2026-08-12 with the pass they configured; nothing here bounds spend anymore
+// because nothing here spends (CLAUDE.md invariant #8).
 const WORKERS: SettingDef[] = [
-  {
-    key: 'x.workers.dailyMetricsHourUtc',
-    group: 'workers',
-    label: 'Daily pass hour',
-    description:
-      'UTC hour the once-daily discovery + snapshot pass fires. Snapshots must stay well inside the 30-day private-metrics window — this moves the time of day, never the cadence.',
-    type: 'number',
-    default: 3,
-    min: 0,
-    max: 23,
-    unit: 'h UTC',
-    scope: 'server',
-    appliesOn: 'restart',
-  },
   {
     key: 'x.workers.publisherIntervalSec',
     group: 'workers',
@@ -705,41 +709,6 @@ const WORKERS: SettingDef[] = [
     unit: 's',
     scope: 'server',
     appliesOn: 'restart',
-  },
-  {
-    key: 'x.workers.winnerRereadMinViews',
-    group: 'workers',
-    label: 'Winner re-read floor',
-    description:
-      'Views a post’s first snapshot must have cleared to earn one extra day-7 read (the "which content compounds" series). Defaults from WINNER_REREAD_MIN_VIEWS when that env var is set.',
-    type: 'number',
-    default: envNumberDefault('WINNER_REREAD_MIN_VIEWS', 500, 100, 100_000),
-    min: 100,
-    max: 100_000,
-    unit: 'views',
-    scope: 'server',
-  },
-  {
-    key: 'x.workers.winnerRereadCap',
-    group: 'workers',
-    label: 'Winner re-reads per day',
-    description:
-      'Most day-7 re-reads the daily pass may buy in one run, at $0.001 each. 0 disables re-reads entirely (the pass short-circuits before claiming anything).',
-    type: 'number',
-    default: 5,
-    min: 0,
-    max: 10,
-    scope: 'server',
-  },
-  {
-    key: 'x.workers.discoveryExcludeReplies',
-    group: 'workers',
-    label: 'Discovery skips replies',
-    description:
-      'Adds exclude=replies to the discovery pull. X bills every result it returns (invariant #5), so at Cannon reply volume (100+/day) this is the difference between ~$0.10 and ~$0.005 a pass — and the $0 DOM harvest measures replies BETTER, since it also carries parent views, parent reply count and latency. The trade: manually-typed replies stop reaching posts_published, so every reply-fed surface (playbook reply angles, people warmth, brief/digest reply counts, conversations) only sees what the harvest read layer supplies. Turn OFF to restore the paid path.',
-    type: 'boolean',
-    default: true,
-    scope: 'server',
   },
 ];
 
@@ -865,51 +834,6 @@ const AI: SettingDef[] = [
     min: 5,
     max: 50,
     scope: 'mirrored',
-  },
-];
-
-// Mentions (§7.5) — the inbox pull bounds. Owned reads bill $0.001 per result,
-// so these are money knobs: the two refresh caps bound how often a human can
-// buy a pull, and pullMax is the per-request page size (invariant #5 — it is
-// max_results that caps cost, never a JS-side slice). Raising pullMax does not
-// raise an incremental pull's bill (since_id already floors the walk); it does
-// raise the first-ever cold pull, which is bounded by pullMax alone.
-const MENTIONS: SettingDef[] = [
-  {
-    key: 'x.mentions.serverRefreshCap',
-    group: 'mentions',
-    label: 'Server refresh cap',
-    description:
-      'Most on-demand mention pulls the server will run per UTC day — the backstop behind the panel button, so a runaway client cannot spend. 0 refuses every manual refresh (the daily pass still runs).',
-    type: 'number',
-    default: 6,
-    min: 0,
-    max: 12,
-    scope: 'server',
-  },
-  {
-    key: 'x.mentions.panelRefreshCap',
-    group: 'mentions',
-    label: 'Panel refresh cap',
-    description:
-      'How many refreshes the inbox panel offers per rolling day before greying the button. Keep it at or below the server cap — the server one is the real limit.',
-    type: 'number',
-    default: 4,
-    min: 0,
-    max: 8,
-    scope: 'mirrored',
-  },
-  {
-    key: 'x.mentions.pullMax',
-    group: 'mentions',
-    label: 'Mentions per page',
-    description:
-      'Page size for a mention pull (X bills every result in the response body). An incremental pull still walks to X’s 800 hard cap from the since_id checkpoint; this only sizes each request, and bounds the first-ever pull.',
-    type: 'number',
-    default: 50,
-    min: 10,
-    max: 100,
-    scope: 'server',
   },
 ];
 
@@ -1058,7 +982,6 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...WORKERS,
   ...BUDGETS,
   ...AI,
-  ...MENTIONS,
   ...DISPLAY,
 ];
 
@@ -1078,7 +1001,6 @@ export const GROUP_LABELS: Record<string, string> = {
   workers: 'Workers',
   budgets: 'Budgets',
   ai: 'AI calls',
-  mentions: 'Mentions',
   display: 'Display',
 };
 

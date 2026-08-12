@@ -1,12 +1,20 @@
-// Starter set of typed endpoint functions. Add more as you need them.
-// Cost notes are inline so you see the impact at the call site.
+// Typed endpoint functions over `xFetch`. Cost notes are inline so you see the
+// impact at the call site.
+//
+// THIS FILE IS WRITE-ONLY ON PURPOSE. Every billed READ (`getTweet`,
+// `searchRecent`, `getUserTweets`, `getUserMentions`, `getTweetsByIds`) was
+// deleted 2026-08-12 together with the 03:00 UTC daily pass — the service now
+// spends money on exactly one thing, publishing a scheduled post. Do not add a
+// read back here without re-reading CLAUDE.md invariant #8: the numbers those
+// reads bought are measured better, and for $0, by the extension's DOM harvest.
+//
+// `getMe` is the one exception and it is NOT reachable from the server: only
+// `scripts/restore-tokens.ts` calls it, to prove a restored refresh token still
+// works before trusting it (invariant #3). One $0.001 read, by hand, during
+// recovery.
 
 import { xFetch } from './client.ts';
-import { XApiError } from './errors.ts';
-import { MENTION_EXPANSIONS, defaultPostParams } from './fields.ts';
-import type { Page } from './pagination.ts';
-import { paginate } from './pagination.ts';
-import { OWNED_READ_USD, POST_CREATE_USD, URL_POST_CREATE_USD } from './pricing.ts';
+import { POST_CREATE_USD, URL_POST_CREATE_USD } from './pricing.ts';
 
 // -------------------------------------------------------------------- READS
 
@@ -23,54 +31,10 @@ export interface XUser {
   };
   verified_type?: string;
   subscription_type?: string;
-  // S0.9: the tweet pinned to the profile. Requested on the daily getMe() — a
-  // field, not an extra call, so it rides free on the same $0.001 owned read.
   pinned_tweet_id?: string;
 }
 
-export interface XTweet {
-  id: string;
-  text: string;
-  created_at?: string;
-  author_id?: string;
-  conversation_id?: string;
-  in_reply_to_user_id?: string;
-  referenced_tweets?: Array<{ type: 'retweeted' | 'quoted' | 'replied_to'; id: string }>;
-  public_metrics?: {
-    retweet_count: number;
-    reply_count: number;
-    like_count: number;
-    quote_count: number;
-    bookmark_count: number;
-    impression_count: number;
-  };
-  // Returned only on owned-user reads of posts ≤30 days old (X plan §6.9).
-  // Silently null after the 30-day window — the daily snapshot fires at ~24h,
-  // well inside it (see workers/dailyMetrics.ts).
-  non_public_metrics?: {
-    impression_count: number;
-    url_link_clicks: number;
-    user_profile_clicks: number;
-  };
-  organic_metrics?: {
-    impression_count: number;
-    like_count: number;
-    reply_count: number;
-    retweet_count: number;
-    url_link_clicks: number;
-    user_profile_clicks: number;
-  };
-  // Present when the tweet carries media/polls. Requested on every owned read
-  // (fields.ts POST_FIELDS already lists `attachments` for the media expansion),
-  // so reading `media_keys` presence adds no cost — X bills per result, not per
-  // field (§S0.2 has_media baseline).
-  attachments?: {
-    media_keys?: string[];
-    poll_ids?: string[];
-  };
-}
-
-/** Cost: $0.001 (owned read). */
+/** Cost: $0.001 (owned read). Recovery scripts only — see the file header. */
 export async function getMe(token: string): Promise<XUser> {
   const res = await xFetch<{ data: XUser }>('/2/users/me', {
     token,
@@ -80,210 +44,6 @@ export async function getMe(token: string): Promise<XUser> {
     },
   });
   return res.data;
-}
-
-/** Cost: $0.005 if other-user, $0.001 if owned — pass `owned: true` when the
- *  id is the authenticated user's tweet so the cost row reads the true price
- *  instead of the conservative other-user rate (§9.1). `ownedPrivate` implies it. */
-export async function getTweet(
-  token: string,
-  id: string,
-  opts: { ownedPrivate?: boolean; owned?: boolean } = {},
-): Promise<XTweet> {
-  const res = await xFetch<{
-    data?: XTweet;
-    errors?: Array<{ type?: string; title?: string; detail?: string }>;
-  }>(`/2/tweets/${id}`, {
-    token,
-    query: defaultPostParams(opts),
-    ...(opts.owned || opts.ownedPrivate ? { costHint: OWNED_READ_USD } : {}),
-  });
-  // X answers an unreadable tweet (deleted, suspended author) with HTTP 200 and
-  // a `{errors:[…]}` body and NO `data` — and bills the read regardless. xFetch
-  // can't see this (200 is "ok"), so without this guard getTweet returns
-  // undefined and the caller dereferences it, throwing *after* the billed read.
-  // In the metrics worker that throw rolls back the per-row tx so next_poll_at
-  // never advances — re-billing the same dead tweet every 60s. Surface it as a
-  // 404 so the worker's retire-on-404 path stops polling it. (Burned $18 once.)
-  if (!res.data) {
-    const e = res.errors?.[0];
-    throw new XApiError({
-      status: 404,
-      type: e?.type ?? 'https://api.x.com/2/problems/resource-not-found',
-      detail: e?.detail ?? e?.title ?? `No data returned for tweet ${id}`,
-      rawBody: res,
-    });
-  }
-  return res.data;
-}
-
-/** Cost: $0.005/result. 7-day window. */
-export async function* searchRecent(
-  token: string,
-  query: string,
-  opts: { maxResults?: number } = {},
-): AsyncIterable<XTweet> {
-  // X bills for every result it returns in the response, not what JS iterates.
-  // If maxResults=3 and we ask the server for 100, we pay for ~98 we never use.
-  // Clamp to X's per-request range [10, 100]; default 100 only when caller wants full iteration.
-  const pageSize = Math.min(100, Math.max(10, opts.maxResults ?? 100));
-  const fetchPage = (nextToken: string | undefined) =>
-    xFetch<Page<XTweet>>('/2/tweets/search/recent', {
-      token,
-      query: {
-        query,
-        max_results: pageSize,
-        ...defaultPostParams(),
-        ...(nextToken ? { next_token: nextToken } : {}),
-      },
-    });
-  yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
-}
-
-export interface GetUserTweetsOptions {
-  /** Max tweets returned across pages. Also clamps per-request page size for cost. Default 100. */
-  maxResults?: number;
-  /** Only return tweets posted after this id (incremental polling). */
-  sinceId?: string;
-  /** Pull `non_public_metrics` and `organic_metrics` (≤30d, owned only). */
-  ownedPrivate?: boolean;
-  /** Drop replies server-side (`exclude=replies`). A COST lever, not a filter:
-   *  X bills every result in the response body (invariant #5), so excluding
-   *  replies here is the only way to stop paying $0.001 each for them — dropping
-   *  them in JS after the fact costs exactly the same as keeping them. At
-   *  100+ manual replies/day this is the difference between ~$0.10 and ~$0.005
-   *  a pass. The trade is that those replies never reach `posts_published`. */
-  excludeReplies?: boolean;
-}
-
-/**
- * Cost: $0.001/result if `xUserId` is the authenticated user, $0.005/result otherwise.
- * Replies and retweets are included by default (see `excludeReplies`). Hard cap
- * of 3,200 tweets per X.
- */
-export async function* getUserTweets(
-  token: string,
-  xUserId: string,
-  opts: GetUserTweetsOptions = {},
-): AsyncIterable<XTweet> {
-  // Server accepts max_results in [5, 100]. Clamp page size to caller intent:
-  // X bills for every result it returns, not what JS iterates.
-  const pageSize = Math.min(100, Math.max(5, opts.maxResults ?? 100));
-  const fetchPage = (nextToken: string | undefined) =>
-    xFetch<Page<XTweet>>(`/2/users/${xUserId}/tweets`, {
-      token,
-      query: {
-        max_results: pageSize,
-        ...(opts.excludeReplies ? { exclude: 'replies' } : {}),
-        ...(opts.sinceId ? { since_id: opts.sinceId } : {}),
-        ...defaultPostParams(opts.ownedPrivate ? { ownedPrivate: true } : undefined),
-        ...(nextToken ? { pagination_token: nextToken } : {}),
-      },
-    });
-  yield* paginate(fetchPage, opts.maxResults ? { maxItems: opts.maxResults } : {});
-}
-
-export interface GetUserMentionsOptions {
-  /** Max mentions returned across pages. Also clamps per-request page size for cost. Default 50. */
-  maxResults?: number;
-  /** Total ceiling across pages (CA.1). Raises completeness by walking MORE
-   *  pages under the since_id boundary — never by widening the per-request
-   *  `max_results`, which stays clamped by `maxResults` (invariant #5).
-   *  Default: `maxResults`, i.e. the old single-page-ish behavior. */
-  maxTotal?: number;
-  /** Only return mentions newer than this tweet id (incremental inbox pull). */
-  sinceId?: string;
-}
-
-/** A mention with the author resolved from the page's `includes.users`. */
-export interface XMention extends XTweet {
-  authorUsername?: string;
-  authorName?: string;
-}
-
-/**
- * Mentions of the authenticated user — owned reads, $0.001/result (§7.5
- * mention inbox). Hard pagination cap of 800 mentions per X. The default
- * maxResults is a deliberate 50: a first pull with no since_id checkpoint
- * would otherwise walk the whole 800-mention history. Incremental pulls pass
- * `maxTotal` to page past 50 under the since_id boundary (CA.1) — the
- * per-request page size never widens.
- */
-export async function* getUserMentions(
-  token: string,
-  xUserId: string,
-  opts: GetUserMentionsOptions = {},
-): AsyncIterable<XMention> {
-  // Server accepts max_results in [5, 100]. Clamp page size to caller intent:
-  // X bills for every result it returns, not what JS iterates.
-  const maxResults = opts.maxResults ?? 50;
-  const pageSize = Math.min(100, Math.max(5, maxResults));
-  // Authors arrive in `includes.users`, which paginate() never sees — collect
-  // them per page so each yielded mention carries its author's handle.
-  const users = new Map<string, { username: string; name: string }>();
-  const fetchPage = async (nextToken: string | undefined) => {
-    const page = await xFetch<Page<XTweet> & { includes?: { users?: XUser[] } }>(
-      `/2/users/${xUserId}/mentions`,
-      {
-        token,
-        query: {
-          max_results: pageSize,
-          ...(opts.sinceId ? { since_id: opts.sinceId } : {}),
-          // The only read in the repo that consumes `includes` — the author
-          // handles collected below. Every other call site expands nothing.
-          ...defaultPostParams({ expansions: MENTION_EXPANSIONS }),
-          ...(nextToken ? { pagination_token: nextToken } : {}),
-        },
-      },
-    );
-    for (const u of page.includes?.users ?? []) {
-      users.set(u.id, { username: u.username, name: u.name });
-    }
-    return page;
-  };
-  for await (const tweet of paginate(fetchPage, { maxItems: opts.maxTotal ?? maxResults })) {
-    const author = tweet.author_id ? users.get(tweet.author_id) : undefined;
-    yield {
-      ...tweet,
-      ...(author ? { authorUsername: author.username, authorName: author.name } : {}),
-    };
-  }
-}
-
-export interface GetTweetsByIdsResult {
-  /** Tweets X returned, in arbitrary order. */
-  found: XTweet[];
-  /** Ids X did not return (deleted, suspended author, or never existed). */
-  missing: string[];
-}
-
-/**
- * Batch tweet lookup — up to 100 ids in one call. Cost: $0.001/result if the
- * ids are the authenticated user's own tweets, $0.005/result otherwise. We only
- * ever call this on our own tweets (the daily metrics snapshot), so it's priced
- * as an owned read in pricing.ts. X bills per result *returned*, so missing ids
- * (which come back under `errors`, not `data`) aren't billed.
- */
-export async function getTweetsByIds(
-  token: string,
-  ids: string[],
-  opts: { ownedPrivate?: boolean } = {},
-): Promise<GetTweetsByIdsResult> {
-  if (ids.length === 0) return { found: [], missing: [] };
-  if (ids.length > 100) {
-    throw new Error(`getTweetsByIds: max 100 ids per call, got ${ids.length}`);
-  }
-  const res = await xFetch<{
-    data?: XTweet[];
-    errors?: Array<{ resource_id?: string; value?: string; type?: string; detail?: string }>;
-  }>('/2/tweets', {
-    token,
-    query: { ids: ids.join(','), ...defaultPostParams(opts) },
-  });
-  const found = res.data ?? [];
-  const foundIds = new Set(found.map((t) => t.id));
-  const missing = ids.filter((id) => !foundIds.has(id));
-  return { found, missing };
 }
 
 // ------------------------------------------------------------------- WRITES

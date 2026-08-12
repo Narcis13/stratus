@@ -135,7 +135,6 @@ describe('registry adapter + grouping', () => {
       'workers',
       'budgets',
       'ai',
-      'mentions',
       'display',
     ]);
     expect(groups.map((g) => g.label)).toEqual([
@@ -153,7 +152,6 @@ describe('registry adapter + grouping', () => {
       'Workers',
       'Budgets',
       'AI calls',
-      'Mentions',
       'Display',
     ]);
 
@@ -209,6 +207,7 @@ describe('registry adapter + grouping', () => {
       'x.followups.momentumWeeklyPct',
       'x.followups.reupMinAgeDays',
       'x.followups.reupMaxAgeDays',
+      'x.followups.reupMinViews',
       'x.followups.fanUnacknowledgedDays',
     ]);
     expect(keysOf('pinned')).toEqual(['x.pinned.staleDays', 'x.pinned.outperformRatio']);
@@ -227,13 +226,14 @@ describe('registry adapter + grouping', () => {
 
     expect(keysOf('gates')).toEqual(['x.gates.minCellN', 'x.gates.bestTimeMinN']);
     expect(keysOf('radar')).toEqual(['x.radar.draftTtlH', 'x.radar.curatedCount']);
-    expect(keysOf('workers')).toEqual([
-      'x.workers.dailyMetricsHourUtc',
-      'x.workers.publisherIntervalSec',
-      'x.workers.winnerRereadMinViews',
-      'x.workers.winnerRereadCap',
-      'x.workers.discoveryExcludeReplies',
-    ]);
+    // One worker, one knob: the daily-pass hour and the two winner-re-read money
+    // bounds died with the pass itself (2026-08-12), and the re-up view floor
+    // moved to `x.followups.reupMinViews` where its only reader lives.
+    expect(keysOf('workers')).toEqual(['x.workers.publisherIntervalSec']);
+    expect(settingsRegistry.get('x.workers.dailyMetricsHourUtc')).toBeUndefined();
+    expect(settingsRegistry.get('x.workers.winnerRereadMinViews')).toBeUndefined();
+    expect(settingsRegistry.get('x.workers.winnerRereadCap')).toBeUndefined();
+    expect(settingsRegistry.get('x.workers.discoveryExcludeReplies')).toBeUndefined();
 
     // The best-time gate is mirrored — the composer chips gate client-side on
     // the same number (UI.6 ships the mirror); everything else here is server-only.
@@ -254,16 +254,12 @@ describe('registry adapter + grouping', () => {
       'x.ai.digestMaxOutputTokens',
       'x.ai.batchReplyCap',
     ]);
-    expect(keysOf('mentions')).toEqual([
-      'x.mentions.serverRefreshCap',
-      'x.mentions.panelRefreshCap',
-      'x.mentions.pullMax',
-    ]);
-
-    // Only the panel's own budget is mirrored — the server cap is the real
-    // limit and stays server-side (UI.6 wires the panel to the mirrored one).
-    expect(settingsRegistry.get('x.mentions.panelRefreshCap')?.scope).toBe('mirrored');
-    expect(settingsRegistry.get('x.mentions.serverRefreshCap')?.scope).toBe('server');
+    // The whole `mentions` group went with the mention pull (2026-08-12): all
+    // three knobs bounded a billed read that no longer exists.
+    expect(keysOf('mentions')).toEqual([]);
+    expect(settingsRegistry.get('x.mentions.serverRefreshCap')).toBeUndefined();
+    expect(settingsRegistry.get('x.mentions.panelRefreshCap')).toBeUndefined();
+    expect(settingsRegistry.get('x.mentions.pullMax')).toBeUndefined();
     // Money knobs bind the next call, never a restart — every one of them is
     // read inside the refuse-before-spend ladder.
     const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
@@ -299,23 +295,15 @@ describe('registry adapter + grouping', () => {
       'not_in_options',
     );
     expect(settingsRegistry.validate('x.ai.replyReasoningEffort', 2)).toBe('not_a_string');
-
-    // Mentions: invariant #5 — pullMax is the per-request page size, ceiling 100.
-    expect(settingsRegistry.validate('x.mentions.pullMax', 100)).toBeNull();
-    expect(settingsRegistry.validate('x.mentions.pullMax', 101)).toBe('out_of_range');
-    expect(settingsRegistry.validate('x.mentions.pullMax', 9)).toBe('out_of_range');
-    // 0 refreshes = refuse every manual pull; 13 is past the money ceiling.
-    expect(settingsRegistry.validate('x.mentions.serverRefreshCap', 0)).toBeNull();
-    expect(settingsRegistry.validate('x.mentions.serverRefreshCap', 13)).toBe('out_of_range');
   });
 
   test('only the worker CADENCE knobs are restart-scoped (decision 10)', () => {
     const restart = SETTINGS_REGISTRY.filter((d) => d.appliesOn === 'restart').map((d) => d.key);
-    expect(restart).toEqual(['x.workers.dailyMetricsHourUtc', 'x.workers.publisherIntervalSec']);
-    // The winner re-read bounds are read at the start of each daily pass, so a
-    // change lands on the next 03:00 run without a restart.
+    expect(restart).toEqual(['x.workers.publisherIntervalSec']);
+    // The re-up view floor is read per request, so a change lands on the next
+    // /followups read with no restart.
     const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
-    expect(byKey.get('x.workers.winnerRereadCap')?.appliesOn).toBeUndefined();
+    expect(byKey.get('x.followups.reupMinViews')?.appliesOn).toBeUndefined();
   });
 
   test('validation honors UI.4 ranges (gate floors, TTL, worker bounds)', () => {
@@ -335,13 +323,10 @@ describe('registry adapter + grouping', () => {
     expect(settingsRegistry.validate('x.radar.curatedCount', 51)).toBe('out_of_range');
     const defs = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
     expect(defs.get('x.radar.curatedCount')?.max).toBe(defs.get('x.ai.batchReplyCap')?.max);
-    expect(settingsRegistry.validate('x.workers.dailyMetricsHourUtc', 23)).toBeNull();
-    expect(settingsRegistry.validate('x.workers.dailyMetricsHourUtc', 24)).toBe('out_of_range');
     expect(settingsRegistry.validate('x.workers.publisherIntervalSec', 29)).toBe('out_of_range');
-    // 0 is a legal cap — it disables the re-read; 11 is past the money ceiling.
-    expect(settingsRegistry.validate('x.workers.winnerRereadCap', 0)).toBeNull();
-    expect(settingsRegistry.validate('x.workers.winnerRereadCap', 11)).toBe('out_of_range');
-    expect(settingsRegistry.validate('x.workers.winnerRereadMinViews', 99)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.workers.publisherIntervalSec', 301)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.followups.reupMinViews', 500)).toBeNull();
+    expect(settingsRegistry.validate('x.followups.reupMinViews', 99)).toBe('out_of_range');
   });
 
   // The env default must itself be inside the knob's range — an env typo can
@@ -384,7 +369,6 @@ describe('registry adapter + grouping', () => {
       'x.cannon.redAgeMin',
       'x.cannon.placedTarget',
       'x.ai.batchReplyCap',
-      'x.mentions.panelRefreshCap',
       'x.display.doNextCap',
       'x.display.doNextSnoozeH',
       'x.display.fansAmberTopN',
@@ -394,9 +378,8 @@ describe('registry adapter + grouping', () => {
       'x.display.voiceListLimit',
       'x.display.repliesListLimit',
     ]);
-    // The server's own refresh cap is the real limit and stays server-side —
-    // the panel budget degrading to its baked value must never widen it.
-    expect(mirrored).not.toContain('x.mentions.serverRefreshCap');
+    // No mention knob is mirrored anymore — the group is gone entirely.
+    expect(mirrored.filter((k) => k.startsWith('x.mentions.'))).toEqual([]);
   });
 
   // Same UI.7 rule one module over: the cannon group must be the WHOLE

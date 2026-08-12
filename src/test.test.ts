@@ -13,10 +13,8 @@ import {
   postsPublished,
   replyDrafts,
 } from './x/db/schema.ts';
-import type { XTweet } from './x/endpoints.ts';
 import { containsUrl, createPost } from './x/endpoints.ts';
 import { XApiError, classify } from './x/errors.ts';
-import { MENTION_EXPANSIONS, defaultPostParams } from './x/fields.ts';
 import { DEFAULT_NICHE } from './x/niche/defaults.ts';
 import {
   IDEAS_PROMPT_TEMPLATE,
@@ -84,11 +82,6 @@ import {
   parseIngestRow,
 } from './x/routes/harvest.ts';
 import {
-  MAX_REFRESHES_PER_DAY,
-  type RefreshLimiter,
-  takeRefreshSlot,
-} from './x/routes/mentions.ts';
-import {
   BEST_TIME_MIN_N,
   type BestTimeCell,
   aggregatePillars,
@@ -114,7 +107,6 @@ import {
 } from './x/routes/voice.ts';
 import { resetSettings, setSettings } from './x/settings/registry.ts';
 import { EXTRACT_PROMPT_TEMPLATE, parseExtractedTemplate } from './x/voice/extractPrompt.ts';
-import { ingestPulledTweet, maxTweetId, msUntilNextUtcHour } from './x/workers/dailyMetrics.ts';
 
 describe('containsUrl', () => {
   test('flags http and https in any position', () => {
@@ -126,50 +118,6 @@ describe('containsUrl', () => {
   test('does not flag plain text', () => {
     expect(containsUrl('no link here')).toBe(false);
     expect(containsUrl(undefined)).toBe(false);
-  });
-});
-
-describe('defaultPostParams', () => {
-  test('owned-private adds non_public_metrics', () => {
-    const p = defaultPostParams({ ownedPrivate: true });
-    expect(p['tweet.fields']).toContain('non_public_metrics');
-    expect(p['tweet.fields']).toContain('organic_metrics');
-  });
-
-  test('default omits private metrics', () => {
-    const p = defaultPostParams();
-    expect(p['tweet.fields']).not.toContain('non_public_metrics');
-  });
-
-  // CA.2: an expansion hydrates whole extra objects into `includes.*`, X bills
-  // every object in the body, and `itemCount` only counts `data` — so a stray
-  // expansion is billed AND invisible to /cost/today. Expanding by default cost
-  // ~90 unread parent tweets ($0.005 each) on a 90-reply day. Lock it at zero.
-  test('expands nothing by default — an unread `includes` object is pure spend', () => {
-    for (const p of [defaultPostParams(), defaultPostParams({ ownedPrivate: true })]) {
-      expect(p.expansions).toBeUndefined();
-      // These only shape objects an expansion would have put in `includes`.
-      expect(p['user.fields']).toBeUndefined();
-      expect(p['media.fields']).toBeUndefined();
-    }
-  });
-
-  test('dropping the expansions keeps the free tweet FIELDS that back has_media', () => {
-    // `attachments`/`referenced_tweets` ride the tweet itself at no extra cost —
-    // only the hydrated parent-tweet/media objects went away, so the has_media
-    // baseline (`tweet.attachments?.media_keys?.length`) still works.
-    const p = defaultPostParams();
-    expect(p['tweet.fields']).toContain('attachments');
-    expect(p['tweet.fields']).toContain('referenced_tweets');
-  });
-
-  test('mentions opt in to author_id — the one includes.* the repo reads', () => {
-    const p = defaultPostParams({ expansions: MENTION_EXPANSIONS });
-    expect(p.expansions).toBe('author_id');
-    // getUserMentions resolves handles out of includes.users, so the shaping
-    // param has to ride along with the expansion.
-    expect(p['user.fields']).toContain('username');
-    expect(p.expansions).not.toContain('referenced_tweets');
   });
 });
 
@@ -256,154 +204,6 @@ describe('pricing.priceFor', () => {
 
   test('unknown endpoint returns 0 (visible gap, not fabricated number)', () => {
     expect(priceFor('/2/something/new', 'GET', 200, null)).toBe(0);
-  });
-});
-
-describe('dailyMetrics schedule', () => {
-  const HOUR = 60 * 60_000;
-
-  test('schedules the next 03:00 UTC ahead of now', () => {
-    // 01:00 UTC → 2h until 03:00 the same day.
-    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 5, 1, 0, 0)), 3)).toBe(2 * HOUR);
-    // 05:00 UTC → 22h until the next day's 03:00.
-    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 5, 5, 0, 0)), 3)).toBe(22 * HOUR);
-  });
-
-  test('exactly 03:00 UTC rolls to the following day', () => {
-    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 5, 3, 0, 0)), 3)).toBe(24 * HOUR);
-  });
-
-  test('crosses the month boundary correctly', () => {
-    // 2026-06-30 05:00 UTC → next 03:00 is 2026-07-01 03:00 (22h).
-    expect(msUntilNextUtcHour(new Date(Date.UTC(2026, 5, 30, 5, 0, 0)), 3)).toBe(22 * HOUR);
-  });
-});
-
-describe('maxTweetId (discovery checkpoint high-water)', () => {
-  test('compares snowflakes as BigInt, not Number', () => {
-    // These differ only past Number's 2^53 safe range — a Number compare ties.
-    const lo = '2078076276561093110';
-    const hi = '2078111316628107769';
-    expect(maxTweetId(lo, hi)).toBe(hi);
-    expect(maxTweetId(hi, lo)).toBe(hi);
-  });
-
-  test('passes through when either side is undefined', () => {
-    expect(maxTweetId(undefined, '123')).toBe('123');
-    expect(maxTweetId('123', undefined)).toBe('123');
-    expect(maxTweetId(undefined, undefined)).toBeUndefined();
-  });
-
-  test('never regresses on equal ids', () => {
-    expect(maxTweetId('999', '999')).toBe('999');
-  });
-});
-
-// The discovery pull now doubles as the snapshot read (one billed read per own
-// tweet per day instead of two — audit 2026-07-23). The property that keeps that
-// safe is idempotency: the pull can be replayed after a crash that lost the
-// checkpoint, and a tweet already retired must cost nothing and write nothing.
-describe('ingestPulledTweet (discovery pull = snapshot)', () => {
-  const NOW = new Date('2026-07-24T03:00:00Z');
-  const POSTED = new Date('2026-07-23T15:00:00Z');
-  const IDS = ['dm1_new', 'dm1_replay', 'dm1_sched', 'dm1_reply'];
-
-  // posts_published/metrics_snapshots are global to the in-memory DB and the
-  // playbook suite aggregates over both — leave nothing behind.
-  afterAll(async () => {
-    await db.delete(metricsSnapshots).where(inArray(metricsSnapshots.tweetId, IDS));
-    await db.delete(postsPublished).where(inArray(postsPublished.tweetId, IDS));
-  });
-
-  function pulled(id: string, extra: Partial<XTweet> = {}): XTweet {
-    return {
-      id,
-      text: 'pulled from the timeline',
-      created_at: POSTED.toISOString(),
-      public_metrics: { impression_count: 900, like_count: 4 },
-      non_public_metrics: { user_profile_clicks: 2 },
-      ...extra,
-    } as XTweet;
-  }
-
-  async function readRow(tweetId: string) {
-    const [row] = await db
-      .select({
-        retired: postsPublished.retired,
-        pollCount: postsPublished.pollCount,
-        nextPollAt: postsPublished.nextPollAt,
-        isReply: postsPublished.isReply,
-        source: postsPublished.source,
-      })
-      .from(postsPublished)
-      .where(eq(postsPublished.tweetId, tweetId));
-    return row;
-  }
-
-  async function snapshotCount(tweetId: string) {
-    const rows = await db
-      .select({ id: metricsSnapshots.id })
-      .from(metricsSnapshots)
-      .where(eq(metricsSnapshots.tweetId, tweetId));
-    return rows.length;
-  }
-
-  test('an unseen tweet lands retired, with its snapshot, in one step', async () => {
-    expect(ingestPulledTweet(pulled('dm1_new'), NOW)).toBe('discovered');
-
-    const row = await readRow('dm1_new');
-    // Retired immediately: this is what stops snapshotDue buying the same read
-    // a second time minutes later.
-    expect(row?.retired).toBe(true);
-    expect(row?.nextPollAt).toBeNull();
-    // pollCount 1 keeps it eligible for the day-7 winner re-read.
-    expect(row?.pollCount).toBe(1);
-    expect(row?.source).toBe('manual');
-    expect(await snapshotCount('dm1_new')).toBe(1);
-  });
-
-  test('replaying the same tweet writes nothing and never double-snapshots', async () => {
-    ingestPulledTweet(pulled('dm1_replay'), NOW);
-    expect(await snapshotCount('dm1_replay')).toBe(1);
-
-    // A run that died before saveDiscoveryCheckpoint re-pulls this tweet.
-    expect(ingestPulledTweet(pulled('dm1_replay'), NOW)).toBe('already-retired');
-    expect(ingestPulledTweet(pulled('dm1_replay'), NOW)).toBe('already-retired');
-
-    expect(await snapshotCount('dm1_replay')).toBe(1);
-    expect((await readRow('dm1_replay'))?.pollCount).toBe(1); // not inflated
-  });
-
-  test('a publisher-inserted scheduled post is adopted, not re-read', async () => {
-    await db.insert(postsPublished).values({
-      tweetId: 'dm1_sched',
-      text: 'scheduled by the publisher',
-      postedAt: POSTED,
-      source: 'scheduled',
-      nextPollAt: new Date(POSTED.getTime() + 24 * 60 * 60 * 1000),
-    });
-
-    expect(ingestPulledTweet(pulled('dm1_sched'), NOW)).toBe('snapshotted');
-
-    const row = await readRow('dm1_sched');
-    expect(row?.retired).toBe(true);
-    expect(row?.nextPollAt).toBeNull();
-    expect(row?.source).toBe('scheduled'); // provenance survives adoption
-    expect(await snapshotCount('dm1_sched')).toBe(1);
-  });
-
-  test('a reply is snapshotted too — the row is free once the pull is paid for', async () => {
-    const outcome = ingestPulledTweet(
-      pulled('dm1_reply', {
-        in_reply_to_user_id: '999',
-        referenced_tweets: [{ type: 'replied_to', id: 'parent-1' }],
-      }),
-      NOW,
-    );
-    expect(outcome).toBe('discovered');
-    expect((await readRow('dm1_reply'))?.isReply).toBe(true);
-    // Playbook reply attribution reads these; dropping them would save $0.
-    expect(await snapshotCount('dm1_reply')).toBe(1);
   });
 });
 
@@ -1590,31 +1390,6 @@ describe('CQ.7 reply language clause at the variable tail', () => {
     ]);
     if ('error' in out) throw new Error(out.error);
     expect(out.tweets[0]).not.toHaveProperty('language');
-  });
-});
-
-describe('mentions refresh limiter (§7.5)', () => {
-  const day1 = new Date('2026-06-10T08:00:00Z');
-
-  test('counts up within a day and refuses past the cap', () => {
-    let state: RefreshLimiter = { day: '', used: 0 };
-    for (let i = 0; i < MAX_REFRESHES_PER_DAY; i++) {
-      const slot = takeRefreshSlot(state, day1);
-      expect(slot.ok).toBe(true);
-      expect(slot.remaining).toBe(MAX_REFRESHES_PER_DAY - i - 1);
-      state = slot.state;
-    }
-    const refused = takeRefreshSlot(state, day1);
-    expect(refused.ok).toBe(false);
-    expect(refused.remaining).toBe(0);
-  });
-
-  test('the counter resets on the next UTC day', () => {
-    const exhausted: RefreshLimiter = { day: '2026-06-10', used: MAX_REFRESHES_PER_DAY };
-    expect(takeRefreshSlot(exhausted, day1).ok).toBe(false);
-    const next = takeRefreshSlot(exhausted, new Date('2026-06-11T00:00:01Z'));
-    expect(next.ok).toBe(true);
-    expect(next.state).toEqual({ day: '2026-06-11', used: 1 });
   });
 });
 

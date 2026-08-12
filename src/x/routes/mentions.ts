@@ -3,9 +3,13 @@
 // Routes:
 //   GET   /mentions          ?status=&limit=   inbox list, newest first, my
 //                            parent post joined for thread context
-//   POST  /mentions/refresh  body: { maxResults? } — on-demand pull, capped
-//                            server-side at MAX_REFRESHES_PER_DAY
 //   PATCH /mentions/:tweetId body: { status?, draftId? }
+//
+// $0 — every route here is SQL over the local `mentions` table. There is no
+// longer any way to FILL that table: `POST /mentions/refresh` and the daily
+// pull were deleted 2026-08-12 when the service dropped every billed X read
+// (CLAUDE.md invariant #8). The rows that exist are historical; new inbound
+// mentions arrive through the extension's $0 DOM surfaces or not at all.
 //
 // POSTING STAYS MANUAL PASTE. The Feb 2026 programmatic-reply policy has
 // exactly one carve-out — replying to a tweet that @-mentions you — which
@@ -18,9 +22,6 @@ import { type SQL, and, desc, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { mentions, postsPublished, replyDrafts } from '../db/schema.ts';
-import { pullMentions } from '../mentions.ts';
-import { getSetting } from '../settings/registry.ts';
-import { getValidAccessToken } from '../token-store.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -31,41 +32,8 @@ type MentionStatus = (typeof STATUSES)[number];
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 
-// Server-side backstop for the panel's client-side limit: a runaway client
-// can't spend more than this many pulls/day (~$0.05 each worst case).
-// In-memory is fine — single process; a restart resetting the counter is
-// harmless at these stakes. UI.5 made the number configurable
-// (`x.mentions.serverRefreshCap`, ceiling 12); this stays the pure default the
-// route overrides per request, so takeRefreshSlot remains testable without a store.
-export const MAX_REFRESHES_PER_DAY = 6;
-
-export interface RefreshLimiter {
-  /** UTC day the counter belongs to, as YYYY-MM-DD. */
-  day: string;
-  used: number;
-}
-
-// Pure — unit-tested. Takes one refresh slot for `now`'s UTC day.
-export function takeRefreshSlot(
-  state: RefreshLimiter,
-  now: Date,
-  max = MAX_REFRESHES_PER_DAY,
-): { ok: boolean; state: RefreshLimiter; remaining: number } {
-  const day = now.toISOString().slice(0, 10);
-  const used = state.day === day ? state.used : 0;
-  if (used >= max) return { ok: false, state: { day, used }, remaining: 0 };
-  return { ok: true, state: { day, used: used + 1 }, remaining: max - used - 1 };
-}
-
-interface MentionsConfig {
-  selfXUserId: string;
-  clientId: string;
-  clientSecret: string;
-}
-
-export function createMentionsRouter(cfg: MentionsConfig): Hono {
+export function createMentionsRouter(): Hono {
   const r = new Hono();
-  let limiter: RefreshLimiter = { day: '', used: 0 };
 
   r.get('/mentions', async (c) => {
     const statusStr = c.req.query('status');
@@ -111,40 +79,6 @@ export function createMentionsRouter(cfg: MentionsConfig): Hono {
     const unanswered = await db.$count(mentions, eq(mentions.status, 'unanswered'));
 
     return c.json({ counts: { unanswered }, mentions: rows });
-  });
-
-  r.post('/mentions/refresh', async (c) => {
-    let maxResults: number | undefined;
-    const raw = await c.req.json().catch(() => null);
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-      const mr = (raw as Record<string, unknown>).maxResults;
-      if (mr !== undefined && mr !== null) {
-        if (typeof mr !== 'number' || !Number.isInteger(mr) || mr < 1) {
-          return c.json({ error: 'invalid_max_results' }, 400);
-        }
-        maxResults = Math.min(200, mr);
-      }
-    }
-
-    // UI.5: both money bounds are read per request, before the token fetch and
-    // the billed pull — refuse-before-spend. A cap of 0 refuses every manual
-    // refresh (the daily pass is unaffected).
-    const maxPerDay = getSetting<number>('x.mentions.serverRefreshCap');
-    const slot = takeRefreshSlot(limiter, new Date(), maxPerDay);
-    limiter = slot.state;
-    if (!slot.ok) {
-      return c.json({ error: 'refresh_limit', maxPerDay }, 429);
-    }
-
-    const token = await getValidAccessToken({
-      clientId: cfg.clientId,
-      clientSecret: cfg.clientSecret,
-    });
-    const result = await pullMentions(token, cfg.selfXUserId, {
-      ...(maxResults !== undefined ? { maxResults } : {}),
-      pullMax: getSetting<number>('x.mentions.pullMax'),
-    });
-    return c.json({ ...result, refreshesRemaining: slot.remaining });
   });
 
   r.patch('/mentions/:tweetId', async (c) => {

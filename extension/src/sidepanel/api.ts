@@ -123,7 +123,6 @@ import {
   type Mention,
   type MentionPatchBody,
   type MentionStatus,
-  type MentionsRefreshResult,
   type MentionsResponse,
   type MetricsAccountResponse,
   type MilestoneWatch,
@@ -361,7 +360,6 @@ export type {
   PillarUpdateBody,
   MentionPatchBody,
   MentionStatus,
-  MentionsRefreshResult,
   MentionsResponse,
   PeopleListOpts,
   PeopleListResponse,
@@ -1241,13 +1239,6 @@ export const api = {
       if (opts.limit !== undefined) q.set('limit', String(opts.limit));
       const qs = q.toString();
       return request<MentionsResponse>(s, `/x/mentions${qs ? `?${qs}` : ''}`);
-    },
-
-    refresh(s: Settings): Promise<MentionsRefreshResult> {
-      return request<MentionsRefreshResult>(s, '/x/mentions/refresh', {
-        method: 'POST',
-        body: {},
-      });
     },
 
     patch(s: Settings, tweetId: string, body: MentionPatchBody): Promise<Mention> {

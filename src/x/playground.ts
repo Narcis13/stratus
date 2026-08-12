@@ -1,7 +1,10 @@
 // Scratchpad for hitting X with your stored token.
 // `bun run play` — runs end-to-end. Edit freely; it's not a test.
+//
+// Only getMe and createPost are left: every billed READ endpoint was deleted
+// 2026-08-12 (CLAUDE.md invariant #8), so there is nothing else to poke at.
 
-import { createPost, getMe, searchRecent } from './endpoints.ts';
+import { createPost, getMe } from './endpoints.ts';
 import { getValidAccessToken } from './token-store.ts';
 
 const token = await getValidAccessToken({
@@ -12,13 +15,6 @@ const token = await getValidAccessToken({
 console.log('--- getMe ---');
 const me = await getMe(token);
 console.log(me);
-
-console.log('\n--- searchRecent (3 results) ---');
-let n = 0;
-for await (const tweet of searchRecent(token, 'from:elonmusk -is:retweet', { maxResults: 3 })) {
-  console.log(`@${tweet.author_id} ${tweet.created_at}\n  ${tweet.text}\n`);
-  if (++n >= 3) break;
-}
 
 // Uncomment to test posting. Costs $0.015 (or $0.20 if you sneak in a URL).
 //
