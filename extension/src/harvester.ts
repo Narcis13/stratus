@@ -33,6 +33,13 @@ import {
 } from './shared/harvest.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
 import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
+import {
+  MAX_THREAD_REPLIES,
+  type ThreadCaptureResult,
+  dedupeThreadReplies,
+  extractedToIngestRow,
+  threadRootIdFromUrl,
+} from './shared/thread.ts';
 import { findShowOriginalButtons, viewerLangOf } from './shared/translation.ts';
 import { handleFromAvatarTestid, parseUserCell } from './shared/userCell.ts';
 
@@ -917,6 +924,219 @@ let running = false;
 // (HV.2) suspends itself so the two never write the same articles twice.
 export function isHarvestActive(): boolean {
   return running;
+}
+
+// ------------------------------------------------------- thread capture (TH.4)
+//
+// A sibling of runHarvest, not a mode of it: this one runs from the page (the 🧵
+// button in the root tweet's action row), needs no port, no CSV and no side
+// panel, and ships ONE atomic POST /x/harvest/thread instead of runs+rows. What
+// it does share is the scroll idiom below — the same pacing preset, the same
+// stable-scrollHeight bottom test, the same per-sweep revealOriginals — because
+// that is the part x.com's virtualization punishes you for improvising.
+//
+// It also takes the module `running` flag, so passive capture (HV.2, via
+// isHarvestActive) suspends for the duration and a hand-run harvest refuses with
+// already_running. $0: DOM reads plus one POST to the local service.
+
+// Opening guesses, all three (§7.19) — recalibrate after ~20 real captures
+// against how many came back truncated, never by vibes.
+const THREAD_STEP_CAP = 400;
+const MAX_SHOW_MORE_CLICKS = 20;
+// Sweeps with no new tweet before pagination is called exhausted. 3 covers one
+// slow lazy-load plus a frame where X re-rendered without adding anything.
+const THREAD_STALL_SWEEPS = 3;
+
+interface ThreadEntry {
+  row: HarvestIngestRow;
+  order: number;
+}
+
+// "Show more replies" — the single most drift-prone selector in this file, so it
+// is identified by SHAPE, never by text: the label is localized (shared/
+// translation.ts makes the same argument for "Show original"), and matching an
+// English string would silently under-collect for every other UI language.
+//
+// The shape that holds: X renders the control in its own `cellInnerDiv` that
+// contains NO article — a reply cell always contains one — and it sits BELOW the
+// last rendered article, because it is the tail of the conversation. Buttons
+// above the last article (the inline composer, a tweet's own action row) are
+// excluded by that ordering alone.
+//
+// The `role="separator"` cut is decision 2: X puts a divider above the
+// "probable spam" / "may contain offensive content" tail, and we deliberately do
+// not paginate into it. Anything from the first separator down is off-limits;
+// articles that happen to render there are still read, we just never click to
+// reveal more of them.
+//
+// `clicked` is the anti-loop: a control that does not disappear after its click
+// (X re-rendering, or a mis-identified button) must not be clicked every sweep.
+function findShowMoreControl(clicked: WeakSet<Element>): HTMLElement | null {
+  const cells = Array.from(document.querySelectorAll('div[data-testid="cellInnerDiv"]'));
+  let lastArticleIdx = -1;
+  let separatorIdx = -1;
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    if (!cell) continue;
+    if (cell.querySelector('article[data-testid="tweet"]')) lastArticleIdx = i;
+    else if (separatorIdx === -1 && cell.querySelector('[role="separator"]')) separatorIdx = i;
+  }
+  if (lastArticleIdx === -1) return null;
+
+  for (let i = lastArticleIdx + 1; i < cells.length; i++) {
+    if (separatorIdx !== -1 && i >= separatorIdx) break; // spam/offensive tail
+    const cell = cells[i];
+    if (!cell) continue;
+    const btn = cell.querySelector<HTMLElement>('button, [role="button"]');
+    if (!btn || clicked.has(btn)) continue;
+    // A bare icon button (the "back to top" arrow and friends) is not it; the
+    // expander always carries its own label.
+    if ((btn.textContent ?? '').trim() === '') continue;
+    return btn;
+  }
+  return null;
+}
+
+/** Capture the conversation on the current /status/ page: the root plus every
+ *  top-level reply the scroll reaches, shipped as one POST. `onProgress` is
+ *  called with the reply count each time it changes, for the button's label. */
+export async function captureThread(
+  onProgress: (replies: number) => void,
+): Promise<ThreadCaptureResult> {
+  if (running) return { ok: false, code: 'already_running' };
+  running = true;
+  try {
+    const rootTweetId = threadRootIdFromUrl(location.href);
+    if (!rootTweetId) return { ok: false, code: 'not_a_thread' };
+
+    const cfg = PRESETS.human;
+    const se = document.scrollingElement ?? document.documentElement;
+
+    // Keyed by tweet id, `order` assigned at FIRST sighting off a monotonic
+    // counter — the harvestFollowing list-position rule at conversation scale.
+    // X virtualizes, so a cell's index in the current DOM restarts every screen;
+    // only first-seen order under a top-down scroll tracks render order, and a
+    // recycled article must never renumber. Re-sighting overwrites the ROW
+    // (fresher metrics, and TR.1's un-translation may have landed since) but
+    // never the order.
+    const store = new Map<string, ThreadEntry>();
+    let order = 0;
+    const clicked = new WeakSet<Element>();
+
+    const sweep = async (): Promise<void> => {
+      // Per sweep, not once per run: the conversation virtualizes and a recycled
+      // article comes back translated (TR.1's reason, verbatim).
+      await revealOriginals();
+      for (const art of Array.from(document.querySelectorAll('article[data-testid="tweet"]'))) {
+        const row = extractedToIngestRow(extractArticle(art));
+        if (!row) continue; // ad, promoted cell, unparseable article
+        const prev = store.get(row.tweetId);
+        store.set(row.tweetId, { row, order: prev ? prev.order : order++ });
+      }
+    };
+
+    // The root renders inline in its own conversation, so it is one of the
+    // sighted articles; everything else is a reply.
+    const replyCount = (): number => store.size - (store.has(rootTweetId) ? 1 : 0);
+
+    await sleep(gauss(600, 1500)); // settle before starting
+    se.scrollTop = 0;
+    await sleep(gauss(500, 1200));
+
+    let lastH = 0;
+    let stable = 0;
+    let steps = 0;
+    let lastReported = -1;
+    let lastSize = 0;
+    let stalled = 0;
+    let showMoreClicks = 0;
+    let truncated = false;
+
+    while (steps < THREAD_STEP_CAP) {
+      await sweep();
+
+      const replies = replyCount();
+      if (replies !== lastReported) {
+        onProgress(replies);
+        lastReported = replies;
+      }
+      if (replies >= MAX_THREAD_REPLIES) {
+        truncated = true;
+        break;
+      }
+
+      // Exhaustion is measured on what we CAPTURED, not on how many articles the
+      // DOM holds: under virtualization the article count hovers around a screen
+      // regardless of how far the conversation has been expanded.
+      if (store.size > lastSize) {
+        lastSize = store.size;
+        stalled = 0;
+      } else stalled++;
+
+      const paginationDone =
+        stalled >= THREAD_STALL_SWEEPS || showMoreClicks >= MAX_SHOW_MORE_CLICKS;
+      const more = paginationDone ? null : findShowMoreControl(clicked);
+      if (more) {
+        clicked.add(more);
+        more.click();
+        showMoreClicks++;
+        if (showMoreClicks >= MAX_SHOW_MORE_CLICKS) truncated = true;
+        stable = 0; // the page is about to grow
+        await sleep(gauss(cfg.loadMin, cfg.loadMax));
+        steps++;
+        continue;
+      }
+
+      const atBottom = se.scrollTop + se.clientHeight >= se.scrollHeight - 5;
+      if (atBottom) {
+        if (se.scrollHeight === lastH) {
+          stable++;
+          if (stable >= cfg.stableNeeded) break; // nothing left to load
+        } else stable = 0;
+        lastH = se.scrollHeight;
+        await sleep(gauss(cfg.loadMin, cfg.loadMax)); // wait for lazy-load
+      } else {
+        if (chance(cfg.backChance)) {
+          await humanScroll(se, -rand(cfg.backMin, cfg.backMax) * se.clientHeight);
+          await sleep(gauss(500, 1300));
+        }
+        await humanScroll(se, rand(cfg.flickMin, cfg.flickMax) * se.clientHeight);
+        await readingPause(cfg);
+      }
+      steps++;
+    }
+    await sweep(); // final sweep of whatever is on screen
+
+    const rootEntry = store.get(rootTweetId);
+    // The URL says this is a thread but its root never parsed — a login wall, a
+    // deleted tweet, or an article shape we did not recognize. Shipping replies
+    // with no root would create a capture nothing can read.
+    if (!rootEntry) return { ok: false, code: 'root_not_found' };
+
+    const ordered = [...store.values()].sort((a, b) => a.order - b.order).map((e) => e.row);
+    // The break above fires AFTER the sweep that crossed the line, so a last
+    // screen can carry the count past the ceiling; the slice is what keeps the
+    // payload inside the server's own row cap.
+    const replies = dedupeThreadReplies(ordered, rootTweetId).slice(0, MAX_THREAD_REPLIES);
+
+    try {
+      const res = await apiSend<{ inserted: number; replies: number }>(
+        'POST',
+        '/x/harvest/thread',
+        { root: rootEntry.row, replies },
+      );
+      onProgress(res.replies);
+      return { ok: true, rootTweetId, inserted: res.inserted, replies: res.replies, truncated };
+    } catch (err) {
+      // flushPassiveHarvest's rule: a lost capture is a retry, not a thrown page.
+      // `unconfigured` (no bearer yet) is silent — it is a setup state, not a bug.
+      const code = err instanceof Error ? err.message : String(err);
+      if (code !== 'unconfigured') console.warn('[stratus] thread capture failed', code);
+      return { ok: false, code };
+    }
+  } finally {
+    running = false;
+  }
 }
 
 // The logged-in account, read off the left-nav account switcher's avatar. Null

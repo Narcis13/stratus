@@ -19,6 +19,18 @@ import type { HarvestIngestRow } from './harvest.ts';
 // real captures show what a long conversation actually renders, never by vibes.
 export const MAX_THREAD_REPLIES = 400;
 
+/** What one capture reports back to its caller (the on-page button, TH.5).
+ *  `inserted`/`replies` are the SERVER's counts, not the page's — the server
+ *  dedupes again and is the authority on what was actually stored. `truncated`
+ *  says a ceiling (MAX_THREAD_REPLIES or the show-more click cap) stopped the
+ *  sweep before the conversation ended, so the label can say "partial" rather
+ *  than claim a complete transcript. `code` on the failure arm is free text: it
+ *  is either a local reason (`already_running`, `not_a_thread`, `root_not_found`)
+ *  or whatever code the API path returned, which the button maps to a label. */
+export type ThreadCaptureResult =
+  | { ok: true; rootTweetId: string; inserted: number; replies: number; truncated: boolean }
+  | { ok: false; code: string };
+
 // Path segments that are app routes, not handles. shared/harvest.ts keeps the
 // full list private to `profileHandleFromUrl`; the only reserved word that can
 // precede /status/ in a real X URL is /i/ (the app's own permalink route), so
