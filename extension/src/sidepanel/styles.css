@@ -766,6 +766,27 @@ button.danger:hover:not(:disabled) {
   line-height: 1.5;
 }
 
+/* TH.6 captured threads — rows reuse `.brief-tweet`; only the head row and the
+   one-line root snippet are new. */
+.harvest-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.harvest-thread-text {
+  font-size: 12px;
+  color: var(--text);
+  text-decoration: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.harvest-thread-text:hover {
+  text-decoration: underline;
+}
+
 /* voice */
 .voice-controls {
   display: flex;

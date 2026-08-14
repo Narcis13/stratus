@@ -762,6 +762,64 @@ export interface TimelineAffinityResponse {
   authors: TimelineAffinityAuthor[];
 }
 
+// TH.2 `GET /x/harvest/threads` — one row per captured conversation, the newest
+// capture of each root. Mirrors the route's exported shapes field for field; the
+// panel renders from the GET, never from the server's types.
+export interface ThreadSummary {
+  rootTweetId: string;
+  runId: string;
+  handle: string;
+  capturedAt: string;
+  // How many times this thread has been captured — >1 is a longitudinal curve.
+  captures: number;
+  // Replies actually scraped in the latest capture. A wide gap against
+  // `rootComments` (what X claims) means the scrape stopped early.
+  replyCount: number;
+  rootText: string;
+  rootComments: number;
+  rootLikes: number;
+  rootViews: number;
+  rootTime: string | null;
+}
+
+export interface ThreadsResponse {
+  threads: ThreadSummary[];
+}
+
+// One post inside a capture. Root is position 0, replies 1..N in captured order.
+export interface ThreadPost {
+  tweetId: string;
+  handle: string;
+  text: string;
+  position: number;
+  // The root author speaking in their own thread.
+  isAuthor: boolean;
+  comments: number;
+  reposts: number;
+  likes: number;
+  bookmarks: number;
+  views: number;
+  tweetTime: string | null;
+}
+
+export interface ThreadCapture {
+  runId: string;
+  capturedAt: string;
+  rowCount: number;
+}
+
+// TH.2 `GET /x/harvest/threads/:rootTweetId` — one capture's full transcript.
+export interface ThreadDetail {
+  rootTweetId: string;
+  runId: string;
+  capturedAt: string;
+  root: ThreadPost;
+  replies: ThreadPost[];
+  replyCount: number;
+  // Every capture of this root, newest first — the axis `?runId=` reads along.
+  captures: ThreadCapture[];
+}
+
 // --------------------------------------------------------------- replies
 
 export type ReplyDraftStatus = 'generated' | 'copied' | 'posted' | 'discarded';

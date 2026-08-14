@@ -210,8 +210,11 @@ import {
   type SettingsResponse,
   type SweepPresetLoadResponse,
   type SweepPresetsResponse,
+  type ThreadDetail,
   type ThreadDraftBody,
   type ThreadDraftResponse,
+  type ThreadSummary,
+  type ThreadsResponse,
   type TimelineAffinityAuthor,
   type TimelineAffinityResponse,
   type TopComment,
@@ -422,8 +425,11 @@ export type {
   SettingsPatchResult,
   SettingsResetResult,
   SettingsResponse,
+  ThreadDetail,
   ThreadDraftBody,
   ThreadDraftResponse,
+  ThreadSummary,
+  ThreadsResponse,
   TimelineAffinityAuthor,
   TimelineAffinityResponse,
   TopComment,
@@ -967,6 +973,19 @@ export const api = {
       if (opts.minDays !== undefined) q.set('minDays', String(opts.minDays));
       const qs = q.toString();
       return request<TimelineAffinityResponse>(s, `/x/harvest/affinity${qs ? `?${qs}` : ''}`);
+    },
+
+    // TH.2 — captured conversations, newest capture of each root first.
+    threads(s: Settings, opts: { limit?: number } = {}): Promise<ThreadSummary[]> {
+      const qs = opts.limit === undefined ? '' : `?limit=${opts.limit}`;
+      return request<ThreadsResponse>(s, `/x/harvest/threads${qs}`).then((r) => r.threads);
+    },
+
+    // One capture's full transcript. Nothing renders it yet (TH.6 lists threads
+    // only); it lives here so the next reader doesn't re-spell the path.
+    thread(s: Settings, rootTweetId: string, opts: { runId?: string } = {}): Promise<ThreadDetail> {
+      const qs = opts.runId === undefined ? '' : `?runId=${encodeURIComponent(opts.runId)}`;
+      return request<ThreadDetail>(s, `/x/harvest/threads/${encodeURIComponent(rootTweetId)}${qs}`);
     },
   },
 

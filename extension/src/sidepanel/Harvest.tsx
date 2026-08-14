@@ -12,6 +12,7 @@ import {
   parseHarvestForm,
   passiveRowsToday,
 } from '../shared/harvest.ts';
+import type { ThreadSummary } from '../shared/types.ts';
 import { api } from './api.ts';
 import {
   type ActiveContext,
@@ -21,6 +22,7 @@ import {
 } from './harvestClient.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
 import type { Settings } from './storage.ts';
+import { EmptyState } from './ui/EmptyState.tsx';
 import { Section } from './ui/Section.tsx';
 import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
@@ -84,6 +86,10 @@ const SEND_TO_STRATUS_KEY = 'harvestSendToStratus';
 // Enough to reach today's passive run past a busy day of hand harvests; the
 // route's own default is the same number.
 const RUNS_LOOKBACK = 20;
+
+// A page of captured threads. Deliberately short: this is a "did it land"
+// receipt for the 🧵 button, not a browser.
+const THREADS_LIMIT = 20;
 
 const ERROR_TEXT: Record<string, string> = {
   no_handle: "Couldn't read a profile handle from that page.",
@@ -201,6 +207,26 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
       })
       .catch(() => {
         if (alive) setPassiveRows(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [settings]);
+
+  // TH.6 — what the 🧵 button has captured. Same discipline as passiveRows:
+  // null = not loaded or the read failed, and renders nothing rather than
+  // claiming zero captures.
+  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api.harvest
+      .threads(settings, { limit: THREADS_LIMIT })
+      .then((rows) => {
+        if (alive) setThreads(rows);
+      })
+      .catch(() => {
+        if (alive) setThreads(null);
       });
     return () => {
       alive = false;
@@ -525,6 +551,44 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
             ? ' — the CSV was still saved.'
             : ' — and the CSV was off, so nothing was kept.'}
         </div>
+      )}
+
+      {threads !== null && (
+        <Section title="Captured threads">
+          {threads.length === 0 ? (
+            <EmptyState
+              line="No threads captured yet."
+              hint="Open a thread on x.com and hit the 🧵 in the action row — the root and its replies land here."
+            />
+          ) : (
+            <ul className="brief-tweets">
+              {threads.map((t) => (
+                <li key={t.rootTweetId} className="brief-tweet">
+                  <div className="harvest-thread-head">
+                    <strong>@{t.handle}</strong>
+                    {t.captures > 1 && (
+                      <span className="chip chip-muted">captures: {t.captures}</span>
+                    )}
+                  </div>
+                  <a
+                    className="harvest-thread-text"
+                    href={`https://x.com/${t.handle}/status/${t.rootTweetId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t.rootText}
+                  </a>
+                  <div className="brief-tweet-metrics">
+                    <span>
+                      <strong>{t.replyCount}</strong> replies
+                    </span>
+                    <span>{fmtDate(t.capturedAt)}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
       )}
 
       {settings.passiveHarvest ? (
