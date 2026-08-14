@@ -8,6 +8,8 @@
 //   POST /harvest/passive  { rows: [...] }            ambient timeline ingest (≤100/call)
 //   POST /harvest/thread   { root, replies: [...] }   one thread capture (≤500 rows/call)
 //   GET  /harvest/runs     ?limit=                    recent runs, newest first
+//   GET  /harvest/threads  ?limit=                    captured threads, latest capture each
+//   GET  /harvest/threads/:rootTweetId ?runId=        one capture's full transcript
 //   GET  /harvest/affinity ?days=&limit=&minDays=     who the algorithm keeps showing me
 //
 // Repeated harvests of the same tweet create new rows on purpose — that is the
@@ -522,6 +524,213 @@ harvest.get('/harvest/runs', async (c) => {
     .limit(limit);
 
   return c.json(runs);
+});
+
+// ----------------------------------------------------------------- threads
+
+export interface ThreadSummary {
+  rootTweetId: string;
+  runId: string;
+  handle: string;
+  capturedAt: string;
+  // How many times this thread has been captured — >1 is a longitudinal curve.
+  captures: number;
+  // Replies actually scraped in the latest capture. Compare with `rootComments`
+  // (what X claims): a wide gap means the scrape stopped early, not that the
+  // conversation is small.
+  replyCount: number;
+  rootText: string;
+  rootComments: number;
+  rootLikes: number;
+  rootViews: number;
+  rootTime: string | null;
+}
+
+export interface ThreadPost {
+  tweetId: string;
+  handle: string;
+  text: string;
+  // Root is 0, replies 1..N in captured order (§7.16 — the server stamped it).
+  position: number;
+  // The root author speaking in their own thread: their continuations read very
+  // differently from a stranger's reply.
+  isAuthor: boolean;
+  comments: number;
+  reposts: number;
+  likes: number;
+  bookmarks: number;
+  views: number;
+  tweetTime: string | null;
+}
+
+export interface ThreadCapture {
+  runId: string;
+  capturedAt: string;
+  rowCount: number;
+}
+
+export interface ThreadDetail {
+  rootTweetId: string;
+  runId: string;
+  capturedAt: string;
+  root: ThreadPost;
+  replies: ThreadPost[];
+  replyCount: number;
+  // Every capture of this root, newest first — the axis `?runId=` reads along.
+  captures: ThreadCapture[];
+}
+
+// A thread is re-captured over time, so "the newest run per root" is a grouping
+// the runs table can't express as a plain page. Scanning the newest
+// MAX_THREAD_RUN_SCAN runs and grouping in TS keeps the work bounded: an
+// unbounded scan grows with every re-capture forever to answer a page of ≤100,
+// and 500 runs covers far more distinct threads than a page can show unless the
+// same handful is re-scraped hundreds of times (in which case the older threads
+// genuinely are the stale ones).
+const MAX_THREAD_RUN_SCAN = 500;
+
+// §7.20: static path BEFORE the `:param` one — this is the router's first param
+// route, so /harvest/threads would otherwise be swallowed by :rootTweetId.
+// Keep them in this order and adjacent.
+harvest.get('/harvest/threads', async (c) => {
+  const limit = intParam(c.req.query('limit'), DEFAULT_RUNS_LIMIT, 1, MAX_RUNS_LIMIT);
+  if (limit === null) return c.json({ error: 'invalid_limit' }, 400);
+
+  const runs = await db
+    .select({
+      id: harvestRuns.id,
+      handle: harvestRuns.handle,
+      rootTweetId: harvestRuns.rootTweetId,
+      rowCount: harvestRuns.rowCount,
+      createdAt: harvestRuns.createdAt,
+    })
+    .from(harvestRuns)
+    .where(eq(harvestRuns.mode, THREAD_MODE))
+    .orderBy(desc(harvestRuns.createdAt))
+    .limit(MAX_THREAD_RUN_SCAN);
+  // Never fall through to an `in ()` — a SQLite syntax error.
+  if (runs.length === 0) return c.json({ threads: [] });
+
+  // Newest-first scan, so the first run seen for a root IS its latest capture.
+  const byRoot = new Map<string, { run: (typeof runs)[number]; captures: number }>();
+  for (const run of runs) {
+    if (!run.rootTweetId) continue; // defensive: the column is nullable per §7.11
+    const seen = byRoot.get(run.rootTweetId);
+    if (seen) seen.captures++;
+    else byRoot.set(run.rootTweetId, { run, captures: 1 });
+  }
+
+  const groups = [...byRoot.values()].slice(0, limit);
+  if (groups.length === 0) return c.json({ threads: [] });
+
+  const rootRows = await db
+    .select()
+    .from(harvestRows)
+    .where(
+      and(
+        inArray(
+          harvestRows.runId,
+          groups.map((g) => g.run.id),
+        ),
+        eq(harvestRows.groupPosition, 0),
+      ),
+    );
+  const rootByRun = new Map(rootRows.map((r) => [r.runId, r]));
+
+  const threads: ThreadSummary[] = [];
+  for (const g of groups) {
+    const root = rootByRun.get(g.run.id);
+    if (!root) continue; // impossible by the TH.1 transaction; skip, never throw
+    threads.push({
+      rootTweetId: root.tweetId,
+      runId: g.run.id,
+      handle: g.run.handle,
+      capturedAt: g.run.createdAt.toISOString(),
+      captures: g.captures,
+      replyCount: Math.max(0, g.run.rowCount - 1),
+      rootText: root.text,
+      rootComments: root.comments,
+      rootLikes: root.likes,
+      rootViews: root.views,
+      rootTime: root.tweetTime ? root.tweetTime.toISOString() : null,
+    });
+  }
+
+  return c.json({ threads });
+});
+
+harvest.get('/harvest/threads/:rootTweetId', async (c) => {
+  const rootTweetId = c.req.param('rootTweetId');
+  if (!TWEET_ID_RE.test(rootTweetId)) return c.json({ error: 'invalid_root_tweet_id' }, 400);
+
+  const runs = await db
+    .select({
+      id: harvestRuns.id,
+      rowCount: harvestRuns.rowCount,
+      createdAt: harvestRuns.createdAt,
+    })
+    .from(harvestRuns)
+    .where(and(eq(harvestRuns.mode, THREAD_MODE), eq(harvestRuns.rootTweetId, rootTweetId)))
+    // Run timestamps are second-resolution, so two captures inside one second
+    // tie. No invented tiebreak: a human re-scrapes a thread minutes apart.
+    .orderBy(desc(harvestRuns.createdAt));
+  if (runs.length === 0) return c.json({ error: 'thread_not_found' }, 404);
+
+  // A malformed runId and a runId belonging to another thread are the same fact
+  // from here: this thread has no such capture.
+  const runIdParam = c.req.query('runId');
+  let run = runs[0] as (typeof runs)[number];
+  if (runIdParam !== undefined) {
+    if (!UUID_RE.test(runIdParam)) return c.json({ error: 'capture_not_found' }, 404);
+    const found = runs.find((r) => r.id === runIdParam);
+    if (!found) return c.json({ error: 'capture_not_found' }, 404);
+    run = found;
+  }
+
+  const rows = await db
+    .select()
+    .from(harvestRows)
+    .where(eq(harvestRows.runId, run.id))
+    .orderBy(harvestRows.groupPosition);
+
+  const rootRow = rows.find((r) => r.groupPosition === 0);
+  // Impossible by the TH.1 transaction (root and replies insert together), but a
+  // read route answers with a status, never a 500.
+  if (!rootRow) return c.json({ error: 'thread_not_found' }, 404);
+
+  // Both sides were lowercased at ingest (parseIngestRow), so this compares raw.
+  const toPost = (r: (typeof rows)[number]): ThreadPost => ({
+    tweetId: r.tweetId,
+    handle: r.handle,
+    text: r.text,
+    position: r.groupPosition ?? 0,
+    isAuthor: r.handle === rootRow.handle,
+    comments: r.comments,
+    reposts: r.reposts,
+    likes: r.likes,
+    bookmarks: r.bookmarks,
+    views: r.views,
+    tweetTime: r.tweetTime ? r.tweetTime.toISOString() : null,
+  });
+
+  const replies = rows.filter((r) => r !== rootRow).map(toPost);
+
+  const detail: ThreadDetail = {
+    rootTweetId,
+    runId: run.id,
+    // One timestamp for the whole capture: the run's, not each row's.
+    capturedAt: run.createdAt.toISOString(),
+    root: toPost(rootRow),
+    replies,
+    replyCount: replies.length,
+    captures: runs.map((r) => ({
+      runId: r.id,
+      capturedAt: r.createdAt.toISOString(),
+      rowCount: r.rowCount,
+    })),
+  };
+
+  return c.json(detail);
 });
 
 // ---------------------------------------------------------------- affinity

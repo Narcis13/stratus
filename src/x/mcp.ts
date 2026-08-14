@@ -309,6 +309,50 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
   );
 
   server.registerTool(
+    'x_threads',
+    {
+      title: 'Captured threads',
+      description:
+        'The threads captured from the DOM (root + its top-level replies), newest capture first — a $0 scraped corpus, no X API. Each entry is the LATEST capture of that thread, with `captures` counting how many times it has been captured (>1 means a longitudinal curve you can read with x_thread ?runId). `replyCount` is how many replies were actually scraped; comparing it with `rootComments` (what X claims) is the completeness signal — a wide gap means the scrape stopped early, not that the conversation is small. Free, local read.',
+      inputSchema: {
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .optional()
+          .describe('How many threads to return (default 20, max 100).'),
+      },
+    },
+    async ({ limit }) => route(`/x/harvest/threads${qp('limit', limit)}`),
+  );
+
+  server.registerTool(
+    'x_thread',
+    {
+      title: 'One thread transcript',
+      description:
+        'The full transcript of one captured thread: the root plus every scraped reply in order, each with its capture-time metrics and an `isAuthor` flag (the root author continuing their own thread reads very differently from a stranger). `captures` lists every capture of this thread, newest first — pass one of their `runId`s to read an earlier snapshot and see how the numbers moved. `replyCount` vs the root’s `comments` is the completeness signal. DOM-scraped and free, no X API.',
+      inputSchema: {
+        rootTweetId: z
+          .string()
+          .describe(
+            'The thread root tweet id, as a STRING — tweet ids exceed Number.MAX_SAFE_INTEGER, so never pass a number.',
+          ),
+        runId: z
+          .string()
+          .optional()
+          .describe(
+            'A specific capture (a runId from x_threads / `captures`). Omit for the latest.',
+          ),
+      },
+    },
+    async ({ rootTweetId, runId }) => {
+      const q = runId === undefined ? '' : `?runId=${encodeURIComponent(runId)}`;
+      return route(`/x/harvest/threads/${encodeURIComponent(rootTweetId)}${q}`);
+    },
+  );
+
+  server.registerTool(
     'x_digest',
     {
       title: 'Weekly digest',

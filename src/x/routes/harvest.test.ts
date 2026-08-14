@@ -8,7 +8,13 @@ import { eq, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import { harvestRows, harvestRuns, people, voiceAuthors } from '../db/schema.ts';
-import { type AffinityAuthor, harvest, utcDayStart } from './harvest.ts';
+import {
+  type AffinityAuthor,
+  type ThreadDetail,
+  type ThreadSummary,
+  harvest,
+  utcDayStart,
+} from './harvest.ts';
 
 const app = new Hono();
 app.route('/x', harvest);
@@ -647,5 +653,190 @@ describe('POST /x/harvest/thread', () => {
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_mode');
+  });
+});
+
+// TH.2 — the read layer over the TH.1 corpus. Every case here is about the two
+// things the write side made possible: grouping repeated captures of one root,
+// and reading a named earlier capture (the longitudinal axis).
+describe('GET /x/harvest/threads', () => {
+  const ROOT_A = '79500000';
+  const ROOT_B = '79500100';
+  const AUTHOR_A = 'th2_root_a';
+  const AUTHOR_B = 'th2_root_b';
+  const OTHER = 'th2_other';
+  const HOUR_MS = 60 * 60 * 1000;
+
+  let runA1 = '';
+  let runA2 = '';
+  let runB = '';
+
+  function post(tweetId: string, handle: string, extra: Record<string, unknown> = {}) {
+    return {
+      tweetId,
+      handle,
+      text: `text ${tweetId}`,
+      comments: 1,
+      reposts: 0,
+      likes: 3,
+      bookmarks: 0,
+      views: 700,
+      time: '2026-08-13T10:00:00Z',
+      ...extra,
+    };
+  }
+
+  async function capture(body: unknown): Promise<string> {
+    const res = await app.request('/x/harvest/thread', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { runId: string }).runId;
+  }
+
+  // The run clock is second-resolution, so back-to-back captures would tie on
+  // created_at — stamp the axis explicitly instead of racing it.
+  async function backdate(id: string, msAgo: number) {
+    await db
+      .update(harvestRuns)
+      .set({ createdAt: new Date(Date.now() - msAgo) })
+      .where(eq(harvestRuns.id, id));
+  }
+
+  async function deleteThreadRuns() {
+    const runs = await db
+      .select({ id: harvestRuns.id })
+      .from(harvestRuns)
+      .where(eq(harvestRuns.mode, 'thread'));
+    const ids = runs.map((r) => r.id);
+    if (ids.length === 0) return;
+    await db.delete(harvestRows).where(inArray(harvestRows.runId, ids));
+    await db.delete(harvestRuns).where(inArray(harvestRuns.id, ids));
+  }
+
+  beforeAll(async () => {
+    // The write-side suite above left its own captures behind; this suite asserts
+    // over the WHOLE thread corpus, so start from a known-empty one.
+    await deleteThreadRuns();
+
+    runA1 = await capture({
+      root: post(ROOT_A, AUTHOR_A, { views: 1000, comments: 40 }),
+      replies: [post('79500001', OTHER), post('79500002', OTHER)],
+    });
+    runB = await capture({
+      root: post(ROOT_B, AUTHOR_B, { views: 55 }),
+      replies: [post('79500101', OTHER)],
+    });
+    runA2 = await capture({
+      root: post(ROOT_A, AUTHOR_A, { views: 2000, comments: 41 }),
+      replies: [
+        post('79500001', OTHER),
+        post('79500003', AUTHOR_A), // the author continuing their own thread
+        post('79500004', OTHER),
+      ],
+    });
+
+    await backdate(runA1, 3 * HOUR_MS);
+    await backdate(runB, 2 * HOUR_MS);
+    await backdate(runA2, 1 * HOUR_MS);
+  });
+
+  async function get<T>(path: string): Promise<{ status: number; body: T }> {
+    const res = await app.request(path);
+    return { status: res.status, body: (await res.json()) as T };
+  }
+
+  test('groups repeated captures per root and reports the latest one', async () => {
+    const { status, body } = await get<{ threads: ThreadSummary[] }>('/x/harvest/threads');
+    expect(status).toBe(200);
+    expect(body.threads.length).toBe(2);
+
+    const [first, second] = body.threads;
+    expect(first?.rootTweetId).toBe(ROOT_A);
+    expect(first?.captures).toBe(2);
+    expect(first?.runId).toBe(runA2);
+    expect(first?.rootViews).toBe(2000); // the latest capture's numbers
+    expect(first?.rootComments).toBe(41);
+    expect(first?.replyCount).toBe(3);
+    expect(first?.handle).toBe(AUTHOR_A);
+    expect(Date.parse(first?.capturedAt ?? '')).toBeGreaterThan(
+      Date.parse(second?.capturedAt ?? ''),
+    );
+
+    expect(second?.rootTweetId).toBe(ROOT_B);
+    expect(second?.captures).toBe(1);
+    expect(second?.replyCount).toBe(1);
+  });
+
+  test('limit is clamped and a non-integer is refused', async () => {
+    const one = await get<{ threads: ThreadSummary[] }>('/x/harvest/threads?limit=1');
+    expect(one.body.threads.length).toBe(1);
+    expect(one.body.threads[0]?.rootTweetId).toBe(ROOT_A);
+
+    const huge = await get<{ threads: ThreadSummary[] }>('/x/harvest/threads?limit=9999');
+    expect(huge.body.threads.length).toBe(2);
+
+    const bad = await get<{ error: string }>('/x/harvest/threads?limit=abc');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_limit');
+  });
+
+  test('detail defaults to the latest capture, ordered by position', async () => {
+    const { status, body } = await get<ThreadDetail>(`/x/harvest/threads/${ROOT_A}`);
+    expect(status).toBe(200);
+    expect(body.runId).toBe(runA2);
+    expect(body.rootTweetId).toBe(ROOT_A);
+    expect(body.root.position).toBe(0);
+    expect(body.root.views).toBe(2000);
+    expect(body.root.isAuthor).toBe(true);
+
+    expect(body.replies.map((r) => r.position)).toEqual([1, 2, 3]);
+    expect(body.replies.map((r) => r.tweetId)).toEqual(['79500001', '79500003', '79500004']);
+    expect(body.replies.map((r) => r.isAuthor)).toEqual([false, true, false]);
+    expect(body.replyCount).toBe(3);
+
+    // Every capture of this root, newest first — the axis ?runId reads along.
+    expect(body.captures.map((c) => c.runId)).toEqual([runA2, runA1]);
+    expect(body.captures.map((c) => c.rowCount)).toEqual([4, 3]);
+    expect(body.capturedAt).toBe(body.captures[0]?.capturedAt ?? '');
+  });
+
+  test('?runId reads a named earlier capture', async () => {
+    const { status, body } = await get<ThreadDetail>(`/x/harvest/threads/${ROOT_A}?runId=${runA1}`);
+    expect(status).toBe(200);
+    expect(body.runId).toBe(runA1);
+    expect(body.root.views).toBe(1000); // …and the metrics are that capture's
+    expect(body.root.comments).toBe(40);
+    expect(body.replies.map((r) => r.tweetId)).toEqual(['79500001', '79500002']);
+    expect(body.replyCount).toBe(2);
+  });
+
+  test('rejects a malformed root id and unknown thread/capture', async () => {
+    const badId = await get<{ error: string }>('/x/harvest/threads/abc');
+    expect(badId.status).toBe(400);
+    expect(badId.body.error).toBe('invalid_root_tweet_id');
+
+    const unknown = await get<{ error: string }>('/x/harvest/threads/79599999');
+    expect(unknown.status).toBe(404);
+    expect(unknown.body.error).toBe('thread_not_found');
+
+    // A well-formed runId that belongs to the OTHER thread is not a capture here.
+    const foreign = await get<{ error: string }>(`/x/harvest/threads/${ROOT_A}?runId=${runB}`);
+    expect(foreign.status).toBe(404);
+    expect(foreign.body.error).toBe('capture_not_found');
+
+    const notUuid = await get<{ error: string }>(`/x/harvest/threads/${ROOT_A}?runId=nope`);
+    expect(notUuid.status).toBe(404);
+    expect(notUuid.body.error).toBe('capture_not_found');
+  });
+
+  // Last on purpose: it empties the corpus the tests above read.
+  test('an empty corpus answers with an empty list, never an in ()', async () => {
+    await deleteThreadRuns();
+    const { status, body } = await get<{ threads: ThreadSummary[] }>('/x/harvest/threads');
+    expect(status).toBe(200);
+    expect(body.threads).toEqual([]);
   });
 });

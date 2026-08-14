@@ -6,7 +6,11 @@
 // (no X/Grok). The token-gated blocks skip when API_TOKEN is unset.
 
 import { describe, expect, test } from 'bun:test';
+import { eq } from 'drizzle-orm';
 import { app } from './app.ts';
+import { db } from './db/client.ts';
+import { harvestRows, harvestRuns } from './x/db/schema.ts';
+import type { ThreadDetail, ThreadSummary } from './x/routes/harvest.ts';
 
 const TOKEN = process.env.API_TOKEN ?? '';
 const authed = TOKEN !== '';
@@ -106,10 +110,12 @@ describe.if(authed)('MCP transport', () => {
     expect(names.has('x_goals')).toBe(true);
     expect(names.has('x_settings')).toBe(true);
     expect(names.has('x_update_setting')).toBe(true);
-    // 3 schema + 15 curated (incl. x_niche, x_me, x_monitor, x_goals, x_settings)
-    // + 5 write (incl. x_add_me_entry, x_update_setting). Goal WRITES stay out by
-    // design (ME.6): a bad target steers every draft.
-    expect(names.size).toBe(23);
+    expect(names.has('x_threads')).toBe(true);
+    expect(names.has('x_thread')).toBe(true);
+    // 3 schema + 17 curated (incl. x_niche, x_me, x_monitor, x_goals, x_settings,
+    // x_threads, x_thread) + 5 write (incl. x_add_me_entry, x_update_setting).
+    // Goal WRITES stay out by design (ME.6): a bad target steers every draft.
+    expect(names.size).toBe(25);
   });
 });
 
@@ -170,6 +176,62 @@ describe.if(authed)('MCP tool tiers', () => {
     expect(Array.isArray(d.goals)).toBe(true);
     expect(Array.isArray(d.commitments)).toBe(true);
     expect(Number.isNaN(Date.parse(d.checkedAt ?? ''))).toBe(false);
+  });
+
+  // TH.2 — ingest one thread through the $0 harvest route, then read it back the
+  // way a model would. Cleans up after itself: the :memory: DB is ONE process
+  // across every test file.
+  test('curated tier: x_thread round-trips a captured transcript', async () => {
+    const rootTweetId = '79900000';
+    const post = (tweetId: string, handle: string, text: string) => ({
+      tweetId,
+      handle,
+      text,
+      comments: 1,
+      reposts: 0,
+      likes: 4,
+      bookmarks: 0,
+      views: 500,
+      time: '2026-08-13T10:00:00Z',
+    });
+
+    const ingest = await app.request('/x/harvest/thread', {
+      method: 'POST',
+      headers: { authorization: BEARER, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        root: post(rootTweetId, 'mcp_th_root', 'the root of the mcp thread'),
+        replies: [
+          post('79900001', 'mcp_th_other', 'a stranger answers'),
+          post('79900002', 'mcp_th_root', 'the author continues'),
+        ],
+      }),
+    });
+    expect(ingest.status).toBe(201);
+    const { runId } = (await ingest.json()) as { runId: string };
+
+    try {
+      const { env } = await rpc('tools/call', { name: 'x_thread', arguments: { rootTweetId } });
+      const { data, isError } = toolPayload(env);
+      expect(isError).toBe(false);
+      const detail = data as ThreadDetail;
+      expect(detail.root.tweetId).toBe(rootTweetId);
+      expect(detail.root.isAuthor).toBe(true);
+      expect(detail.replies.map((r) => r.tweetId)).toEqual(['79900001', '79900002']);
+      expect(detail.replies.map((r) => r.isAuthor)).toEqual([false, true]);
+      expect(detail.replyCount).toBe(2);
+      expect(detail.captures.map((c) => c.runId)).toEqual([runId]);
+
+      const list = await rpc('tools/call', { name: 'x_threads', arguments: { limit: 5 } });
+      const { data: listData, isError: listErr } = toolPayload(list.env);
+      expect(listErr).toBe(false);
+      const threads = (listData as { threads: ThreadSummary[] }).threads;
+      const mine = threads.find((t) => t.rootTweetId === rootTweetId);
+      expect(mine?.captures).toBe(1);
+      expect(mine?.replyCount).toBe(2);
+    } finally {
+      await db.delete(harvestRows).where(eq(harvestRows.runId, runId));
+      await db.delete(harvestRuns).where(eq(harvestRuns.id, runId));
+    }
   });
 
   test('write tier: x_add_idea creates an open idea', async () => {
