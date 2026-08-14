@@ -115,6 +115,7 @@ Every stratus control on a tweet's action row lives in **one cluster** appended 
 | 2 | Add to Radar | plus in a circle | every tweet |
 | 3 | Reply Master | purple sparkle | focused tweet only |
 | 4 | Canned | list lines + caret | focused tweet only |
+| 5 | Capture thread | two connected dots with their text lines | root tweet of a `/status/` page only |
 
 Rules of the cluster:
 
@@ -126,6 +127,16 @@ Rules of the cluster:
 ### The Canned popover
 
 The popover is **portalled to `<body>` and positioned in viewport coordinates**, not anchored inside the action row — anchored there it was clipped by X's own overflow and buried under "View quotes", which is what made the list unreadable. It opens below the button, **flips above** when there isn't at least 180px of room, clamps into the viewport on both axes, and caps its own height to the space available (the list scrolls inside). It follows the anchor on scroll/resize, closes on outside click, on <kbd>Esc</kbd>, on its own ✕, and closes itself if a virtualised re-render takes its button away.
+
+### Capture thread (TH.5)
+
+The fifth control, and the only one that does a long-running job from the page. It appears **only on the root tweet of a `/status/` page** — its permalink has to equal the focused tweet id, so a reply's own action row never gets one — and clicking it scrolls the whole conversation, clicks through "Show more replies", and posts the root plus every top-level reply to `POST /x/harvest/thread` at **$0**. Read the captures back in the [Harvest tab](./harvest-tab.md#captured-threads-the-whole-conversation-in-one-click) or over MCP (`x_threads` / `x_thread`).
+
+- **The button is the whole UI. The side panel does not need to be open** — the capture runs inside the content script, and the label counts up in place: `Capturing… 47` → `Saved 143`, or `Saved 143 (partial)` when a scroll ceiling was hit.
+- **Its own `data-state` is the lock.** A second click while `working` does nothing rather than flashing an error at someone who double-clicked their own capture.
+- **The click is `preventDefault`ed and `stopPropagation`ed** — X wraps the action row in navigation handlers, and a bare click would open the tweet and unload the page mid-sweep.
+- **Failures read as words, never codes:** `Harvest running` (a Harvest-tab run holds the flag — the two can't scroll the same page at once), `Not a thread`, `Root not found`, and `Failed` for anything the server or the harvester grows later. An unconfigured extension reverts to idle **silently** — nothing was lost, there was just nowhere to send it.
+- All of it settles back to the icon on the same `STATUS_PERSIST_MS` timer as the rest of the cluster.
 
 ---
 

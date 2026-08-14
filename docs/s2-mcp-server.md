@@ -14,7 +14,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
   --header "Authorization: Bearer $STRATUS_TOKEN"
 ```
 
-From then on, an agent has **23 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make five tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, change one setting). No session state, no SSH, no exported CSV.
+From then on, an agent has **25 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make five tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, change one setting). No session state, no SSH, no exported CSV.
 
 The MCP client *is* the intelligence — there are deliberately **no Grok tools**. And the write ceiling is a `draft` calendar row, so **no MCP call can ever reach `createPost` or any billed X endpoint.**
 
@@ -73,7 +73,7 @@ CIRCLES gave stratus a rich, measured CRM. But the only consumer was the side pa
 
 ## The tools — `src/x/mcp.ts`
 
-**23 tools, three tiers, all $0.**
+**25 tools, three tiers, all $0.**
 
 ### Schema tier (3) — the S1 core, verbatim
 
@@ -85,7 +85,7 @@ These call the read-only `inspect.ts` core directly (`tokens`-blind, 500-row cap
 | `x_describe_table` | `table` | One table's columns (name/type/nullability/pk) + row count. |
 | `x_query` | `sql` | A single `SELECT` / `WITH…SELECT`, ≤500 rows. The most powerful tool. |
 
-### Curated tier (15) — zero duplicated logic
+### Curated tier (17) — zero duplicated logic
 
 Each tool calls an existing stratus route **in-process** via Hono's `app.request(path, { headers: { authorization } })`, forwarding the MCP caller's bearer. The routes stay the single source of truth, and every future route improvement is inherited for free.
 
@@ -100,6 +100,8 @@ Each tool calls an existing stratus route **in-process** via Hono's `app.request
 | `x_best_times` | `/x/metrics/best-times?minN=&tzOffsetMin=` | Weekday × hour cells, gated. |
 | `x_cost` | `/cost/daily?days=` | Daily spend per platform. **Reports** past cost — spends nothing. |
 | `x_search_voice` | `/x/voice/tweets?q=` | Substring search of the $0 swipe file. |
+| `x_threads` | `/x/harvest/threads?limit=` | Captured threads, latest capture each. `captures > 1` = a longitudinal curve; `replyCount` vs `rootComments` is the completeness signal (TH.2). |
+| `x_thread` | `/x/harvest/threads/:rootTweetId?runId=` | One capture's whole transcript — root + every scraped reply in order, with metrics and `isAuthor`. `rootTweetId` is a **string** (ids exceed `Number.MAX_SAFE_INTEGER`); omit `runId` for the latest capture. |
 | `x_digest` | `/x/digest?week=&tzOffsetMin=&factsOnly=true` | Weekly digest **facts** (incl. the GR.9 scorecard) — forces `factsOnly=true` so the read never triggers the Grok-billed narration. **This one writes**: the facts pass settles finished goals. |
 | `x_niche` | `/x/niche` | The active niche + its resolved doctrine (N0.2). |
 | `x_me` | `/x/me` | The living profile — entries + goals with progress (ME.6). |
@@ -164,7 +166,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
 - **`src/mcp.test.ts`** — a JSON-RPC round-trip over `app.request`: `initialize` → `tools/list` → `tools/call` for one tool per tier, plus the **draft-forced guard** (a smuggled `pending` is stripped) and a **401 without the bearer**. Adds a `describeTable` check to `inspect.ts` coverage.
 - **`scripts/smoke-mcp.ts`** — rerunnable $0 check on an ephemeral `:memory:` DB: full round-trip including the `tokens` guard and the draft-forced guard.
 
-**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 23 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
+**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 25 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
 
 ---
 

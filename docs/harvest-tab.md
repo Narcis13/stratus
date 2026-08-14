@@ -10,6 +10,7 @@ Two tabs in this extension save tweets, and they're for different jobs:
 
 - **Voice tab** — saves *one tweet at a time*. You open a single tweet you admire, click "Save to stratus" (the cloud icon in the action row), and it's stashed in your swipe file for style study. Precise, deliberate, one-by-one.
 - **Harvest tab** (this one) — saves *many tweets at once* by scrolling an entire profile. Instead of picking individual tweets, you point it at a person's timeline and it sweeps everything it can reach, with all the engagement numbers attached.
+- **The 🧵 button on a thread's root tweet** — saves *one whole conversation*: the root and every top-level reply, with each reply's own numbers. Started from the page, read back in the **[Captured threads](#captured-threads-the-whole-conversation-in-one-click)** section below.
 
 Use Harvest when you want the *whole picture* of an account: every recent post with its likes/views/replies, so you can study what works, or every one of *your own* replies so stratus can measure how they performed. Use the Voice tab when you just want to keep one specific tweet.
 
@@ -158,6 +159,28 @@ Everything above is the harvest you *start*. There's a second one that just happ
 - **[Playbook → Timeline funnel](./playbook-tab.md)** — of the tweets you were actually shown, how many you replied to, split by how good the opportunity was. The honest measure of what you're letting slide past.
 
 Both need real scrolling before they say anything — days, not minutes.
+
+---
+
+## Captured threads (the whole conversation, in one click)
+
+There's a third way tweets get in here, and it doesn't start from this tab at all. Open any thread on x.com — `x.com/<handle>/status/<id>` — and the root tweet's action row carries a **🧵** button (last in the little cluster stratus adds, next to save / ⊕ / Reply Master / Canned). One click scrolls the conversation, clicks through "Show more replies", and saves **the root plus every top-level reply** — text, author, timestamp, replies/reposts/likes/bookmarks/views, media flags — as one capture. It costs **$0**, like every other harvest here, and **the side panel doesn't have to be open**: the button counts up in place (*"Capturing… 47"*) and settles on *"Saved 143"*.
+
+The **Captured threads** section near the bottom of this tab is the read-back. One row per thread, newest capture first:
+
+- the root author's handle, and a **captures: N** chip when you've captured that thread more than once;
+- the root's text, linking straight back to the thread on x.com;
+- how many replies the capture actually stored, and when it was captured.
+
+Nothing loaded yet, or the server unreachable? The section shows **nothing** rather than a fabricated "0 threads". On a fresh database it tells you where the button is.
+
+**Capturing the same thread again adds a capture, it doesn't overwrite one.** That's the same rule the rest of this tab follows — each capture is a data point, so you can watch a thread's replies and views grow over the week you were in it. The list always shows the latest.
+
+**Reading a thread back.** This tab deliberately doesn't render the transcript; the reading surface is Claude. Over MCP, `x_threads` lists what you've captured and `x_thread` hands over the whole conversation with every reply's numbers, so you can ask things like *"which reply in this thread out-earned the root, and why"* against real figures instead of impressions.
+
+**How complete was the capture?** Every transcript reports X's own reply counter on the root next to the number of replies actually stored. Those two numbers side by side are the honest signal: X counts nested and deleted replies too, so they were never going to match exactly — but a big gap means the scroll stopped early, not that the conversation was small. Nested "Show replies" chains and the "probable spam" section are skipped on purpose: X's page doesn't reliably say which reply answered which, so stratus stores the render order and the root, which are the two things that are actually knowable.
+
+**What it doesn't do:** nobody is added to your People roster from a thread capture (reading a conversation is exposure, not a relationship), thread rows never feed the Cannon roster or the Timeline funnel, and nothing here is ever sent to an AI on capture — the corpus is the deliverable, the analysis happens in the chat.
 
 ---
 
