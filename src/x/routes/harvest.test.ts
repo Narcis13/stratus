@@ -70,7 +70,7 @@ afterAll(async () => {
   const timeline = await db
     .select({ id: harvestRuns.id })
     .from(harvestRuns)
-    .where(eq(harvestRuns.mode, 'timeline'));
+    .where(inArray(harvestRuns.mode, ['timeline', 'thread']));
   const ids = timeline.map((r) => r.id);
   if (keepRunId) ids.push(keepRunId);
   if (ids.length > 0) {
@@ -444,5 +444,208 @@ describe('GET /x/harvest/affinity', () => {
     );
 
     expect(find((await get('?minDays=1')).body, HAND)).toBeUndefined();
+  });
+});
+
+// TH.1: one atomic capture — the server owns the pairing and the ordering.
+describe('POST /x/harvest/thread', () => {
+  const ROOT_ID = '79000000';
+  const ROOT_AUTHOR = 'th1_root';
+
+  interface ThreadBody {
+    runId: string;
+    rootTweetId: string;
+    inserted: number;
+    replies: number;
+    skippedDuplicate: number;
+  }
+
+  function threadRow(tweetId: string, extra: Record<string, unknown> = {}) {
+    return {
+      tweetId,
+      handle: 'th1_replier',
+      text: `reply ${tweetId}`,
+      comments: 1,
+      reposts: 0,
+      likes: 4,
+      bookmarks: 1,
+      views: 900,
+      time: '2026-08-13T10:00:00Z',
+      ...extra,
+    };
+  }
+
+  const rootRow = () =>
+    threadRow(ROOT_ID, {
+      handle: ROOT_AUTHOR,
+      text: 'the root of the thread',
+      comments: 42,
+      reposts: 3,
+      likes: 120,
+      bookmarks: 9,
+      views: 30000,
+      time: '2026-08-13T09:00:00Z',
+    });
+
+  async function postThread<T = ThreadBody>(body: unknown): Promise<{ status: number; body: T }> {
+    const res = await app.request('/x/harvest/thread', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as T };
+  }
+
+  async function rowsOf(runId: string) {
+    return db
+      .select()
+      .from(harvestRows)
+      .where(eq(harvestRows.runId, runId))
+      .orderBy(harvestRows.groupPosition);
+  }
+
+  test('writes one run and 1 + n rows, all mode=thread', async () => {
+    const { status, body } = await postThread({
+      root: rootRow(),
+      replies: ['79000001', '79000002', '79000003'].map((id) => threadRow(id)),
+    });
+    expect(status).toBe(201);
+    expect(body.inserted).toBe(4);
+    expect(body.replies).toBe(3);
+    expect(body.skippedDuplicate).toBe(0);
+    expect(body.rootTweetId).toBe(ROOT_ID);
+
+    const run = await runById(body.runId);
+    expect(run?.mode).toBe('thread');
+    expect(run?.scope).toBe('all');
+    expect(run?.handle).toBe(ROOT_AUTHOR);
+    expect(run?.rootTweetId).toBe(ROOT_ID);
+    expect(run?.rowCount).toBe(4);
+
+    const rows = await rowsOf(body.runId);
+    expect(rows.length).toBe(4);
+    expect(rows.every((r) => r.mode === 'thread')).toBe(true);
+
+    const root = rows[0];
+    expect(root?.tweetId).toBe(ROOT_ID);
+    expect(root?.groupPosition).toBe(0);
+    expect(root?.views).toBe(30000);
+    expect(root?.origTweetId).toBeNull();
+    expect(root?.origHandle).toBeNull();
+    expect(root?.matchedDraftId).toBeNull();
+
+    expect(rows.slice(1).map((r) => r.groupPosition)).toEqual([1, 2, 3]);
+    expect(rows.slice(1).map((r) => r.tweetId)).toEqual(['79000001', '79000002', '79000003']);
+    for (const r of rows.slice(1)) {
+      expect(r.origTweetId).toBe(ROOT_ID);
+      expect(r.origHandle).toBe(ROOT_AUTHOR);
+      expect(r.origText).toBe('the root of the thread');
+      expect(r.origComments).toBe(42);
+      expect(r.origLikes).toBe(120);
+      expect(r.origViews).toBe(30000);
+      expect(r.origTime?.toISOString()).toBe('2026-08-13T09:00:00.000Z');
+    }
+  });
+
+  test('ignores client-supplied groupPosition and orig — the server stamps both', async () => {
+    const { status, body } = await postThread({
+      root: rootRow(),
+      replies: [
+        threadRow('79000101', {
+          groupPosition: 47,
+          orig: { tweetId: '12345', handle: 'someone_else', text: 'forged', views: 1 },
+        }),
+      ],
+    });
+    expect(status).toBe(201);
+
+    const rows = await rowsOf(body.runId);
+    const reply = rows[1];
+    expect(reply?.groupPosition).toBe(1);
+    expect(reply?.origTweetId).toBe(ROOT_ID);
+    expect(reply?.origHandle).toBe(ROOT_AUTHOR);
+    expect(reply?.origText).toBe('the root of the thread');
+    expect(reply?.origViews).toBe(30000);
+  });
+
+  test('drops duplicate replies and any reply equal to the root', async () => {
+    const { status, body } = await postThread({
+      root: rootRow(),
+      replies: [
+        threadRow('79000201'),
+        threadRow('79000201'), // re-sighted while scrolling
+        threadRow(ROOT_ID), // the root renders inside the conversation
+      ],
+    });
+    expect(status).toBe(201);
+    expect(body.inserted).toBe(2);
+    expect(body.replies).toBe(1);
+    expect(body.skippedDuplicate).toBe(2);
+
+    const rows = await rowsOf(body.runId);
+    expect(rows.map((r) => r.tweetId)).toEqual([ROOT_ID, '79000201']);
+    expect((await runById(body.runId))?.rowCount).toBe(2);
+  });
+
+  test('accepts a thread nobody has replied to yet', async () => {
+    const { status, body } = await postThread({ root: rootRow(), replies: [] });
+    expect(status).toBe(201);
+    expect(body.inserted).toBe(1);
+    expect(body.replies).toBe(0);
+
+    const rows = await rowsOf(body.runId);
+    expect(rows.length).toBe(1);
+    expect(rows[0]?.groupPosition).toBe(0);
+  });
+
+  test('rejects malformed payloads before touching the DB', async () => {
+    const before = await db
+      .select({ id: harvestRuns.id })
+      .from(harvestRuns)
+      .where(eq(harvestRuns.mode, 'thread'));
+
+    expect((await postThread([])).status).toBe(400);
+    expect((await postThread({ replies: [] })).status).toBe(400);
+    expect((await postThread({ root: rootRow() })).status).toBe(400);
+
+    const badRoot = await postThread<{ error: string; reason: string }>({
+      root: threadRow('not-an-id'),
+      replies: [],
+    });
+    expect(badRoot.status).toBe(400);
+    expect(badRoot.body.error).toBe('invalid_root');
+    expect(badRoot.body.reason).toBe('invalid_row_tweet_id');
+
+    const badReply = await postThread<{ error: string; index: number }>({
+      root: rootRow(),
+      replies: [threadRow('79000301'), threadRow('79000302'), threadRow('nope')],
+    });
+    expect(badReply.status).toBe(400);
+    expect(badReply.body.error).toBe('invalid_row_tweet_id');
+    expect(badReply.body.index).toBe(2);
+
+    const tooMany = await postThread<{ error: string; max: number }>({
+      root: rootRow(),
+      replies: Array.from({ length: 500 }, (_, i) => threadRow(String(79100000 + i))),
+    });
+    expect(tooMany.status).toBe(400);
+    expect(tooMany.body.error).toBe('too_many_rows');
+    expect(tooMany.body.max).toBe(500);
+
+    const after = await db
+      .select({ id: harvestRuns.id })
+      .from(harvestRuns)
+      .where(eq(harvestRuns.mode, 'thread'));
+    expect(after.length).toBe(before.length);
+  });
+
+  test('a client cannot forge a thread run through POST /harvest/runs', async () => {
+    const res = await app.request('/x/harvest/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: ROOT_AUTHOR, mode: 'thread', scope: 'all' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_mode');
   });
 });

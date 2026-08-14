@@ -6,6 +6,7 @@
 //   POST /harvest/runs     { handle, mode, scope }    create a run, returns the row
 //   POST /harvest/rows     { runId, rows: [...] }     batched insert (≤500/call)
 //   POST /harvest/passive  { rows: [...] }            ambient timeline ingest (≤100/call)
+//   POST /harvest/thread   { root, replies: [...] }   one thread capture (≤500 rows/call)
 //   GET  /harvest/runs     ?limit=                    recent runs, newest first
 //   GET  /harvest/affinity ?days=&limit=&minDays=     who the algorithm keeps showing me
 //
@@ -21,6 +22,13 @@
 // hung off one server-created run per UTC day — clients cannot forge those runs
 // (POST /harvest/runs still rejects the mode). Band is never stored: it stays
 // recomputable from views/comments/tweetTime/capturedAt/text (§7.12).
+//
+// TH.1 thread capture: one conversation (root + its top-level replies) as one
+// run, discriminated by mode='thread' and identified by harvest_runs.root_tweet_id
+// — same server-created-only rule as the passive run. Re-capturing a thread
+// appends a new run, which is the longitudinal contract harvest_rows has always
+// had. EVERY route in this file is $0 by construction and stays that way:
+// nothing here may import `xFetch` or `askLLM` — the rows arrive pre-scraped.
 
 import { and, desc, eq, gt, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
@@ -59,6 +67,15 @@ const MAX_PASSIVE_BATCH = 100;
 const PASSIVE_DAILY_CAP = 2000;
 const PASSIVE_RECAPTURE_MS = 30 * 60 * 1000;
 const PASSIVE_RETENTION_DAYS = 60;
+
+// Thread capture (TH.1). Server-created runs only — `mode` stays out of MODES.
+const THREAD_MODE = 'thread';
+// A thread has no date axis; reusing an existing SCOPES value means no other
+// scope-aware code path has to learn about thread runs.
+const THREAD_SCOPE = 'all';
+// Root + ≤499 replies in one atomic call — the same ceiling as a rows batch, and
+// like every other number here an opening guess (recalibrate on real captures).
+const MAX_THREAD_ROWS = 500;
 
 // Timeline affinity (HV.4). `minDays` is the noise floor: one day of scrolling
 // past someone means nothing, three separate days is the algorithm insisting.
@@ -351,6 +368,142 @@ harvest.post('/harvest/passive', async (c) => {
   }
 
   return c.json({ runId: run.id, inserted: accepted.length, skippedRecent, skippedCap }, 201);
+});
+
+// One thread = one atomic call (TH.1). The client sends what it scraped; the
+// server owns the pairing (`orig` = the root, stamped from the PARSED root, any
+// client `orig` ignored) and the ordering (`groupPosition`: root 0, replies
+// 1..N in array order) — §7.16.
+harvest.post('/harvest/thread', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (body.root === undefined || body.root === null) {
+    return c.json({ error: 'root_required' }, 400);
+  }
+  const parsedRoot = parseIngestRow(body.root);
+  if ('error' in parsedRoot)
+    return c.json({ error: 'invalid_root', reason: parsedRoot.error }, 400);
+  const root = parsedRoot;
+
+  // An empty reply list is a legitimate capture — a thread nobody has answered
+  // yet is still worth a row.
+  if (!Array.isArray(body.replies)) return c.json({ error: 'replies_required' }, 400);
+  if (1 + body.replies.length > MAX_THREAD_ROWS) {
+    return c.json({ error: 'too_many_rows', max: MAX_THREAD_ROWS }, 400);
+  }
+
+  const parsedReplies: IngestRow[] = [];
+  for (let i = 0; i < body.replies.length; i++) {
+    const parsed = parseIngestRow(body.replies[i]);
+    if ('error' in parsed) return c.json({ error: parsed.error, index: i }, 400);
+    parsedReplies.push(parsed);
+  }
+
+  // Virtualized scrolling re-sights the same article, and the root itself renders
+  // inside the conversation — first-wins, and report the drops (`skippedRecent`
+  // honesty) rather than silently shrinking the capture.
+  const seen = new Set<string>([root.tweetId]);
+  const replies: IngestRow[] = [];
+  let skippedDuplicate = 0;
+  for (const r of parsedReplies) {
+    if (seen.has(r.tweetId)) {
+      skippedDuplicate++;
+      continue;
+    }
+    seen.add(r.tweetId);
+    replies.push(r);
+  }
+
+  const now = new Date();
+  const rowCount = 1 + replies.length;
+
+  // No reply-draft reconcile and no safeLogPersonEvents here, both deliberate:
+  // OH.2 measured 0 of the first 98 harvested replies matching a draft row, and
+  // reading a thread is exposure, not interaction (HV.1 decision 6).
+  const runId = db.transaction((tx) => {
+    const run = tx
+      .insert(harvestRuns)
+      .values({
+        handle: root.handle,
+        mode: THREAD_MODE,
+        scope: THREAD_SCOPE,
+        rootTweetId: root.tweetId,
+        rowCount,
+      })
+      .returning({ id: harvestRuns.id })
+      .get();
+
+    tx.insert(harvestRows)
+      .values([
+        {
+          runId: run.id,
+          tweetId: root.tweetId,
+          handle: root.handle,
+          mode: THREAD_MODE,
+          text: root.text,
+          comments: root.comments,
+          reposts: root.reposts,
+          likes: root.likes,
+          bookmarks: root.bookmarks,
+          views: root.views,
+          tweetTime: root.tweetTime,
+          capturedAt: now,
+          hasPhoto: root.hasPhoto,
+          hasVideo: root.hasVideo,
+          isQuote: root.isQuote,
+          textLen: root.textLen,
+          lineBreaks: root.lineBreaks,
+          groupPosition: 0,
+        },
+        ...replies.map((r, k) => ({
+          runId: run.id,
+          tweetId: r.tweetId,
+          handle: r.handle,
+          mode: THREAD_MODE,
+          text: r.text,
+          comments: r.comments,
+          reposts: r.reposts,
+          likes: r.likes,
+          bookmarks: r.bookmarks,
+          views: r.views,
+          tweetTime: r.tweetTime,
+          capturedAt: now,
+          // The root, capture-time — one row read is self-describing. Empty root
+          // text stores as null, matching parseIngestRow's own orig convention.
+          origTweetId: root.tweetId,
+          origHandle: root.handle,
+          origText: root.text === '' ? null : root.text,
+          origTime: root.tweetTime,
+          origComments: root.comments,
+          origLikes: root.likes,
+          origViews: root.views,
+          hasPhoto: r.hasPhoto,
+          hasVideo: r.hasVideo,
+          isQuote: r.isQuote,
+          textLen: r.textLen,
+          lineBreaks: r.lineBreaks,
+          groupPosition: k + 1,
+        })),
+      ])
+      .run();
+
+    return run.id;
+  });
+
+  return c.json(
+    {
+      runId,
+      rootTweetId: root.tweetId,
+      inserted: rowCount,
+      replies: replies.length,
+      skippedDuplicate,
+    },
+    201,
+  );
 });
 
 harvest.get('/harvest/runs', async (c) => {

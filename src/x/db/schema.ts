@@ -652,18 +652,25 @@ export const conversationMeta = sqliteTable('conversation_meta', {
 // per harvest click; repeated harvests of the same tweet intentionally create
 // new rows — the (tweet_id, captured_at) series is the longitudinal view/
 // bookmark curve the once-only API snapshot can't provide.
-export const harvestRuns = sqliteTable('harvest_runs', {
-  id: text('id')
-    .primaryKey()
-    .$defaultFn(() => crypto.randomUUID()),
-  handle: text('handle').notNull(),
-  mode: text('mode').notNull(), // 'posts' | 'replies'
-  scope: text('scope').notNull(), // 'all' | 'today' | 'yesterday'
-  rowCount: integer('row_count').default(0).notNull(),
-  createdAt: integer('created_at', { mode: 'timestamp_ms' })
-    .default(sql`(unixepoch() * 1000)`)
-    .notNull(),
-});
+export const harvestRuns = sqliteTable(
+  'harvest_runs',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    handle: text('handle').notNull(),
+    mode: text('mode').notNull(), // 'posts' | 'replies' | 'timeline' | 'thread'
+    scope: text('scope').notNull(), // 'all' | 'today' | 'yesterday'
+    rowCount: integer('row_count').default(0).notNull(),
+    // Thread captures (TH.1) only: the conversation's root tweet, which is the
+    // thread's identity across re-captures. Null on every other mode (§7.11).
+    rootTweetId: text('root_tweet_id'),
+    createdAt: integer('created_at', { mode: 'timestamp_ms' })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (t) => [index('harvest_runs_root_idx').on(t.rootTweetId, t.createdAt)],
+);
 
 export const harvestRows = sqliteTable(
   'harvest_rows',
