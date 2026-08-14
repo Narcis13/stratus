@@ -24,7 +24,7 @@
 // composer. See the section near the variant chips.
 
 import { suggestChannels } from './channelSuggest.ts';
-import { extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
+import { captureThread, extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
 import {
   SWEEP_STATE_KEY,
   type SweepCandidate,
@@ -90,6 +90,7 @@ import {
   mergePendingSighting,
   shouldReportSighting,
 } from './shared/sightings.ts';
+import type { ThreadCaptureResult } from './shared/thread.ts';
 import { findShowOriginalButtons, viewerLangOf } from './shared/translation.ts';
 import { buildTweetContextModel } from './shared/tweetContext.ts';
 import type { Dossier, TweetContextModel } from './shared/tweetContext.ts';
@@ -167,7 +168,7 @@ const ACT_CLASS = 'stratus-act';
 const ACT_LABEL_CLASS = 'stratus-act-lbl';
 const ACT_CARET_CLASS = 'stratus-act-caret';
 // Fixed left-to-right order regardless of which scan pass injected which button.
-const ACT_ORDER = { save: 1, radar: 2, reply: 3, canned: 4 } as const;
+const ACT_ORDER = { save: 1, radar: 2, reply: 3, canned: 4, thread: 5 } as const;
 const CHAN_CHIP_CLASS = 'stratus-chan-chip';
 const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const PERSON_CHIPS_CLASS = 'stratus-person-chips';
@@ -193,6 +194,8 @@ const CANNED_TITLE_CLASS = 'stratus-canned-title';
 const CANNED_CLOSE_CLASS = 'stratus-canned-close';
 const CANNED_BODY_CLASS = 'stratus-canned-body';
 const RADAR_ADD_CLASS = 'stratus-radar-add-btn';
+// TH.5 — the 🧵 on a focused thread's root action row.
+const THREAD_BTN_CLASS = 'stratus-thread-btn';
 // RS.5 — the on-page sweep indicator. One element, portalled to <body>.
 const SWEEP_CHIP_CLASS = 'stratus-sweep-chip';
 const SWEEP_CHIP_DOT_CLASS = 'stratus-sweep-chip-dot';
@@ -221,6 +224,8 @@ const RADAR_ADD_TITLE = 'Add this tweet to the stratus Radar queue';
 // what a screen reader and the tooltip say.
 const RADAR_QUEUED_LABEL = 'Already in the Radar queue';
 const AUTHOR_BTN_LABEL = 'Save author to stratus';
+const THREAD_BTN_LABEL = 'Capture thread';
+const THREAD_BTN_TITLE = 'Scroll this conversation and save it to stratus ($0 DOM scrape)';
 // How long to wait for X's hover card to render after we synthesise a hover.
 const HOVER_CARD_TIMEOUT_MS = 1500;
 const HOVER_CARD_POLL_MS = 100;
@@ -317,6 +322,14 @@ const ICON_WAND = ['M12 3.2l1.7 4.6 4.6 1.7-4.6 1.7L12 15.8l-1.7-4.6L5.7 9.5l4.6
 const ICON_WAND_SPARK = ['M18.4 14.6l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z'];
 /** Stacked lines — a list of premade replies. */
 const ICON_LIST = ['M4.5 7.5h13', 'M4.5 12h13', 'M4.5 16.5h8'];
+/** Two connected dots with their text lines — a conversation, not a list. */
+const ICON_THREAD = [
+  'M5.5 7.5a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+  'M7.5 9.5v5',
+  'M5.5 16.5a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+  'M13 7.5h5.5',
+  'M13 16.5h4.5',
+];
 const ICON_PLUS_CIRCLE = ['M12 3.5a8.5 8.5 0 1 1 0 17 8.5 8.5 0 0 1 0-17z', 'M12 8v8', 'M8 12h8'];
 const ICON_CLOSE = ['M6 6l12 12', 'M18 6L6 18'];
 
@@ -2259,6 +2272,109 @@ function attachCannedButton(article: Element, focusedTweetId: string): void {
   cannedHandled.add(actionRow);
 }
 
+// ------------------------------------------------------- thread capture (TH.5)
+//
+// The 🧵 that hands the whole conversation to `captureThread`. It belongs to the
+// thread's ROOT only — the focused tweet whose id the URL names — because the
+// capture is defined by the URL, not by the article the click landed on. A copy
+// on every reply's action row would run the identical sweep and read as five
+// different buttons.
+//
+// The sweep takes the harvester's `running` flag, so passive harvesting suspends
+// for its duration and a second click is a no-op rather than a second scroll.
+
+const threadCaptureHandled = new WeakSet<Element>();
+
+function attachThreadCaptureButton(article: Element, focusedTweetId: string): void {
+  const reply = article.querySelector('[data-testid="reply"]');
+  if (!reply) return;
+  const actionRow = reply.closest('div[role="group"]');
+  if (!actionRow || threadCaptureHandled.has(actionRow)) return;
+  const permalink = findPermalink(article);
+  if (!permalink || permalink.tweetId !== focusedTweetId) return;
+
+  const btn = makeActButton({
+    icons: [svgIcon(ICON_THREAD)],
+    tone: 'muted',
+    order: ACT_ORDER.thread,
+    title: THREAD_BTN_TITLE,
+    label: THREAD_BTN_LABEL,
+    extraClass: THREAD_BTN_CLASS,
+  });
+  btn.addEventListener('click', (ev) => {
+    // X wraps the action row in its own navigation handlers; a bare click here
+    // opens the tweet and unloads the page mid-sweep.
+    ev.preventDefault();
+    ev.stopPropagation();
+    void onThreadCaptureClick(btn);
+  });
+
+  actionCluster(actionRow).appendChild(btn);
+  threadCaptureHandled.add(actionRow);
+}
+
+/** Failure codes → something a human can read in a 30px pill. Anything the
+ *  server or the harvester grows later falls through to "Failed" rather than
+ *  painting a raw code at the reader. */
+function threadFailLabel(code: string): string | null {
+  switch (code) {
+    case 'already_running':
+      return 'Harvest running';
+    case 'not_a_thread':
+      return 'Not a thread';
+    case 'root_not_found':
+      return 'Root not found';
+    // Not an error the user did anything about: the extension has no server
+    // configured yet, so the capture never had anywhere to go. Silent.
+    case 'unconfigured':
+      return null;
+    default:
+      return 'Failed';
+  }
+}
+
+async function onThreadCaptureClick(btn: HTMLButtonElement): Promise<void> {
+  // The button's own face is the lock. `captureThread` refuses a concurrent run
+  // too (`already_running`), but that would flash an error at a user who just
+  // double-clicked their own capture.
+  if (btn.dataset.state === 'working') return;
+  btn.dataset.state = 'working';
+  setActLabel(btn, 'Capturing…');
+
+  let result: ThreadCaptureResult;
+  try {
+    result = await captureThread((n) => {
+      if (btn.isConnected) setActLabel(btn, `Capturing… ${n}`);
+    });
+  } catch (err) {
+    warnErr('[stratus] thread capture failed', err);
+    result = { ok: false, code: 'crashed' };
+  }
+
+  if (!btn.isConnected) return;
+  if (result.ok) {
+    // 'added' is the sheet's existing success tone (UI.16: no colour literal
+    // gets added here). `inserted` is the server's count, not the page's.
+    btn.dataset.state = 'added';
+    setActLabel(btn, `Saved ${result.inserted}${result.truncated ? ' (partial)' : ''}`);
+  } else {
+    const label = threadFailLabel(result.code);
+    if (!label) {
+      resetThreadCaptureBtn(btn);
+      return;
+    }
+    btn.dataset.state = 'failed';
+    setActLabel(btn, label);
+  }
+  window.setTimeout(() => resetThreadCaptureBtn(btn), STATUS_PERSIST_MS);
+}
+
+function resetThreadCaptureBtn(btn: HTMLButtonElement): void {
+  if (!btn.isConnected) return;
+  btn.dataset.state = 'idle';
+  setActLabel(btn, THREAD_BTN_LABEL);
+}
+
 // ------------------------------------------------------- timeline capture
 
 // What a scroll may put into the Radar queue. Every signal is read from the DOM
@@ -3987,6 +4103,7 @@ function scan(root: ParentNode): void {
     if (focusedId) {
       attachReplyMasterButton(article, focusedId);
       attachCannedButton(article, focusedId);
+      attachThreadCaptureButton(article, focusedId);
     }
     if (onNotifications) applyNotifParentContext(article);
   }
