@@ -11,6 +11,9 @@
 //   PATCH /radar/drafts/:tweetId/tags   body: { tags: string[] | null } — channel tags (C8),
 //                                       applied to every draft row of that tweet
 //   POST  /radar/sightings              { rows: [...] } — the sighting mirror (RA.1, ≤100/call)
+//   GET   /radar/sightings              ?days=&band=&handle=&admitted=&worked=&order=&limit=
+//                                       the corpus read (RA.3) — pure SELECT, writes nothing
+//   GET   /radar/sightings/:tweetId     one tweet: sighting + every draft + every reply (RA.3)
 //
 // Expiry is a lazy status flip (never a delete), applied on every GET: a radar
 // reply to a post that's been dead for 48h is worthless anyway.
@@ -23,23 +26,32 @@
 import { type SQL, and, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import type { RadarBandName } from '../../shared/radarSweep.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
-import { radarDrafts, radarSightings, replyDrafts } from '../db/schema.ts';
+import { people, radarDrafts, radarSightings, replyDrafts } from '../db/schema.ts';
 import { loadDoctrine } from '../niche/store.ts';
+import { normalizePersonHandle } from '../people/store.ts';
 import { localDayKey } from '../quests.ts';
 import {
   type SightingPatch,
+  type SightingPerson,
+  type SightingView,
+  type SightingViewContext,
   type SightingWireRow,
+  buildSightingViews,
   derivePostedAt,
   mergeSightingRow,
   parseSightingWireRow,
+  summarizeSightings,
 } from '../radar/corpus.ts';
 import type { BatchTweet, PostContext, PostSignals } from '../replies/prompt.ts';
 import { getSetting } from '../settings/registry.ts';
+import { sweepConfigFromSettings } from '../settings/sweepConfig.ts';
 import { localDayStart } from './brief.ts';
 import { parseChannelTags } from './channels.ts';
 import { loadCommitmentsWithDebt } from './goals.ts';
 import { utcDayStart } from './harvest.ts';
+import { loadTargetHandles } from './voice.ts';
 
 export const RADAR_DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -63,6 +75,25 @@ const SIGHTING_RECAPTURE_MS = 60_000;
 const SIGHTING_DAILY_NEW_CAP = 2000;
 const SIGHTING_RETENTION_DAYS = 60;
 const MAX_SIGHTING_BATCH = 100;
+
+// Sighting reader (RA.3).
+const DEFAULT_SIGHTING_DAYS = 7;
+// The retention window — asking for more than the table keeps is not an error,
+// it is just the whole table.
+const MAX_SIGHTING_DAYS = SIGHTING_RETENTION_DAYS;
+const DEFAULT_SIGHTING_LIMIT = 50;
+const MAX_SIGHTING_LIMIT = 200;
+// A read ceiling, not a filter. `days=60` at the ingest cap is 120k rows, and
+// `vpm`/`admitted`/`worked` are all computed in JS (the formula lives in one
+// place, the pure layer) — so the window is read newest-first and truncated
+// here, with `truncated` in the response. A silently short answer to "what did
+// my sweep admit" is worse than a short one that says so.
+const SIGHTING_SCAN_CAP = 5000;
+
+const SIGHTING_ORDERS = ['vpm', 'views', 'lastSeen'] as const;
+type SightingOrder = (typeof SIGHTING_ORDERS)[number];
+
+const SIGHTING_BANDS: readonly RadarBandName[] = ['manual', 'roster', 'cannon', 'sweep'];
 
 // Pure — exported for unit tests. A draft is past its useful life 48h after
 // drafting; expiry flips status, it never deletes. UI.4: the TTL is a param
@@ -613,6 +644,238 @@ radar.post('/radar/sightings', async (c) => {
     201,
   );
 });
+
+// The corpus read (RA.3). "What did my sweep admit in the last N days, which of
+// it is unworked, and which of it still clears today's filters."
+//
+// BOTH sighting GETs are pure SELECTs — they write NOTHING, deliberately, the
+// same property `GET /radar/placed-today` above is built on. In particular they
+// do NOT run `GET /radar/drafts`'s lazy expiry: an agent reading this corpus
+// should be able to page it without advancing anyone's draft statuses. The
+// consequence is visible and small — a `ready` draft older than the TTL still
+// reads `ready` here until a panel read flips it.
+//
+// §7.20: the static path is registered immediately before, and adjacent to, the
+// `:tweetId` form. RA.4's compose route goes with the `/radar/drafts` block, not
+// here.
+radar.get('/radar/sightings', async (c) => {
+  const days = intParam(c.req.query('days'), DEFAULT_SIGHTING_DAYS, 1, MAX_SIGHTING_DAYS);
+  if (days === null) return c.json({ error: 'invalid_days' }, 400);
+
+  const limit = intParam(c.req.query('limit'), DEFAULT_SIGHTING_LIMIT, 1, MAX_SIGHTING_LIMIT);
+  if (limit === null) return c.json({ error: 'invalid_limit' }, 400);
+
+  const bandStr = c.req.query('band');
+  if (bandStr !== undefined && !(SIGHTING_BANDS as readonly string[]).includes(bandStr)) {
+    return c.json({ error: 'invalid_band', allowed: SIGHTING_BANDS }, 400);
+  }
+
+  const handleStr = c.req.query('handle');
+  let handle: string | null = null;
+  if (handleStr !== undefined) {
+    handle = normalizePersonHandle(handleStr);
+    if (handle === null) return c.json({ error: 'invalid_handle' }, 400);
+  }
+
+  const orderStr = c.req.query('order');
+  if (orderStr !== undefined && !(SIGHTING_ORDERS as readonly string[]).includes(orderStr)) {
+    return c.json({ error: 'invalid_order', allowed: SIGHTING_ORDERS }, 400);
+  }
+  const order = (orderStr ?? 'vpm') as SightingOrder;
+
+  const admitted = boolParam(c.req.query('admitted'));
+  if (admitted === 'invalid') return c.json({ error: 'invalid_admitted' }, 400);
+  const worked = boolParam(c.req.query('worked'));
+  if (worked === 'invalid') return c.json({ error: 'invalid_worked' }, 400);
+
+  const conds: SQL[] = [
+    gte(radarSightings.lastSeenAt, new Date(Date.now() - days * 24 * 60 * 60 * 1000)),
+  ];
+  // The band filter compares against the stored free text, so it can only ever
+  // name one of the four live values — a legacy row is unreachable by filter and
+  // still visible in the unfiltered list, which is the honest way round.
+  if (bandStr !== undefined) conds.push(eq(radarSightings.band, bandStr));
+  if (handle !== null) conds.push(eq(radarSightings.handle, handle));
+
+  // +1 so "there was more" is a fact, not an inference from a full page.
+  const scan = await db
+    .select()
+    .from(radarSightings)
+    .where(and(...conds))
+    .orderBy(desc(radarSightings.lastSeenAt))
+    .limit(SIGHTING_SCAN_CAP + 1);
+  const truncated = scan.length > SIGHTING_SCAN_CAP;
+  const rows = truncated ? scan.slice(0, SIGHTING_SCAN_CAP) : scan;
+
+  // TODAY's config, echoed back under `sweep`: a preset change legitimately
+  // re-reads history, and the echo is what makes that legible rather than
+  // mysterious ("why did this row stop being admitted?").
+  const cfg = sweepConfigFromSettings();
+  const ctx = await loadSightingContext(
+    rows.map((r) => r.tweetId),
+    rows.map((r) => r.handle),
+  );
+
+  const filtered = buildSightingViews(rows, cfg, ctx).filter(
+    (v) =>
+      (admitted === null || v.admitted === admitted) && (worked === null || v.worked === worked),
+  );
+  // The summary describes the whole FILTERED population; `sightings` is the
+  // `limit`-sized slice of it, so `count < summary.total` means "truncated list,
+  // not a truncated answer".
+  const summary = summarizeSightings(filtered);
+  const sightings = [...filtered].sort(compareSightings(order)).slice(0, limit);
+
+  return c.json({
+    days,
+    order,
+    sweep: cfg,
+    scanned: rows.length,
+    truncated,
+    count: sightings.length,
+    summary,
+    sightings,
+  });
+});
+
+// One tweet's whole history in a single call: what the queue saw, every draft
+// ever written for it, and any reply that reached X. "Did I already answer this,
+// and with what."
+radar.get('/radar/sightings/:tweetId', async (c) => {
+  const tweetId = c.req.param('tweetId');
+  if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
+
+  const [row] = await db.select().from(radarSightings).where(eq(radarSightings.tweetId, tweetId));
+  if (!row) return c.json({ error: 'not_found' }, 404);
+
+  const [drafts, replies, ctx] = await Promise.all([
+    db
+      .select()
+      .from(radarDrafts)
+      .where(eq(radarDrafts.tweetId, tweetId))
+      .orderBy(desc(radarDrafts.draftedAt)),
+    // A projection, not `select()`: `contextSnapshot` is the whole rendered
+    // prompt context and would dwarf everything else in an agent's context
+    // window for no gain — this list answers "with what", and the drafts above
+    // already carry the variants.
+    db
+      .select({
+        id: replyDrafts.id,
+        replyText: replyDrafts.replyText,
+        replyTextEdited: replyDrafts.replyTextEdited,
+        status: replyDrafts.status,
+        source: replyDrafts.source,
+        model: replyDrafts.model,
+        postedTweetId: replyDrafts.postedTweetId,
+        sourcePostedAt: replyDrafts.sourcePostedAt,
+        createdAt: replyDrafts.createdAt,
+        updatedAt: replyDrafts.updatedAt,
+      })
+      .from(replyDrafts)
+      .where(eq(replyDrafts.sourceTweetId, tweetId))
+      .orderBy(desc(replyDrafts.createdAt)),
+    loadSightingContext([tweetId], [row.handle]),
+  ]);
+
+  const cfg = sweepConfigFromSettings();
+  const [sighting] = buildSightingViews([row], cfg, ctx);
+  // One row in, one view out (`buildSightingViews` is a map) — the guard is
+  // `noUncheckedIndexedAccess` bookkeeping, not a reachable branch.
+  if (!sighting) return c.json({ error: 'not_found' }, 404);
+
+  return c.json({ sweep: cfg, sighting, drafts, replies });
+});
+
+/** The four read-time answers the sighting rows can't carry (§7.12/§7.16),
+ *  loaded for a whole page at once — never per row (the `GET /harvest/affinity`
+ *  join shape). */
+async function loadSightingContext(
+  tweetIds: string[],
+  handles: string[],
+): Promise<SightingViewContext> {
+  if (tweetIds.length === 0) {
+    return { drafted: new Set(), replied: new Set(), people: new Map(), targets: new Set() };
+  }
+  const uniqueHandles = [...new Set(handles)];
+  const [draftRows, replyRows, personRows, targetHandles] = await Promise.all([
+    db
+      .select({ tweetId: radarDrafts.tweetId })
+      .from(radarDrafts)
+      .where(inArray(radarDrafts.tweetId, tweetIds)),
+    // POSTED only — a draft that was never pasted is `drafted`, not `replied`,
+    // and conflating them would report work that never reached anyone.
+    db
+      .select({ tweetId: replyDrafts.sourceTweetId })
+      .from(replyDrafts)
+      .where(and(inArray(replyDrafts.sourceTweetId, tweetIds), eq(replyDrafts.status, 'posted'))),
+    // Handles are lowercased on every side (the ingest's own parser,
+    // normalizePersonHandle, the voice scrape), so these join without lower().
+    db
+      .select({ handle: people.handle, stage: people.stage, retired: people.retired })
+      .from(people)
+      .where(inArray(people.handle, uniqueHandles)),
+    // §7.4c: reuse the roster's one loader, never re-derive membership here.
+    loadTargetHandles(),
+  ]);
+
+  const peopleByHandle = new Map<string, SightingPerson>(
+    personRows.map((p) => [p.handle, { stage: p.stage, retired: p.retired }]),
+  );
+  return {
+    drafted: new Set(draftRows.map((r) => r.tweetId)),
+    replied: new Set(replyRows.map((r) => r.tweetId)),
+    people: peopleByHandle,
+    targets: new Set(targetHandles),
+  };
+}
+
+/** Newest first, then by id — so two calls over unchanged data return the same
+ *  order and a diffing agent sees only real movement. */
+function sightingTieBreak(a: SightingView, b: SightingView): number {
+  return Date.parse(b.lastSeenAt) - Date.parse(a.lastSeenAt) || a.tweetId.localeCompare(b.tweetId);
+}
+
+function compareSightings(order: SightingOrder): (a: SightingView, b: SightingView) => number {
+  return (a, b) => {
+    if (order === 'lastSeen') return sightingTieBreak(a, b);
+    if (order === 'views') return b.views - a.views || sightingTieBreak(a, b);
+    // vpm: unjudgeable rows sort LAST rather than as zero-velocity ones — a
+    // missing post time is not a slow tweet (§7.11).
+    if (a.vpm === null || b.vpm === null) {
+      if (a.vpm === b.vpm) return sightingTieBreak(a, b);
+      return a.vpm === null ? 1 : -1;
+    }
+    return b.vpm - a.vpm || sightingTieBreak(a, b);
+  };
+}
+
+/** Optional positive integer, clamped into range. `null` = present but not one,
+ *  which the caller turns into its own 400 code. `GET /harvest/affinity`'s
+ *  helper, restated here rather than exported across routers. */
+function intParam(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number | null {
+  if (raw === undefined) return fallback;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return null;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Tri-state query flag: absent = no filter, `'true'`/`'false'` = the filter,
+ *  anything else = a 400. Deliberately stricter than the repo's `=== 'true'`
+ *  boolean params, which default to false when the caller fat-fingers them:
+ *  those are opt-in switches, this one narrows a RESULT SET, and `admitted=1`
+ *  quietly meaning "no filter" hands back a full list the caller believes is
+ *  filtered — a wrong answer, not a missing one. */
+function boolParam(raw: string | undefined): boolean | null | 'invalid' {
+  if (raw === undefined) return null;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return 'invalid';
+}
 
 function isStatus(v: unknown): v is RadarDraftStatus {
   return typeof v === 'string' && (STATUSES as readonly string[]).includes(v);

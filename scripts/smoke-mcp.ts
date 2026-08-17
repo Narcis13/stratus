@@ -154,6 +154,8 @@ async function callTool(
     'x_digest',
     'x_niche',
     'x_me',
+    'x_radar',
+    'x_radar_tweet',
     'x_add_idea',
     'x_add_person_note',
     'x_add_me_entry',

@@ -353,6 +353,73 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
   );
 
   server.registerTool(
+    'x_radar',
+    {
+      title: 'The Radar sighting corpus',
+      description:
+        'Every tweet my Radar queue admitted — what my sweep actually let through, on ANY x.com page, not just what /home fed me. $0 DOM capture, no X API.\n' +
+        'Bands (WHY a row is here, never a judgement about the tweet): `sweep` = an armed sweep’s numeric filters admitted it (the ordinary way); `manual` = I pinned it by hand with ⊕; `cannon` = a camped-roster capture, metric filters bypassed; `roster` = a fresh post by someone already in my circle, metric filters bypassed.\n' +
+        '`admitted` is RECOMPUTED against today’s sweep settings (echoed back under `sweep`), judged at the age the tweet had when the queue last saw it — so `admitted:false` on an older row may just mean I changed the filters since, not that the capture was junk. `worked` = a draft exists OR a reply was posted. **An admitted, unworked, high-`vpm` row is the finding** (`summary.unworkedAdmitted` counts them). `sourcePath` is the x.com pathname it was captured on — the one thing the passive /home corpus cannot answer. `stage`/`isTarget` come from the people layer at read time. Tweet ids are STRINGS. Free, local read.',
+      inputSchema: {
+        days: z
+          .number()
+          .int()
+          .min(1)
+          .max(60)
+          .optional()
+          .describe('Trailing window on last-seen (default 7, max 60 — the retention window).'),
+        band: z
+          .enum(['manual', 'roster', 'cannon', 'sweep'])
+          .optional()
+          .describe('Only this band.'),
+        handle: z.string().optional().describe('Only this author, with or without a leading @.'),
+        admitted: z
+          .boolean()
+          .optional()
+          .describe('Only rows today’s sweep filters would (or would not) admit.'),
+        worked: z
+          .boolean()
+          .optional()
+          .describe('false = the unworked queue (no draft, no posted reply) — the usual ask.'),
+        order: z
+          .enum(['vpm', 'views', 'lastSeen'])
+          .optional()
+          .describe('Sort key (default vpm — views per minute at last sighting).'),
+        limit: z.number().int().min(1).max(200).optional().describe('Rows to return (default 50).'),
+      },
+    },
+    async ({ days, band, handle, admitted, worked, order, limit }) => {
+      const parts: string[] = [];
+      if (days !== undefined) parts.push(`days=${encodeURIComponent(String(days))}`);
+      if (band !== undefined) parts.push(`band=${encodeURIComponent(band)}`);
+      if (handle !== undefined)
+        parts.push(`handle=${encodeURIComponent(handle.replace(/^@/, ''))}`);
+      if (admitted !== undefined) parts.push(`admitted=${admitted ? 'true' : 'false'}`);
+      if (worked !== undefined) parts.push(`worked=${worked ? 'true' : 'false'}`);
+      if (order !== undefined) parts.push(`order=${encodeURIComponent(order)}`);
+      if (limit !== undefined) parts.push(`limit=${encodeURIComponent(String(limit))}`);
+      return route(`/x/radar/sightings${parts.length ? `?${parts.join('&')}` : ''}`);
+    },
+  );
+
+  server.registerTool(
+    'x_radar_tweet',
+    {
+      title: 'One swept tweet’s history',
+      description:
+        'Everything about one tweet the Radar saw: the sighting itself (with the same `admitted`/`vpm`/`worked`/`stage` fields x_radar returns), every `radar_drafts` row ever written for it (newest first, with status, angle, all variants, model and curation score), and every reply draft it produced with its posted state. One call answers "did I already answer this, and with what". Free, local read of $0 DOM-captured data.',
+      inputSchema: {
+        tweetId: z
+          .string()
+          .describe(
+            'The tweet id, as a STRING — tweet ids exceed Number.MAX_SAFE_INTEGER, so never pass a number.',
+          ),
+      },
+    },
+    async ({ tweetId }) => route(`/x/radar/sightings/${encodeURIComponent(tweetId)}`),
+  );
+
+  server.registerTool(
     'x_digest',
     {
       title: 'Weekly digest',

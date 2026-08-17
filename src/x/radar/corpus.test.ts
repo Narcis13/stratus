@@ -4,13 +4,18 @@
 // out-of-order cases below are asserted in both directions.
 
 import { describe, expect, test } from 'bun:test';
+import { SWEEP, type SweepConfig } from '../../shared/radarSweep.ts';
 import {
   SIGHTING_TEXT_MAX,
+  type SightingViewContext,
   type SightingWireRow,
   type StoredSighting,
+  type StoredSightingRow,
+  buildSightingViews,
   derivePostedAt,
   mergeSightingRow,
   parseSightingWireRow,
+  summarizeSightings,
 } from './corpus.ts';
 
 const NOW = Date.parse('2026-08-17T12:00:00.000Z');
@@ -254,5 +259,194 @@ describe('mergeSightingRow', () => {
   test('seen_count counts every accepted re-sighting', () => {
     const patch = mergeSightingRow(stored({ seenCount: 41 }), ok(wire()));
     expect(patch.seenCount).toBe(42);
+  });
+});
+
+// RA.3 — the read half. Every field asserted below is one the table deliberately
+// does NOT have a column for (§7.12/§7.16), so this block is the whole proof
+// that the server's answers are reproducible from a row plus a config.
+describe('buildSightingViews', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const SEEN = new Date(NOW);
+
+  function row(over: Partial<StoredSightingRow> = {}): StoredSightingRow {
+    return {
+      tweetId: TWEET,
+      url: `https://x.com/alice/status/${TWEET}`,
+      handle: 'alice',
+      author: 'Alice Builder',
+      text: 'shipping is a skill you learn by shipping',
+      band: 'sweep',
+      views: 900,
+      replies: 3,
+      likes: 5,
+      bait: false,
+      verified: true,
+      postedAt: new Date(NOW - 12 * 60_000),
+      sourcePath: '/home',
+      firstSeenAt: SEEN,
+      lastSeenAt: SEEN,
+      seenCount: 1,
+      ...over,
+    };
+  }
+
+  function ctx(over: Partial<SightingViewContext> = {}): SightingViewContext {
+    return {
+      drafted: new Set<string>(),
+      replied: new Set<string>(),
+      people: new Map(),
+      targets: new Set<string>(),
+      ...over,
+    };
+  }
+
+  function viewOf(
+    over: Partial<StoredSightingRow> = {},
+    cfg: SweepConfig = SWEEP,
+    c: SightingViewContext = ctx(),
+  ) {
+    const [v] = buildSightingViews([row(over)], cfg, c);
+    if (!v) throw new Error('expected exactly one view');
+    return v;
+  }
+
+  test('derives the age, the velocity and the sweep verdict', () => {
+    const v = viewOf();
+    expect(v.ageMinAtLastSeen).toBe(12);
+    expect(v.vpm).toBe(75); // 900 views / 12 min
+    expect(v.admitted).toBe(true);
+    expect(v.postedAt).toBe(new Date(NOW - 12 * 60_000).toISOString());
+    expect(v.lastSeenAt).toBe(SEEN.toISOString());
+  });
+
+  // The one that matters: a post is only ever replyable at the moment it was in
+  // front of me, so judging it at `now` would make every row older than
+  // `maxAgeMin` read false and the whole field would say nothing.
+  test('admitted is judged at the last sighting, not at read time', () => {
+    const lastSeen = new Date(NOW - 5 * DAY);
+    const v = viewOf({
+      lastSeenAt: lastSeen,
+      postedAt: new Date(lastSeen.getTime() - 12 * 60_000),
+    });
+    expect(v.ageMinAtLastSeen).toBe(12);
+    expect(v.admitted).toBe(true);
+  });
+
+  test('admitted follows the config it is given, so a preset change re-reads history', () => {
+    const strict: SweepConfig = { ...SWEEP, minViews: 5000 };
+    expect(viewOf().admitted).toBe(true);
+    expect(viewOf({}, strict).admitted).toBe(false);
+  });
+
+  // The two unknowns resolve in OPPOSITE directions, and both are deliberate.
+  test('unknown verified refuses, unknown likes passes', () => {
+    expect(viewOf({ verified: null }).admitted).toBe(false);
+    expect(viewOf({ verified: false }).admitted).toBe(false);
+    // …while a missing like count reads as 0 (what the page itself passes when
+    // X renders no count) rather than as a refusal.
+    expect(viewOf({ likes: null }).admitted).toBe(true);
+    // Not vacuous: the like ceiling still bites when the count IS known.
+    expect(viewOf({ likes: 25 }).admitted).toBe(false);
+  });
+
+  test('a row with no post time is unjudgeable, never a zero', () => {
+    const v = viewOf({ postedAt: null });
+    expect(v.ageMinAtLastSeen).toBeNull();
+    expect(v.vpm).toBeNull();
+    expect(v.admitted).toBeNull();
+  });
+
+  test('worked is drafted OR replied, and each half is visible on its own', () => {
+    expect(viewOf({}, SWEEP, ctx()).worked).toBe(false);
+    const drafted = viewOf({}, SWEEP, ctx({ drafted: new Set([TWEET]) }));
+    expect(drafted).toMatchObject({ drafted: true, replied: false, worked: true });
+    const replied = viewOf({}, SWEEP, ctx({ replied: new Set([TWEET]) }));
+    expect(replied).toMatchObject({ drafted: false, replied: true, worked: true });
+  });
+
+  test('stage comes from the people layer and a retired person has none', () => {
+    const known = ctx({ people: new Map([['alice', { stage: 'engaged', retired: false }]]) });
+    expect(viewOf({}, SWEEP, known).stage).toBe('engaged');
+
+    const retired = ctx({ people: new Map([['alice', { stage: 'engaged', retired: true }]]) });
+    expect(viewOf({}, SWEEP, retired).stage).toBeNull();
+
+    expect(viewOf({}, SWEEP, ctx()).stage).toBeNull();
+    expect(viewOf({}, SWEEP, ctx({ targets: new Set(['alice']) })).isTarget).toBe(true);
+    expect(viewOf({}, SWEEP, ctx({ targets: new Set(['bob']) })).isTarget).toBe(false);
+  });
+
+  test('a null url stays null — a synthesised permalink would erase the unknown', () => {
+    expect(viewOf({ url: null }).url).toBeNull();
+  });
+});
+
+describe('summarizeSightings', () => {
+  const SEEN = new Date(NOW);
+
+  function view(over: Partial<StoredSightingRow>, worked = false) {
+    const base: StoredSightingRow = {
+      tweetId: '1',
+      url: null,
+      handle: 'alice',
+      author: null,
+      text: 't',
+      band: 'sweep',
+      views: 900,
+      replies: 3,
+      likes: 5,
+      bait: false,
+      verified: true,
+      postedAt: new Date(NOW - 12 * 60_000),
+      sourcePath: '/home',
+      firstSeenAt: SEEN,
+      lastSeenAt: SEEN,
+      seenCount: 1,
+    };
+    const row = { ...base, ...over };
+    const [v] = buildSightingViews([row], SWEEP, {
+      drafted: new Set(worked ? [row.tweetId] : []),
+      replied: new Set<string>(),
+      people: new Map(),
+      targets: new Set<string>(),
+    });
+    if (!v) throw new Error('expected exactly one view');
+    return v;
+  }
+
+  test('counts by band, by source path and by author — and never a rate', () => {
+    const s = summarizeSightings([
+      view({ tweetId: '1', handle: 'alice', band: 'sweep', sourcePath: '/home' }),
+      view({ tweetId: '2', handle: 'alice', band: 'manual', sourcePath: '/search' }),
+      view({ tweetId: '3', handle: 'bob', band: 'sweep', sourcePath: null }),
+    ]);
+    expect(s.total).toBe(3);
+    expect(s.byBand).toEqual({ sweep: 2, manual: 1 });
+    expect(s.bySourcePath).toEqual({ '/home': 1, '/search': 1, unknown: 1 });
+    expect(s.topHandles).toEqual([
+      { handle: 'alice', sightings: 2 },
+      { handle: 'bob', sightings: 1 },
+    ]);
+    // A reply-RATE over this corpus would be an inference needing the §7.19
+    // gate; the funnel in GET /playbook already owns that question.
+    expect(Object.keys(s)).not.toContain('rate');
+  });
+
+  test('unworkedAdmitted is the finding: admitted, and nothing done about it', () => {
+    const s = summarizeSightings([
+      // Admitted + worked → counted in both, but not the finding.
+      view({ tweetId: '1' }, true),
+      // Admitted + untouched → the finding.
+      view({ tweetId: '2' }),
+      // Not admitted (too few views) and untouched → neither.
+      view({ tweetId: '3', views: 10 }),
+      // Unjudgeable → never counts as admitted.
+      view({ tweetId: '4', postedAt: null }),
+    ]);
+    expect(s.total).toBe(4);
+    expect(s.admitted).toBe(2);
+    expect(s.worked).toBe(1);
+    expect(s.unworkedAdmitted).toBe(1);
   });
 });

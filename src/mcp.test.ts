@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { app } from './app.ts';
 import { db } from './db/client.ts';
-import { harvestRows, harvestRuns } from './x/db/schema.ts';
+import { harvestRows, harvestRuns, radarSightings } from './x/db/schema.ts';
 import type { ThreadDetail, ThreadSummary } from './x/routes/harvest.ts';
 
 const TOKEN = process.env.API_TOKEN ?? '';
@@ -112,10 +112,13 @@ describe.if(authed)('MCP transport', () => {
     expect(names.has('x_update_setting')).toBe(true);
     expect(names.has('x_threads')).toBe(true);
     expect(names.has('x_thread')).toBe(true);
-    // 3 schema + 17 curated (incl. x_niche, x_me, x_monitor, x_goals, x_settings,
-    // x_threads, x_thread) + 5 write (incl. x_add_me_entry, x_update_setting).
+    expect(names.has('x_radar')).toBe(true);
+    expect(names.has('x_radar_tweet')).toBe(true);
+    // 3 schema + 19 curated (incl. x_niche, x_me, x_monitor, x_goals, x_settings,
+    // x_threads, x_thread, x_radar, x_radar_tweet) + 5 write (incl.
+    // x_add_me_entry, x_update_setting).
     // Goal WRITES stay out by design (ME.6): a bad target steers every draft.
-    expect(names.size).toBe(25);
+    expect(names.size).toBe(27);
   });
 });
 
@@ -231,6 +234,74 @@ describe.if(authed)('MCP tool tiers', () => {
     } finally {
       await db.delete(harvestRows).where(eq(harvestRows.runId, runId));
       await db.delete(harvestRuns).where(eq(harvestRuns.id, runId));
+    }
+  });
+
+  // RA.3 — the same round-trip for the Radar corpus: mirror a sighting through
+  // the $0 ingest route, then read it back the way a Claude Code session would.
+  // This is also what proves the two tools reach a MOUNTED route (the radar
+  // router is always mounted, unlike the LLM-gated ones).
+  test('curated tier: x_radar round-trips a swept tweet', async () => {
+    const tweetId = '799100000000000001';
+    const ingest = await app.request('/x/radar/sightings', {
+      method: 'POST',
+      headers: { authorization: BEARER, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rows: [
+          {
+            tweetId,
+            url: `https://x.com/mcp_ra/status/${tweetId}`,
+            handle: 'mcp_ra',
+            author: 'MCP RA',
+            text: 'a tweet my sweep admitted',
+            band: 'sweep',
+            views: 900,
+            replies: 3,
+            likes: 5,
+            bait: false,
+            verified: true,
+            ageMin: 10,
+            sourcePath: '/search',
+          },
+        ],
+      }),
+    });
+    expect(ingest.status).toBe(201);
+
+    try {
+      const { env } = await rpc('tools/call', {
+        name: 'x_radar',
+        arguments: { handle: '@mcp_ra', days: 1, worked: false },
+      });
+      const { data, isError } = toolPayload(env);
+      expect(isError).toBe(false);
+      const list = data as {
+        sweep: { minViews: number };
+        summary: { total: number; unworkedAdmitted: number };
+        sightings: { tweetId: string; sourcePath: string | null; worked: boolean }[];
+      };
+      // The config the route judged with is echoed, not implied.
+      expect(typeof list.sweep.minViews).toBe('number');
+      expect(list.summary.total).toBe(1);
+      expect(list.sightings[0]?.tweetId).toBe(tweetId);
+      // The one thing the passive /home corpus structurally cannot answer.
+      expect(list.sightings[0]?.sourcePath).toBe('/search');
+      expect(list.sightings[0]?.worked).toBe(false);
+
+      const one = await rpc('tools/call', { name: 'x_radar_tweet', arguments: { tweetId } });
+      const { data: detail, isError: detailErr } = toolPayload(one.env);
+      expect(detailErr).toBe(false);
+      const d = detail as {
+        sighting: { tweetId: string; vpm: number | null };
+        drafts: unknown[];
+        replies: unknown[];
+      };
+      expect(d.sighting.tweetId).toBe(tweetId);
+      expect(d.sighting.vpm).toBe(90); // 900 views / 10 min
+      expect(d.drafts).toEqual([]);
+      expect(d.replies).toEqual([]);
+    } finally {
+      await db.delete(radarSightings).where(eq(radarSightings.tweetId, tweetId));
     }
   });
 

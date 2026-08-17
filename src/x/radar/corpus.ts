@@ -1,7 +1,14 @@
-// The sighting corpus (RA.1) — the pure half of `POST /x/radar/sightings`:
-// what a wire row has to look like, and what a re-sighting does to a row that
-// is already stored. No db import and no clock of its own (every function takes
-// `nowMs`), so the rules are unit-testable and the route stays transport.
+// The sighting corpus — the pure half of the `/x/radar/sightings` routes.
+//
+// RA.1, the WRITE half: what a wire row has to look like, and what a
+// re-sighting does to a row that is already stored. RA.3, the READ half:
+// `buildSightingViews` turns stored rows into the answers only the server can
+// give (`vpm`, `admitted`, `worked`, `stage`, `isTarget` — none of them a
+// column, §7.12/§7.16) and `summarizeSightings` counts them.
+//
+// No db import and no clock of its own (the write half takes `nowMs`, the read
+// half derives every age from the rows' own timestamps), so the rules are
+// unit-testable and the routes stay transport.
 //
 // Twin of two existing modules, one on each side of the wire: `parseIngestRow`
 // in `routes/harvest.ts` (the passive-harvest parser) and `mergeSightings` in
@@ -10,7 +17,12 @@
 // sightings, one storage layer down — and the band ratchet is not re-stated at
 // all: it is imported from `src/shared/radarSweep.ts` (§7.27).
 
-import { type RadarBandName, bandStickiness } from '../../shared/radarSweep.ts';
+import {
+  type RadarBandName,
+  type SweepConfig,
+  bandStickiness,
+  passesSweep,
+} from '../../shared/radarSweep.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -232,7 +244,227 @@ export function mergeSightingRow(
   };
 }
 
+// --------------------------------------------------------- the reader (RA.3)
+
+/** One stored sighting as the reader pulls it back out. Wider than
+ *  `StoredSighting` (which is only what the merge reads) and deliberately a
+ *  separate interface: the merge must never grow a dependency on a column it
+ *  has no business folding. `band` is free text here for the same reason it is
+ *  free text in the column — a row written by an older build can hold a legacy
+ *  verdict, and a reader that typed it as the union would be making a claim the
+ *  table cannot keep. */
+export interface StoredSightingRow {
+  tweetId: string;
+  url: string | null;
+  handle: string;
+  author: string | null;
+  text: string;
+  band: string;
+  views: number;
+  replies: number;
+  likes: number | null;
+  bait: boolean;
+  verified: boolean | null;
+  postedAt: Date | null;
+  sourcePath: string | null;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  seenCount: number;
+}
+
+/** What `people` says about this handle. Passed in rather than resolved here so
+ *  the retired rule (below) lives in the tested pure layer, not in the route. */
+export interface SightingPerson {
+  stage: string;
+  retired: boolean;
+}
+
+/** Everything the view needs that is NOT on the sighting row. All four are the
+ *  server's own answers (§7.16) — none of them is ever accepted from a client,
+ *  and none is a column (§7.12). */
+export interface SightingViewContext {
+  /** Tweet ids with a `radar_drafts` row of ANY status. */
+  drafted: ReadonlySet<string>;
+  /** Tweet ids with a POSTED `reply_drafts` row — the paste actually happened. */
+  replied: ReadonlySet<string>;
+  /** Lowercased handle → the people-layer row, when there is one. */
+  people: ReadonlyMap<string, SightingPerson>;
+  /** The 2–10x target roster, lowercased (`loadTargetHandles()`). */
+  targets: ReadonlySet<string>;
+}
+
+/** One sighting, enriched with every read-time answer. Dates are ISO strings
+ *  so the shape is the wire shape and a unit test asserts what the caller gets. */
+export interface SightingView {
+  tweetId: string;
+  /** Null = the capture never read a permalink (§7.11). Deliberately NOT
+   *  back-filled with `https://x.com/<handle>/status/<id>`: unknown is a fact
+   *  about the capture, and a synthesised URL would erase it. */
+  url: string | null;
+  handle: string;
+  author: string | null;
+  text: string;
+  band: string;
+  views: number;
+  replies: number;
+  likes: number | null;
+  bait: boolean;
+  verified: boolean | null;
+  /** Minutes between the post going up and the LAST time the queue saw it.
+   *  Null when `posted_at` is unknown (a hand-written row — the ingest always
+   *  derives one). */
+  ageMinAtLastSeen: number | null;
+  /** Views per minute at that same moment, 2dp. Null with the age. */
+  vpm: number | null;
+  /** Would TODAY's sweep filters have admitted this capture? Judged at the age
+   *  the row had when it was last seen — the same reading `deriveTimelineBucket`
+   *  takes over the passive corpus, and for the same reason: a post is only ever
+   *  replyable at the moment it was in front of you, so judging it at "now"
+   *  would make every row older than `maxAgeMin` read false and say nothing.
+   *
+   *  Unlike the funnel this does NOT force `verifiedOnly` off — `verified` is
+   *  stored here, so the badge gate is evaluated exactly as configured and the
+   *  answer is exact rather than approximate. `null` = unjudgeable (no age). */
+  admitted: boolean | null;
+  drafted: boolean;
+  replied: boolean;
+  /** Drafted OR replied — "I have already done something about this one". */
+  worked: boolean;
+  /** The CRM stage, or null when unknown. A RETIRED person reads null too: they
+   *  have no current stage, which is the `GET /harvest/affinity` rule verbatim. */
+  stage: string | null;
+  isTarget: boolean;
+  sourcePath: string | null;
+  postedAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  seenCount: number;
+}
+
+/** Enrich stored rows into views. Pure — the clock only enters through the
+ *  rows' own timestamps, so `admitted` is reproducible from a fixture. */
+export function buildSightingViews(
+  rows: readonly StoredSightingRow[],
+  cfg: SweepConfig,
+  ctx: SightingViewContext,
+): SightingView[] {
+  return rows.map((r) => {
+    const ageMinAtLastSeen =
+      r.postedAt === null
+        ? null
+        : Math.max(0, Math.round((r.lastSeenAt.getTime() - r.postedAt.getTime()) / 60_000));
+    const drafted = ctx.drafted.has(r.tweetId);
+    const replied = ctx.replied.has(r.tweetId);
+    const person = ctx.people.get(r.handle);
+    return {
+      tweetId: r.tweetId,
+      url: r.url,
+      handle: r.handle,
+      author: r.author,
+      text: r.text,
+      band: r.band,
+      views: r.views,
+      replies: r.replies,
+      likes: r.likes,
+      bait: r.bait,
+      verified: r.verified,
+      ageMinAtLastSeen,
+      vpm: ageMinAtLastSeen === null ? null : round2(r.views / Math.max(ageMinAtLastSeen, 1)),
+      admitted:
+        ageMinAtLastSeen === null
+          ? null
+          : passesSweep(
+              {
+                views: r.views,
+                // Unknown likes read as 0 — the LENIENT direction, opposite to
+                // `verified` above it, and it is the page's own reading: the
+                // capture passes `cap.likes`, which is 0 when X renders no like
+                // count. Failing on unknown here would filter out exactly the
+                // quiet posts the sweep exists to find.
+                likes: r.likes ?? 0,
+                replies: r.replies,
+                ageMin: ageMinAtLastSeen,
+                verified: r.verified,
+              },
+              cfg,
+            ),
+      drafted,
+      replied,
+      worked: drafted || replied,
+      stage: person && !person.retired ? person.stage : null,
+      isTarget: ctx.targets.has(r.handle),
+      sourcePath: r.sourcePath,
+      postedAt: r.postedAt === null ? null : r.postedAt.toISOString(),
+      firstSeenAt: r.firstSeenAt.toISOString(),
+      lastSeenAt: r.lastSeenAt.toISOString(),
+      seenCount: r.seenCount,
+    };
+  });
+}
+
+/** The `source_path` bucket for a row that never recorded one. A real path
+ *  always starts with '/', so this can never collide with one. */
+export const SIGHTING_PATH_UNKNOWN = 'unknown';
+
+/** COUNTS ONLY, deliberately — no rates (§7.19). A reply-rate over this corpus
+ *  would be an inference needing the n≥20 gate, and `GET /playbook`'s
+ *  `timelineFunnel` already owns the gated version of that question. */
+export interface SightingSummary {
+  /** The whole filtered population — `sightings[]` may be a `limit`ed slice of it. */
+  total: number;
+  admitted: number;
+  worked: number;
+  /** Admitted and NOT worked: the reply I could still have written. The finding. */
+  unworkedAdmitted: number;
+  byBand: Record<string, number>;
+  bySourcePath: Record<string, number>;
+  topHandles: { handle: string; sightings: number }[];
+}
+
+/** How many authors the summary names. A display bound, not a judgement. */
+const SUMMARY_TOP_HANDLES = 10;
+
+export function summarizeSightings(views: readonly SightingView[]): SightingSummary {
+  const byBand: Record<string, number> = {};
+  const bySourcePath: Record<string, number> = {};
+  const byHandle = new Map<string, number>();
+  let admitted = 0;
+  let worked = 0;
+  let unworkedAdmitted = 0;
+
+  for (const v of views) {
+    byBand[v.band] = (byBand[v.band] ?? 0) + 1;
+    const path = v.sourcePath ?? SIGHTING_PATH_UNKNOWN;
+    bySourcePath[path] = (bySourcePath[path] ?? 0) + 1;
+    byHandle.set(v.handle, (byHandle.get(v.handle) ?? 0) + 1);
+    if (v.admitted === true) admitted++;
+    if (v.worked) worked++;
+    if (v.admitted === true && !v.worked) unworkedAdmitted++;
+  }
+
+  const topHandles = [...byHandle.entries()]
+    // Handle asc as the tie-break, so two authors with the same count come back
+    // in the same order on every call (the list is read by a diffing agent).
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, SUMMARY_TOP_HANDLES)
+    .map(([handle, sightings]) => ({ handle, sightings }));
+
+  return {
+    total: views.length,
+    admitted,
+    worked,
+    unworkedAdmitted,
+    byBand,
+    bySourcePath,
+    topHandles,
+  };
+}
+
 // ------------------------------------------------------------------ helpers
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 /** The 4-union, plus the two dead classifier verdicts an extension build older
  *  than RS.2 may still hold in its buffer. The page already folds those onto

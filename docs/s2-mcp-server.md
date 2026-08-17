@@ -14,7 +14,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
   --header "Authorization: Bearer $STRATUS_TOKEN"
 ```
 
-From then on, an agent has **25 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make five tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, change one setting). No session state, no SSH, no exported CSV.
+From then on, an agent has **27 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make five tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, change one setting). No session state, no SSH, no exported CSV.
 
 The MCP client *is* the intelligence — there are deliberately **no Grok tools**. And the write ceiling is a `draft` calendar row, so **no MCP call can ever reach `createPost` or any billed X endpoint.**
 
@@ -73,7 +73,7 @@ CIRCLES gave stratus a rich, measured CRM. But the only consumer was the side pa
 
 ## The tools — `src/x/mcp.ts`
 
-**25 tools, three tiers, all $0.**
+**27 tools, three tiers, all $0.**
 
 ### Schema tier (3) — the S1 core, verbatim
 
@@ -85,7 +85,7 @@ These call the read-only `inspect.ts` core directly (`tokens`-blind, 500-row cap
 | `x_describe_table` | `table` | One table's columns (name/type/nullability/pk) + row count. |
 | `x_query` | `sql` | A single `SELECT` / `WITH…SELECT`, ≤500 rows. The most powerful tool. |
 
-### Curated tier (17) — zero duplicated logic
+### Curated tier (19) — zero duplicated logic
 
 Each tool calls an existing stratus route **in-process** via Hono's `app.request(path, { headers: { authorization } })`, forwarding the MCP caller's bearer. The routes stay the single source of truth, and every future route improvement is inherited for free.
 
@@ -108,6 +108,8 @@ Each tool calls an existing stratus route **in-process** via Hono's `app.request
 | `x_monitor` | `/x/monitor` | The activity monitor's alerts, no inputs (GR.5). |
 | `x_goals` | `/x/goals?tzOffsetMin=` | Goals with pacing + commitments with debt (GR.7). Read-only — goal **writes** stay out of MCP by design: a bad target steers every future draft. |
 | `x_settings` | `/x/settings` | The whole knob catalog with values, ranges and `isDefault` (UI.4). Read this before `x_update_setting` — the description carries the why, the range is the bound. |
+| `x_radar` | `/x/radar/sightings?days=&band=&handle=&admitted=&worked=&order=&limit=` | The Radar's sighting corpus (RA.3) — what my sweep admitted on **any** x.com page, with `sourcePath`, a counts-only `summary`, and `admitted` **recomputed** against today's sweep settings (echoed under `sweep`). The finding is `summary.unworkedAdmitted`. |
+| `x_radar_tweet` | `/x/radar/sightings/:tweetId` | One swept tweet's whole history: the sighting + every `radar_drafts` row + every reply draft. `tweetId` is a **string**. |
 
 Tool descriptions state costs ("Free, local read") so agent callers don't hesitate.
 
@@ -166,7 +168,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
 - **`src/mcp.test.ts`** — a JSON-RPC round-trip over `app.request`: `initialize` → `tools/list` → `tools/call` for one tool per tier, plus the **draft-forced guard** (a smuggled `pending` is stripped) and a **401 without the bearer**. Adds a `describeTable` check to `inspect.ts` coverage.
 - **`scripts/smoke-mcp.ts`** — rerunnable $0 check on an ephemeral `:memory:` DB: full round-trip including the `tokens` guard and the draft-forced guard.
 
-**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 25 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
+**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 27 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
 
 ---
 

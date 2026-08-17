@@ -6,8 +6,16 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { eq, inArray, like } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { commitments, radarDrafts, radarSightings, replyDrafts, streaks } from '../db/schema.ts';
+import {
+  commitments,
+  people,
+  radarDrafts,
+  radarSightings,
+  replyDrafts,
+  streaks,
+} from '../db/schema.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
+import { sweepConfigFromSettings } from '../settings/sweepConfig.ts';
 import { radar } from './radar.ts';
 
 const app = new Hono();
@@ -711,5 +719,410 @@ describe('POST /radar/sightings (RA.1)', () => {
     ]);
     expect(capped.body.updated).toBe(1);
     expect(capped.body.skippedCap).toBe(0);
+  });
+});
+
+// RA.3 — the corpus read. The route's whole job is to answer questions the
+// table has no columns for (`admitted`, `vpm`, `worked`, `stage`), so almost
+// every assertion below is about a derived field. Its own 993-prefixed ids and
+// `ra3*` handles keep it isolated from the ingest block above and from every
+// other suite sharing the in-memory DB.
+describe('GET /radar/sightings (RA.3)', () => {
+  const G_ADMIT = '993000000000000001'; // admitted, untouched — the finding
+  const G_WORKED = '993000000000000002'; // has an EXPIRED radar draft
+  const G_REPLIED = '993000000000000003'; // has a POSTED reply
+  const G_FILTERED = '993000000000000004'; // too few views for the sweep
+  const G_OLD = '993000000000000005'; // last seen 40 days ago
+  const G_BOB = '993000000000000006'; // a second author
+  const G_IDS = [G_ADMIT, G_WORKED, G_REPLIED, G_FILTERED, G_OLD, G_BOB];
+
+  const MIN = 60_000;
+  const ALICE = 'ra3alice';
+  const BOB = 'ra3bob';
+
+  interface ViewRow {
+    tweetId: string;
+    handle: string;
+    band: string;
+    views: number;
+    vpm: number | null;
+    ageMinAtLastSeen: number | null;
+    admitted: boolean | null;
+    drafted: boolean;
+    replied: boolean;
+    worked: boolean;
+    stage: string | null;
+    isTarget: boolean;
+    sourcePath: string | null;
+  }
+  interface ListBody {
+    days: number;
+    order: string;
+    sweep: Record<string, number | boolean>;
+    scanned: number;
+    truncated: boolean;
+    count: number;
+    summary: {
+      total: number;
+      admitted: number;
+      worked: number;
+      unworkedAdmitted: number;
+      byBand: Record<string, number>;
+      bySourcePath: Record<string, number>;
+      topHandles: { handle: string; sightings: number }[];
+    };
+    sightings: ViewRow[];
+  }
+
+  // Every fixture is placed relative to one `now` so the ages below are exact.
+  const now = Date.now();
+  const sighting = (
+    tweetId: string,
+    over: {
+      handle?: string;
+      band?: string;
+      views?: number;
+      lastSeenMinAgo: number;
+      ageMin: number;
+      sourcePath?: string | null;
+    },
+  ) => {
+    const lastSeen = new Date(now - over.lastSeenMinAgo * MIN);
+    return {
+      tweetId,
+      url: `https://x.com/${over.handle ?? ALICE}/status/${tweetId}`,
+      handle: over.handle ?? ALICE,
+      author: 'RA3 Author',
+      text: 'a swept tweet',
+      band: over.band ?? 'sweep',
+      views: over.views ?? 900,
+      replies: 3,
+      likes: 5,
+      bait: false,
+      verified: true,
+      postedAt: new Date(lastSeen.getTime() - over.ageMin * MIN),
+      sourcePath: over.sourcePath === undefined ? '/home' : over.sourcePath,
+      firstSeenAt: lastSeen,
+      lastSeenAt: lastSeen,
+      seenCount: 1,
+    };
+  };
+
+  const list = (q: string) => send<ListBody>(`/x/radar/sightings${q}`, 'GET');
+  const ids = (b: ListBody) => b.sightings.map((s) => s.tweetId);
+  const rowOf = (b: ListBody, tweetId: string) => b.sightings.find((s) => s.tweetId === tweetId);
+
+  async function wipe(): Promise<void> {
+    await db.delete(replyDrafts).where(inArray(replyDrafts.sourceTweetId, G_IDS));
+    await db.delete(radarDrafts).where(inArray(radarDrafts.tweetId, G_IDS));
+    await db.delete(radarSightings).where(inArray(radarSightings.tweetId, G_IDS));
+    await db.delete(people).where(inArray(people.handle, [ALICE, BOB]));
+  }
+
+  beforeAll(async () => {
+    await wipe();
+    await db.insert(radarSightings).values([
+      // vpm 900/10 = 90; views 900; last seen 10m ago.
+      sighting(G_ADMIT, { lastSeenMinAgo: 10, ageMin: 10 }),
+      // vpm 1200/10 = 120 — the vpm AND views leader.
+      sighting(G_WORKED, { views: 1200, lastSeenMinAgo: 40, ageMin: 10 }),
+      // vpm 600/30 = 20 — third by views, LAST by vpm.
+      sighting(G_REPLIED, { views: 600, band: 'manual', lastSeenMinAgo: 20, ageMin: 30 }),
+      // vpm 50/1 = 50 — last by views, third by vpm. Below the 300-view floor.
+      sighting(G_FILTERED, {
+        views: 50,
+        band: 'roster',
+        lastSeenMinAgo: 30,
+        ageMin: 1,
+        sourcePath: '/search',
+      }),
+      sighting(G_OLD, { lastSeenMinAgo: 40 * 24 * 60, ageMin: 15 }),
+      sighting(G_BOB, { handle: BOB, views: 800, lastSeenMinAgo: 15, ageMin: 20 }),
+    ]);
+
+    // `worked` is any draft status — an expired one still means I worked it.
+    await db.insert(radarDrafts).values({
+      tweetId: G_WORKED,
+      handle: ALICE,
+      snippet: 'a swept tweet',
+      replyText: 'a reply I drafted and let rot',
+      angle: 'extends',
+      status: 'expired',
+      draftedAt: new Date(now - 100 * 60 * MIN),
+    });
+
+    await db.insert(replyDrafts).values([
+      {
+        sourceTweetId: G_REPLIED,
+        sourceAuthorUsername: ALICE,
+        sourceText: 'a swept tweet',
+        sourceUrl: `https://x.com/${ALICE}/status/${G_REPLIED}`,
+        contextSnapshot: {},
+        replyText: 'the reply I actually pasted',
+        model: 'grok-4.3',
+        source: 'radar',
+        status: 'posted',
+      },
+      // Copied is NOT posted: a draft that never reached anyone is not a reply.
+      {
+        sourceTweetId: G_ADMIT,
+        sourceAuthorUsername: ALICE,
+        sourceText: 'a swept tweet',
+        sourceUrl: `https://x.com/${ALICE}/status/${G_ADMIT}`,
+        contextSnapshot: {},
+        replyText: 'never pasted',
+        model: 'grok-4.3',
+        source: 'radar',
+        status: 'copied',
+      },
+    ]);
+
+    await db.insert(people).values({ handle: ALICE, stage: 'engaged' });
+  });
+
+  afterAll(wipe);
+
+  test('returns the read-time answers and echoes the config it judged with', async () => {
+    const { status, body } = await list(`?handle=${ALICE}&days=7`);
+    expect(status).toBe(200);
+    expect(body.days).toBe(7);
+    expect(body.order).toBe('vpm');
+    expect(body.truncated).toBe(false);
+    // The echo is what makes "why did this row stop being admitted?" answerable.
+    expect(body.sweep).toEqual(sweepConfigFromSettings() as unknown as typeof body.sweep);
+
+    expect(body.count).toBe(4); // G_OLD is outside the window, G_BOB is another author
+    const admit = rowOf(body, G_ADMIT);
+    expect(admit).toMatchObject({
+      ageMinAtLastSeen: 10,
+      vpm: 90,
+      admitted: true,
+      drafted: false,
+      // The `copied` reply draft above must not read as a posted one.
+      replied: false,
+      worked: false,
+      stage: 'engaged',
+      isTarget: false,
+      sourcePath: '/home',
+    });
+    // An EXPIRED radar draft still counts as worked.
+    expect(rowOf(body, G_WORKED)).toMatchObject({ drafted: true, replied: false, worked: true });
+    expect(rowOf(body, G_REPLIED)).toMatchObject({ drafted: false, replied: true, worked: true });
+    expect(rowOf(body, G_FILTERED)?.admitted).toBe(false);
+  });
+
+  test('the summary counts the whole filtered set, never a rate', async () => {
+    const { body } = await list(`?handle=${ALICE}&days=7`);
+    expect(body.summary).toMatchObject({
+      total: 4,
+      admitted: 3,
+      worked: 2,
+      // Admitted and untouched: exactly G_ADMIT. The finding.
+      unworkedAdmitted: 1,
+      byBand: { sweep: 2, manual: 1, roster: 1 },
+      bySourcePath: { '/home': 3, '/search': 1 },
+      topHandles: [{ handle: ALICE, sightings: 4 }],
+    });
+  });
+
+  test('the window is on last-seen: 7 days hides the 40-day-old row, 60 shows it', async () => {
+    expect(ids((await list(`?handle=${ALICE}&days=7`)).body)).not.toContain(G_OLD);
+    const wide = await list(`?handle=${ALICE}&days=60`);
+    expect(ids(wide.body)).toContain(G_OLD);
+    // Above the retention window is a clamp, not an error.
+    const clamped = await list(`?handle=${ALICE}&days=999`);
+    expect(clamped.body.days).toBe(60);
+  });
+
+  test('band and handle narrow the set', async () => {
+    const manual = await list(`?handle=${ALICE}&band=manual`);
+    expect(ids(manual.body)).toEqual([G_REPLIED]);
+    const bob = await list(`?handle=@${BOB}`);
+    expect(ids(bob.body)).toEqual([G_BOB]);
+    // The people layer knows alice, not bob.
+    expect(bob.body.sightings[0]?.stage).toBeNull();
+  });
+
+  test('admitted and worked filter independently', async () => {
+    const finding = await list(`?handle=${ALICE}&admitted=true&worked=false`);
+    expect(ids(finding.body)).toEqual([G_ADMIT]);
+    expect(finding.body.summary.total).toBe(1);
+
+    expect(ids((await list(`?handle=${ALICE}&worked=true`)).body).sort()).toEqual(
+      [G_REPLIED, G_WORKED].sort(),
+    );
+    expect(ids((await list(`?handle=${ALICE}&admitted=false`)).body)).toEqual([G_FILTERED]);
+  });
+
+  // The reason `sweep` is echoed at all: the same stored rows answer differently
+  // after a preset change, and that has to read as a config change rather than
+  // as data rot.
+  test('admitted follows the live sweep settings', async () => {
+    const before = await list(`?handle=${ALICE}&admitted=true`);
+    expect(before.body.count).toBe(3);
+
+    try {
+      setSettings({ 'x.sweep.minViews': 1000 });
+      const after = await list(`?handle=${ALICE}&admitted=true`);
+      // Only the 1200-view row still clears the floor.
+      expect(ids(after.body)).toEqual([G_WORKED]);
+      expect(after.body.sweep.minViews).toBe(1000);
+    } finally {
+      resetSettings({ keys: ['x.sweep.minViews'] });
+    }
+
+    expect((await list(`?handle=${ALICE}&admitted=true`)).body.count).toBe(3);
+  });
+
+  test('order picks a genuinely different ranking each time', async () => {
+    expect(ids((await list(`?handle=${ALICE}&days=7`)).body)).toEqual([
+      G_WORKED, // 120 vpm
+      G_ADMIT, // 90
+      G_FILTERED, // 50
+      G_REPLIED, // 20
+    ]);
+    expect(ids((await list(`?handle=${ALICE}&days=7&order=views`)).body)).toEqual([
+      G_WORKED, // 1200
+      G_ADMIT, // 900
+      G_REPLIED, // 600
+      G_FILTERED, // 50
+    ]);
+    expect(ids((await list(`?handle=${ALICE}&days=7&order=lastSeen`)).body)).toEqual([
+      G_ADMIT, // 10m ago
+      G_REPLIED, // 20m
+      G_FILTERED, // 30m
+      G_WORKED, // 40m
+    ]);
+  });
+
+  test('limit slices the list but not the summary', async () => {
+    const { body } = await list(`?handle=${ALICE}&days=7&limit=1`);
+    expect(body.count).toBe(1);
+    expect(ids(body)).toEqual([G_WORKED]);
+    // `count < summary.total` is what tells a caller the LIST was truncated and
+    // the ANSWER was not.
+    expect(body.summary.total).toBe(4);
+    // Above the ceiling is a clamp, not an error.
+    expect((await list(`?handle=${ALICE}&limit=9999`)).status).toBe(200);
+  });
+
+  test('every parameter has its own 400', async () => {
+    const bad = async (q: string) =>
+      (await send<{ error: string }>(`/x/radar/sightings${q}`, 'GET')).body.error;
+    expect(await bad('?days=0')).toBe('invalid_days');
+    expect(await bad('?days=abc')).toBe('invalid_days');
+    expect(await bad('?limit=0')).toBe('invalid_limit');
+    expect(await bad('?band=hot')).toBe('invalid_band');
+    expect(await bad('?handle=not a handle')).toBe('invalid_handle');
+    expect(await bad('?order=random')).toBe('invalid_order');
+    // Stricter than the repo's `=== 'true'` flags on purpose: a fat-fingered
+    // filter must not hand back a full list the caller believes is filtered.
+    expect(await bad('?admitted=1')).toBe('invalid_admitted');
+    expect(await bad('?worked=yes')).toBe('invalid_worked');
+  });
+});
+
+describe('GET /radar/sightings/:tweetId (RA.3)', () => {
+  const D_TWEET = '993100000000000001';
+  const D_UNKNOWN = '993199999999999999';
+  const D_HANDLE = 'ra3carol';
+
+  interface DetailBody {
+    sweep: Record<string, number | boolean>;
+    sighting: { tweetId: string; admitted: boolean | null; vpm: number | null; worked: boolean };
+    drafts: { tweetId: string; status: string; angle: string; model: string | null }[];
+    replies: { id: string; replyText: string; status: string; model: string }[];
+  }
+
+  async function wipe(): Promise<void> {
+    await db.delete(replyDrafts).where(eq(replyDrafts.sourceTweetId, D_TWEET));
+    await db.delete(radarDrafts).where(eq(radarDrafts.tweetId, D_TWEET));
+    await db.delete(radarSightings).where(eq(radarSightings.tweetId, D_TWEET));
+  }
+
+  beforeAll(async () => {
+    await wipe();
+    const lastSeen = new Date(Date.now() - 5 * 60_000);
+    await db.insert(radarSightings).values({
+      tweetId: D_TWEET,
+      url: `https://x.com/${D_HANDLE}/status/${D_TWEET}`,
+      handle: D_HANDLE,
+      author: 'RA3 Carol',
+      text: 'the tweet I want the whole history of',
+      band: 'sweep',
+      views: 1000,
+      replies: 4,
+      likes: 6,
+      bait: false,
+      verified: true,
+      postedAt: new Date(lastSeen.getTime() - 20 * 60_000),
+      sourcePath: '/home',
+      firstSeenAt: lastSeen,
+      lastSeenAt: lastSeen,
+      seenCount: 3,
+    });
+    // Deliberately older than any TTL: the read must not expire it (below).
+    await db.insert(radarDrafts).values({
+      tweetId: D_TWEET,
+      handle: D_HANDLE,
+      snippet: 'the tweet I want the whole history of',
+      replyText: 'draft one',
+      angle: 'extends',
+      variants: [{ text: 'draft one', angle: 'extends' }],
+      model: 'grok-4.3',
+      status: 'ready',
+      draftedAt: new Date(Date.now() - 100 * 60 * 60 * 1000),
+    });
+    await db.insert(replyDrafts).values({
+      sourceTweetId: D_TWEET,
+      sourceAuthorUsername: D_HANDLE,
+      sourceText: 'the tweet I want the whole history of',
+      sourceUrl: `https://x.com/${D_HANDLE}/status/${D_TWEET}`,
+      contextSnapshot: { big: 'blob' },
+      replyText: 'the one I pasted',
+      model: 'grok-4.3',
+      source: 'radar',
+      status: 'posted',
+    });
+  });
+
+  afterAll(wipe);
+
+  test('one call answers "did I already answer this, and with what"', async () => {
+    const { status, body } = await send<DetailBody>(`/x/radar/sightings/${D_TWEET}`, 'GET');
+    expect(status).toBe(200);
+    expect(body.sighting.tweetId).toBe(D_TWEET);
+    expect(body.sighting.vpm).toBe(50); // 1000 views / 20 min
+    expect(body.sighting.admitted).toBe(true);
+    expect(body.sighting.worked).toBe(true);
+    expect(body.sweep).toEqual(sweepConfigFromSettings() as unknown as typeof body.sweep);
+
+    expect(body.drafts).toHaveLength(1);
+    expect(body.drafts[0]?.angle).toBe('extends');
+    expect(body.replies).toHaveLength(1);
+    expect(body.replies[0]?.replyText).toBe('the one I pasted');
+    // The projection: the whole rendered prompt context would dwarf everything
+    // else in an agent's window and the drafts already carry the variants.
+    expect(body.replies[0]).not.toHaveProperty('contextSnapshot');
+  });
+
+  // Both sighting reads are pure SELECTs, which is what makes them safe to page.
+  // GET /radar/drafts flips stale ready rows to expired on the way; this one
+  // must not, or an agent browsing the corpus advances the panel's queue.
+  test('reading writes nothing — a 100h-old ready draft stays ready', async () => {
+    await send<DetailBody>(`/x/radar/sightings/${D_TWEET}`, 'GET');
+    await send(`/x/radar/sightings?handle=${D_HANDLE}`, 'GET');
+    const [row] = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, D_TWEET));
+    expect(row?.status).toBe('ready');
+  });
+
+  test('a malformed id is a 400 and an unknown one is a 404', async () => {
+    const bad = await send<{ error: string }>('/x/radar/sightings/not-an-id', 'GET');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_tweet_id');
+
+    const missing = await send<{ error: string }>(`/x/radar/sightings/${D_UNKNOWN}`, 'GET');
+    expect(missing.status).toBe(404);
+    expect(missing.body.error).toBe('not_found');
   });
 });
