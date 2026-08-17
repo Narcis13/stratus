@@ -100,7 +100,7 @@ While running, you'll see a live status line such as *"Scrolling @handle — pos
 A small grey line under the button reports the *other* harvest — the one you never start:
 
 - **"Passive: 412 rows today"** — how many tweets today's ambient timeline capture has collected so far (see the next section). The day rolls over at **midnight UTC**, not your local midnight, so the number resets at a fixed time worldwide.
-- **"Passive capture off"** — the Settings toggle is off, so nothing is being collected.
+- **"Passive capture off"** — the Settings toggle is off, so nothing is being collected. This line is the *only* place the extension tells you so; see [If the corpus stops growing, check the toggle first](#if-the-corpus-stops-growing-check-the-toggle-first).
 - **Nothing at all** — the count hasn't loaded yet, or the server couldn't be reached. It never guesses "0".
 
 ---
@@ -159,6 +159,28 @@ Everything above is the harvest you *start*. There's a second one that just happ
 - **[Playbook → Timeline funnel](./playbook-tab.md)** — of the tweets you were actually shown, how many you replied to, split by how good the opportunity was. The honest measure of what you're letting slide past.
 
 Both need real scrolling before they say anything — days, not minutes.
+
+### If the corpus stops growing, check the toggle first
+
+A worked example, because it already happened. Between 2026-07-24 and **2026-07-27, around 06:00 UTC**, this corpus took 799 rows. Then it took none for three weeks, while everything else kept working normally.
+
+**The cause was this feature's Settings toggle, switched off on the morning of 2026-07-27.** Nothing was broken. The route, the auth and the transport were fine (`scripts/smoke-passive-harvest.ts` drives the whole ingest end-to-end and passes), and the page-side reader was demonstrably alive throughout — the Radar recorded and drafted sightings on nearly every day of the gap, off the same DOM read, from the same call site, one line above this feature's. The home-timeline gate was ruled out too: browsing on `/home` continued as before, and the gate is **not** being widened to other pages — this corpus means *what the algorithm fed me*, which is what keeps both readers honest.
+
+Three things about that toggle are worth knowing, because together they are why three weeks passed:
+
+- **It is the only writer of the setting, and it applies the instant you click it.** There is no Save step and no confirmation, so a stray click is indistinguishable from a decision.
+- **Turning it off breaks nothing you can see.** The single piece of feedback anywhere in the product is the grey **"Passive capture off"** line at the bottom of this tab — a tab you only open when you're starting a harvest, which can be weeks apart.
+- **The two readers go quiet, not empty.** Timeline affinity and the Playbook's Timeline funnel keep serving the rows collected before the switch, so they read as stale rather than as broken.
+
+**The one-query check** (`x_query`, $0):
+
+```sql
+SELECT MAX(captured_at) FROM harvest_rows WHERE mode = 'timeline';
+```
+
+If that is more than a day old and you have been scrolling `/home`, the toggle is off.
+
+**Deliberately not implemented (RA.6).** The change that would make this self-reporting is a *dated* off-state on the passive line — "Passive capture off — no timeline rows since Jul 27" in place of today's undated "Passive capture off". That is a real change to a shipped surface, and it belongs to a decision rather than to a bug hunt, so it is written down here instead of built.
 
 ---
 

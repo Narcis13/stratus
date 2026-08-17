@@ -7,8 +7,8 @@
 // nothing written; a 61-day-old passive run -> pruned by the next POST;
 // GET /harvest/affinity -> the multi-day author ranks and the one-day authors
 // are floored; GET /playbook -> timelineFunnel carries the seeded rows in the
-// `unknown` band (no tweet_time => no age => nothing to classify, and never the
-// real `null` band).
+// `unknown` bucket (no tweet_time => no derivable age => the age gate cannot be
+// evaluated, and the row is never folded into `filtered`).
 //
 // Real-DB safety: every row this script writes carries an 888-prefixed tweet id
 // (no real snowflake id starts there) and every run it seeds carries an hv6_*
@@ -262,8 +262,8 @@ async function seed(handle: string, dayOffsets: number[]): Promise<void> {
       text: 'hv6 smoke — a backdated sighting',
       views: SEED_VIEWS,
       capturedAt: new Date(Date.now() - d * DAY_MS),
-      // Deliberately no tweetTime: no age => no velocity => nothing to ask the
-      // classifier, so these land in the funnel's `unknown` band below.
+      // Deliberately no tweetTime: no age => the always-enforced age gate can't
+      // be evaluated at all, so these land in the funnel's `unknown` bucket.
       tweetTime: null,
     })),
   );
@@ -312,7 +312,7 @@ console.log(
 // ------------------------------------------------------- 6. playbook cell
 
 interface FunnelCellBody {
-  band: string | null;
+  bucket: string | null;
   seen: number;
   replied: number;
   rate: number | null;
@@ -329,15 +329,15 @@ if (!Array.isArray(funnel.cells)) fail('timelineFunnel.cells is not an array');
 if (typeof funnel.totalReplied !== 'number') fail('timelineFunnel.totalReplied is not a number');
 // 4 ingest tweets + the pruning POST's one + 6 backdated seeds, all distinct.
 if (funnel.totalSeen < 11) fail(`timelineFunnel.totalSeen ${funnel.totalSeen}, expected ≥ 11`);
-// `unknown` (no tweet_time) is its own bucket and never the real `null` band,
-// which means "classified, and not worth replying to".
-const unknown = funnel.cells.find((c) => c.band === 'unknown');
+// `unknown` (no tweet_time) is its own bucket and is never folded into
+// `filtered`, which DOES mean "the filters looked and said no".
+const unknown = funnel.cells.find((c) => c.bucket === 'unknown');
 if (!unknown) fail("the 6 rows seeded without a tweet_time produced no 'unknown' cell");
 if (unknown.seen < 6) fail(`'unknown' cell saw ${unknown.seen}, expected ≥ 6`);
-if (funnel.cells.filter((c) => c.band === 'unknown').length > 1) fail('duplicate unknown cells');
+if (funnel.cells.filter((c) => c.bucket === 'unknown').length > 1) fail('duplicate unknown cells');
 console.log(
   `playbook: timelineFunnel ${funnel.totalReplied}/${funnel.totalSeen} replied, ` +
-    `${funnel.cells.length} band cells, unknown seen=${unknown.seen}`,
+    `${funnel.cells.length} bucket cells, unknown seen=${unknown.seen}`,
 );
 
 // ------------------------------------------------------------ 7. cleanup
