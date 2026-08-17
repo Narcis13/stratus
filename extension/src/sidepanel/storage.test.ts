@@ -48,6 +48,7 @@ describe('appearance settings (UI.9)', () => {
       autoTypeReplyDraft: false,
       passiveCapture: true,
       passiveHarvest: true,
+      radarSightingSync: true,
       theme: 'light',
       density: 'compact',
       uiScale: 14,

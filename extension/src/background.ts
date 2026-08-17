@@ -76,6 +76,15 @@ import {
   purgeDismissed,
   stampTiers,
 } from './shared/radar.ts';
+import {
+  RADAR_INGEST_BATCH_MAX,
+  RADAR_SYNC_KEY,
+  type SightingSend,
+  type SightingWireInput,
+  pathFromTabUrl,
+  shouldShipSighting,
+  toSightingWireRow,
+} from './shared/radarIngest.ts';
 import { SERVER_SETTINGS_KEY } from './shared/serverSettings.ts';
 import type {
   MentionsResponse,
@@ -358,6 +367,90 @@ async function addSightings(incoming: RadarSighting[]): Promise<void> {
     [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
     ...(kept.length !== dismissed.length ? { [RADAR_DISMISSED_KEY]: kept } : {}),
   });
+}
+
+// --- sighting mirror (RA.2): what the queue admitted, shipped to the server at
+// capture time so it outlives the browser and is readable from outside it.
+//
+// It hangs off the background rather than off content.ts::flushRadar for three
+// reasons: this is where every entry path already converges (sweep, cannon,
+// roster and ⊕ pins), it is already the one auth transport (§7.24/§7.25), and
+// `sender.tab.url` gives the page the row was admitted on for free — a fact the
+// content IIFE would have to be taught to send. Only PAGE reports reach it, so
+// a sighting rehydrated out of `radar_drafts` is never shipped back to the
+// server that just served it.
+//
+// Default ON, opt-out through the panel toggle: the HV.2 `passiveHarvest`
+// precedent, deliberately not a server registry knob (D187) — the human at the
+// browser owns their own browser, and a mirrored knob is seven edits and two
+// exact-list tests for one checkbox.
+let radarSyncEnabled = true;
+
+function initRadarSyncSetting(): void {
+  chrome.storage.local
+    .get(RADAR_SYNC_KEY)
+    .then((out) => {
+      radarSyncEnabled = out[RADAR_SYNC_KEY] !== false;
+    })
+    .catch(() => {
+      /* keep default */
+    });
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[RADAR_SYNC_KEY];
+    if (change) radarSyncEnabled = change.newValue !== false;
+  });
+}
+initRadarSyncSetting();
+
+// One entry per distinct tweet mirrored since the worker last started. A
+// marathon scroll resets the map rather than pruning it — forgetting costs one
+// early re-send per tweet, which the server's own recapture gate absorbs as
+// skippedRecent. MV3 tears the worker down when idle, which resets it too.
+const sightingSentAt = new Map<string, SightingSend>();
+
+// Best-effort, warn-and-drop, never retried (§7.8): a failed mirror may not cost
+// the user their queue, and a lost sighting is a missing row in an analysis
+// corpus, never a lost user action. Fire-and-forget by construction (the
+// `markDraftsOnServer` idiom) so it cannot throw back into the buffer chain.
+function shipSightings(sightings: RadarSighting[], sourcePath: string | null): void {
+  if (!radarSyncEnabled || sightings.length === 0) return;
+  const now = Date.now();
+  if (sightingSentAt.size > 3000) sightingSentAt.clear();
+
+  const rows: SightingWireInput[] = [];
+  for (const s of sightings) {
+    // Ship the INCOMING batch, not the merged buffer: the buffer holds up to
+    // RADAR_CAP rows and re-sending them all on every flush is bytes the server
+    // would only count as skippedRecent. The overflow past one server batch is
+    // left unmarked on purpose — it ships whenever it is next reported, the
+    // passive flush's overflow rule without the timer.
+    if (rows.length >= RADAR_INGEST_BATCH_MAX) break;
+    if (!shouldShipSighting(sightingSentAt.get(s.tweetId), s.band, now)) continue;
+    const row = toSightingWireRow(s, sourcePath);
+    // A row the route would refuse (an ancient ⊕ pin, a handle no reader should
+    // have produced) is dropped HERE: the route parses every row before writing
+    // any and 400s the whole batch on the first bad one, so one of these would
+    // take the other ninety-nine down with it.
+    if (!row) continue;
+    rows.push(row);
+    sightingSentAt.set(s.tweetId, { at: now, band: s.band });
+  }
+  if (rows.length === 0) return;
+
+  void handleApiRequest({
+    type: 'stratus/api',
+    method: 'POST',
+    path: '/x/radar/sightings',
+    body: { rows },
+  }).then(
+    (res) => {
+      if (!res.ok && res.code !== 'unconfigured') {
+        console.warn('[stratus] radar sighting sync failed', res.code);
+      }
+    },
+    (err) => console.warn('[stratus] radar sighting sync failed', err),
+  );
 }
 
 async function dismissSightings(tweetIds: string[]): Promise<void> {
@@ -959,8 +1052,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (isRadarReport(msg)) {
+    // Read the path off the sender before anything awaits — `sender` describes
+    // the message, and the tab can navigate while the buffer write is in flight.
+    const sourcePath = pathFromTabUrl(sender.tab?.url);
     void enqueueRadar(() => addSightings(msg.sightings)).then(
-      () => sendResponse({ ok: true }),
+      () => {
+        sendResponse({ ok: true });
+        // The mirror follows the buffer write and never precedes or blocks it:
+        // the queue is the user's, this is bookkeeping (§7.8/§7.24).
+        shipSightings(msg.sightings, sourcePath);
+      },
       () => sendResponse({ ok: false }),
     );
     return true;

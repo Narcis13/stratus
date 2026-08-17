@@ -63,7 +63,7 @@ A **401** response means "not authorized" — the server got your request but di
 
 ## Behavior & privacy toggles
 
-Four checkboxes sit between the connection fields and the harvest section. Each one saves immediately when you click it.
+Five checkboxes sit between the connection fields and the harvest section. Each one saves immediately when you click it.
 
 ### Apply content pillars to reply drafting (default off)
 
@@ -93,6 +93,14 @@ Four checkboxes sit between the connection fields and the harvest section. Each 
 - **Why it's on by default:** it's free, invisible, and it's what powers **People → Timeline affinity** ("who does the algorithm keep showing me?") and **Playbook → Timeline funnel** ("of what I was shown, what did I actually reply to?"). Neither says anything useful until a few days of real scrolling have accumulated.
 - **How to opt out:** **uncheck** this box. It takes effect immediately in every open X tab — no reload needed — and the Harvest tab's status line switches to *"Passive capture off"*.
 - **Note:** this is a **separate** toggle from *Passive contact capture from hover cards* above. One grows your people roster from profile pop-ups you hover; this one grows the tweet corpus from your timeline. Turning either off leaves the other running.
+
+### Mirror Radar sightings to stratus (default on, $0)
+
+- **What it does:** every tweet your [Radar](./radar-tab.md) queue admits — an armed sweep, a cannon capture, the roster lane, or a tweet you pinned yourself with the ⊕ button — is also written to your stratus database as it's captured, together with **which page you were on** when it was admitted. Like the harvest above, it reads only what the queue already read: no X API call, no AI call, **$0**.
+- **Why it exists:** the Radar queue lives in your browser and expires. This is what makes yesterday's sweep — or a sweep you ran on `/search`, a list, or someone's profile — still answerable afterwards from outside the browser ("what did my filters admit in the last three days, and which of it did I never work?"). The passive harvest above can only ever answer *what the algorithm fed me*; this answers *what I let through*.
+- **What data it captures:** the tweet, its author, its on-screen view/reply/like counts, why the queue admitted it, whether the author is verified, when you saw it, and the path of the page you saw it on (`/home`, `/search`, `/i/lists/…`). **No one is added to your People roster from this** — seeing a tweet isn't a relationship.
+- **Where it stops:** at most one write per tweet per minute (sooner if the *reason* it's in the queue changed), a ceiling of **2,000 new tweets a day**, and everything older than **60 days** is deleted automatically. A failed send is dropped and never retried — your queue is never affected either way.
+- **How to opt out:** **uncheck** this box. It takes effect immediately, and the Radar queue, drafting, and dismissals behave exactly as before — you just stop keeping a copy outside the browser.
 
 ---
 
@@ -333,7 +341,8 @@ The mention-refresh budget is **not** a control on this Settings tab — there's
 1. Go to the **Settings** tab.
 2. **Uncheck** *"Passive contact capture from hover cards (default on)"* to stop adding people from hover cards.
 3. **Uncheck** *"Passive timeline harvest while browsing /home (default on, $0)"* to stop recording the tweets your home timeline shows you.
-4. That's it — both save the moment you click, and they're independent: turning one off leaves the other running.
+4. **Uncheck** *"Mirror Radar sightings to stratus (default on, $0)"* to stop keeping a server-side copy of what your Radar sweep admits.
+5. That's it — all three save the moment you click, and they're independent: turning one off leaves the others running.
 
 ### Reset a harvest cursor that's skipping tweets
 1. Go to the **Settings** tab and scroll to **Harvest cursors**.
@@ -348,7 +357,7 @@ The mention-refresh budget is **not** a control on this Settings tab — there's
 - **Not configured (tabs locked):** if the **API URL** or **Bearer token** is empty, every tab except **Settings** is disabled and greyed out, and trying to view another tab shows *"Configure API URL and bearer token first."* Fill in both fields and click **Save** to unlock everything. This is the expected first-run state, not an error.
 - **Save button won't click:** the **Save** button is intentionally disabled until **both** the API URL and Bearer token fields contain text. Make sure neither is blank.
 - **Tabs unlocked but nothing loads / requests fail (401 or errors):** the extension only checks that the two fields are *non-empty* — it doesn't verify they're correct. A wrong token or wrong URL unlocks the UI but every request fails. Re-check the token against the server's `API_TOKEN`, confirm the URL is right and the server is running, then **Save** again. See [Troubleshooting a 401](#troubleshooting-a-401-or-everything-is-failing).
-- **A toggle didn't seem to stick:** the four toggles save on click, independently of the Save button. If one looks unchanged, click it again — the checkbox reflects the stored state.
+- **A toggle didn't seem to stick:** the five toggles save on click, independently of the Save button. If one looks unchanged, click it again — the checkbox reflects the stored state.
 
 ---
 

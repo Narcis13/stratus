@@ -77,6 +77,7 @@ export function SettingsPanel(): JSX.Element {
   const [autoTypeReplyDraft, setAutoTypeReplyDraft] = useState(false);
   const [passiveCapture, setPassiveCapture] = useState(true);
   const [passiveHarvest, setPassiveHarvest] = useState(true);
+  const [radarSightingSync, setRadarSightingSync] = useState(true);
   const [theme, setTheme] = useState<ThemePref>(DEFAULT_THEME);
   const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
   const [uiScale, setUiScale] = useState<UiScale>(DEFAULT_UI_SCALE);
@@ -92,6 +93,7 @@ export function SettingsPanel(): JSX.Element {
       setAutoTypeReplyDraft(s.autoTypeReplyDraft);
       setPassiveCapture(s.passiveCapture);
       setPassiveHarvest(s.passiveHarvest);
+      setRadarSightingSync(s.radarSightingSync);
       setTheme(s.theme);
       setDensity(s.density);
       setUiScale(s.uiScale);
@@ -110,6 +112,7 @@ export function SettingsPanel(): JSX.Element {
       autoTypeReplyDraft,
       passiveCapture,
       passiveHarvest,
+      radarSightingSync,
       theme,
       density,
       uiScale,
@@ -121,6 +124,7 @@ export function SettingsPanel(): JSX.Element {
       autoTypeReplyDraft,
       passiveCapture,
       passiveHarvest,
+      radarSightingSync,
       theme,
       density,
       uiScale,
@@ -143,6 +147,7 @@ export function SettingsPanel(): JSX.Element {
       autoTypeReplyDraft,
       passiveCapture,
       passiveHarvest,
+      radarSightingSync,
       theme,
       density,
       uiScale,
@@ -263,6 +268,19 @@ export function SettingsPanel(): JSX.Element {
                   }}
                 />
                 <span>Passive timeline harvest while browsing /home (default on, $0)</span>
+              </label>
+
+              <label className="row voice-toggle">
+                <input
+                  type="checkbox"
+                  checked={radarSightingSync}
+                  onChange={(e) => {
+                    const v = e.target.checked;
+                    setRadarSightingSync(v);
+                    void patchSettings({ radarSightingSync: v });
+                  }}
+                />
+                <span>Mirror Radar sightings to stratus (default on, $0)</span>
               </label>
             </Section>
           </div>

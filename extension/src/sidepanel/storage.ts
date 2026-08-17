@@ -2,6 +2,12 @@
 // across all extension contexts. Shared with the background worker.
 
 import { useEffect, useState } from 'react';
+// RA.2 radar sighting mirror — default ON (opt-out) like the two passive keys
+// below, read directly by the background worker. IMPORTED rather than restated
+// as a local `KEY_*`: the background gates its POSTs on the same string, and the
+// two copies `passiveHarvest` keeps are one rename away from a toggle that
+// writes a key nothing reads.
+import { RADAR_SYNC_KEY } from '../shared/radarIngest.ts';
 
 const KEY_API_URL = 'apiUrl';
 const KEY_BEARER = 'bearer';
@@ -55,6 +61,7 @@ export interface Settings {
   autoTypeReplyDraft: boolean;
   passiveCapture: boolean;
   passiveHarvest: boolean;
+  radarSightingSync: boolean;
   theme: ThemePref;
   density: Density;
   uiScale: UiScale;
@@ -67,6 +74,7 @@ export const EMPTY_SETTINGS: Settings = {
   autoTypeReplyDraft: false,
   passiveCapture: true,
   passiveHarvest: true,
+  radarSightingSync: true,
   theme: DEFAULT_THEME,
   density: DEFAULT_DENSITY,
   uiScale: DEFAULT_UI_SCALE,
@@ -80,6 +88,7 @@ export async function getSettings(): Promise<Settings> {
     KEY_AUTOTYPE_REPLY,
     KEY_PASSIVE_CAPTURE,
     KEY_PASSIVE_HARVEST,
+    RADAR_SYNC_KEY,
     KEY_THEME,
     KEY_DENSITY,
     KEY_UI_SCALE,
@@ -91,6 +100,7 @@ export async function getSettings(): Promise<Settings> {
     autoTypeReplyDraft: out[KEY_AUTOTYPE_REPLY] === true,
     passiveCapture: out[KEY_PASSIVE_CAPTURE] !== false,
     passiveHarvest: out[KEY_PASSIVE_HARVEST] !== false,
+    radarSightingSync: out[RADAR_SYNC_KEY] !== false,
     theme: normalizeTheme(out[KEY_THEME]),
     density: normalizeDensity(out[KEY_DENSITY]),
     uiScale: normalizeScale(out[KEY_UI_SCALE]),
@@ -105,6 +115,7 @@ export async function saveSettings(s: Settings): Promise<void> {
     [KEY_AUTOTYPE_REPLY]: s.autoTypeReplyDraft === true,
     [KEY_PASSIVE_CAPTURE]: s.passiveCapture !== false,
     [KEY_PASSIVE_HARVEST]: s.passiveHarvest !== false,
+    [RADAR_SYNC_KEY]: s.radarSightingSync !== false,
     [KEY_THEME]: normalizeTheme(s.theme),
     [KEY_DENSITY]: normalizeDensity(s.density),
     [KEY_UI_SCALE]: normalizeScale(s.uiScale),
@@ -126,6 +137,8 @@ export async function patchSettings(partial: Partial<Settings>): Promise<void> {
     out[KEY_PASSIVE_CAPTURE] = partial.passiveCapture !== false;
   if (partial.passiveHarvest !== undefined)
     out[KEY_PASSIVE_HARVEST] = partial.passiveHarvest !== false;
+  if (partial.radarSightingSync !== undefined)
+    out[RADAR_SYNC_KEY] = partial.radarSightingSync !== false;
   if (partial.theme !== undefined) out[KEY_THEME] = normalizeTheme(partial.theme);
   if (partial.density !== undefined) out[KEY_DENSITY] = normalizeDensity(partial.density);
   if (partial.uiScale !== undefined) out[KEY_UI_SCALE] = normalizeScale(partial.uiScale);
@@ -160,6 +173,7 @@ export function useSettings(): { settings: Settings; loading: boolean } {
         !(KEY_AUTOTYPE_REPLY in changes) &&
         !(KEY_PASSIVE_CAPTURE in changes) &&
         !(KEY_PASSIVE_HARVEST in changes) &&
+        !(RADAR_SYNC_KEY in changes) &&
         !(KEY_THEME in changes) &&
         !(KEY_DENSITY in changes) &&
         !(KEY_UI_SCALE in changes)
