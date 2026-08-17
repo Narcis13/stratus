@@ -1,9 +1,12 @@
-# MASTERPLAN — unified execution order for the 17 feature plans
+# MASTERPLAN — unified execution order for the 18 feature plans
 
 > **Created:** 2026-07-17. Combines every plan in `plans/` into one dependency-correct
 > execution order with per-task reasoning levels and parallel lanes.
 > **Extended 2026-07-25:** Wave 6 (SC / GT / JD — the x-builder-derived backlog plans).
 > **Extended 2026-07-28:** Wave 7 (HM / RC — the two Radar follow-up plans).
+> **Extended 2026-08-17:** Wave 8 (RA — Radar access from a Claude Code session). This
+> RE-OPENS the masterplan, closed at RC.5 since 2026-07-28; STATE.md's ledger and its
+> stale "current state" numbers are re-opened by RA.1 (see the Wave 8 rationale).
 > **Execution state lives in `.claude/skills/masterplan/STATE.md`** — this file is the
 > static plan; never mark progress here.
 > **Driven by the `/masterplan` skill** — one task per session, codemap-first, state
@@ -30,6 +33,7 @@
 | JD | `2026-07-22-llm-judge.md` | 8 | On-demand 13-dimension draft judge, anchored fixes, falsification cell |
 | HM | `2026-07-28-project-humanizer.md` | 5 | Project-level humanizer: server-owned jitter config + Radar humanize-at-pick |
 | RC | `2026-07-28-radar-curated-drafting.md` | 5 | Radar curation: score the queue, dismiss the noise, draft the top N |
+| RA | `2026-08-17-radar-access.md` | 8 | Swept sightings mirrored to the server + MCP read/draft tools + the radar-analyst skill |
 
 Task IDs are `<code>.<n>` matching "Task n" in the source plan. **The source plan's task
 block is the implementation spec** — this file only fixes order, reasoning level, and
@@ -169,6 +173,30 @@ so the seeds take D172–D174; STATE continues from D175):
   plan text. D171a binds both closers: pick-time jitter and the lowValue drop rule are
   SELECTION RULES — their user-facing paragraphs go in the tab docs of the surfaces that
   render them (`radar-tab`, `settings-tab`, `replies-tab`), not only in PHASE-HISTORY.
+
+### Wave-8 seeds (RA — D185–D187)
+
+- **D185 — `bandStickiness` gets one owner at RA.1.** The ratchet moves from
+  `extension/src/shared/radar.ts` into `src/shared/radarSweep.ts` (§7.27: the page and the
+  server must not hold two copies of a rule they both apply), and `RadarBand` stays in the
+  extension module as a **type alias** of the shared union so no importer changes. Any later
+  task needing a band comparison imports it; `evictionWeight` stays extension-side (it is a
+  display rule about cap pressure, not a shared verdict). Verify with
+  `grep -rn "function bandStickiness" src extension` → exactly one hit.
+- **D186 — the composed-draft contract is `draftRowToSighting`, and no test in the repo
+  guards it for you.** `extension/src/shared/radar.ts:548` returns `null` when a
+  `radar_drafts` row has a null `band` or null `signals`, so RA.4's compose route MUST stamp
+  both server-side from the stored sighting (§7.16) or the feature ships invisible — green
+  tests, empty panel. Same task, same reason: compose flips that tweet's prior `ready` rows
+  to `expired` inside its txn, because `radar_drafts` now has **two** writers (the Grok batch
+  and the MCP compose) racing the panel's "newest ready row wins" rehydrate.
+- **D187 — the sighting feed's kill switch is a browser toggle, NOT a registry knob.**
+  `chrome.storage.local['radarSightingSync']`, default ON / absent = enabled — the HV.2
+  `passiveHarvest` precedent. So RA.2 owes none of STATE.md's seven-edit mirrored-knob move,
+  and `docs/settings-tab.md`'s three count strings stay unchanged (confirm, don't assume).
+  The corollary for RA.8: the only doc counts this wave bumps are the MCP ones (25 → 28,
+  `src/mcp.test.ts` + `docs/s2-mcp-server.md`, in the same commit as each tool), the table
+  count (42 → 43) and the migration head (`0028` → `0029`).
 
 ---
 
@@ -482,6 +510,62 @@ mistake here silently deletes queue rows and no test catches panel code).
 
 ---
 
+## Wave 8 — Radar access from a Claude Code session (RA)
+
+Rationale: one plan written 2026-08-17, and the wave that **re-opens** a masterplan closed
+at RC.5. The problem it solves is an absence, not a feature gap: a swept sighting exists only
+in `chrome.storage.local` (cap 500, 24h TTL) unless a Grok batch draft happens to persist it,
+so an agent session can read what was *drafted* and what /home fed us, never what the armed
+sweep actually **admitted** — and never a sweep on `/search`, a list or a profile, which the
+HV.2 passive corpus excludes by design. RA mirrors every sighting to the server at capture
+time (with the page it came from), exposes it as `x_radar`/`x_radar_tweet`, and closes the
+loop the other way: Claude composes angle variants into the same `radar_drafts` table the
+"Draft replies" button fills, so one **Fetch drafts** click makes them reply-ready in the
+panel with the paste still manual (invariant #2).
+
+**The whole wave is $0** — no `xFetch`, no `askLLM`, no image call in any task; drafting moves
+off Grok onto the operator's own session, so RA can only reduce spend. Order: the migration
+task alone first (it also owns the wave's one shared-rule move, D185), then the extension
+transport and the read layer in parallel (disjoint files), then the compose route that depends
+on both, then the three independent closers. RA.6 (the passive-capture repair) touches nothing
+another RA task owns and may run at any point.
+
+**RA.1 owes the re-opening**, in its own commit: this file's legend + this section are already
+here, so what remains is STATE.md — the eight ledger rows, the Wave 8 hot-file locks, and a
+**correction of the stale "current state" line** (it still reads 41 tables / 23 MCP tools /
+head `0025` / registry 62 knobs, while the codemap — authoritative — says 42 tables, 25 tools,
+head `0028`, 61 knobs / 15 groups / 31 mirrored). Skip that correction and every later RA task
+inherits wrong counts and asserts against them.
+
+| Order | ID | Task | Depends | Reasoning |
+|---|---|---|---|---|
+| 8.1 | RA.1 | `radar_sightings` table + `POST /x/radar/sightings` + migration `0029` (**D185**: the `bandStickiness` move; migration — runs alone) | — | **xhigh** |
+| 8.2 | RA.2 | Background ships every sighting + the `radarSightingSync` toggle (**D187**: no registry knob) | RA.1 | **xhigh** |
+| 8.3 | RA.3 | `GET /x/radar/sightings(/:tweetId)` + `x_radar` / `x_radar_tweet` (MCP 25 → 27) | RA.1 | high |
+| 8.4 | RA.4 | `POST /x/radar/drafts/compose` + `x_radar_draft_reply` (**D186**; MCP 27 → 28) | RA.1, RA.3 | **xhigh** |
+| 8.5 | RA.5 | Radar tab **Fetch drafts** action (one button; no CSS, no new message type) | — (pointless before RA.4) | high |
+| 8.6 | RA.6 | Passive `/home` capture repair — diagnose the 2026-07-27 stop | — | high |
+| 8.7 | RA.7 | The `radar-analyst` skill (`.claude/skills/radar-analyst/`) | RA.3, RA.4 | high |
+| 8.8 | RA.8 | RA docs-sync + `$0 scripts/smoke-radar-access.ts` + the browser end-to-end check | all | high |
+
+Parallelizable inside Wave 8: RA.2 (extension: `background.ts`, `shared/radarIngest.ts`,
+`storage.ts`, `Settings.tsx`) alongside RA.3 (server: `radar/corpus.ts`, `routes/radar.ts`,
+`mcp.ts`) — fully disjoint; RA.5 and RA.6 alongside anything (RA.5 owns only `Radar.tsx`,
+RA.6 only `content.ts`/docs). Serial constraints: **`src/x/routes/radar.ts` is the wave's hot
+file — RA.1 → RA.3 → RA.4 never overlap**; RA.1 runs alone as the migration task (global rule
+1); `src/mcp.test.ts`'s exact tool count is edited by RA.3 (→27) and RA.4 (→28), which is a
+second reason those two serialize; RA.8 closes after everything. Reasoning-level notes: no
+task is **max** — nothing touches the prompt-surgery chain, the publisher, or any billed path.
+The **xhigh** set is where a mistake passes tests and breaks something invisible: RA.1 (a
+migration plus a rule moved out from under the content IIFE), RA.2 (background single-writer
+machinery, §7.24/§7.8 — the mirror must never fail the buffer write, and the throttle must
+mirror the server's window or the wire carries rows the server only counts as `skippedRecent`),
+and RA.4 (**D186** — the null-`band`/null-`signals` drop, plus the two-writer race on
+`radar_drafts`, and an `ageMin` recomputed from `posted_at` so the confirm route's
+`sourcePostedAt` derivation still lands on the true post time hours after capture).
+
+---
+
 ## Parallelism model (how many sessions at once)
 
 Practical ceiling: **2–3 concurrent sessions**, each owning a lane, coordinated through
@@ -501,6 +585,10 @@ STATE.md's hot-file locks:
 - **Wave 7:** HM server lane (HM.1→HM.2) ∥ RC server lane (RC.1 ∥ RC.2 → RC.3); the
   Radar.tsx/api.ts/types.ts trio serializes HM.3 → RC.4 (D172); HM.4 ∥ RC.4 (disjoint
   files); RC.2 (migration) runs alone (D173); docs-sync closes HM.5 → RC.5 (D174).
+- **Wave 8:** RA.1 alone (migration + the D185 rule move), then 2 lanes — extension
+  (RA.2, later RA.5) ∥ server/MCP (RA.3 → RA.4); `src/x/routes/radar.ts` and
+  `src/mcp.test.ts`'s exact tool count serialize RA.1 → RA.3 → RA.4. RA.6 floats (it owns
+  only `content.ts` + harvest docs) and RA.7 is docs-only; RA.8 closes alone.
 
 Rules: a lane claims its hot files in STATE.md before starting and releases on commit;
 migration tasks always run alone; when in doubt, serialize — a merge conflict in
