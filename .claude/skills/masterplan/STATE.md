@@ -6,12 +6,13 @@
 > History: `.claude/skills/masterplan/STATE-ARCHIVE.md` (frozen, grep-only — closed-lane deviations, gotchas, priors, ledger rows).
 > Debt: `.claude/skills/masterplan/VERIFY-DEBT.md` (**unpaid**, not history — browser-verify + CA.2. Read it when you have Chrome open; skip it otherwise).
 
-## THE MASTERPLAN IS CLOSED — 141/141 (RC.5, 2026-07-28). There is no next task.
+## WAVE 8 IS OPEN — 142/149. Next: RA.2 or RA.3 (both unblocked by RA.1, and disjoint).
 
-All eight waves are done. `/masterplan next` has nothing to pick; **`/masterplan status` is the only mode
-that still means anything**, and a new feature starts with `/plan-feature`, not here. If a new plan is
-written, it opens Wave 8 in `plans/MASTERPLAN.md` and re-opens the ledger below — until then, this file's
-job is to be the short answer to "what state is the repo in and what is still owed".
+Waves 0–7 closed at 141/141 (RC.5, 2026-07-28). `d968fe9` re-opened the masterplan with **Wave 8 (RA —
+`plans/2026-08-17-radar-access.md`, 8 tasks)**: the Radar's swept queue, readable and draftable from a
+Claude Code session. **The whole wave is $0** — no `xFetch`, no `askLLM`, no image call on any path; reply
+drafting moves off Grok onto the operator's own session, so RA can only reduce spend. RA.1 shipped the
+table + ingest + the D185 rule move and did the re-opening below.
 
 **What is still owed, and it is not a task.** `VERIFY-DEBT.md` holds **eighteen** unpaid items — browser
 checks that shipped with automated gates only, plus CA.2 step 2. Two came out of Wave 7 (`0m` HM, `0n` RC);
@@ -40,15 +41,15 @@ lock row and its pointer lines are weight, not state** — a pointer to an archi
 needs is 2 KB of "go read this, though nobody has to". Never "fix" a breach by deleting something an open
 task needs; if a pass slips, pay it as a standalone housekeeping commit (the `55c6d19`/`c9c8ade` precedent).
 
-- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `docs(radar): RC docs-sync + $0 smoke-radar-curate.ts (RC.5)`, parent `80a2f2b` = HM.5. **Step 0 is one command:** `git log -1 --format='%h %s'`. With the ledger closed there is nothing left to reconcile it against, so a subject naming something else just means ordinary post-masterplan work happened — that is expected now, not drift.
-- **current state of the repo (the numbers a new plan starts from):** suite **1935**; tables **41**; migrations through **`0025_curvy_edwin_jarvis`** — **the journal is FREE from `0026`**; registry **14 groups / 62 knobs, 28 mirrored**; **prompt keys 16**; MCP **23 tools**; smoke scripts **33**; extension tsconfig `include` shims **7**; whole-repo lint **0 errors**. **No file is locked.** The four multi-file moves a new plan will hit, each with the assertions that make them fail loudly: **a mirrored knob is SEVEN edits** — `registry.ts` (group array; order decides mirrored position), `registry.test.ts` **twice** (the group's exact key list *and* the exact mirrored list), `docs/settings-tab.md`'s **three** count strings (prose, asserted by nothing), plus extension-side `ServerConfig` + `SERVER_DEFAULTS` + `readServerConfig`, pinned by `serverSettings.test.ts`'s exact `Object.keys` list AND its full-blob `toEqual` (D181d — the server half alone ships a knob that silently does nothing). **A registry prompt key is FOUR** (`PROMPT_KEYS` + `PROMPT_SPECS`, the default exported from a **pure** module or the import cycles, `registry.test.ts`'s exact key list, and `docs/settings-tab.md`'s three counts). **An MCP tool bumps `src/mcp.test.ts`'s exact 23 and `docs/s2-mcp-server.md`'s three counts in the same commit.** **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git diff --stat src/db/migrations/` plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0 (D177a).
-- **next-up:** **nothing.** The masterplan is closed. Standing gate reminders for whatever comes next: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); biome forbids `delete process.env.X` / `: any` in `scripts/`, **non-null assertions (`x!`) anywhere**, a `let` assigned once, and a backtick string with no interpolation — it also sorts imports case-sensitively, collapses short chained calls, and rejects a `console.log` string-concat unless every operand interpolates (run `bunx biome check --write` on the changed files FIRST). Extension-touching work adds `cd extension && bun run build` **and** its own `typecheck`, then `grep -cE '^\s*import[ {]' extension/dist/content.js` == 0.
+- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `feat(radar): RA.1 radar_sightings table + $0 sighting ingest`, parent `d968fe9` (`wave 8` — the plan + MASTERPLAN registration, no code). **Step 0 is one command:** `git log -1 --format='%h %s'`.
+- **current state of the repo (RECOUNTED at RA.1 — the pre-RA line here was three lanes stale and the plan predicted it; every number below was read off the code, not carried forward):** suite **2396** across 126 files; tables **43**; migrations through **`0029_blushing_expediter`** — **the journal is FREE from `0030`**; registry **15 groups / 61 knobs, 31 mirrored** and **17 prompt keys** (both read out of the running registry, not off any doc — see the gotcha: `docs/settings-tab.md` currently claims 67/16 and 16, and is wrong on all three); MCP **25 tools**; smoke scripts **39**; extension tsconfig `include` shims **11**; whole-repo lint **0 errors**. The four multi-file moves a new task will hit, each with the assertions that make them fail loudly: **a mirrored knob is SEVEN edits** — `registry.ts` (group array; order decides mirrored position), `registry.test.ts` **twice** (the group's exact key list *and* the exact mirrored list), `docs/settings-tab.md`'s **three** count strings (prose, asserted by nothing), plus extension-side `ServerConfig` + `SERVER_DEFAULTS` + `readServerConfig`, pinned by `serverSettings.test.ts`'s exact `Object.keys` list AND its full-blob `toEqual` (D181d — the server half alone ships a knob that silently does nothing). **RA needs none of it: D187 makes the sighting feed's kill switch a `chrome.storage.local` toggle, so `docs/settings-tab.md`'s counts stay put — confirm, don't assume.** **A registry prompt key is FOUR** (`PROMPT_KEYS` + `PROMPT_SPECS`, the default exported from a **pure** module or the import cycles, `registry.test.ts`'s exact key list, and `docs/settings-tab.md`'s three counts). **An MCP tool bumps `src/mcp.test.ts`'s exact 25 and `docs/s2-mcp-server.md`'s three counts in the same commit** — RA.3 takes it to 27, RA.4 to 28. **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git diff --stat src/db/migrations/` plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0 (D177a).
+- **next-up:** **RA.2** (extension: `background.ts`, `shared/radarIngest.ts`, `storage.ts`, `Settings.tsx`) or **RA.3** (server: `radar/corpus.ts`, `routes/radar.ts`, `mcp.ts`) — fully disjoint, either order, or both in parallel sessions. **RA.6 floats** (owns only `content.ts` + harvest docs) and is the only one that can run alongside anything. RA.4 waits on RA.3 (`routes/radar.ts` + `src/mcp.test.ts`'s exact tool count serialize RA.1 → RA.3 → RA.4). Standing gate reminders: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); biome forbids `delete process.env.X` / `: any` in `scripts/`, **non-null assertions (`x!`) anywhere**, a `let` assigned once, and a backtick string with no interpolation — it also sorts imports case-sensitively, collapses short chained calls, and rejects a `console.log` string-concat unless every operand interpolates (run `bunx biome check --write` on the changed files FIRST). Extension-touching work adds `cd extension && bun run build` **and** its own `typecheck`, then `grep -cE '^\s*import[ {]' extension/dist/content.js` == 0.
 
 ## Ledger
 
 Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date) · `[s]` skipped (reason in deviations).
 
-**All eight waves are CLOSED — 141/141.** Per-task entries (shas, parents, dates, notes) live in
+**Waves 0–7 are CLOSED — 141/141.** Per-task entries (shas, parents, dates, notes) live in
 `STATE-ARCHIVE.md` — Waves 0–4 at UI.11, Wave 5 at GT.9, Wave 6 at JD.8, **Wave 7 at RC.5**. Grep by task id.
 
 - **Wave 0 — Foundations (13/13 ✓)**: UI.1, UI.8, UI.9, UI.10, ST.1–ST.9. Closed by `d1902e5` ST.9 studio docs+smoke.
@@ -58,22 +59,56 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 - **Wave 4 — Authoring 3.0 (15/15 ✓)**: A3.1–A3.15. Took migration `0023_slimy_night_thrasher` (`articles`). Closed by `docs(authoring): Authoring 3.0 docs-sync + $0 smoke-authoring3.ts (A3.15)`, parent `819c61d`.
 - **Wave 5 — Settings moat + polish (16/16 ✓)**: UI.2–UI.7, UI.11–UI.17. Closed by `docs(ui): cockpit overhaul docs-sync + $0 smoke-settings.ts (UI.17)`, parent `7b10239`.
 - **Wave 6 — Coach, judge & growth tactics (25/25 ✓, + GT.5 `[s]` by design)**: SC.1–SC.9, GT.1–GT.9, JD.1–JD.8. Took migration `0024_soft_leopardon` (`draft_judgments`). Closed by `docs(judge): LLM-judge docs-sync + $0 smoke-judge.ts (JD.8)`, parent `fc44d1c`.
-- **Wave 7 — Radar follow-ups: curated drafting & humanize-at-pick (10/10 ✓)**: HM.1–HM.5 (project humanizer), RC.1–RC.5 (curated drafting). Took migration `0025_curvy_edwin_jarvis` (`radar_drafts.curation_score`). Closed by `docs(radar): RC docs-sync + $0 smoke-radar-curate.ts (RC.5)`, parent `80a2f2b` — **which also closes the masterplan.**
+- **Wave 7 — Radar follow-ups: curated drafting & humanize-at-pick (10/10 ✓)**: HM.1–HM.5 (project humanizer), RC.1–RC.5 (curated drafting). Took migration `0025_curvy_edwin_jarvis` (`radar_drafts.curation_score`). Closed by `docs(radar): RC docs-sync + $0 smoke-radar-curate.ts (RC.5)`, parent `80a2f2b`.
+- **Wave 8 — Radar access from a Claude Code session (1/8)**, plan `plans/2026-08-17-radar-access.md`, opened by `d968fe9` (`wave 8` — plan + MASTERPLAN registration only, no code, no STATE.md; RA.1 owed the re-opening and did it). **$0 lane.** Took migration `0029_blushing_expediter` (`radar_sightings`).
+  - `[x]` **RA.1** — `radar_sightings` + `POST /x/radar/sightings` + migration `0029` + the D185 `bandStickiness` move. `feat(radar): RA.1 radar_sightings table + $0 sighting ingest`, parent `d968fe9`, 2026-08-17. Gates: suite 2396/0 fail, typecheck ✓, lint ✓, extension typecheck+build ✓, `content.js` imports 0, one `bandStickiness` in the tree, `:memory:` boot → 3 `content_pillars`.
+  - `[ ]` **RA.2** — background ships every sighting + the `radarSightingSync` toggle (D187: no registry knob). Deps RA.1 ✓. **xhigh.**
+  - `[ ]` **RA.3** — `GET /x/radar/sightings(/:tweetId)` + `x_radar`/`x_radar_tweet` (MCP 25 → 27). Deps RA.1 ✓. high.
+  - `[ ]` **RA.4** — `POST /x/radar/drafts/compose` + `x_radar_draft_reply` (D186; MCP 27 → 28). Deps RA.1 ✓, RA.3. **xhigh.**
+  - `[ ]` **RA.5** — Radar tab **Fetch drafts** action. Pointless before RA.4. high.
+  - `[ ]` **RA.6** — passive `/home` capture repair (the 2026-07-27 stop). No deps, `[parallel-ok]`. high.
+  - `[ ]` **RA.7** — the `radar-analyst` skill. Deps RA.3, RA.4. high.
+  - `[ ]` **RA.8** — RA docs-sync + `$0 scripts/smoke-radar-access.ts` + the browser end-to-end check. Deps all. high.
 
 ## Hot-file locks
 
-A lane claims a file before starting, releases on commit. **Every file is free and nothing serializes
-anything** — with the ledger closed there is no lane left to claim one. The single row below states a
-standing invariant rather than lane state. The documented way to reach a closed lane's file notes is to
-**grep `STATE-ARCHIVE.md` by filename** before touching a file that lane built.
+A lane claims a file before starting, releases on commit. **RA.1 released everything it held** — no file is
+locked right now. The documented way to reach a closed lane's file notes is to **grep `STATE-ARCHIVE.md` by
+filename** before touching a file that lane built.
 
 | File | Owner |
 |---|---|
-| `src/db/migrations/` journal (any migration task) | — (**RC.2 took `0025_curvy_edwin_jarvis` (`radar_drafts.curation_score`); the next migrating task owns `0026`.** JD.4 took `0024_soft_leopardon` (`draft_judgments`) before it. Standing invariant: never run two migration-generating tasks in parallel sessions (journal conflicts), ignore any hardcoded number in plan text — **JD.4's plan said "0018", which is RL.2's `reply_lists`; a plan quoting a migration number is quoting the day it was written** — and always `bun run db:generate` against the current journal, then inspect the SQL for dropped seed INSERTs, codemap §4) |
+| `src/x/routes/radar.ts` | — (free, but **the wave's hot file: RA.1 → RA.3 → RA.4 must never overlap**. RA.1 added `POST /radar/sightings` at the end of the file, under a `sightings (RA.1)` divider; RA.3's two GETs and RA.4's compose land in that same section. §7.20: `GET /radar/sightings/:tweetId` goes **after** and adjacent to the static `GET /radar/sightings`.) |
+| `src/mcp.test.ts`'s exact tool count (25) | — (free; **a second reason RA.3 → RA.4 serialize** — RA.3 takes it to 27, RA.4 to 28, each with `docs/s2-mcp-server.md`'s three counts in the same commit.) |
+| `extension/src/background.ts` | — (free; RA.2 claims it, and RA.2 is the only RA task that touches it.) |
+| `extension/src/shared/radar.ts` | — (free; **RA.1 already made its edit** — the `RadarBand` alias + the `bandStickiness` import. RA.2/RA.5 touch the extension elsewhere.) |
+| `src/db/migrations/` journal (any migration task) | — (**RA.1 took `0029_blushing_expediter` (`radar_sightings`); the next migrating task owns `0030`.** No later RA task needs a migration — the lane is one table wide. JD.4 took `0024_soft_leopardon` (`draft_judgments`) before it. Standing invariant: never run two migration-generating tasks in parallel sessions (journal conflicts), ignore any hardcoded number in plan text — **JD.4's plan said "0018", which is RL.2's `reply_lists`; a plan quoting a migration number is quoting the day it was written** — and always `bun run db:generate` against the current journal, then inspect the SQL for dropped seed INSERTs, codemap §4) |
 
 ## Deviations & decisions register
 
-**All 184 D-entries are in `STATE-ARCHIVE.md`** — grep by task id or by the filename the lane built.
+**Wave 8 (open) — D185–D188.** D185–D187 are the plan's own seeds (full text in `plans/MASTERPLAN.md`
+§"Wave-8 seeds"): **D185** the `bandStickiness` move (done at RA.1), **D186** the `draftRowToSighting`
+contract that binds RA.4, **D187** the browser-toggle kill switch that binds RA.2. New at RA.1:
+
+- **D188** (RA.1, binds RA.2 and any later reader of `radar_sightings`): **three places the plan and the
+  code had to be reconciled, and one of them changes the wire contract.** **(a) The merge's freshness
+  tie-break is `>=`, not `>`.** The plan's rule was "metrics only move when the incoming sighting is
+  newer", which read as strict — and it is wrong in the one case the route deliberately creates: a band
+  change punches through the 60s throttle, so the second POST lands in the *same millisecond* as the
+  first, `newer` was false, and an ACCEPTED re-sighting stored nothing but a bumped `seen_count`. Ties now
+  resolve to the incoming row (the same "fresher copy wins" tie-break the batch dedup and the band ratchet
+  already use); only a strictly-older sighting is held back, which is the case the guard exists for. A
+  route test would not have caught this — the corpus unit test did, via the route test failing on a real
+  clock. **(b) `§7.407`, cited five times in the plan header, is not a codemap section.** §7 stops at 36.
+  The rules it names ("free-text/server-owned parent, lazy prune, warn-and-drop client, throttle mirrors
+  the server window, gate order is the perf contract") are the HV.1 passive-ingest ones and are readable
+  off `POST /harvest/passive` in `routes/harvest.ts` — read them there, not by grepping the codemap. Same
+  for `§7.415a`. **(c) `parseSightingWireRow` takes `nowMs` as a second parameter** (defaulted), which the
+  plan's signature did not have: `seenAt` both defaults to now AND is clamped to ≤ now, and neither is
+  testable if the module reads its own clock. RA.2's throttle must assume the server may clamp a
+  fast-clock `seenAt` down.
+
+**All 184 earlier D-entries are in `STATE-ARCHIVE.md`** — grep by task id or by the filename the lane built.
 Waves 0–3, the Wave-4 closer D127, the registry lane D128–D133, the polish lane D134–D140, the GT/SC lanes,
 the whole JD lane (D149/D160/D162–D171) at JD.8, the HM lane (D175/D178/D180/D182) at HM.5, and the RC lane
 (D176/D177/D179/D181/D183/D184) at RC.5. What stays below is only what is **standing** — true of the repo
@@ -95,6 +130,19 @@ below is the standing set: test/lint/typecheck traps that bite any task, and the
 four items are about how this repo's tests, docs and fixtures work rather than about any lane.
 **Browser-verification debt is not here — it is `VERIFY-DEBT.md`**; a debt parked among facts reads as a fact.
 
+- **RA.1 — `docs/settings-tab.md`'s three count strings are STALE, and nothing asserts them.** The doc says
+  "**67 knobs in 16 groups**" and "**16 prompts**" (×2); the running registry says **61 knobs / 15 groups /
+  31 mirrored** and **17 prompt keys** (`reply-batch-network` is the 17th). RA.1 recounted rather than
+  carried forward, and the numbers in the `current state` line above are the recount. **RA touches none of
+  them** (D187 — the sighting feed's switch is a browser toggle), so this is not RA's to fix; but the next
+  task that "bumps the three count strings" must bump them *from the truth*, not from the doc, or it ships
+  a fourth wrong number. Same lesson as the MCP doc being 5 tools stale for four phases.
+- **RA.1 — the sighting ingest's two twins live on opposite sides of the wire and nothing links them in
+  code.** `SIGHTING_RECAPTURE_MS` (`src/x/routes/radar.ts`) mirrors `RADAR_RESEND_MS`
+  (`extension/src/content.ts:3108`) at 60s, *including* the "unless the band changed" clause. If RA.2 gives
+  the background its own throttle, it must be the same window: shorter on the client and the wire carries
+  rows the server can only count as `skippedRecent`; longer and the corpus silently loses re-sightings.
+  Both files say so in a comment — that comment is the only link.
 - **Settings types are extension-local mirrors.** The extension MUST NOT import `src/x/settings/registry.ts` (§5 build-isolation); it mirrors the `GET /x/settings` JSON in `extension/src/shared/types.ts`, and a new server-side `SettingDef` field is hand-synced there. **The same wall bites `scripts/`, in the other direction:** a smoke may not import the extension build, which is why `smoke-humanizer.ts` keeps a local `mulberry32` and `smoke-radar-curate.ts` cannot test `partitionForCurate`. (Full block in the archive; grep `Settings types are`.)
 - **`exactOptionalPropertyTypes` pass-through pattern (UI.10):** primitives forwarding a maybe-undefined optional (`Slider.unit`, `SettingRow.onReset`, `GearPopover.onReset`/`label`) type the prop as `T | undefined` explicitly — else TS rejects `prop={maybeUndefined}`. Reuse this for new primitives that relay optionals. Root tsconfig also has **`noUncheckedIndexedAccess`**, so `arr[0]` is `T | undefined` — name your fixtures as consts rather than indexing them in a script.
 - **`inspect.test.ts` fails 2/2 under bare `bun test`, GREEN under `bun run test`** (the canonical `SQLITE_PATH=:memory: bun test`). `src/db/client.ts` defaults to `:memory:` when `NODE_ENV==='test'`, but `src/x/data/inspect.ts`'s readonly connection still defaults to `./stratus.db` when `SQLITE_PATH` is unset — the primary writes memory, the readonly reads the file, seeded rows are invisible. **Always gate with `bun run test`.** One-line fix for a future data-core task: make `inspect.ts` honor the same `NODE_ENV==='test'` default (or have `client.ts` `process.env.SQLITE_PATH ??=` set it so both agree).

@@ -1164,3 +1164,66 @@ export const cannonTargets = sqliteTable(
   // The review sort: the camped set, worst score first.
   (t) => [index('cannon_targets_active_score_idx').on(t.active, t.score)],
 );
+
+// The Radar's sighting corpus (RA.1): every tweet the queue admitted — an armed
+// sweep, a cannon capture, the roster lane, a ⊕ pin — mirrored off the browser
+// at capture time. Until this table a sighting existed ONLY in
+// `chrome.storage.local['radar:sightings']` (cap 500, 24h TTL) unless a Grok
+// batch happened to draft against it, so nothing outside the browser could ever
+// answer "what did my sweep actually let through".
+//
+// **One row per tweet, upserted** — deliberately NOT a second `harvest_rows`
+// series. `harvest_rows` already owns the longitudinal metric curve for what
+// /home fed me; this answers a different question ("what did my sweep admit,
+// and what happened to it"), so bounded growth beats a second series and the
+// §7.34 "latest row wins" trap never arises.
+//
+// `vpm` and `person_tier` are deliberately NOT columns (§7.12/§7.16): both are
+// the server's own read-time answers (views/age; `people` + the target roster),
+// and storing a client's copy would fork a rule the server owns.
+//
+// `url`/`author`/`likes`/`verified`/`posted_at`/`source_path` are all null =
+// unknown, never "no" (§7.11) — a collapsed card or a drifted badge selector
+// reads as unknown, and the upsert is fill-only on them so a re-sighting that
+// could not read one never erases what the capture that admitted the row saw.
+export const radarSightings = sqliteTable(
+  'radar_sightings',
+  {
+    tweetId: text('tweet_id').primaryKey(),
+    url: text('url'),
+    handle: text('handle').notNull(), // lowercased, no '@'
+    author: text('author'),
+    // Clipped at capture, then again at ingest (SIGHTING_TEXT_MAX, corpus.ts).
+    text: text('text').notNull(),
+    // 'manual' | 'roster' | 'cannon' | 'sweep', ratcheted by `bandStickiness`
+    // (src/shared/radarSweep.ts) — the same rule the page applies. Free text
+    // like `radar_drafts.band`, which is why an old build's legacy 'hot'/'warm'
+    // folds onto 'sweep' at the ingest instead of needing a migration.
+    band: text('band').notNull(),
+    views: integer('views').notNull(),
+    replies: integer('replies').notNull(),
+    likes: integer('likes'),
+    bait: integer('bait', { mode: 'boolean' }).notNull(),
+    verified: integer('verified', { mode: 'boolean' }),
+    // Derived ONCE from seenAt − ageMin, then fill-only: age is a moving number
+    // and the post time is a fact. Storing it is what keeps the confirm route's
+    // `draftedAt − ageMin` derivation landing on the true post time hours after
+    // capture, which is exactly the window a drafting session works in.
+    postedAt: integer('posted_at', { mode: 'timestamp_ms' }),
+    // The x.com pathname the sighting was captured on ('/home', '/search', a
+    // list, a profile). A path, never a full URL — and the one thing the
+    // passive /home corpus structurally cannot answer about my sweeping.
+    sourcePath: text('source_path'),
+    firstSeenAt: integer('first_seen_at', { mode: 'timestamp_ms' }).notNull(),
+    lastSeenAt: integer('last_seen_at', { mode: 'timestamp_ms' }).notNull(),
+    // Times the algorithm (or I) put this in front of me, not times it was
+    // shipped — the ingest's 60s recapture window is the client's own twin.
+    seenCount: integer('seen_count').default(1).notNull(),
+  },
+  (t) => [
+    // The corpus read ("what did my sweep admit in the last N days").
+    index('radar_sightings_last_seen_idx').on(t.lastSeenAt),
+    // Per-author history, the people layer's join direction.
+    index('radar_sightings_handle_idx').on(t.handle, t.lastSeenAt),
+  ],
+);

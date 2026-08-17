@@ -4,6 +4,7 @@ import {
   SWEEP_STATE_KEY,
   type SweepCandidate,
   type SweepConfig,
+  bandStickiness,
   passesSweep,
   startSweepSession,
   sweepActiveAt,
@@ -248,5 +249,26 @@ describe('sweepMinutesLeft (RS.4)', () => {
     expect(sweepMinutesLeft(s, T0 + 30 * 60_000)).toBe(0);
     expect(sweepMinutesLeft(s, T0 + 86_400_000)).toBe(0);
     expect(sweepMinutesLeft({ startedAt: 'x', expiresAt: 'tomorrow-ish' }, T0)).toBe(0);
+  });
+});
+
+// RA.1 moved this ratchet here from `extension/src/shared/radar.ts` so the page
+// and the server resolve a re-sighting's band with one copy of the rule (§7.27).
+// The order is the whole content of the function, so it is asserted as an order
+// rather than as three magic numbers.
+describe('bandStickiness (the band ratchet)', () => {
+  test('a human pin outranks every capture', () => {
+    expect(bandStickiness('manual')).toBeGreaterThan(bandStickiness('sweep'));
+    expect(bandStickiness('manual')).toBeGreaterThan(bandStickiness('cannon'));
+    expect(bandStickiness('manual')).toBeGreaterThan(bandStickiness('roster'));
+  });
+
+  test('filters I armed outrank "someone I know posted this"', () => {
+    expect(bandStickiness('sweep')).toBeGreaterThan(bandStickiness('roster'));
+    expect(bandStickiness('cannon')).toBeGreaterThan(bandStickiness('roster'));
+  });
+
+  test('sweep and cannon tie, so the fresher one wins at the call site', () => {
+    expect(bandStickiness('sweep')).toBe(bandStickiness('cannon'));
   });
 });

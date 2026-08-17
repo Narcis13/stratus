@@ -141,6 +141,43 @@ export function sweepNeedsVerified(cfg: SweepConfig): boolean {
   return cfg.verifiedOnly;
 }
 
+// -------------------------------------------------------- the band ratchet
+
+/** WHY a row is in the Radar queue. Four values, and there is no longer any
+ *  other kind of band: the reply-band classifier that produced 'hot'/'warm'
+ *  verdicts is deleted, so every band here is a statement about how the row got
+ *  captured, not a judgement about the tweet.
+ *
+ *  - `manual` — the user pinned this tweet via the ⊕ button (RU.8).
+ *  - `sweep`  — an armed sweep's filters admitted it (RS.2): the min/max
+ *    impressions/likes/replies, age and verified-only rules above are the entire
+ *    reason it is here. The ordinary way a row arrives.
+ *  - `cannon` — a camped-roster capture (CQ.4), metric filters bypassed.
+ *  - `roster` — a fresh post by someone already in my circle (GT.8), metric
+ *    filters bypassed; the reciprocity lane is about who posted it.
+ *
+ *  Lives in this module rather than in the extension's radar core because the
+ *  SERVER ratchets bands too since RA.1 — `radar_sightings` upserts one row per
+ *  tweet, so a re-sighting resolves a band on both sides of the wire (§7.27:
+ *  one rule, one home). `extension/src/shared/radar.ts` keeps `RadarBand` as an
+ *  alias of this union, so no importer on the page side had to change. */
+export type RadarBandName = 'manual' | 'roster' | 'cannon' | 'sweep';
+
+/** How strongly a stored band resists being overwritten by a re-sighting. A
+ *  human pin outranks everything; a sweep or cannon capture — filters the user
+ *  wrote and armed, or a roster they camp on purpose — outranks a circle
+ *  capture, which only says "someone I know posted this". Equal stickiness →
+ *  the fresher incoming band wins.
+ *
+ *  The asymmetry matters in both directions: a `roster` row that a later sweep
+ *  admits on its numbers takes the upgrade, while a swept row is never demoted
+ *  to `roster` on the next scroll past it. */
+export function bandStickiness(b: RadarBandName): number {
+  if (b === 'manual') return 2;
+  if (b === 'roster') return 0;
+  return 1; // sweep / cannon
+}
+
 // ------------------------------------------------------------ the session
 
 /** `chrome.storage.local` key holding the armed sweep. ABSENT = manual, which is

@@ -1,0 +1,258 @@
+// RA.1 — the sighting corpus's pure rules. Two halves, and they fail in
+// different ways: a parse bug 400s a whole batch (loud), while a merge bug
+// quietly rewrites a row that was already right (silent), which is why the
+// out-of-order cases below are asserted in both directions.
+
+import { describe, expect, test } from 'bun:test';
+import {
+  SIGHTING_TEXT_MAX,
+  type SightingWireRow,
+  type StoredSighting,
+  derivePostedAt,
+  mergeSightingRow,
+  parseSightingWireRow,
+} from './corpus.ts';
+
+const NOW = Date.parse('2026-08-17T12:00:00.000Z');
+const TWEET = '1234567890123456789';
+
+function wire(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    tweetId: TWEET,
+    url: `https://x.com/alice/status/${TWEET}`,
+    handle: 'alice',
+    author: 'Alice Builder',
+    text: 'shipping is a skill you learn by shipping',
+    band: 'sweep',
+    views: 1500,
+    replies: 8,
+    likes: 12,
+    bait: false,
+    verified: true,
+    ageMin: 22,
+    seenAt: new Date(NOW).toISOString(),
+    sourcePath: '/home',
+    ...over,
+  };
+}
+
+function ok(v: unknown, nowMs = NOW): SightingWireRow {
+  const r = parseSightingWireRow(v, nowMs);
+  if ('error' in r) throw new Error(`expected a parsed row, got ${r.error}`);
+  return r;
+}
+
+function err(v: unknown, nowMs = NOW): string | null {
+  const r = parseSightingWireRow(v, nowMs);
+  return 'error' in r ? r.error : null;
+}
+
+describe('parseSightingWireRow', () => {
+  test('accepts a full row and lowercases the handle', () => {
+    const r = ok(wire({ handle: '@Alice' }));
+    expect(r.handle).toBe('alice');
+    expect(r.tweetId).toBe(TWEET);
+    expect(r.views).toBe(1500);
+    expect(r.likes).toBe(12);
+    expect(r.verified).toBe(true);
+    expect(r.sourcePath).toBe('/home');
+    expect(r.seenAt.getTime()).toBe(NOW);
+  });
+
+  test('rejects every bad field by name', () => {
+    expect(err(null)).toBe('row_invalid');
+    expect(err([])).toBe('row_invalid');
+    expect(err(wire({ tweetId: 'abc' }))).toBe('tweetId_invalid');
+    expect(err(wire({ tweetId: undefined }))).toBe('tweetId_invalid');
+    expect(err(wire({ handle: 'a-handle-that-is-far-too-long' }))).toBe('handle_invalid');
+    expect(err(wire({ handle: 42 }))).toBe('handle_invalid');
+    expect(err(wire({ text: undefined }))).toBe('text_invalid');
+    expect(err(wire({ band: 'nonsense' }))).toBe('band_invalid');
+    expect(err(wire({ band: undefined }))).toBe('band_invalid');
+    expect(err(wire({ views: -1 }))).toBe('views_invalid');
+    expect(err(wire({ views: 'lots' }))).toBe('views_invalid');
+    expect(err(wire({ replies: undefined }))).toBe('replies_invalid');
+    expect(err(wire({ likes: -3 }))).toBe('likes_invalid');
+    expect(err(wire({ bait: undefined }))).toBe('bait_invalid');
+    expect(err(wire({ bait: 'no' }))).toBe('bait_invalid');
+    expect(err(wire({ verified: 'yes' }))).toBe('verified_invalid');
+    expect(err(wire({ ageMin: undefined }))).toBe('ageMin_invalid');
+    expect(err(wire({ ageMin: 525_601 }))).toBe('ageMin_invalid');
+    expect(err(wire({ seenAt: 'not a date' }))).toBe('seenAt_invalid');
+    expect(err(wire({ url: 12 }))).toBe('url_invalid');
+    expect(err(wire({ author: {} }))).toBe('author_invalid');
+  });
+
+  test('sourcePath must be a path, not a URL, and is bounded', () => {
+    expect(err(wire({ sourcePath: 'https://x.com/home' }))).toBe('sourcePath_invalid');
+    expect(err(wire({ sourcePath: `/${'a'.repeat(200)}` }))).toBe('sourcePath_invalid');
+    expect(ok(wire({ sourcePath: '/search?q=bun&f=live' })).sourcePath).toBe(
+      '/search?q=bun&f=live',
+    );
+    expect(ok(wire({ sourcePath: '' })).sourcePath).toBeNull();
+    expect(ok(wire({ sourcePath: undefined })).sourcePath).toBeNull();
+  });
+
+  test('clamps text at 500 and keeps an empty snippet', () => {
+    const r = ok(wire({ text: `  ${'x'.repeat(600)}  ` }));
+    expect(r.text.length).toBe(SIGHTING_TEXT_MAX);
+    // An image-only tweet is a real sighting, not a bad row.
+    expect(ok(wire({ text: '' })).text).toBe('');
+  });
+
+  test('folds the dead classifier bands onto sweep', () => {
+    expect(ok(wire({ band: 'hot' })).band).toBe('sweep');
+    expect(ok(wire({ band: 'warm' })).band).toBe('sweep');
+    expect(ok(wire({ band: 'MANUAL' })).band).toBe('manual');
+  });
+
+  test('absent likes/verified are null, never 0/false (§7.11)', () => {
+    const r = ok(wire({ likes: undefined, verified: undefined }));
+    expect(r.likes).toBeNull();
+    expect(r.verified).toBeNull();
+    // A real zero is still a value.
+    expect(ok(wire({ likes: 0 })).likes).toBe(0);
+    expect(ok(wire({ verified: false })).verified).toBe(false);
+  });
+
+  test('seenAt defaults to now and can never be in the future', () => {
+    expect(ok(wire({ seenAt: undefined })).seenAt.getTime()).toBe(NOW);
+    const ahead = new Date(NOW + 60 * 60 * 1000).toISOString();
+    expect(ok(wire({ seenAt: ahead })).seenAt.getTime()).toBe(NOW);
+    const behind = new Date(NOW - 5 * 60 * 1000).toISOString();
+    expect(ok(wire({ seenAt: behind })).seenAt.getTime()).toBe(NOW - 5 * 60 * 1000);
+  });
+});
+
+describe('derivePostedAt', () => {
+  test('walks back from the sighting by its age', () => {
+    expect(derivePostedAt(NOW, 22).getTime()).toBe(NOW - 22 * 60_000);
+  });
+
+  test('ageMin 0 is a real answer, not a missing one', () => {
+    expect(derivePostedAt(NOW, 0).getTime()).toBe(NOW);
+  });
+});
+
+describe('mergeSightingRow', () => {
+  function stored(over: Partial<StoredSighting> = {}): StoredSighting {
+    return {
+      url: `https://x.com/alice/status/${TWEET}`,
+      author: 'Alice Builder',
+      text: 'the snippet as first captured',
+      band: 'sweep',
+      views: 1000,
+      replies: 4,
+      likes: 9,
+      bait: false,
+      verified: true,
+      postedAt: new Date(NOW - 60 * 60 * 1000),
+      sourcePath: '/home',
+      lastSeenAt: new Date(NOW),
+      seenCount: 3,
+      ...over,
+    };
+  }
+
+  test('a newer sighting moves the metrics', () => {
+    const later = new Date(NOW + 5 * 60_000);
+    const patch = mergeSightingRow(
+      stored(),
+      ok(wire({ views: 2400, replies: 11, likes: 30, seenAt: later.toISOString() }), NOW + 600_000),
+    );
+    expect(patch.views).toBe(2400);
+    expect(patch.replies).toBe(11);
+    expect(patch.likes).toBe(30);
+    expect(patch.lastSeenAt.getTime()).toBe(later.getTime());
+  });
+
+  test('an OLDER sighting moves nothing but the counter', () => {
+    const earlier = new Date(NOW - 10 * 60_000);
+    const patch = mergeSightingRow(
+      stored(),
+      ok(wire({ views: 12, replies: 0, likes: 1, seenAt: earlier.toISOString() })),
+    );
+    expect(patch.views).toBe(1000);
+    expect(patch.replies).toBe(4);
+    expect(patch.likes).toBe(9);
+    expect(patch.lastSeenAt.getTime()).toBe(NOW);
+    expect(patch.seenCount).toBe(4);
+  });
+
+  test('posted_at / source_path / verified / url / author are fill-only', () => {
+    const later = new Date(NOW + 60_000).toISOString();
+    const kept = mergeSightingRow(
+      stored(),
+      ok(
+        wire({
+          seenAt: later,
+          verified: false,
+          sourcePath: '/search',
+          url: 'https://x.com/other/status/9',
+          author: 'Renamed',
+          ageMin: 1,
+        }),
+        NOW + 60_000,
+      ),
+    );
+    expect(kept.verified).toBe(true);
+    expect(kept.sourcePath).toBe('/home');
+    expect(kept.url).toBe(`https://x.com/alice/status/${TWEET}`);
+    expect(kept.author).toBe('Alice Builder');
+    expect(kept.postedAt?.getTime()).toBe(NOW - 60 * 60 * 1000);
+
+    // ...and they DO fill when the stored row never knew.
+    const filled = mergeSightingRow(
+      stored({ verified: null, sourcePath: null, url: null, author: null, postedAt: null }),
+      ok(wire({ seenAt: later, ageMin: 1 }), NOW + 60_000),
+    );
+    expect(filled.verified).toBe(true);
+    expect(filled.sourcePath).toBe('/home');
+    expect(filled.url).toBe(`https://x.com/alice/status/${TWEET}`);
+    expect(filled.author).toBe('Alice Builder');
+    expect(filled.postedAt?.getTime()).toBe(NOW + 60_000 - 60_000);
+  });
+
+  test('a metric-less re-sighting keeps the stored like count', () => {
+    const later = new Date(NOW + 60_000).toISOString();
+    const patch = mergeSightingRow(
+      stored(),
+      ok(wire({ likes: undefined, seenAt: later }), NOW + 60_000),
+    );
+    expect(patch.likes).toBe(9);
+  });
+
+  test('the band ratchets and never demotes', () => {
+    const later = new Date(NOW + 60_000).toISOString();
+    const incoming = (band: string) => ok(wire({ band, seenAt: later }), NOW + 60_000);
+
+    // roster → sweep upgrades: my own filters admitted it on its numbers.
+    expect(mergeSightingRow(stored({ band: 'roster' }), incoming('sweep')).band).toBe('sweep');
+    // sweep → roster does not: a swept row is never demoted on the next scroll.
+    expect(mergeSightingRow(stored({ band: 'sweep' }), incoming('roster')).band).toBe('sweep');
+    // A human pin survives everything.
+    expect(mergeSightingRow(stored({ band: 'manual' }), incoming('sweep')).band).toBe('manual');
+    expect(mergeSightingRow(stored({ band: 'manual' }), incoming('cannon')).band).toBe('manual');
+    // ...and reaches a swept row when the human pins it.
+    expect(mergeSightingRow(stored({ band: 'sweep' }), incoming('manual')).band).toBe('manual');
+    // Equal stickiness → the fresher incoming band wins.
+    expect(mergeSightingRow(stored({ band: 'sweep' }), incoming('cannon')).band).toBe('cannon');
+    // An unreadable stored band takes the incoming one rather than sticking.
+    expect(mergeSightingRow(stored({ band: 'garbage' }), incoming('roster')).band).toBe('roster');
+  });
+
+  // Two POSTs land in the same millisecond routinely (a band change punches
+  // through the throttle, so the second call follows the first immediately) —
+  // and the fresher read has to win, or a re-sighting that the route deliberately
+  // ACCEPTED would silently store nothing but a bumped counter.
+  test('a same-millisecond re-sighting counts as the newer one', () => {
+    const patch = mergeSightingRow(stored(), ok(wire({ views: 7777, seenAt: undefined })));
+    expect(patch.views).toBe(7777);
+    expect(patch.lastSeenAt.getTime()).toBe(NOW);
+  });
+
+  test('seen_count counts every accepted re-sighting', () => {
+    const patch = mergeSightingRow(stored({ seenCount: 41 }), ok(wire()));
+    expect(patch.seenCount).toBe(42);
+  });
+});

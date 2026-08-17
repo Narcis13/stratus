@@ -10,22 +10,36 @@
 //   PATCH /radar/drafts                 body: { tweetIds: string[], status: 'clicked'|'expired' }
 //   PATCH /radar/drafts/:tweetId/tags   body: { tags: string[] | null } — channel tags (C8),
 //                                       applied to every draft row of that tweet
+//   POST  /radar/sightings              { rows: [...] } — the sighting mirror (RA.1, ≤100/call)
 //
 // Expiry is a lazy status flip (never a delete), applied on every GET: a radar
 // reply to a post that's been dead for 48h is worthless anyway.
+//
+// EVERY route in this file is $0 by construction and stays that way: nothing
+// here may import `xFetch` or `askLLM` (invariants #4/#8). The drafts arrive
+// pre-paid from routes/replies.ts; the sightings arrive pre-scraped from the
+// page.
 
-import { type SQL, and, desc, eq, gte, inArray, lt, ne } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
-import { radarDrafts, replyDrafts } from '../db/schema.ts';
+import { radarDrafts, radarSightings, replyDrafts } from '../db/schema.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import { localDayKey } from '../quests.ts';
+import {
+  type SightingPatch,
+  type SightingWireRow,
+  derivePostedAt,
+  mergeSightingRow,
+  parseSightingWireRow,
+} from '../radar/corpus.ts';
 import type { BatchTweet, PostContext, PostSignals } from '../replies/prompt.ts';
 import { getSetting } from '../settings/registry.ts';
 import { localDayStart } from './brief.ts';
 import { parseChannelTags } from './channels.ts';
 import { loadCommitmentsWithDebt } from './goals.ts';
+import { utcDayStart } from './harvest.ts';
 
 export const RADAR_DRAFT_TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -36,6 +50,19 @@ const TWEET_ID_RE = /^\d{1,32}$/;
 const DEFAULT_LIST_LIMIT = 100;
 const MAX_LIST_LIMIT = 200;
 const MAX_PATCH_IDS = 200;
+
+// Sighting ingest (RA.1). Three opening guesses and one twin.
+//
+// The twin is `SIGHTING_RECAPTURE_MS`: it MIRRORS the extension's own
+// `RADAR_RESEND_MS` (content.ts), down to the "unless the band changed" clause.
+// That is not a coincidence to be tidied away later — if the client's window is
+// shorter than this one the wire carries rows the server can only count as
+// `skippedRecent`, and if it is longer the corpus quietly loses re-sightings.
+// Change one, change the other, in the same commit.
+const SIGHTING_RECAPTURE_MS = 60_000;
+const SIGHTING_DAILY_NEW_CAP = 2000;
+const SIGHTING_RETENTION_DAYS = 60;
+const MAX_SIGHTING_BATCH = 100;
 
 // Pure — exported for unit tests. A draft is past its useful life 48h after
 // drafting; expiry flips status, it never deletes. UI.4: the TTL is a param
@@ -438,6 +465,153 @@ radar.get('/radar/placed-today', async (c) => {
   const target = repliesCommitment?.dailyTarget ?? loadDoctrine().replyTargetMax;
 
   return c.json({ dayKey: localDayKey(now, tzOffsetMin), placed: placedRows.length, target });
+});
+
+// ------------------------------------------------------------ sightings (RA.1)
+
+// The sighting mirror. Every tweet the Radar queue admits — an armed sweep, a
+// cannon capture, the roster lane, a ⊕ pin — is shipped here by background.ts
+// at capture time, so what the queue admitted outlives the browser and is
+// readable from outside it. $0 by construction: SQL over rows the page already
+// read, no X call and no LLM call anywhere on the path.
+//
+// Structurally `POST /harvest/passive`'s twin (routes/harvest.ts): parse every
+// row before writing any, dedup the batch, skip a re-sighting inside the
+// window, cap NEW rows per UTC day, prune lazily on the ingest path, and report
+// honest `skipped*` counts. The one real difference is the table shape — the
+// passive harvest APPENDS a longitudinal series, this UPSERTS one row per tweet
+// (see the `radar_sightings` header for why).
+//
+// §7.20 note for RA.3: `GET /radar/sightings/:tweetId` lands in this section and
+// MUST be registered after the static `GET /radar/sightings`, adjacent to it.
+radar.post('/radar/sightings', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  if (!Array.isArray(body.rows) || body.rows.length === 0) {
+    return c.json({ error: 'rows_required' }, 400);
+  }
+  if (body.rows.length > MAX_SIGHTING_BATCH) {
+    return c.json({ error: 'too_many_rows', max: MAX_SIGHTING_BATCH }, 400);
+  }
+
+  const now = new Date();
+  const nowMs = now.getTime();
+
+  // Parse every row BEFORE writing any: one bad row 400s with its index and the
+  // batch lands nothing, so a client that drifted knows which reader broke and
+  // a resend is not a partial duplicate.
+  const parsed: SightingWireRow[] = [];
+  for (let i = 0; i < body.rows.length; i++) {
+    const row = parseSightingWireRow(body.rows[i], nowMs);
+    if ('error' in row) return c.json({ error: row.error, index: i }, 400);
+    parsed.push(row);
+  }
+
+  let skippedRecent = 0;
+
+  // The same tweet twice in one flush is one sighting; the LAST copy wins
+  // because it is the fresher read of the same card.
+  const byId = new Map<string, SightingWireRow>();
+  for (const r of parsed) {
+    if (byId.has(r.tweetId)) skippedRecent++;
+    byId.set(r.tweetId, r);
+  }
+  const unique = [...byId.values()];
+
+  // Lazy retention, harvest's `prunePassiveRuns` rule: no worker for a job that
+  // only matters while rows are arriving.
+  await db
+    .delete(radarSightings)
+    .where(
+      lt(
+        radarSightings.lastSeenAt,
+        new Date(nowMs - SIGHTING_RETENTION_DAYS * 24 * 60 * 60 * 1000),
+      ),
+    );
+
+  const stored = await db
+    .select()
+    .from(radarSightings)
+    .where(
+      inArray(
+        radarSightings.tweetId,
+        unique.map((r) => r.tweetId),
+      ),
+    );
+  const storedById = new Map(stored.map((r) => [r.tweetId, r]));
+
+  const updates: { tweetId: string; patch: SightingPatch }[] = [];
+  const inserts: SightingWireRow[] = [];
+  for (const r of unique) {
+    const prev = storedById.get(r.tweetId);
+    if (!prev) {
+      inserts.push(r);
+      continue;
+    }
+    // A tweet re-sighted inside the window is the same sighting — UNLESS the
+    // band changed, which is a real event (a ⊕ pin landing on a swept row, a
+    // sweep admitting a roster capture on its numbers) and must not wait out a
+    // throttle meant for scroll noise. Exactly the client's own skip rule.
+    if (nowMs - prev.lastSeenAt.getTime() < SIGHTING_RECAPTURE_MS && prev.band === r.band) {
+      skippedRecent++;
+      continue;
+    }
+    updates.push({ tweetId: r.tweetId, patch: mergeSightingRow(prev, r) });
+  }
+
+  // Volume guard on NEW rows only (a volume guard, not an invariant —
+  // concurrent tabs can overshoot by a batch). Re-sightings are deliberately
+  // uncapped: an update costs one row of writes and capping them would freeze
+  // the corpus at whatever a busy morning happened to write first.
+  const [dayCount] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(radarSightings)
+    .where(gte(radarSightings.firstSeenAt, utcDayStart(now)));
+  const room = Math.max(0, SIGHTING_DAILY_NEW_CAP - (dayCount?.n ?? 0));
+  const accepted = inserts.slice(0, room);
+  const skippedCap = inserts.length - accepted.length;
+
+  // One sync txn (§7.13 — `.run()` terminals, no await inside).
+  if (accepted.length > 0 || updates.length > 0) {
+    db.transaction((tx) => {
+      if (accepted.length > 0) {
+        tx.insert(radarSightings)
+          .values(
+            accepted.map((r) => ({
+              tweetId: r.tweetId,
+              url: r.url,
+              handle: r.handle,
+              author: r.author,
+              text: r.text,
+              band: r.band,
+              views: r.views,
+              replies: r.replies,
+              likes: r.likes,
+              bait: r.bait,
+              verified: r.verified,
+              postedAt: derivePostedAt(r.seenAt.getTime(), r.ageMin),
+              sourcePath: r.sourcePath,
+              firstSeenAt: r.seenAt,
+              lastSeenAt: r.seenAt,
+              seenCount: 1,
+            })),
+          )
+          .run();
+      }
+      for (const u of updates) {
+        tx.update(radarSightings).set(u.patch).where(eq(radarSightings.tweetId, u.tweetId)).run();
+      }
+    });
+  }
+
+  return c.json(
+    { inserted: accepted.length, updated: updates.length, skippedRecent, skippedCap },
+    201,
+  );
 });
 
 function isStatus(v: unknown): v is RadarDraftStatus {

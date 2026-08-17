@@ -9,38 +9,18 @@
 // sidepanel/Radar.tsx (reader).
 
 import { CANNON, type CannonThresholds, cannonAgeTone, cannonScore } from '../cannon.ts';
+import { type RadarBandName, bandStickiness } from '../radarSweep.ts';
 import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyModeId } from '../replyMode.ts';
 import type { ReplyModeSource, ReplyVariant } from './types.ts';
 
-// WHY a row is in the queue. Four values, and there is no longer any other kind
-// of band: the reply-band classifier that produced 'hot'/'warm' verdicts is
-// deleted, so every band here is a statement about how the row got captured, not
-// a judgement about the tweet.
-//
-// 'manual' = the user pinned this tweet via the ⊕ button (RU.8).
-// 'sweep'  = an armed sweep's filters admitted it (RS.2) — your own min/max
-//            impressions/likes/replies, age and verified-only rules are the
-//            entire reason it is here. The ordinary way a row arrives.
-// 'cannon' = a camped-roster capture (CQ.4), metric filters bypassed.
-// 'roster' = a fresh post by someone already in my circle (GT.8), metric filters
-//            bypassed — the reciprocity lane is about who posted it.
-export type RadarBand = 'manual' | 'roster' | 'cannon' | 'sweep';
-
-// How strongly a stored band resists being overwritten by a re-sighting. A human
-// pin outranks everything; a sweep or cannon capture — filters the user wrote
-// and armed, or a roster they camp on purpose — outranks a circle capture, which
-// only says "someone I know posted this". Equal stickiness → the fresher
-// incoming band wins.
-//
-// The asymmetry matters in both directions: a 'roster' row that a later sweep
-// admits on its numbers takes the upgrade, while a swept row is never demoted to
-// 'roster' on the next scroll past it.
-function bandStickiness(b: RadarBand): number {
-  if (b === 'manual') return 2;
-  if (b === 'roster') return 0;
-  return 1; // sweep / cannon
-}
+// WHY a row is in the queue. The union and its ratchet (`bandStickiness`) moved
+// to `src/shared/radarSweep.ts` at RA.1: the server upserts `radar_sightings`
+// one row per tweet, so a re-sighting now resolves a band on BOTH sides of the
+// wire, and two copies of that rule is exactly what §7.27 forbids. Read the
+// four values' meanings there. Kept here as an alias so every importer in the
+// extension — and the on-page capture arm — is untouched.
+export type RadarBand = RadarBandName;
 
 // What survives cap pressure. Used to be `bandStickiness` itself, and that was
 // wrong in one expensive way: a row carrying a DRAFTED reply sat on the same rung

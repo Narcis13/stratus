@@ -3,10 +3,10 @@
 // auto-migrated) SQLite DB; bun test runs with SQLITE_PATH=:memory:.
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { eq, inArray } from 'drizzle-orm';
+import { eq, inArray, like } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import { commitments, radarDrafts, replyDrafts, streaks } from '../db/schema.ts';
+import { commitments, radarDrafts, radarSightings, replyDrafts, streaks } from '../db/schema.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
 import { radar } from './radar.ts';
 
@@ -444,4 +444,272 @@ describe('POST /radar/drafts/:tweetId/confirm', () => {
       expect(row?.band).toBe(band);
     });
   }
+});
+
+// RA.1 — the sighting mirror. The ingest is `POST /harvest/passive`'s twin, so
+// the assertions here are its counterparts: the throttle, the batch dedup, the
+// per-UTC-day cap on NEW rows, the lazy prune, and honest `skipped*` counts. The
+// two that are NOT shared with the passive twin get the most attention: this
+// table upserts one row per tweet (so `updated` is a real outcome, not a second
+// row), and a BAND CHANGE punches through the recapture window.
+describe('POST /radar/sightings (RA.1)', () => {
+  // A separate 992-prefixed block so the drafts seeded above can't collide, and
+  // a 9925-prefixed one for the cap test's bulk rows (deleted by prefix).
+  const S_NEW = '992000000000000001';
+  const S_THROTTLE = '992000000000000002';
+  const S_BAND = '992000000000000003';
+  const S_STALE = '992000000000000004'; // 61 days old — must be pruned
+  const S_FRESH = '992000000000000005'; // sighted today — must survive
+  const S_DEDUP = '992000000000000006';
+  const S_REJECT = '992000000000000007';
+  const S_AGED = '992000000000000008'; // stored outside the throttle window
+  const S_CAP = '992000000000000009';
+  const BULK_PREFIX = '9925';
+  const S_IDS = [S_NEW, S_THROTTLE, S_BAND, S_STALE, S_FRESH, S_DEDUP, S_REJECT, S_AGED, S_CAP];
+
+  interface IngestResult {
+    inserted: number;
+    updated: number;
+    skippedRecent: number;
+    skippedCap: number;
+  }
+
+  function wire(tweetId: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      tweetId,
+      url: `https://x.com/ra_alice/status/${tweetId}`,
+      handle: 'ra_alice',
+      author: 'RA Alice',
+      text: 'a swept tweet',
+      band: 'sweep',
+      views: 900,
+      replies: 3,
+      likes: 5,
+      bait: false,
+      verified: true,
+      ageMin: 12,
+      sourcePath: '/home',
+      ...over,
+    };
+  }
+
+  const post = (rows: unknown[]) => send<IngestResult>('/x/radar/sightings', 'POST', { rows });
+
+  async function rowOf(tweetId: string) {
+    const [row] = await db.select().from(radarSightings).where(eq(radarSightings.tweetId, tweetId));
+    return row;
+  }
+
+  async function wipe(): Promise<void> {
+    await db.delete(radarSightings).where(inArray(radarSightings.tweetId, S_IDS));
+    await db.delete(radarSightings).where(like(radarSightings.tweetId, `${BULK_PREFIX}%`));
+  }
+
+  beforeAll(wipe);
+  afterAll(wipe);
+
+  test('a new sighting inserts with everything the page read', async () => {
+    const { status, body } = await post([wire(S_NEW)]);
+    expect(status).toBe(201);
+    expect(body).toEqual({ inserted: 1, updated: 0, skippedRecent: 0, skippedCap: 0 });
+
+    const row = await rowOf(S_NEW);
+    expect(row?.handle).toBe('ra_alice');
+    expect(row?.band).toBe('sweep');
+    expect(row?.views).toBe(900);
+    expect(row?.verified).toBe(true);
+    expect(row?.sourcePath).toBe('/home');
+    expect(row?.seenCount).toBe(1);
+    // posted_at is derived from seenAt − ageMin, which is what keeps the confirm
+    // route's `draftedAt − ageMin` landing on the true post time hours later.
+    const gap = (row?.lastSeenAt.getTime() ?? 0) - (row?.postedAt?.getTime() ?? 0);
+    expect(gap).toBe(12 * 60_000);
+  });
+
+  test('a re-sighting inside the window is the same sighting, not a new one', async () => {
+    expect((await post([wire(S_THROTTLE)])).body.inserted).toBe(1);
+    const { body } = await post([wire(S_THROTTLE, { views: 4000 })]);
+    expect(body).toEqual({ inserted: 0, updated: 0, skippedRecent: 1, skippedCap: 0 });
+    // The throttled read is dropped whole — including its metrics.
+    const row = await rowOf(S_THROTTLE);
+    expect(row?.views).toBe(900);
+    expect(row?.seenCount).toBe(1);
+  });
+
+  test('a BAND change punches through the recapture window', async () => {
+    expect((await post([wire(S_BAND, { band: 'roster' })])).body.inserted).toBe(1);
+    const { body } = await post([wire(S_BAND, { band: 'sweep', views: 2100 })]);
+    expect(body.updated).toBe(1);
+    expect(body.skippedRecent).toBe(0);
+
+    const row = await rowOf(S_BAND);
+    // roster → sweep is an upgrade, and the fresher metrics ride in with it.
+    expect(row?.band).toBe('sweep');
+    expect(row?.views).toBe(2100);
+    expect(row?.seenCount).toBe(2);
+  });
+
+  test('a sighting past the window updates the stored row in place', async () => {
+    const old = new Date(Date.now() - 10 * 60_000);
+    await db.insert(radarSightings).values({
+      tweetId: S_AGED,
+      handle: 'ra_bob',
+      text: 'first capture',
+      band: 'sweep',
+      views: 100,
+      replies: 1,
+      likes: null,
+      bait: false,
+      verified: null,
+      postedAt: old,
+      sourcePath: null,
+      firstSeenAt: old,
+      lastSeenAt: old,
+      seenCount: 1,
+    });
+
+    const { body } = await post([
+      wire(S_AGED, { handle: 'ra_bob', views: 5000, replies: 9, likes: 40, sourcePath: '/search' }),
+    ]);
+    expect(body).toEqual({ inserted: 0, updated: 1, skippedRecent: 0, skippedCap: 0 });
+
+    const row = await rowOf(S_AGED);
+    expect(row?.views).toBe(5000);
+    expect(row?.likes).toBe(40);
+    expect(row?.seenCount).toBe(2);
+    // Fill-only: the row learns what it didn't know...
+    expect(row?.verified).toBe(true);
+    expect(row?.sourcePath).toBe('/search');
+    // ...but where it FIRST entered the queue never moves.
+    expect(row?.firstSeenAt.getTime()).toBe(old.getTime());
+    expect(row?.postedAt?.getTime()).toBe(old.getTime());
+  });
+
+  test('the same tweet twice in one batch is one sighting', async () => {
+    const { body } = await post([wire(S_DEDUP, { views: 100 }), wire(S_DEDUP, { views: 700 })]);
+    expect(body).toEqual({ inserted: 1, updated: 0, skippedRecent: 1, skippedCap: 0 });
+    // The LAST copy wins — it is the fresher read of the same card.
+    expect((await rowOf(S_DEDUP))?.views).toBe(700);
+  });
+
+  test('a bad row 400s with its index and lands nothing', async () => {
+    const { status, body } = await send<{ error: string; index: number }>(
+      '/x/radar/sightings',
+      'POST',
+      { rows: [wire(S_REJECT), wire(S_REJECT, { tweetId: 'nope' })] },
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('tweetId_invalid');
+    expect(body.index).toBe(1);
+    // Parse-all-then-write: the VALID row in front of it was not written either.
+    expect(await rowOf(S_REJECT)).toBeUndefined();
+  });
+
+  test('an oversized batch is refused whole', async () => {
+    const rows = Array.from({ length: 101 }, (_, i) => wire(`9924${String(i).padStart(14, '0')}`));
+    const { status, body } = await send<{ error: string; max: number }>(
+      '/x/radar/sightings',
+      'POST',
+      { rows },
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('too_many_rows');
+    expect(body.max).toBe(100);
+    const written = await db
+      .select()
+      .from(radarSightings)
+      .where(like(radarSightings.tweetId, '9924%'));
+    expect(written.length).toBe(0);
+  });
+
+  test('an empty or malformed body is refused', async () => {
+    expect((await send<{ error: string }>('/x/radar/sightings', 'POST', {})).body.error).toBe(
+      'rows_required',
+    );
+    expect((await post([])).body).toEqual({ error: 'rows_required' } as never);
+    expect((await send<{ error: string }>('/x/radar/sightings', 'POST', [1, 2])).body.error).toBe(
+      'invalid_body',
+    );
+  });
+
+  test('the ingest path prunes what aged out and keeps what did not', async () => {
+    const stale = new Date(Date.now() - 61 * 24 * 60 * 60 * 1000);
+    const fresh = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    await db.insert(radarSightings).values([
+      {
+        tweetId: S_STALE,
+        handle: 'ra_old',
+        text: 'sighted two months ago',
+        band: 'sweep',
+        views: 10,
+        replies: 0,
+        likes: null,
+        bait: false,
+        verified: null,
+        postedAt: stale,
+        sourcePath: null,
+        firstSeenAt: stale,
+        lastSeenAt: stale,
+        seenCount: 1,
+      },
+      {
+        tweetId: S_FRESH,
+        handle: 'ra_new',
+        text: 'sighted this week',
+        band: 'sweep',
+        views: 10,
+        replies: 0,
+        likes: null,
+        bait: false,
+        verified: null,
+        postedAt: fresh,
+        sourcePath: null,
+        firstSeenAt: fresh,
+        lastSeenAt: fresh,
+        seenCount: 1,
+      },
+    ]);
+
+    // Retention is lazy — it only runs because a new batch arrived.
+    expect((await post([wire(S_CAP)])).body.inserted).toBe(1);
+    expect(await rowOf(S_STALE)).toBeUndefined();
+    expect(await rowOf(S_FRESH)).toBeDefined();
+  });
+
+  // Runs LAST on purpose: it fills today's quota, so any insert asserted after
+  // it would be capped for reasons that have nothing to do with the test.
+  test('new rows are capped per UTC day; re-sightings are not', async () => {
+    const now = new Date();
+    const bulk = Array.from({ length: 2000 }, (_, i) => ({
+      tweetId: `${BULK_PREFIX}${String(i).padStart(14, '0')}`,
+      handle: 'ra_bulk',
+      text: 'quota filler',
+      band: 'sweep',
+      views: 1,
+      replies: 0,
+      likes: null,
+      bait: false,
+      verified: null,
+      postedAt: now,
+      sourcePath: null,
+      firstSeenAt: now,
+      lastSeenAt: now,
+      seenCount: 1,
+    }));
+    // Chunked: 2,000 × 16 columns would sit on SQLite's bound-parameter ceiling.
+    for (let i = 0; i < bulk.length; i += 250) {
+      await db.insert(radarSightings).values(bulk.slice(i, i + 250));
+    }
+
+    const { body } = await post([wire('992000000000000099')]);
+    expect(body).toEqual({ inserted: 0, updated: 0, skippedRecent: 0, skippedCap: 1 });
+
+    // An UPDATE still lands — capping re-sightings would freeze the corpus at
+    // whatever a busy morning happened to write first.
+    const capped = await post([
+      wire(`${BULK_PREFIX}00000000000000`, { handle: 'ra_bulk', views: 55, band: 'manual' }),
+    ]);
+    expect(capped.body.updated).toBe(1);
+    expect(capped.body.skippedCap).toBe(0);
+  });
 });
