@@ -1126,3 +1126,282 @@ describe('GET /radar/sightings/:tweetId (RA.3)', () => {
     expect(missing.body.error).toBe('not_found');
   });
 });
+
+// RA.4 — a Claude Code session writes into the queue. The two assertions that
+// matter aren't the 201: a draft with a null `band` or null `signals` is dropped
+// by `draftRowToSighting` on rehydrate (D186), so the feature would ship
+// invisible with every test green; and `signals.ageMin` is recomputed at COMPOSE
+// time, which is what keeps the confirm route's `draftedAt − ageMin` landing on
+// the real post time hours after the capture.
+describe('POST /radar/drafts/compose (RA.4)', () => {
+  const C_BASE = '994000000000000001'; // the happy path + the two-writer race
+  const C_AGE = '994000000000000002'; // posted 2h ago, last seen 30m ago
+  const C_SELFNAME = '994000000000000003'; // author === handle, legacy band
+  const C_UNKNOWN = '994999999999999999'; // no sighting — 404
+  const C_IDS = [C_BASE, C_AGE, C_SELFNAME, C_UNKNOWN];
+  const C_HANDLE = 'ra4dana';
+
+  const MIN = 60_000;
+
+  interface DraftBody {
+    id: string;
+    tweetId: string;
+    url: string | null;
+    handle: string;
+    author: string | null;
+    snippet: string;
+    band: string | null;
+    signals: { views: number; replies: number; ageMin: number; vpm: number; bait: boolean } | null;
+    replyText: string;
+    angle: string;
+    variants: { text: string; angle: string }[] | null;
+    model: string | null;
+    curationScore: number | null;
+    status: string;
+  }
+
+  const compose = (body: unknown) =>
+    send<DraftBody & { error?: string; allowed?: string[] }>(
+      '/x/radar/drafts/compose',
+      'POST',
+      body,
+    );
+
+  const PRIMARY = 'the part nobody says out loud is the migration';
+  const V2 = [
+    { text: PRIMARY, angle: 'extends' },
+    { text: 'this only holds under 10k rows', angle: 'contrarian' },
+  ];
+
+  async function wipe(): Promise<void> {
+    await db.delete(replyDrafts).where(inArray(replyDrafts.sourceTweetId, C_IDS));
+    await db.delete(radarDrafts).where(inArray(radarDrafts.tweetId, C_IDS));
+    await db.delete(radarSightings).where(inArray(radarSightings.tweetId, C_IDS));
+  }
+
+  beforeAll(async () => {
+    await wipe();
+    const seen = new Date(Date.now() - 10 * MIN);
+    await db.insert(radarSightings).values([
+      {
+        tweetId: C_BASE,
+        url: `https://x.com/${C_HANDLE}/status/${C_BASE}`,
+        handle: C_HANDLE,
+        author: 'RA4 Dana',
+        text: 'a swept tweet worth answering',
+        band: 'sweep',
+        views: 1200,
+        replies: 4,
+        likes: 9,
+        bait: false,
+        verified: true,
+        postedAt: new Date(seen.getTime() - 20 * MIN),
+        sourcePath: '/search',
+        firstSeenAt: seen,
+        lastSeenAt: seen,
+        seenCount: 2,
+      },
+      {
+        // Last seen 30m ago but posted 2h ago: the two ages differ, so a route
+        // stamping the stored last-seen age instead of recomputing shows up.
+        tweetId: C_AGE,
+        url: `https://x.com/${C_HANDLE}/status/${C_AGE}`,
+        handle: C_HANDLE,
+        author: 'RA4 Dana',
+        text: 'a tweet I got round to hours later',
+        band: 'manual',
+        views: 600,
+        replies: 2,
+        likes: 3,
+        bait: true,
+        verified: null,
+        postedAt: new Date(Date.now() - 120 * MIN),
+        sourcePath: '/home',
+        firstSeenAt: new Date(Date.now() - 30 * MIN),
+        lastSeenAt: new Date(Date.now() - 30 * MIN),
+        seenCount: 1,
+      },
+      {
+        // No display name distinct from the handle, and a band written by a
+        // build older than RS.2 — both are folds, not refusals.
+        tweetId: C_SELFNAME,
+        url: null,
+        handle: C_HANDLE,
+        author: C_HANDLE,
+        text: 'a tweet from a hand-edited row',
+        band: 'hot',
+        views: 300,
+        replies: 1,
+        likes: null,
+        bait: false,
+        verified: false,
+        postedAt: new Date(Date.now() - 15 * MIN),
+        sourcePath: null,
+        firstSeenAt: seen,
+        lastSeenAt: seen,
+        seenCount: 1,
+      },
+    ]);
+  });
+
+  afterAll(wipe);
+
+  test('stamps band + signals from the sighting and lands a ready draft', async () => {
+    const { status, body } = await compose({ tweetId: C_BASE, variants: V2 });
+    expect(status).toBe(201);
+
+    // THE rehydrate contract (D186): either of these null and the panel silently
+    // shows nothing, with every other assertion here still green.
+    expect(body.band).toBe('sweep');
+    expect(body.signals).not.toBeNull();
+    expect(body.signals?.views).toBe(1200);
+    expect(body.signals?.replies).toBe(4);
+    expect(body.signals?.bait).toBe(false);
+
+    expect(body.model).toBe('claude-code-mcp');
+    expect(body.status).toBe('ready');
+    expect(body.curationScore).toBeNull();
+    expect(body.variants).toHaveLength(2);
+    // The primary is variants[0], the same rule the batch path uses.
+    expect(body.replyText).toBe(PRIMARY);
+    expect(body.angle).toBe('extends');
+    // Straight off the sighting, never from the caller (§7.16).
+    expect(body.handle).toBe(C_HANDLE);
+    expect(body.author).toBe('RA4 Dana');
+    expect(body.snippet).toBe('a swept tweet worth answering');
+    expect(body.url).toBe(`https://x.com/${C_HANDLE}/status/${C_BASE}`);
+
+    // And it is visible through the route the panel actually rehydrates from —
+    // asserting only the 201 would pass on a row the Radar never shows.
+    const queue = await send<{ count: number; drafts: DraftBody[] }>(
+      `/x/radar/drafts?tweetId=${C_BASE}&status=ready`,
+      'GET',
+    );
+    expect(queue.status).toBe(200);
+    expect(queue.body.count).toBe(1);
+    expect(queue.body.drafts[0]?.band).toBe('sweep');
+    expect(queue.body.drafts[0]?.signals).not.toBeNull();
+  });
+
+  test('a display name equal to the handle is not a display name; a legacy band folds', async () => {
+    const { status, body } = await compose({
+      tweetId: C_SELFNAME,
+      variants: [{ text: 'one variant is enough', angle: 'question' }],
+    });
+    expect(status).toBe(201);
+    expect(body.author).toBeNull();
+    expect(body.url).toBeNull();
+    // 'hot' is a dead classifier verdict — folded, not refused, and never null
+    // (a null band is the invisible-draft case).
+    expect(body.band).toBe('sweep');
+  });
+
+  test('ageMin is recomputed at compose time, and confirm lands on the true post time', async () => {
+    const postedAtMs = Date.now() - 120 * MIN;
+    const { status, body } = await compose({
+      tweetId: C_AGE,
+      variants: [{ text: 'late but still worth saying', angle: 'observation' }],
+    });
+    expect(status).toBe(201);
+    // ~120, NOT the 30 minutes the row had when the queue last saw it.
+    expect(body.signals?.ageMin).toBeGreaterThanOrEqual(119);
+    expect(body.signals?.ageMin).toBeLessThanOrEqual(121);
+    expect(body.signals?.vpm).toBeCloseTo(5, 1); // 600 views / ~120 min
+    expect(body.signals?.bait).toBe(true);
+
+    // The whole point of recomputing: confirm derives the post time back out as
+    // draftedAt − ageMin, and it has to land where the post actually went up.
+    const confirmed = await send<{ sourcePostedAt: string; model: string; source: string }>(
+      `/x/radar/drafts/${C_AGE}/confirm`,
+      'POST',
+    );
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body.source).toBe('radar');
+    expect(confirmed.body.model).toBe('claude-code-mcp');
+    expect(Math.abs(Date.parse(confirmed.body.sourcePostedAt) - postedAtMs)).toBeLessThan(60_000);
+  });
+
+  test('composing again expires the previous draft — one ready row per tweet', async () => {
+    const second = await compose({
+      tweetId: C_BASE,
+      variants: [{ text: 'a better second pass', angle: 'debate' }],
+    });
+    expect(second.status).toBe(201);
+
+    const rows = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, C_BASE));
+    expect(rows).toHaveLength(2);
+    const ready = rows.filter((r) => r.status === 'ready');
+    expect(ready).toHaveLength(1);
+    expect(ready[0]?.id).toBe(second.body.id);
+    expect(rows.filter((r) => r.status === 'expired')).toHaveLength(1);
+  });
+
+  test('an unknown tweet is a 404 — a composed draft is anchored to a real capture', async () => {
+    const { status, body } = await compose({ tweetId: C_UNKNOWN, variants: V2 });
+    expect(status).toBe(404);
+    expect(body.error).toBe('sighting_not_found');
+    const rows = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, C_UNKNOWN));
+    expect(rows).toHaveLength(0);
+  });
+
+  test('every refusal has its own code, and none of them writes', async () => {
+    const before = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, C_SELFNAME));
+
+    const bad = await compose('not an object');
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toBe('invalid_body');
+
+    const badId = await compose({ tweetId: 'not-an-id', variants: V2 });
+    expect(badId.status).toBe(400);
+    expect(badId.body.error).toBe('invalid_tweet_id');
+
+    const none = await compose({ tweetId: C_SELFNAME, variants: [] });
+    expect(none.status).toBe(400);
+    expect(none.body.error).toBe('invalid_variants');
+
+    const four = await compose({
+      tweetId: C_SELFNAME,
+      variants: [...V2, ...V2].map((v) => ({ ...v })),
+    });
+    expect(four.status).toBe(400);
+    expect(four.body.error).toBe('invalid_variants');
+
+    const blank = await compose({
+      tweetId: C_SELFNAME,
+      variants: [{ text: '   ', angle: 'extends' }],
+    });
+    expect(blank.status).toBe(400);
+    expect(blank.body.error).toBe('invalid_variants');
+
+    const long = await compose({
+      tweetId: C_SELFNAME,
+      variants: [{ text: 'x'.repeat(501), angle: 'extends' }],
+    });
+    expect(long.status).toBe(400);
+    expect(long.body.error).toBe('reply_too_long');
+
+    const angle = await compose({
+      tweetId: C_SELFNAME,
+      variants: [{ text: 'a fine reply', angle: 'snark' }],
+    });
+    expect(angle.status).toBe(400);
+    expect(angle.body.error).toBe('invalid_angle');
+    // The refusal names the vocabulary, so a caller can fix it in one round trip.
+    expect(angle.body.allowed).toContain('contrarian');
+
+    // Refuse before write (§7.4): the id was valid on most of those and none of
+    // them may have touched the tweet's queue.
+    const after = await db.select().from(radarDrafts).where(eq(radarDrafts.tweetId, C_SELFNAME));
+    expect(after).toHaveLength(before.length);
+  });
+
+  test('a 500-char reply is stored, not clamped (decision 7)', async () => {
+    const text = 'y'.repeat(500);
+    const { status, body } = await compose({
+      tweetId: C_SELFNAME,
+      variants: [{ text, angle: 'network' }],
+    });
+    expect(status).toBe(201);
+    expect(body.replyText).toHaveLength(500);
+  });
+});

@@ -160,6 +160,7 @@ async function callTool(
     'x_add_person_note',
     'x_add_me_entry',
     'x_draft_post',
+    'x_radar_draft_reply',
   ];
   for (const name of expected) if (!names.has(name)) fail(`tools/list missing ${name}`);
   console.log(`tools/list OK (${tools.length} tools, all ${expected.length} expected present)`);

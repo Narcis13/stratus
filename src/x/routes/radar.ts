@@ -8,6 +8,8 @@
 // Routes:
 //   GET   /radar/drafts                 ?status=ready|clicked|expired (default ready)
 //   PATCH /radar/drafts                 body: { tweetIds: string[], status: 'clicked'|'expired' }
+//   POST  /radar/drafts/compose         { tweetId, variants: [{text, angle}] } — a Claude Code
+//                                       session writes reply variants into the queue (RA.4)
 //   PATCH /radar/drafts/:tweetId/tags   body: { tags: string[] | null } — channel tags (C8),
 //                                       applied to every draft row of that tweet
 //   POST  /radar/sightings              { rows: [...] } — the sighting mirror (RA.1, ≤100/call)
@@ -28,6 +30,7 @@ import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import type { RadarBandName } from '../../shared/radarSweep.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
+import { REPLY_ANGLES } from '../../shared/replyMode.ts';
 import { people, radarDrafts, radarSightings, replyDrafts } from '../db/schema.ts';
 import { loadDoctrine } from '../niche/store.ts';
 import { normalizePersonHandle } from '../people/store.ts';
@@ -39,6 +42,8 @@ import {
   type SightingViewContext,
   type SightingWireRow,
   buildSightingViews,
+  coerceBand,
+  composeDraftSignals,
   derivePostedAt,
   mergeSightingRow,
   parseSightingWireRow,
@@ -89,6 +94,21 @@ const MAX_SIGHTING_LIMIT = 200;
 // here, with `truncated` in the response. A silently short answer to "what did
 // my sweep admit" is worse than a short one that says so.
 const SIGHTING_SCAN_CAP = 5000;
+
+// Compose (RA.4). The variant ceiling is the panel's — the Radar card renders
+// angle tabs for the batch's three, and a fourth would have nowhere to go.
+const MAX_COMPOSE_VARIANTS = 3;
+// Decision 7: the same 500 as the sighting snippet clamp, by intent rather than
+// by construction (they bound different things — a scraped tweet vs a reply I
+// would paste). Refusing a long reply the operator could legitimately post
+// (premium longform) is worse than storing one; revisit on a real refusal.
+const MAX_COMPOSE_TEXT = 500;
+// The cohort key that makes this lane measurable. `radar_drafts.model` is copied
+// onto the confirmed `reply_drafts.model` by the confirm route, so "do
+// Claude-drafted replies out-earn Grok batch ones" is read-time SQL split on
+// this string — no new column and no new gate (§7.19: n≥20 a side before it
+// says anything).
+const COMPOSE_MODEL = 'claude-code-mcp';
 
 const SIGHTING_ORDERS = ['vpm', 'views', 'lastSeen'] as const;
 type SightingOrder = (typeof SIGHTING_ORDERS)[number];
@@ -309,6 +329,122 @@ radar.patch('/radar/drafts', async (c) => {
     .returning({ id: radarDrafts.id });
 
   return c.json({ updated: updated.length });
+});
+
+// Compose (RA.4): a Claude Code session writes reply variants straight into the
+// Radar queue, and the panel then treats them exactly like a Grok batch draft —
+// same card, same angle tabs, same copy-on-pick handoff, still a manual paste
+// (invariant #2). $0: the text arrives already written, so there is no `askLLM`
+// call here, and adding a "polish it" step would re-add the spend this lane
+// exists to remove.
+//
+// Registered above the `:tweetId` forms (§7.20) and with the rest of the
+// `/radar/drafts` block rather than with the sightings, because what it writes
+// is a draft — the sighting is only the anchor it is stamped from.
+//
+// Two things are load-bearing, and neither is politeness:
+//
+//  1. `band` and `signals` come from the STORED SIGHTING, never from the caller
+//     (§7.16). `draftRowToSighting` (extension/src/shared/radar.ts) returns null
+//     when either is missing, so a row without them is silently dropped on
+//     rehydrate — green tests, empty panel. That is why the unknown-tweet case
+//     is a 404 rather than a draft with null stamps: the sighting is the only
+//     thing that can supply them.
+//  2. Prior `ready` rows for this tweet are expired in the same txn.
+//     `radar_drafts` now has TWO writers (the Grok batch and this route) racing
+//     the panel's "newest ready row wins" rehydrate; without the flip, which
+//     draft the human sees depends on clock resolution.
+radar.post('/radar/drafts/compose', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  // §7.4 order: every shape check before the DB is touched, even though nothing
+  // on this path spends. A 404 for a real typo in a tweet id would be a lie.
+  if (typeof body.tweetId !== 'string' || !TWEET_ID_RE.test(body.tweetId)) {
+    return c.json({ error: 'invalid_tweet_id' }, 400);
+  }
+  const tweetId = body.tweetId;
+
+  if (!Array.isArray(body.variants)) return c.json({ error: 'invalid_variants' }, 400);
+  const rawVariants = body.variants as unknown[];
+  if (rawVariants.length === 0 || rawVariants.length > MAX_COMPOSE_VARIANTS) {
+    return c.json({ error: 'invalid_variants', max: MAX_COMPOSE_VARIANTS }, 400);
+  }
+
+  const variants: { text: string; angle: string }[] = [];
+  for (let i = 0; i < rawVariants.length; i++) {
+    const v = rawVariants[i];
+    if (!v || typeof v !== 'object' || Array.isArray(v)) {
+      return c.json({ error: 'invalid_variants', index: i }, 400);
+    }
+    const { text, angle } = v as Record<string, unknown>;
+    if (typeof text !== 'string' || text.trim() === '') {
+      return c.json({ error: 'invalid_variants', index: i }, 400);
+    }
+    const trimmed = text.trim();
+    if (trimmed.length > MAX_COMPOSE_TEXT) {
+      return c.json({ error: 'reply_too_long', index: i, max: MAX_COMPOSE_TEXT }, 400);
+    }
+    // The storage column is free text (it holds rows written before
+    // `observation`/`question` existed), but a caller writing TODAY has no
+    // excuse for inventing a sixth angle — every crosstab splits on this.
+    if (typeof angle !== 'string' || !(REPLY_ANGLES as readonly string[]).includes(angle)) {
+      return c.json({ error: 'invalid_angle', index: i, allowed: REPLY_ANGLES }, 400);
+    }
+    variants.push({ text: trimmed, angle });
+  }
+  const primary = variants[0];
+  // `noUncheckedIndexedAccess` bookkeeping — the length check above already
+  // proved there is one.
+  if (!primary) return c.json({ error: 'invalid_variants' }, 400);
+
+  const [row] = await db.select().from(radarSightings).where(eq(radarSightings.tweetId, tweetId));
+  // Anchored to a real capture, never an arbitrary id: without a sighting there
+  // is nothing to stamp band/signals from, and see (1) above.
+  if (!row) return c.json({ error: 'sighting_not_found' }, 404);
+
+  const signals = composeDraftSignals(row, Date.now());
+  // Never null (D186). A stored band this reader can't parse is a hand-edited
+  // row, and the lenient resolution is the same one `mergeSightingRow` takes —
+  // dropping the draft out of the panel over it would be the worst of the three.
+  const band = coerceBand(row.band) ?? 'sweep';
+
+  const created = db.transaction((tx) => {
+    tx.update(radarDrafts)
+      .set({ status: 'expired' })
+      .where(and(eq(radarDrafts.tweetId, tweetId), eq(radarDrafts.status, 'ready')))
+      .run();
+    const [draft] = tx
+      .insert(radarDrafts)
+      .values({
+        tweetId: row.tweetId,
+        url: row.url,
+        handle: row.handle,
+        // `buildRadarDraftRows`' rule: a display name identical to the handle is
+        // not a display name.
+        author: row.author === row.handle ? null : row.author,
+        snippet: row.text,
+        band,
+        signals,
+        replyText: primary.text,
+        angle: primary.angle,
+        variants,
+        model: COMPOSE_MODEL,
+        // Null, never 0 — 0 is a real "nothing to gain replying here" curation
+        // verdict, and this draft never went through curation at all.
+        curationScore: null,
+        status: 'ready',
+      })
+      .returning()
+      .all();
+    if (!draft) throw new Error('radar_drafts insert returned no row');
+    return draft;
+  });
+
+  return c.json(created, 201);
 });
 
 // Channel tags (C8). Keyed by tweetId — the panel's queue and the session ring

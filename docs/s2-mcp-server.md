@@ -14,9 +14,9 @@ claude mcp add --transport http stratus https://<host>/mcp \
   --header "Authorization: Bearer $STRATUS_TOKEN"
 ```
 
-From then on, an agent has **27 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make five tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, change one setting). No session state, no SSH, no exported CSV.
+From then on, an agent has **28 tools** across three tiers that let it read the production database, call any curated stratus route in-process, and make six tiny non-billed writes (add an idea, add a person note, log a Me entry, draft a post, draft a Radar reply, change one setting). No session state, no SSH, no exported CSV.
 
-The MCP client *is* the intelligence — there are deliberately **no Grok tools**. And the write ceiling is a `draft` calendar row, so **no MCP call can ever reach `createPost` or any billed X endpoint.**
+The MCP client *is* the intelligence — there are deliberately **no Grok tools**. And the write ceiling is an inert draft — a `draft` calendar row, or a `radar_drafts` reply the human still pastes by hand — so **no MCP call can ever reach `createPost` or any billed X endpoint.**
 
 ---
 
@@ -73,7 +73,7 @@ CIRCLES gave stratus a rich, measured CRM. But the only consumer was the side pa
 
 ## The tools — `src/x/mcp.ts`
 
-**27 tools, three tiers, all $0.**
+**28 tools, three tiers, all $0.**
 
 ### Schema tier (3) — the S1 core, verbatim
 
@@ -113,7 +113,7 @@ Each tool calls an existing stratus route **in-process** via Hono's `app.request
 
 Tool descriptions state costs ("Free, local read") so agent callers don't hesitate.
 
-### Write tier (5) — tiny, never X-billed
+### Write tier (6) — tiny, never X-billed
 
 The write ceiling is a **draft**. MCP can propose; only the human promotes.
 
@@ -122,6 +122,7 @@ The write ceiling is a **draft**. MCP can propose; only the human promotes.
 | `x_add_idea` | `text`, `tags?` | `POST /x/ideas` | Idea Inbox only. |
 | `x_add_person_note` | `handle`, `text` | `POST /x/people/:handle/events` `{ type:'note', summary:text }` | Creates the person if unknown. |
 | `x_draft_post` | `text`, `pillar?`, `scheduledFor?` | `POST /x/posts/scheduled` | **`status` is hard-coded to `'draft'`** in the handler. |
+| `x_radar_draft_reply` | `tweetId`, `variants[1–3]` (`text` ≤500, `angle`) | `POST /x/radar/drafts/compose` | The tweet must already be in the sighting corpus (404 otherwise); `band` and `signals` are stamped **from the stored sighting**, never from the caller. Composing again expires the previous `ready` draft. The reply reaches X only by manual paste (invariant #2). |
 | `x_add_me_entry` | `kind`, `text`, `happenedAt?`, `pinned?` | `POST /x/me/entries` | `kind` is a zod enum over the 4 Me kinds — journal only, **no goal write**. |
 | `x_update_setting` | `key`, `value` | `PATCH /x/settings` | Same registry validation as the UI (UI.4) — an out-of-range value is a 400. The knobs that would matter most (URL surcharge, retire-before-snapshot, claim-before-call, token rotation) have **no key at all**. |
 
@@ -136,7 +137,7 @@ The write ceiling is a **draft**. MCP can propose; only the human promotes.
 | Guarantee | How |
 |---|---|
 | No unauthenticated access | `app.use('/mcp', bearerAuth())` before `mountMcp` |
-| No write reaches a billed X endpoint | Write tier tops out at a `draft` calendar row; `status` hard-coded, not caller-settable |
+| No write reaches a billed X endpoint | Write tier tops out at an inert draft — a `draft` calendar row (`status` hard-coded, not caller-settable) or a `radar_drafts` reply the human pastes by hand |
 | No Grok spend | No Grok tools; `x_digest` forces `factsOnly=true` |
 | No agent can raise a money ceiling | `x_update_setting` goes through the same registry validation as the UI — floors/ceilings are the guard, and the never-settings guards have no key |
 | No secret leak | Schema tier is the S1 `tokens`-blind core |
@@ -168,7 +169,7 @@ claude mcp add --transport http stratus https://<host>/mcp \
 - **`src/mcp.test.ts`** — a JSON-RPC round-trip over `app.request`: `initialize` → `tools/list` → `tools/call` for one tool per tier, plus the **draft-forced guard** (a smuggled `pending` is stripped) and a **401 without the bearer**. Adds a `describeTable` check to `inspect.ts` coverage.
 - **`scripts/smoke-mcp.ts`** — rerunnable $0 check on an ephemeral `:memory:` DB: full round-trip including the `tokens` guard and the draft-forced guard.
 
-**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 27 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
+**Verified end-to-end** with the real `@modelcontextprotocol/sdk` `Client` + `StreamableHTTPClientTransport` over an actual HTTP port: connect → 28 tools listed → `x_query` round-trips → `x_draft_post` lands a `draft` row in `scheduled_posts` visible to the Composer.
 
 ---
 

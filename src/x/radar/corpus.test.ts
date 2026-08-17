@@ -12,9 +12,12 @@ import {
   type StoredSighting,
   type StoredSightingRow,
   buildSightingViews,
+  coerceBand,
+  composeDraftSignals,
   derivePostedAt,
   mergeSightingRow,
   parseSightingWireRow,
+  sightingVpm,
   summarizeSightings,
 } from './corpus.ts';
 
@@ -448,5 +451,82 @@ describe('summarizeSightings', () => {
     expect(s.admitted).toBe(2);
     expect(s.worked).toBe(1);
     expect(s.unworkedAdmitted).toBe(1);
+  });
+});
+
+// RA.4 — what a stored sighting looks like as a draft's `signals`. The number
+// under test is `ageMin`: the confirm route derives the source post time back out
+// as `draftedAt − ageMin`, so drafting an hour after the last sighting must not
+// move where the post is recorded as having gone up.
+describe('composeDraftSignals', () => {
+  const SEEN = new Date(NOW - 30 * 60_000);
+
+  function row(over: Partial<StoredSightingRow> = {}): StoredSightingRow {
+    return {
+      tweetId: TWEET,
+      url: `https://x.com/alice/status/${TWEET}`,
+      handle: 'alice',
+      author: 'Alice Builder',
+      text: 'shipping is a skill you learn by shipping',
+      band: 'sweep',
+      views: 600,
+      replies: 3,
+      likes: 5,
+      bait: true,
+      verified: true,
+      postedAt: new Date(NOW - 120 * 60_000),
+      sourcePath: '/home',
+      firstSeenAt: SEEN,
+      lastSeenAt: SEEN,
+      seenCount: 2,
+      ...over,
+    };
+  }
+
+  test('ageMin is measured from the post time at COMPOSE time, not at last sighting', () => {
+    const s = composeDraftSignals(row(), NOW);
+    // The row was last seen 30 minutes ago, when it was 90 minutes old. Neither
+    // number is the answer.
+    expect(s.ageMin).toBe(120);
+    expect(s.vpm).toBe(5); // 600 views / 120 min
+    expect(s.views).toBe(600);
+    expect(s.replies).toBe(3);
+    expect(s.bait).toBe(true);
+  });
+
+  test('the age keeps moving with the clock — an hour later is an hour older', () => {
+    const later = composeDraftSignals(row(), NOW + 60 * 60_000);
+    expect(later.ageMin).toBe(180);
+  });
+
+  test('a hand-written row with no post time falls back to the last sighting, never null', () => {
+    // A null `signals` is what makes a draft invisible on rehydrate (D186), so
+    // the unknown resolves to a defensible lower bound instead: the post
+    // demonstrably existed when the queue last saw it.
+    const s = composeDraftSignals(row({ postedAt: null }), NOW);
+    expect(s.ageMin).toBe(30);
+    expect(s.vpm).toBe(20); // 600 views / 30 min
+  });
+
+  test('a post sighted in its first minute is not infinitely fast', () => {
+    const s = composeDraftSignals(row({ postedAt: new Date(NOW) }), NOW);
+    expect(s.ageMin).toBe(0);
+    expect(s.vpm).toBe(sightingVpm(600, 0));
+    expect(s.vpm).toBe(600);
+  });
+});
+
+// Exported at RA.4 so the compose route can narrow the stored band without a
+// third copy of the fold (§7.27).
+describe('coerceBand', () => {
+  test('folds the dead verdicts, passes the live four, and refuses the rest', () => {
+    expect(coerceBand('hot')).toBe('sweep');
+    expect(coerceBand('WARM')).toBe('sweep');
+    expect(coerceBand('manual')).toBe('manual');
+    expect(coerceBand('roster')).toBe('roster');
+    expect(coerceBand('cannon')).toBe('cannon');
+    expect(coerceBand('sweep')).toBe('sweep');
+    expect(coerceBand('nonsense')).toBeNull();
+    expect(coerceBand(null)).toBeNull();
   });
 });

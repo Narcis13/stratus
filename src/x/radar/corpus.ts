@@ -4,7 +4,9 @@
 // re-sighting does to a row that is already stored. RA.3, the READ half:
 // `buildSightingViews` turns stored rows into the answers only the server can
 // give (`vpm`, `admitted`, `worked`, `stage`, `isTarget` — none of them a
-// column, §7.12/§7.16) and `summarizeSightings` counts them.
+// column, §7.12/§7.16) and `summarizeSightings` counts them. RA.4 adds
+// `composeDraftSignals`, the same corpus read one step further on: what a stored
+// sighting looks like as the `signals` blob a draft row has to carry.
 //
 // No db import and no clock of its own (the write half takes `nowMs`, the read
 // half derives every age from the rows' own timestamps), so the rules are
@@ -23,6 +25,7 @@ import {
   bandStickiness,
   passesSweep,
 } from '../../shared/radarSweep.ts';
+import type { TweetSignals } from '../../shared/replyBand.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
@@ -341,6 +344,41 @@ export interface SightingView {
   seenCount: number;
 }
 
+/** Views per minute, 2dp. ONE copy of the formula: the view's `vpm` field, the
+ *  `signals.vpm` a composed draft carries (RA.4) and any later reader all read
+ *  the same number for the same row, which they would not if each spelled out
+ *  `views / max(ageMin, 1)` itself. `max(…, 1)` is what keeps a post sighted in
+ *  its first minute from reading as infinite velocity. */
+export function sightingVpm(views: number, ageMin: number): number {
+  return round2(views / Math.max(ageMin, 1));
+}
+
+/** The `signals` blob a composed draft carries (RA.4) — the classifier inputs a
+ *  live Radar capture would have attached, rebuilt from the stored sighting.
+ *
+ *  `ageMin` is recomputed at COMPOSE time and is deliberately NOT the view's
+ *  `ageMinAtLastSeen`: `POST /radar/drafts/:tweetId/confirm` derives the source
+ *  post time back out as `draftedAt − ageMin`, so a draft written six hours
+ *  after the last sighting would place the post six hours late — and the
+ *  Playbook's latency reader would believe it.
+ *
+ *  `posted_at` is null only on a hand-written row (the ingest always derives
+ *  one). It then falls back to the age since the LAST SIGHTING — a lower bound,
+ *  since the post demonstrably existed at that moment — rather than to null,
+ *  because a null `signals` makes the whole draft invisible to
+ *  `draftRowToSighting` (D186): a defensible age beats a row the panel drops. */
+export function composeDraftSignals(row: StoredSightingRow, nowMs: number): TweetSignals {
+  const from = row.postedAt ?? row.lastSeenAt;
+  const ageMin = Math.max(0, Math.round((nowMs - from.getTime()) / 60_000));
+  return {
+    views: row.views,
+    replies: row.replies,
+    ageMin,
+    vpm: sightingVpm(row.views, ageMin),
+    bait: row.bait,
+  };
+}
+
 /** Enrich stored rows into views. Pure — the clock only enters through the
  *  rows' own timestamps, so `admitted` is reproducible from a fixture. */
 export function buildSightingViews(
@@ -369,7 +407,7 @@ export function buildSightingViews(
       bait: r.bait,
       verified: r.verified,
       ageMinAtLastSeen,
-      vpm: ageMinAtLastSeen === null ? null : round2(r.views / Math.max(ageMinAtLastSeen, 1)),
+      vpm: ageMinAtLastSeen === null ? null : sightingVpm(r.views, ageMinAtLastSeen),
       admitted:
         ageMinAtLastSeen === null
           ? null
@@ -469,8 +507,13 @@ function round2(n: number): number {
 /** The 4-union, plus the two dead classifier verdicts an extension build older
  *  than RS.2 may still hold in its buffer. The page already folds those onto
  *  'sweep'; being lenient here too is what stops one stale tab 400ing every
- *  batch it ships. */
-function coerceBand(value: unknown): RadarBandName | null {
+ *  batch it ships.
+ *
+ *  Exported since RA.4: the compose route has to narrow the stored band (free
+ *  text in the column, on purpose) before stamping it onto a draft row, and a
+ *  third copy of "a legacy verdict means sweep" is exactly the fork §7.27
+ *  forbids. */
+export function coerceBand(value: unknown): RadarBandName | null {
   if (typeof value !== 'string') return null;
   const b = value.trim().toLowerCase();
   if (b === 'hot' || b === 'warm') return 'sweep';

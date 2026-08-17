@@ -17,6 +17,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Hono } from 'hono';
 import { z } from 'zod';
+import { REPLY_ANGLES } from '../shared/replyMode.ts';
 import { InspectError, describeTable, listTables, runSelect } from './data/inspect.ts';
 import { ME_KINDS } from './me/profile.ts';
 
@@ -585,6 +586,45 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
       if (scheduledFor !== undefined) body.scheduledFor = scheduledFor;
       return route('/x/posts/scheduled', { method: 'POST', body });
     },
+  );
+
+  server.registerTool(
+    'x_radar_draft_reply',
+    {
+      title: 'Draft a reply into the Radar queue',
+      description:
+        'Write 1–3 angle variants of a reply to a tweet the Radar already saw, straight into the Radar queue as a `ready` draft — the same card, the same angle tabs and the same copy-on-pick handoff the Grok batch produces, so this REPLACES that spend rather than adding to it.\n' +
+        '**Nothing is published.** The write ceiling is one local `radar_drafts` row; every reply still reaches X by manual paste, and no X API call exists on this path.\n' +
+        'The tweet must already be in the sighting corpus (find one with x_radar, read its history with x_radar_tweet) — the draft’s `band` and capture `signals` are stamped from that stored sighting and are NOT settable from here; a row without them is silently dropped by the panel. Composing again for the same tweet expires the previous draft, so the newest one is what the human sees. To see it: press **Fetch drafts** on the Radar tab (or reopen the panel). Free, local write — no X API, no Grok.',
+      inputSchema: {
+        tweetId: z
+          .string()
+          .describe(
+            'The tweet id, as a STRING — tweet ids exceed Number.MAX_SAFE_INTEGER, so never pass a number. It must already exist in the sighting corpus (404 otherwise).',
+          ),
+        variants: z
+          .array(
+            z.object({
+              text: z
+                .string()
+                .min(1)
+                .describe(
+                  'The reply exactly as it should be pasted, ≤500 chars. Written in my voice — no hashtags, no "great post", no emoji unless I use them.',
+                ),
+              angle: z
+                .enum(REPLY_ANGLES)
+                .describe(
+                  'How this variant answers: extends (build on it), contrarian (disagree), debate (press a distinction), observation (name what is happening), question (ask a real one), network (address the person, not the reach).',
+                ),
+            }),
+          )
+          .min(1)
+          .max(3)
+          .describe('1–3 variants. The FIRST is the primary the Radar card shows by default.'),
+      },
+    },
+    async ({ tweetId, variants }) =>
+      route('/x/radar/drafts/compose', { method: 'POST', body: { tweetId, variants } }),
   );
 
   server.registerTool(

@@ -9,7 +9,7 @@ import { describe, expect, test } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { app } from './app.ts';
 import { db } from './db/client.ts';
-import { harvestRows, harvestRuns, radarSightings } from './x/db/schema.ts';
+import { harvestRows, harvestRuns, radarDrafts, radarSightings } from './x/db/schema.ts';
 import type { ThreadDetail, ThreadSummary } from './x/routes/harvest.ts';
 
 const TOKEN = process.env.API_TOKEN ?? '';
@@ -114,11 +114,12 @@ describe.if(authed)('MCP transport', () => {
     expect(names.has('x_thread')).toBe(true);
     expect(names.has('x_radar')).toBe(true);
     expect(names.has('x_radar_tweet')).toBe(true);
+    expect(names.has('x_radar_draft_reply')).toBe(true);
     // 3 schema + 19 curated (incl. x_niche, x_me, x_monitor, x_goals, x_settings,
-    // x_threads, x_thread, x_radar, x_radar_tweet) + 5 write (incl.
-    // x_add_me_entry, x_update_setting).
+    // x_threads, x_thread, x_radar, x_radar_tweet) + 6 write (incl.
+    // x_add_me_entry, x_radar_draft_reply, x_update_setting).
     // Goal WRITES stay out by design (ME.6): a bad target steers every draft.
-    expect(names.size).toBe(27);
+    expect(names.size).toBe(28);
   });
 });
 
@@ -301,6 +302,76 @@ describe.if(authed)('MCP tool tiers', () => {
       expect(d.drafts).toEqual([]);
       expect(d.replies).toEqual([]);
     } finally {
+      await db.delete(radarSightings).where(eq(radarSightings.tweetId, tweetId));
+    }
+  });
+
+  // RA.4 — the write tier's second draft-only ceiling. What this proves beyond
+  // the route test is that the stamping survives the MCP hop: the tool takes no
+  // band and no signals, so if the route ever stopped filling them the draft
+  // would rehydrate as nothing and every assertion but these two would pass.
+  test('write tier: x_radar_draft_reply composes a stamped, unpublished draft', async () => {
+    const tweetId = '799100000000000002';
+    const ingest = await app.request('/x/radar/sightings', {
+      method: 'POST',
+      headers: { authorization: BEARER, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rows: [
+          {
+            tweetId,
+            handle: 'mcp_ra4',
+            text: 'a tweet worth a considered reply',
+            band: 'sweep',
+            views: 1200,
+            replies: 2,
+            bait: false,
+            ageMin: 20,
+            sourcePath: '/home',
+          },
+        ],
+      }),
+    });
+    expect(ingest.status).toBe(201);
+
+    try {
+      const { env } = await rpc('tools/call', {
+        name: 'x_radar_draft_reply',
+        arguments: {
+          tweetId,
+          variants: [
+            { text: 'the interesting half is what you left out', angle: 'extends' },
+            { text: 'this stops being true at scale', angle: 'contrarian' },
+          ],
+        },
+      });
+      const { data, isError } = toolPayload(env);
+      expect(isError).toBe(false);
+      const draft = data as {
+        band: string | null;
+        signals: { ageMin: number } | null;
+        model: string | null;
+        status: string;
+        variants: unknown[];
+      };
+      // Server-stamped from the sighting (§7.16) — the rehydrate contract.
+      expect(draft.band).toBe('sweep');
+      expect(draft.signals).not.toBeNull();
+      expect(draft.signals?.ageMin).toBeGreaterThanOrEqual(20);
+      expect(draft.model).toBe('claude-code-mcp');
+      expect(draft.status).toBe('ready');
+      expect(draft.variants).toHaveLength(2);
+
+      // The schema exposes no angle outside the reply vocabulary, so a made-up
+      // one never reaches the route.
+      const bad = await rpc('tools/call', {
+        name: 'x_radar_draft_reply',
+        arguments: { tweetId, variants: [{ text: 'nope', angle: 'snark' }] },
+      });
+      // Same rejection-path tolerance as the x_add_me_entry enum test below: a
+      // zod failure is a JSON-RPC error envelope, a route 400 an isError result.
+      expect(bad.env?.error !== undefined || toolPayload(bad.env).isError).toBe(true);
+    } finally {
+      await db.delete(radarDrafts).where(eq(radarDrafts.tweetId, tweetId));
       await db.delete(radarSightings).where(eq(radarSightings.tweetId, tweetId));
     }
   });
