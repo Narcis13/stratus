@@ -643,18 +643,40 @@ function markDraftsOnServer(tweetIds: string[], status: 'clicked' | 'expired'): 
 }
 
 // Merge server drafts into the buffer and re-stamp every row's tier from the
-// current rankmap. Only tweetIds the buffer does NOT hold come in — a live
-// sighting has fresher signals than its hours-old draft row, and mergeSightings
-// would let the stale copy win. Dismissed ids are filtered by mergeSightings as
-// usual. Runs even with no rows so a refreshed rankmap re-tiers the whole
-// buffer. Returns how many drafts entered.
+// current rankmap. A tweetId the buffer does NOT hold enters as a whole
+// sighting; one it DOES hold keeps its live row and gains only the draft (see
+// below). Dismissed ids are filtered by mergeSightings as usual. Runs even with
+// no rows so a refreshed rankmap re-tiers the whole buffer. Returns how many
+// rows entered or gained a draft.
+//
+// RA.5 — why the "already here" case stopped being a plain skip. The rule it
+// enforced is still right and is still enforced: a live capture's signals are
+// fresher than an hours-old draft row's, and `mergeSightings` would let the
+// stale copy win, so the ROW is never replaced. What changed is who writes
+// `radar_drafts`. Until RA.4 the only writer was the Grok batch, which attaches
+// its replies on the way back through `attachReplies` — so "the buffer already
+// holds it" could only mean "the buffer already has this draft", and dropping
+// the row lost nothing. `x_radar_draft_reply` breaks that: a Claude Code session
+// composes for a tweet the operator swept minutes ago and never cleared, and the
+// whole row was skipped — RA.5's Fetch drafts would answer "up to date" with the
+// draft sitting on the server. So the draft fields alone are attached, exactly
+// the shape `attachReplies` writes. A row already showing this reply is left
+// untouched and uncounted, which is what keeps a second click honest (and makes
+// this a no-op for every pre-RA.4 path: the batch already attached that text).
 async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
   const { sightings, dismissed } = await readRadar();
   const have = new Set(sightings.map((s) => s.tweetId));
   const gone = new Set(dismissedIds(dismissed));
   const incoming: RadarSighting[] = [];
+  const attach = new Map<string, RadarDraftRow>();
   for (const row of rows) {
-    if (have.has(row.tweetId) || gone.has(row.tweetId)) continue;
+    if (gone.has(row.tweetId)) continue;
+    if (have.has(row.tweetId)) {
+      // Rows come back newest-first and `variantsFor` reads them the same way:
+      // first one wins, so a leftover older `ready` row can't overwrite it.
+      if (!attach.has(row.tweetId)) attach.set(row.tweetId, row);
+      continue;
+    }
     const s = draftRowToSighting(row);
     if (s) incoming.push(s);
   }
@@ -665,10 +687,19 @@ async function rehydrateSightings(rows: RadarDraftRow[]): Promise<number> {
   const merged = fresh.length
     ? mergeSightings(sightings, fresh, dismissedIds(dismissed))
     : sightings;
-  await chrome.storage.local.set({
-    [RADAR_SIGHTINGS_KEY]: stampTiers(merged, rankMap),
+  let attached = 0;
+  const withDrafts = merged.map((s) => {
+    const row = attach.get(s.tweetId);
+    if (!row || s.reply === row.replyText) return s;
+    attached += 1;
+    const next: RadarSighting = { ...s, reply: row.replyText };
+    if (row.variants && row.variants.length > 0) next.variants = row.variants;
+    return next;
   });
-  return fresh.length;
+  await chrome.storage.local.set({
+    [RADAR_SIGHTINGS_KEY]: stampTiers(withDrafts, rankMap),
+  });
+  return fresh.length + attached;
 }
 
 async function rehydrateFromServer(): Promise<{ added: number }> {

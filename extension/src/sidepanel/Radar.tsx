@@ -515,14 +515,55 @@ export function RadarSection({
     });
   };
 
+  // RA.5 — a draft can also be composed OUTSIDE this browser (a Claude Code
+  // session writing through `x_radar_draft_reply`), and the rehydrate used to
+  // be mount-only, so seeing it meant closing and reopening the panel. One
+  // callback now serves both entry points; the mount path below is unchanged.
+  const [pulling, setPulling] = useState(false);
+
   // C0: ask the background to pull the server's radar_drafts copy — after a
   // browser restart the session buffer is empty but paid-for drafts survive.
-  useEffect(() => {
+  // Returns how many rows entered the buffer, or `null` if the pull failed.
+  // Nothing here touches `sightings`: the background is the single writer
+  // (§7.24) and `useRadarSightings`'s onChanged listener repaints the queue, so
+  // a pull lands without a remount.
+  const pullDrafts = useCallback(async (): Promise<number | null> => {
     const msg: RadarRehydrate = { type: 'stratus/radar-rehydrate' };
-    chrome.runtime
-      .sendMessage(msg)
-      .catch((err) => console.warn('[stratus] radar rehydrate failed', err));
+    try {
+      const res: { ok?: boolean; added?: number } | undefined =
+        await chrome.runtime.sendMessage(msg);
+      return res?.ok ? (res.added ?? 0) : null;
+    } catch (err) {
+      console.warn('[stratus] radar rehydrate failed', err);
+      return null;
+    }
   }, []);
+
+  useEffect(() => {
+    void pullDrafts();
+  }, [pullDrafts]);
+
+  // The same pull, with a note — the only thing the button adds. No polling and
+  // no timer behind it: the route is $0 and deliberately writes nothing beyond
+  // its lazy TTL flip, which is exactly the property that makes a poll look
+  // free right up until the route grows a side write (the placed-today rule,
+  // above).
+  const fetchDrafts = async (): Promise<void> => {
+    setPulling(true);
+    setNote(null);
+    try {
+      const added = await pullDrafts();
+      setNote(
+        added === null
+          ? 'Fetch failed — the queue is unchanged'
+          : added > 0
+            ? `${added} new draft${added === 1 ? '' : 's'}`
+            : 'up to date',
+      );
+    } finally {
+      setPulling(false);
+    }
+  };
 
   // One $0 read per mount. A failure is swallowed on purpose: an unreachable
   // server means no jitter, not a broken Radar.
@@ -977,6 +1018,25 @@ export function RadarSection({
               {busy === 'curate' ? 'Curating…' : `Curate & draft (${curatedSize})`}
             </button>
           )}
+          {/* RA.5 — renders in ALL THREE views, unlike the two spending buttons
+              that hide in Clicked: a draft composed elsewhere can arrive for a
+              tweet sitting in any of them, and this button spends nothing (one
+              $0 `GET /x/radar/drafts`). It borrows `.radar-clear` — the other
+              non-spending action — rather than growing a class of its own: the
+              three `.radar-*` action rules are already byte-identical, and a
+              fourth copy is a token-free rule waiting to drift from them. It IS
+              disabled during a paying pass, though: the
+              note line has one owner, and a fetch report landing mid-batch
+              would overwrite what the click that spent money is reporting. */}
+          <button
+            type="button"
+            className="radar-clear"
+            onClick={() => void fetchDrafts()}
+            disabled={pulling || busy !== null}
+            title="Pull replies drafted outside this browser — a Claude Code session writing through x_radar_draft_reply — into the queue. $0, and never polled: press it when you know something is waiting."
+          >
+            {pulling ? 'Fetching…' : 'Fetch drafts'}
+          </button>
           {shown.length > 0 && (
             <button
               type="button"
