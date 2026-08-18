@@ -263,6 +263,30 @@ describe('mergeSightingRow', () => {
     const patch = mergeSightingRow(stored({ seenCount: 41 }), ok(wire()));
     expect(patch.seenCount).toBe(42);
   });
+
+  // The tombstone rule. `undefined` would be indistinguishable from `null` at
+  // the drizzle boundary on some paths, so the assertion is on the KEY.
+  test('an ordinary re-sighting leaves the dismissal alone', () => {
+    for (const band of ['sweep', 'roster', 'cannon']) {
+      const patch = mergeSightingRow(stored(), ok(wire({ band })));
+      expect('dismissedAt' in patch).toBe(false);
+    }
+  });
+
+  test('a manual re-pin clears the dismissal', () => {
+    const patch = mergeSightingRow(stored(), ok(wire({ band: 'manual' })));
+    expect('dismissedAt' in patch).toBe(true);
+    expect(patch.dismissedAt).toBeNull();
+  });
+
+  // An OLDER manual pin still clears it: the ⊕ click is a decision, not a
+  // metric, so the "only a newer sighting moves it" rule does not reach it.
+  test('an older manual pin still clears the dismissal', () => {
+    const earlier = new Date(NOW - 10 * 60_000).toISOString();
+    const patch = mergeSightingRow(stored(), ok(wire({ band: 'manual', seenAt: earlier })));
+    expect(patch.dismissedAt).toBeNull();
+    expect(patch.views).toBe(1000);
+  });
 });
 
 // RA.3 — the read half. Every field asserted below is one the table deliberately

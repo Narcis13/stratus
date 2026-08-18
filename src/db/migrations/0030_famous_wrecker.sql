@@ -1,0 +1,1 @@
+ALTER TABLE `radar_sightings` ADD `dismissed_at` integer;

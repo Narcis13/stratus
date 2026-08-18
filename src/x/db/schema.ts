@@ -1219,6 +1219,14 @@ export const radarSightings = sqliteTable(
     // Times the algorithm (or I) put this in front of me, not times it was
     // shipped — the ingest's 60s recapture window is the client's own twin.
     seenCount: integer('seen_count').default(1).notNull(),
+    // Null = never dismissed. Stamped by `PATCH /radar/sightings` when the
+    // panel tombstones a card, and it RATCHETS: a re-dismiss leaves the first
+    // stamp alone, and a plain re-ingest never clears it (the content script
+    // keeps re-sighting a tweet for as long as it is rendered, so a worked item
+    // must stay gone). The ONE thing that clears it is a `manual`-band
+    // re-ingest — a ⊕ pin is a person changing their mind, which is exactly the
+    // exception `mergeSightings` already makes page-side.
+    dismissedAt: integer('dismissed_at', { mode: 'timestamp_ms' }),
   },
   (t) => [
     // The corpus read ("what did my sweep admit in the last N days").

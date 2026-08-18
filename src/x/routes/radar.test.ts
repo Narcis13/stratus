@@ -727,6 +727,125 @@ describe('POST /radar/sightings (RA.1)', () => {
 // every assertion below is about a derived field. Its own 993-prefixed ids and
 // `ra3*` handles keep it isolated from the ingest block above and from every
 // other suite sharing the in-memory DB.
+describe('PATCH /radar/sightings (dismissal mirror)', () => {
+  // 995-prefixed so neither the drafts block nor the ingest block can collide.
+  const X_ONE = '995000000000000001';
+  const X_TWO = '995000000000000002';
+  const X_FLOW = '995000000000000003'; // the ingest round-trip
+  const X_UNKNOWN = '995999999999999999'; // never ingested
+  const X_IDS = [X_ONE, X_TWO, X_FLOW];
+
+  interface PatchResult {
+    updated: number;
+  }
+
+  function wire(tweetId: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      tweetId,
+      url: `https://x.com/dx_bob/status/${tweetId}`,
+      handle: 'dx_bob',
+      author: 'DX Bob',
+      text: 'a dismissable tweet',
+      band: 'roster',
+      views: 700,
+      replies: 2,
+      likes: 4,
+      bait: false,
+      verified: true,
+      ageMin: 8,
+      sourcePath: '/home',
+      ...over,
+    };
+  }
+
+  const ingest = (rows: unknown[]) => send('/x/radar/sightings', 'POST', { rows });
+  const dismiss = (body: unknown) => send<PatchResult>('/x/radar/sightings', 'PATCH', body);
+
+  async function rowOf(tweetId: string) {
+    const [row] = await db.select().from(radarSightings).where(eq(radarSightings.tweetId, tweetId));
+    return row;
+  }
+
+  async function wipe(): Promise<void> {
+    await db.delete(radarSightings).where(inArray(radarSightings.tweetId, X_IDS));
+  }
+
+  beforeAll(async () => {
+    await wipe();
+    await ingest([wire(X_ONE), wire(X_TWO), wire(X_FLOW)]);
+  });
+  afterAll(wipe);
+
+  test('stamps every named row and says how many moved', async () => {
+    const { status, body } = await dismiss({ tweetIds: [X_ONE, X_TWO], dismissed: true });
+    expect(status).toBe(200);
+    expect(body).toEqual({ updated: 2 });
+    expect((await rowOf(X_ONE))?.dismissedAt).toBeInstanceOf(Date);
+    expect((await rowOf(X_TWO))?.dismissedAt).toBeInstanceOf(Date);
+  });
+
+  // The ratchet: the panel re-ships its whole tombstone list, so a re-dismiss is
+  // the NORMAL case and it must not move the stamp.
+  test('a re-dismiss updates nothing and keeps the first stamp', async () => {
+    const before = (await rowOf(X_ONE))?.dismissedAt?.getTime();
+    const { body } = await dismiss({ tweetIds: [X_ONE, X_TWO], dismissed: true });
+    expect(body).toEqual({ updated: 0 });
+    expect((await rowOf(X_ONE))?.dismissedAt?.getTime()).toBe(before);
+  });
+
+  // The panel holds tombstones for cards the ingest cap or a throttle meant the
+  // server never stored. Dismissing one is not a client bug.
+  test('an unknown tweetId is not an error', async () => {
+    const { status, body } = await dismiss({ tweetIds: [X_UNKNOWN], dismissed: true });
+    expect(status).toBe(200);
+    expect(body).toEqual({ updated: 0 });
+  });
+
+  test('a dismissal survives a plain re-ingest and dies on a manual re-pin', async () => {
+    expect((await dismiss({ tweetIds: [X_FLOW], dismissed: true })).body.updated).toBe(1);
+
+    // A band change punches through the recapture throttle, so this really is a
+    // stored re-sighting and not a `skippedRecent`.
+    await ingest([wire(X_FLOW, { band: 'sweep', views: 2400 })]);
+    const kept = await rowOf(X_FLOW);
+    expect(kept?.views).toBe(2400);
+    expect(kept?.dismissedAt).toBeInstanceOf(Date);
+
+    // The ⊕ pin — the human changing their mind, and the only thing that clears it.
+    await ingest([wire(X_FLOW, { band: 'manual', views: 2600 })]);
+    const pinned = await rowOf(X_FLOW);
+    expect(pinned?.band).toBe('manual');
+    expect(pinned?.dismissedAt).toBeNull();
+  });
+
+  test('refuses a body that does not say `dismissed: true`', async () => {
+    for (const body of [
+      { tweetIds: [X_ONE], dismissed: false },
+      { tweetIds: [X_ONE] },
+      { tweetIds: [X_ONE], dismissed: 'true' },
+    ]) {
+      const res = await dismiss(body);
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'invalid_dismissed' } as unknown as PatchResult);
+    }
+  });
+
+  test('refuses a missing, empty or malformed id list', async () => {
+    for (const ids of [[], undefined, 'nope', [X_ONE, 'not-a-tweet'], [123]]) {
+      const res = await dismiss({ tweetIds: ids, dismissed: true });
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'invalid_tweet_ids' } as unknown as PatchResult);
+    }
+  });
+
+  test('refuses more ids than the shared cap', async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `9959${String(i).padStart(14, '0')}`);
+    const res = await dismiss({ tweetIds: ids, dismissed: true });
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'too_many_tweet_ids' } as unknown as PatchResult);
+  });
+});
+
 describe('GET /radar/sightings (RA.3)', () => {
   const G_ADMIT = '993000000000000001'; // admitted, untouched — the finding
   const G_WORKED = '993000000000000002'; // has an EXPIRED radar draft

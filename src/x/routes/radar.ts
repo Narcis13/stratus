@@ -15,6 +15,8 @@
 //   POST  /radar/sightings              { rows: [...] } — the sighting mirror (RA.1, ≤100/call)
 //   GET   /radar/sightings              ?days=&band=&handle=&admitted=&worked=&order=&limit=
 //                                       the corpus read (RA.3) — pure SELECT, writes nothing
+//   PATCH /radar/sightings              body: { tweetIds: string[], dismissed: true } — mirror
+//                                       the panel's dismissals onto the corpus
 //   GET   /radar/sightings/:tweetId     one tweet: sighting + every draft + every reply (RA.3)
 //
 // Expiry is a lazy status flip (never a delete), applied on every GET: a radar
@@ -25,7 +27,7 @@
 // pre-paid from routes/replies.ts; the sightings arrive pre-scraped from the
 // page.
 
-import { type SQL, and, desc, eq, gte, inArray, lt, ne, sql } from 'drizzle-orm';
+import { type SQL, and, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import type { RadarBandName } from '../../shared/radarSweep.ts';
@@ -872,6 +874,54 @@ radar.get('/radar/sightings', async (c) => {
     summary,
     sightings,
   });
+});
+
+// The panel dismisses a card in `chrome.storage.local` and the tombstone dies
+// with the profile. This mirrors it onto the corpus so "I already decided about
+// this one" is a fact the server holds too — and so an agent reading the corpus
+// from outside the browser can see the same queue the human sees.
+//
+// A RATCHET (§7.10), in both directions and for the same reason as the drafts'
+// status flip: the `isNull` guard means a re-dismiss re-stamps nothing (so
+// `updated: 0` is the honest answer, not a bug), and the only thing that clears
+// the stamp is a `manual`-band re-ingest — the ⊕ pin, `mergeSightingRow`'s
+// fourth rule. An unknown tweetId is deliberately NOT an error: the panel holds
+// tombstones for rows the ingest cap or a throttle meant the server never
+// received, and 400ing a dismiss the human really made would be the wrong lie.
+//
+// Registered immediately above the `:tweetId` form (§7.20), with the rest of
+// the sightings block.
+radar.patch('/radar/sightings', async (c) => {
+  const raw = await c.req.json().catch(() => null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return c.json({ error: 'invalid_body' }, 400);
+  }
+  const body = raw as Record<string, unknown>;
+
+  // Only ever `true`. Un-dismissing is not this route's job — a ⊕ pin is, and
+  // it comes in through the ingest — so the field is a required acknowledgement
+  // of what the call does, not a boolean switch.
+  if (body.dismissed !== true) return c.json({ error: 'invalid_dismissed' }, 400);
+
+  if (!Array.isArray(body.tweetIds) || body.tweetIds.length === 0) {
+    return c.json({ error: 'invalid_tweet_ids' }, 400);
+  }
+  if (body.tweetIds.length > MAX_PATCH_IDS) return c.json({ error: 'too_many_tweet_ids' }, 400);
+  const tweetIds: string[] = [];
+  for (const id of body.tweetIds) {
+    if (typeof id !== 'string' || !TWEET_ID_RE.test(id)) {
+      return c.json({ error: 'invalid_tweet_ids' }, 400);
+    }
+    tweetIds.push(id);
+  }
+
+  const updated = await db
+    .update(radarSightings)
+    .set({ dismissedAt: new Date() })
+    .where(and(inArray(radarSightings.tweetId, tweetIds), isNull(radarSightings.dismissedAt)))
+    .returning({ tweetId: radarSightings.tweetId });
+
+  return c.json({ updated: updated.length });
 });
 
 // One tweet's whole history in a single call: what the queue saw, every draft

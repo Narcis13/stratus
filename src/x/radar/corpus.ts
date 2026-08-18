@@ -179,7 +179,12 @@ export interface StoredSighting {
 /** The column patch a re-sighting produces. `first_seen_at` is deliberately
  *  absent: where and when a tweet FIRST entered the queue is the fact this
  *  table exists to keep, and an update that could move it is one bad clock away
- *  from erasing it. */
+ *  from erasing it.
+ *
+ *  `dismissedAt` is OPTIONAL and only ever `null` — the key is present only on
+ *  a `manual` re-pin, which clears the tombstone. Absent is not the same as
+ *  `undefined`: an absent key writes no column at all, which is what leaves a
+ *  dismissal standing across every ordinary re-sighting. */
 export interface SightingPatch {
   url: string | null;
   author: string | null;
@@ -194,11 +199,12 @@ export interface SightingPatch {
   sourcePath: string | null;
   lastSeenAt: Date;
   seenCount: number;
+  dismissedAt?: null;
 }
 
 /** Fold a fresh sighting into the stored row.
  *
- *  Three rules, and each one is a different §7 clause:
+ *  Four rules, and each one is a different §7 clause:
  *
  *  1. **Fill-only** (§7.9/§7.11) for `url`/`author`/`verified`/`sourcePath`/
  *     `posted_at` — a stored value is never overwritten. Four of the five are
@@ -211,7 +217,13 @@ export interface SightingPatch {
  *     and an older capture rewinding views/replies is the one way this table
  *     lies about a curve. `likes` additionally keeps the stored value when the
  *     newer sighting could not read one (the page's own rule).
- *  3. **The band ratchets**, by the shared `bandStickiness` — never by a copy. */
+ *  3. **The band ratchets**, by the shared `bandStickiness` — never by a copy.
+ *  4. **A dismissal survives every re-sighting except a `manual` one.** The
+ *     content script re-sights a rendered tweet for as long as it is on screen,
+ *     so a tombstone that any capture could clear would not be a tombstone at
+ *     all; a ⊕ pin is the human changing their mind, and it is the only thing
+ *     that puts the row back in the queue. The extension's `mergeSightings`
+ *     makes exactly this exception one storage layer up. */
 export function mergeSightingRow(
   existing: StoredSighting,
   incoming: SightingWireRow,
@@ -244,6 +256,10 @@ export function mergeSightingRow(
     // "Times the algorithm put this in front of me" — so every accepted
     // re-sighting counts, including one that moved no metric.
     seenCount: existing.seenCount + 1,
+    // Spread, not `dismissedAt: incoming.band === 'manual' ? null : undefined`:
+    // drizzle writes an explicitly-`undefined` key as nothing on some paths and
+    // as NULL on others, and this rule cannot depend on which.
+    ...(incoming.band === 'manual' ? { dismissedAt: null } : {}),
   };
 }
 

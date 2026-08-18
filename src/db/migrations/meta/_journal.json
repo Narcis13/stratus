@@ -211,6 +211,13 @@
       "when": 1786988115763,
       "tag": "0029_blushing_expediter",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1787086300013,
+      "tag": "0030_famous_wrecker",
+      "breakpoints": true
     }
   ]
 }
