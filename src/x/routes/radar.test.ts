@@ -1141,6 +1141,153 @@ describe('GET /radar/sightings (RA.3)', () => {
   });
 });
 
+// RQ.3 — `queue=true`, the panel's own predicate rebuilt server-side. Its own
+// fixtures and its own author: the point of the preset is that three rules fire
+// together (the 24h window, the tombstone, the worked join), and proving that
+// inside the RA.3 block would mean perturbing the counts that block asserts.
+describe('GET /radar/sightings?queue=true (RQ.3)', () => {
+  const Q_LIVE = '994000000000000001'; // 10m ago, clean — the queue
+  const Q_23H = '994000000000000002'; // just inside the TTL
+  const Q_25H = '994000000000000003'; // just outside it
+  const Q_DISMISSED = '994000000000000004'; // waved off in the panel
+  const Q_DRAFTED = '994000000000000005'; // a draft exists, nothing posted
+  const Q_POSTED = '994000000000000006'; // a reply actually went out
+  const Q_UNADMITTED = '994000000000000007'; // clean, but today's sweep says no
+  const Q_IDS = [Q_LIVE, Q_23H, Q_25H, Q_DISMISSED, Q_DRAFTED, Q_POSTED, Q_UNADMITTED];
+
+  const MIN = 60_000;
+  const QUEUE_HANDLE = 'rq3alice';
+
+  interface QueueBody {
+    days: number;
+    queue: boolean;
+    count: number;
+    summary: { total: number; dismissed: number; worked: number };
+    sightings: { tweetId: string; dismissed: boolean; worked: boolean }[];
+  }
+
+  const now = Date.now();
+  const sighting = (
+    tweetId: string,
+    over: { views?: number; lastSeenMinAgo: number; dismissedAt?: Date | null },
+  ) => {
+    const lastSeen = new Date(now - over.lastSeenMinAgo * MIN);
+    return {
+      tweetId,
+      url: `https://x.com/${QUEUE_HANDLE}/status/${tweetId}`,
+      handle: QUEUE_HANDLE,
+      author: 'RQ3 Author',
+      text: 'a swept tweet',
+      band: 'sweep',
+      views: over.views ?? 900,
+      replies: 3,
+      likes: 5,
+      bait: false,
+      verified: true,
+      postedAt: new Date(lastSeen.getTime() - 10 * MIN),
+      sourcePath: '/home',
+      firstSeenAt: lastSeen,
+      lastSeenAt: lastSeen,
+      seenCount: 1,
+      dismissedAt: over.dismissedAt ?? null,
+    };
+  };
+
+  const list = (q: string) => send<QueueBody>(`/x/radar/sightings${q}`, 'GET');
+  const ids = (b: QueueBody) => b.sightings.map((s) => s.tweetId).sort();
+
+  async function wipe(): Promise<void> {
+    await db.delete(replyDrafts).where(inArray(replyDrafts.sourceTweetId, Q_IDS));
+    await db.delete(radarDrafts).where(inArray(radarDrafts.tweetId, Q_IDS));
+    await db.delete(radarSightings).where(inArray(radarSightings.tweetId, Q_IDS));
+  }
+
+  beforeAll(async () => {
+    await wipe();
+    await db
+      .insert(radarSightings)
+      .values([
+        sighting(Q_LIVE, { lastSeenMinAgo: 10 }),
+        sighting(Q_23H, { lastSeenMinAgo: 23 * 60 }),
+        sighting(Q_25H, { lastSeenMinAgo: 25 * 60 }),
+        sighting(Q_DISMISSED, { lastSeenMinAgo: 10, dismissedAt: new Date(now - MIN) }),
+        sighting(Q_DRAFTED, { lastSeenMinAgo: 10 }),
+        sighting(Q_POSTED, { lastSeenMinAgo: 10 }),
+        sighting(Q_UNADMITTED, { lastSeenMinAgo: 10, views: 50 }),
+      ]);
+
+    // Worked, both ways: a draft nobody pasted is still work done on the row.
+    await db.insert(radarDrafts).values({
+      tweetId: Q_DRAFTED,
+      handle: QUEUE_HANDLE,
+      snippet: 'a swept tweet',
+      replyText: 'drafted, never pasted',
+      angle: 'extends',
+      status: 'ready',
+      draftedAt: new Date(now - 5 * MIN),
+    });
+    await db.insert(replyDrafts).values({
+      sourceTweetId: Q_POSTED,
+      sourceAuthorUsername: QUEUE_HANDLE,
+      sourceText: 'a swept tweet',
+      sourceUrl: `https://x.com/${QUEUE_HANDLE}/status/${Q_POSTED}`,
+      contextSnapshot: {},
+      replyText: 'the reply I actually pasted',
+      model: 'grok-4.3',
+      source: 'radar',
+      status: 'posted',
+    });
+  });
+
+  afterAll(wipe);
+
+  test('queue=true is the panel predicate: 24h, undismissed, unworked', async () => {
+    const { status, body } = await list(`?handle=${QUEUE_HANDLE}&queue=true`);
+    expect(status).toBe(200);
+    expect(body.queue).toBe(true);
+    expect(ids(body)).toEqual([Q_LIVE, Q_23H, Q_UNADMITTED].sort());
+    // Dismissed rows leave in SQL, so the summary describes a queue with none.
+    expect(body.summary).toMatchObject({ total: 3, dismissed: 0, worked: 0 });
+  });
+
+  test('the same rows are all there without it — the exclusions are the preset', async () => {
+    const { body } = await list(`?handle=${QUEUE_HANDLE}&days=7`);
+    expect(body.queue).toBe(false);
+    expect(ids(body)).toEqual(Q_IDS.slice().sort());
+    expect(body.summary).toMatchObject({ total: 7, dismissed: 1, worked: 2 });
+  });
+
+  test('days is ignored under queue=true, and the echo reports the window used', async () => {
+    const { body } = await list(`?handle=${QUEUE_HANDLE}&queue=true&days=60`);
+    // 60 days would have reached Q_25H; the TTL is what answered.
+    expect(ids(body)).toEqual([Q_LIVE, Q_23H, Q_UNADMITTED].sort());
+    expect(body.days).toBe(1);
+  });
+
+  test('admitted still combines', async () => {
+    const no = await list(`?handle=${QUEUE_HANDLE}&queue=true&admitted=false`);
+    expect(ids(no.body)).toEqual([Q_UNADMITTED]);
+    const yes = await list(`?handle=${QUEUE_HANDLE}&queue=true&admitted=true`);
+    expect(ids(yes.body)).toEqual([Q_LIVE, Q_23H].sort());
+  });
+
+  test('queue=false is the plain read, and queue=true&worked=true is a contradiction', async () => {
+    const off = await list(`?handle=${QUEUE_HANDLE}&queue=false&days=7`);
+    expect(off.body.queue).toBe(false);
+    expect(ids(off.body)).toEqual(Q_IDS.slice().sort());
+
+    const bad = (q: string) => send<{ error: string }>(`/x/radar/sightings${q}`, 'GET');
+    // A contradiction 400s rather than returning the empty set a caller would
+    // read as "queue clear".
+    const combo = await bad(`?handle=${QUEUE_HANDLE}&queue=true&worked=true`);
+    expect(combo.status).toBe(400);
+    expect(combo.body.error).toBe('invalid_queue_combo');
+    // worked=false is redundant, not a contradiction.
+    expect((await list(`?handle=${QUEUE_HANDLE}&queue=true&worked=false`)).status).toBe(200);
+    expect((await bad('?queue=1')).body.error).toBe('invalid_queue');
+  });
+});
+
 describe('GET /radar/sightings/:tweetId (RA.3)', () => {
   const D_TWEET = '993100000000000001';
   const D_UNKNOWN = '993199999999999999';

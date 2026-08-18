@@ -289,6 +289,9 @@ export interface StoredSightingRow {
   firstSeenAt: Date;
   lastSeenAt: Date;
   seenCount: number;
+  /** When the human said "I've decided about this one" — the panel's tombstone,
+   *  mirrored by `PATCH /radar/sightings`. Null = still in the queue. */
+  dismissedAt: Date | null;
 }
 
 /** What `people` says about this handle. Passed in rather than resolved here so
@@ -356,6 +359,10 @@ export interface SightingView {
   replied: boolean;
   /** Drafted OR replied — "I have already done something about this one". */
   worked: boolean;
+  /** The human dismissed it. Orthogonal to `worked`: a dismissal is "not this
+   *  one", which is a decision, and a row can carry it having produced nothing.
+   *  Only a `manual` ⊕ re-pin clears it (`mergeSightingRow`'s fourth rule). */
+  dismissed: boolean;
   /** The CRM stage, or null when unknown. A RETIRED person reads null too: they
    *  have no current stage, which is the `GET /harvest/affinity` rule verbatim. */
   stage: string | null;
@@ -454,6 +461,7 @@ export function buildSightingViews(
       drafted,
       replied,
       worked: drafted || replied,
+      dismissed: r.dismissedAt !== null,
       stage: person && !person.retired ? person.stage : null,
       isTarget: ctx.targets.has(r.handle),
       sourcePath: r.sourcePath,
@@ -477,6 +485,9 @@ export interface SightingSummary {
   total: number;
   admitted: number;
   worked: number;
+  /** How much of this population the human has already waved off — the number
+   *  that says whether a big `total` is a backlog or a corpus already triaged. */
+  dismissed: number;
   /** Admitted and NOT worked: the reply I could still have written. The finding. */
   unworkedAdmitted: number;
   byBand: Record<string, number>;
@@ -493,6 +504,7 @@ export function summarizeSightings(views: readonly SightingView[]): SightingSumm
   const byHandle = new Map<string, number>();
   let admitted = 0;
   let worked = 0;
+  let dismissed = 0;
   let unworkedAdmitted = 0;
 
   for (const v of views) {
@@ -502,6 +514,10 @@ export function summarizeSightings(views: readonly SightingView[]): SightingSumm
     byHandle.set(v.handle, (byHandle.get(v.handle) ?? 0) + 1);
     if (v.admitted === true) admitted++;
     if (v.worked) worked++;
+    if (v.dismissed) dismissed++;
+    // Deliberately NOT `&& !v.dismissed`: this counts the replies that were
+    // still available, and a dismissal is a choice not to take one — netting it
+    // out here would hide exactly the decision worth reviewing.
     if (v.admitted === true && !v.worked) unworkedAdmitted++;
   }
 
@@ -516,6 +532,7 @@ export function summarizeSightings(views: readonly SightingView[]): SightingSumm
     total: views.length,
     admitted,
     worked,
+    dismissed,
     unworkedAdmitted,
     byBand,
     bySourcePath,

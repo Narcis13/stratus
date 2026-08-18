@@ -9,7 +9,7 @@
 // sidepanel/Radar.tsx (reader).
 
 import { CANNON, type CannonThresholds, cannonAgeTone, cannonScore } from '../cannon.ts';
-import { type RadarBandName, bandStickiness } from '../radarSweep.ts';
+import { RADAR_QUEUE_TTL_MS, type RadarBandName, bandStickiness } from '../radarSweep.ts';
 import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyModeId } from '../replyMode.ts';
 import type { ReplyModeSource, ReplyVariant } from './types.ts';
@@ -164,16 +164,13 @@ export const RADAR_DISMISSED_TTL_MS = 24 * 60 * 60 * 1000;
 // before; hitting this at all means the TTL is not being applied.
 export const RADAR_DISMISSED_CAP = 5000;
 
-// How long a sighting stays queueable. Replacing "until the browser closes",
-// and 24h because a tweet you first saw yesterday is not a reply opportunity
-// today. (It used to be stated as "the same 24h ROSTER_MAX_AGE_MIN uses" — that
-// constant is gone at RS.3: every capture arm now takes its age bound from the
-// user's `x.sweep.maxAgeMin`, default 60. This TTL stays independent — how long
-// a captured row is workable is not how fresh a tweet must be to be captured.) A tweet
-// you first saw yesterday is not a reply opportunity today, and the server
-// expires its own drafted copy at 48h anyway. This is the ONLY implicit way a
-// row leaves the queue — everything else is a dismiss the human asked for.
-export const RADAR_TTL_MS = 24 * 60 * 60 * 1000;
+// How long a sighting stays queueable. The value and its reasoning moved to
+// `src/shared/radarSweep.ts` at RQ.3 (read them there): the server's
+// `GET /radar/sightings?queue=true` rebuilds this same queue, and two copies of
+// the window is how the panel and the corpus would come to disagree about what
+// is still workable. Kept here under the old name so every call site — and
+// `RADAR_DISMISSED_TTL_MS` above, which is pinned to it — is untouched.
+export const RADAR_TTL_MS = RADAR_QUEUE_TTL_MS;
 
 // Merge a report batch into the stored queue, keyed by tweetId: fresher
 // signals/band/lastSeenAt win, firstSeenAt survives from the earlier entry.

@@ -13,8 +13,9 @@
 //   PATCH /radar/drafts/:tweetId/tags   body: { tags: string[] | null } — channel tags (C8),
 //                                       applied to every draft row of that tweet
 //   POST  /radar/sightings              { rows: [...] } — the sighting mirror (RA.1, ≤100/call)
-//   GET   /radar/sightings              ?days=&band=&handle=&admitted=&worked=&order=&limit=
-//                                       the corpus read (RA.3) — pure SELECT, writes nothing
+//   GET   /radar/sightings              ?days=&band=&handle=&admitted=&worked=&queue=&order=&limit=
+//                                       the corpus read (RA.3) — pure SELECT, writes nothing;
+//                                       queue=true is the live panel queue (RQ.3)
 //   PATCH /radar/sightings              body: { tweetIds: string[], dismissed: true } — mirror
 //                                       the panel's dismissals onto the corpus
 //   GET   /radar/sightings/:tweetId     one tweet: sighting + every draft + every reply (RA.3)
@@ -30,7 +31,7 @@
 import { type SQL, and, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
-import type { RadarBandName } from '../../shared/radarSweep.ts';
+import { RADAR_QUEUE_TTL_MS, type RadarBandName } from '../../shared/radarSweep.ts';
 import type { TweetSignals } from '../../shared/replyBand.ts';
 import { REPLY_ANGLES } from '../../shared/replyMode.ts';
 import { people, radarDrafts, radarSightings, replyDrafts } from '../db/schema.ts';
@@ -826,9 +827,33 @@ radar.get('/radar/sightings', async (c) => {
   const worked = boolParam(c.req.query('worked'));
   if (worked === 'invalid') return c.json({ error: 'invalid_worked' }, 400);
 
+  // `queue=true` is the PANEL's predicate, server-side (RQ.3): seen in the last
+  // RADAR_QUEUE_TTL_MS, not dismissed, not worked — the same three rules
+  // `pruneStale` + the tombstones + the worked filter apply in the side panel,
+  // so an agent and the human are looking at one queue rather than two.
+  //
+  // It is a PRESET, not another independent filter, so it owns two of the
+  // others: `days` is ignored (the window is the TTL, and the response echoes
+  // the window actually used — `days: 1` — never the parameter that was
+  // dropped), and `worked` is forced false. An explicit `worked=true` is
+  // therefore a contradiction and 400s here rather than quietly returning the
+  // empty set that would let a caller believe their queue was clear.
+  // `admitted` stays free and combines.
+  const queue = boolParam(c.req.query('queue'));
+  if (queue === 'invalid') return c.json({ error: 'invalid_queue' }, 400);
+  if (queue === true && worked === true) return c.json({ error: 'invalid_queue_combo' }, 400);
+
+  const windowDays = queue === true ? 1 : days;
   const conds: SQL[] = [
-    gte(radarSightings.lastSeenAt, new Date(Date.now() - days * 24 * 60 * 60 * 1000)),
+    gte(
+      radarSightings.lastSeenAt,
+      new Date(Date.now() - (queue === true ? RADAR_QUEUE_TTL_MS : days * 24 * 60 * 60 * 1000)),
+    ),
   ];
+  // The one predicate that CAN be SQL — `worked` can't (it's a join answer
+  // `buildSightingViews` computes), so it stays below with the other post-
+  // filters and `summary` keeps describing the filtered population.
+  if (queue === true) conds.push(isNull(radarSightings.dismissedAt));
   // The band filter compares against the stored free text, so it can only ever
   // name one of the four live values — a legacy row is unreachable by filter and
   // still visible in the unfiltered list, which is the honest way round.
@@ -854,9 +879,11 @@ radar.get('/radar/sightings', async (c) => {
     rows.map((r) => r.handle),
   );
 
+  const workedFilter = queue === true ? false : worked;
   const filtered = buildSightingViews(rows, cfg, ctx).filter(
     (v) =>
-      (admitted === null || v.admitted === admitted) && (worked === null || v.worked === worked),
+      (admitted === null || v.admitted === admitted) &&
+      (workedFilter === null || v.worked === workedFilter),
   );
   // The summary describes the whole FILTERED population; `sightings` is the
   // `limit`-sized slice of it, so `count < summary.total` means "truncated list,
@@ -865,7 +892,10 @@ radar.get('/radar/sightings', async (c) => {
   const sightings = [...filtered].sort(compareSightings(order)).slice(0, limit);
 
   return c.json({
-    days,
+    days: windowDays,
+    // Echoed next to `days`/`order` so a reader can tell which predicate
+    // produced these numbers without re-deriving it from the query string.
+    queue: queue === true,
     order,
     sweep: cfg,
     scanned: rows.length,

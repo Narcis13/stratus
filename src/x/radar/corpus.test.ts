@@ -314,6 +314,7 @@ describe('buildSightingViews', () => {
       firstSeenAt: SEEN,
       lastSeenAt: SEEN,
       seenCount: 1,
+      dismissedAt: null,
       ...over,
     };
   }
@@ -407,6 +408,14 @@ describe('buildSightingViews', () => {
   test('a null url stays null — a synthesised permalink would erase the unknown', () => {
     expect(viewOf({ url: null }).url).toBeNull();
   });
+
+  test('dismissed reads straight off the column, and never off `worked`', () => {
+    expect(viewOf({ dismissedAt: null }).dismissed).toBe(false);
+    const v = viewOf({ dismissedAt: new Date(NOW - 60_000) });
+    expect(v.dismissed).toBe(true);
+    // Orthogonal: waving a row off is a decision, not work done on it.
+    expect(v.worked).toBe(false);
+  });
 });
 
 describe('summarizeSightings', () => {
@@ -430,6 +439,7 @@ describe('summarizeSightings', () => {
       firstSeenAt: SEEN,
       lastSeenAt: SEEN,
       seenCount: 1,
+      dismissedAt: null,
     };
     const row = { ...base, ...over };
     const [v] = buildSightingViews([row], SWEEP, {
@@ -476,6 +486,20 @@ describe('summarizeSightings', () => {
     expect(s.worked).toBe(1);
     expect(s.unworkedAdmitted).toBe(1);
   });
+
+  test('dismissed is counted, and does not net out of unworkedAdmitted', () => {
+    const s = summarizeSightings([
+      view({ tweetId: '1', dismissedAt: new Date(NOW - 60_000) }),
+      view({ tweetId: '2', dismissedAt: new Date(NOW - 60_000) }, true),
+      view({ tweetId: '3' }),
+    ]);
+    expect(s.dismissed).toBe(2);
+    expect(s.worked).toBe(1);
+    // Both undismissed-arithmetic answers are untouched by the new field: '1'
+    // and '3' are admitted and unworked, dismissal or not.
+    expect(s.admitted).toBe(3);
+    expect(s.unworkedAdmitted).toBe(2);
+  });
 });
 
 // RA.4 — what a stored sighting looks like as a draft's `signals`. The number
@@ -503,6 +527,7 @@ describe('composeDraftSignals', () => {
       firstSeenAt: SEEN,
       lastSeenAt: SEEN,
       seenCount: 2,
+      dismissedAt: null,
       ...over,
     };
   }

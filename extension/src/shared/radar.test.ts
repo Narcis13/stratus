@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { RADAR_QUEUE_TTL_MS } from '../radarSweep.ts';
 import {
   CURATE_REQUEST_CAP,
   RADAR_CAP,
@@ -898,6 +899,13 @@ describe('pruneStale', () => {
   test('an unparseable lastSeenAt is kept, never silently dropped', () => {
     const broken = sighting('3', { lastSeenAt: 'not a date' });
     expect(pruneStale([broken], now)).toEqual([broken]);
+  });
+
+  // RQ.3: the same number the server's `?queue=true` window uses. Asserted as
+  // an identity, not as `24 * 60 * 60 * 1000` — a second literal here is exactly
+  // the drift the move was meant to close.
+  test('RADAR_TTL_MS is the shared RADAR_QUEUE_TTL_MS', () => {
+    expect(RADAR_TTL_MS).toBe(RADAR_QUEUE_TTL_MS);
   });
 
   test('the TTL is exactly RADAR_TTL_MS from lastSeenAt', () => {

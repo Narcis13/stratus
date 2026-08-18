@@ -304,3 +304,22 @@ export function sweepMinutesLeft(session: SweepSession, nowMs: number): number {
   if (!Number.isFinite(ms) || ms <= 0) return 0;
   return Math.ceil(ms / 60_000);
 }
+
+// ---------------------------------------------------------- the queue TTL
+
+// How long a sighting stays queueable. Replacing "until the browser closes",
+// and 24h because a tweet you first saw yesterday is not a reply opportunity
+// today. (It used to be stated as "the same 24h ROSTER_MAX_AGE_MIN uses" — that
+// constant is gone at RS.3: every capture arm now takes its age bound from the
+// user's `x.sweep.maxAgeMin`, default 60. This TTL stays independent — how long
+// a captured row is workable is not how fresh a tweet must be to be captured.) A tweet
+// you first saw yesterday is not a reply opportunity today, and the server
+// expires its own drafted copy at 48h anyway. This is the ONLY implicit way a
+// row leaves the queue — everything else is a dismiss the human asked for.
+//
+// It lives HERE, not in the extension, since RQ.3: `GET /radar/sightings?queue=true`
+// reconstructs the panel's queue server-side, and the server's window and the
+// page's `pruneStale` must be the same number or the two answers to "what is in
+// my queue" drift apart. `extension/src/shared/radar.ts` re-exports it as
+// `RADAR_TTL_MS`, so every call site there is untouched.
+export const RADAR_QUEUE_TTL_MS = 24 * 60 * 60 * 1000;

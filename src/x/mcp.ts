@@ -360,7 +360,7 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
       description:
         'Every tweet my Radar queue admitted — what my sweep actually let through, on ANY x.com page, not just what /home fed me. $0 DOM capture, no X API.\n' +
         'Bands (WHY a row is here, never a judgement about the tweet): `sweep` = an armed sweep’s numeric filters admitted it (the ordinary way); `manual` = I pinned it by hand with ⊕; `cannon` = a camped-roster capture, metric filters bypassed; `roster` = a fresh post by someone already in my circle, metric filters bypassed.\n' +
-        '`admitted` is RECOMPUTED against today’s sweep settings (echoed back under `sweep`), judged at the age the tweet had when the queue last saw it — so `admitted:false` on an older row may just mean I changed the filters since, not that the capture was junk. `worked` = a draft exists OR a reply was posted. **An admitted, unworked, high-`vpm` row is the finding** (`summary.unworkedAdmitted` counts them). `sourcePath` is the x.com pathname it was captured on — the one thing the passive /home corpus cannot answer. `stage`/`isTarget` come from the people layer at read time. Tweet ids are STRINGS. Free, local read.',
+        '`admitted` is RECOMPUTED against today’s sweep settings (echoed back under `sweep`), judged at the age the tweet had when the queue last saw it — so `admitted:false` on an older row may just mean I changed the filters since, not that the capture was junk. `worked` = a draft exists OR a reply was posted; `dismissed` = I waved the row off in the panel (a decision, not work — `queue:true` is the shortcut for everything still open). **An admitted, unworked, high-`vpm` row is the finding** (`summary.unworkedAdmitted` counts them). `sourcePath` is the x.com pathname it was captured on — the one thing the passive /home corpus cannot answer. `stage`/`isTarget` come from the people layer at read time. Tweet ids are STRINGS. Free, local read.',
       inputSchema: {
         days: z
           .number()
@@ -382,6 +382,12 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
           .boolean()
           .optional()
           .describe('false = the unworked queue (no draft, no posted reply) — the usual ask.'),
+        queue: z
+          .boolean()
+          .optional()
+          .describe(
+            'true = the live panel queue: seen in the last 24h, not dismissed, not worked. Ignores `days`; cannot be combined with worked=true.',
+          ),
         order: z
           .enum(['vpm', 'views', 'lastSeen'])
           .optional()
@@ -389,7 +395,7 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
         limit: z.number().int().min(1).max(200).optional().describe('Rows to return (default 50).'),
       },
     },
-    async ({ days, band, handle, admitted, worked, order, limit }) => {
+    async ({ days, band, handle, admitted, worked, queue, order, limit }) => {
       const parts: string[] = [];
       if (days !== undefined) parts.push(`days=${encodeURIComponent(String(days))}`);
       if (band !== undefined) parts.push(`band=${encodeURIComponent(band)}`);
@@ -397,6 +403,7 @@ export function registerXTools(server: McpServer, app: Hono, authHeader: string)
         parts.push(`handle=${encodeURIComponent(handle.replace(/^@/, ''))}`);
       if (admitted !== undefined) parts.push(`admitted=${admitted ? 'true' : 'false'}`);
       if (worked !== undefined) parts.push(`worked=${worked ? 'true' : 'false'}`);
+      if (queue !== undefined) parts.push(`queue=${queue ? 'true' : 'false'}`);
       if (order !== undefined) parts.push(`order=${encodeURIComponent(order)}`);
       if (limit !== undefined) parts.push(`limit=${encodeURIComponent(String(limit))}`);
       return route(`/x/radar/sightings${parts.length ? `?${parts.join('&')}` : ''}`);

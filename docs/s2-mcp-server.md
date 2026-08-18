@@ -108,7 +108,7 @@ Each tool calls an existing stratus route **in-process** via Hono's `app.request
 | `x_monitor` | `/x/monitor` | The activity monitor's alerts, no inputs (GR.5). |
 | `x_goals` | `/x/goals?tzOffsetMin=` | Goals with pacing + commitments with debt (GR.7). Read-only — goal **writes** stay out of MCP by design: a bad target steers every future draft. |
 | `x_settings` | `/x/settings` | The whole knob catalog with values, ranges and `isDefault` (UI.4). Read this before `x_update_setting` — the description carries the why, the range is the bound. |
-| `x_radar` | `/x/radar/sightings?days=&band=&handle=&admitted=&worked=&order=&limit=` | The Radar's sighting corpus (RA.3) — what my sweep admitted on **any** x.com page, with `sourcePath`, a counts-only `summary`, and `admitted` **recomputed** against today's sweep settings (echoed under `sweep`). The finding is `summary.unworkedAdmitted`. |
+| `x_radar` | `/x/radar/sightings?days=&band=&handle=&admitted=&worked=&queue=&order=&limit=` | The Radar's sighting corpus (RA.3) — what my sweep admitted on **any** x.com page, with `sourcePath`, a counts-only `summary`, and `admitted` **recomputed** against today's sweep settings (echoed under `sweep`). The finding is `summary.unworkedAdmitted`. **`queue: true` (RQ.3)** is the live panel queue in one flag — seen in the last 24h, not dismissed, not worked; it ignores `days` (the echo reports `days: 1`) and refuses `worked: true`. |
 | `x_radar_tweet` | `/x/radar/sightings/:tweetId` | One swept tweet's whole history: the sighting + every `radar_drafts` row + every reply draft. `tweetId` is a **string**. |
 
 Tool descriptions state costs ("Free, local read") so agent callers don't hesitate.

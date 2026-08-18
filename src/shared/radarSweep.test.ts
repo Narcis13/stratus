@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  RADAR_QUEUE_TTL_MS,
   SWEEP,
   SWEEP_STATE_KEY,
   type SweepCandidate,
@@ -343,5 +344,14 @@ describe('bandStickiness (the band ratchet)', () => {
 
   test('sweep and cannon tie, so the fresher one wins at the call site', () => {
     expect(bandStickiness('sweep')).toBe(bandStickiness('cannon'));
+  });
+});
+
+// RQ.3 moved the queue TTL here for the same reason as the ratchet above: the
+// server's `?queue=true` window and the panel's `pruneStale` are now the same
+// number by construction. The extension side asserts the identity from its end.
+describe('RADAR_QUEUE_TTL_MS', () => {
+  test('is 24 hours', () => {
+    expect(RADAR_QUEUE_TTL_MS).toBe(24 * 60 * 60 * 1000);
   });
 });
