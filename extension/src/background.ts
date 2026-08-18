@@ -642,6 +642,32 @@ function markDraftsOnServer(tweetIds: string[], status: 'clicked' | 'expired'): 
   }
 }
 
+// The same fire-and-forget mirror, one table over. `markDraftsOnServer` only
+// touches rows a draft already created, so a ✕ on a never-drafted tweet was
+// invisible to the server and `/radar-analyst` re-surfaced it at the next read.
+// Chunked by `MAX_DRAFT_PATCH_IDS` for the same reason: the route refuses an
+// over-long id list rather than truncating it. Never retried — losing this
+// write only costs a re-surfaced tweet, never a wrong live queue.
+function markSightingsDismissedOnServer(tweetIds: string[]): void {
+  if (tweetIds.length === 0) return;
+  for (let i = 0; i < tweetIds.length; i += MAX_DRAFT_PATCH_IDS) {
+    const chunk = tweetIds.slice(i, i + MAX_DRAFT_PATCH_IDS);
+    void handleApiRequest({
+      type: 'stratus/api',
+      method: 'PATCH',
+      path: '/x/radar/sightings',
+      body: { tweetIds: chunk, dismissed: true },
+    }).then(
+      (res) => {
+        if (!res.ok && res.code !== 'unconfigured') {
+          console.warn('[stratus] radar sighting dismiss sync failed', res.code);
+        }
+      },
+      (err) => console.warn('[stratus] radar sighting dismiss sync failed', err),
+    );
+  }
+}
+
 // Merge server drafts into the buffer and re-stamp every row's tier from the
 // current rankmap. A tweetId the buffer does NOT hold enters as a whole
 // sighting; one it DOES hold keeps its live row and gains only the draft (see
@@ -1099,6 +1125,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (isRadarDismiss(msg)) {
     markDraftsOnServer(msg.tweetIds, 'expired');
+    markSightingsDismissedOnServer(msg.tweetIds);
     void enqueueRadar(() => dismissSightings(msg.tweetIds)).then(
       () => sendResponse({ ok: true }),
       () => sendResponse({ ok: false }),
