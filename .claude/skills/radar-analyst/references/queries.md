@@ -100,6 +100,53 @@ ORDER BY d.drafted_at DESC
 LIMIT 50;
 ```
 
+## Drafting inputs: my own measured winners
+
+The highest-value thing to read before composing (see
+[reply-craft.md §2.7](reply-craft.md)). This is the same pool
+`src/x/replies/winners.ts` feeds to Grok, minus the per-room attribution the
+route derives in TypeScript: 21-day window, ≥50 views, ≤320 chars, the parent
+actually scraped, latest capture per tweet. Own reply metrics come from the $0
+DOM harvest, so this costs nothing.
+
+Read `x.identity.selfHandle` off `x_settings` first and paste it lowercase
+without the `@` — `harvest_rows.handle` is stored normalized.
+
+```sql
+WITH latest AS (
+  SELECT tweet_id, max(captured_at) AS captured_at
+  FROM harvest_rows
+  WHERE mode = 'replies' AND handle = 'myhandle'
+  GROUP BY tweet_id
+)
+SELECT h.views,
+       h.text,
+       h.orig_handle                 AS parent_handle,
+       substr(h.orig_text, 1, 180)   AS parent_snippet
+FROM harvest_rows h
+JOIN latest ON latest.tweet_id = h.tweet_id
+           AND latest.captured_at = h.captured_at
+WHERE h.mode = 'replies'
+  AND h.handle = 'myhandle'
+  AND h.tweet_time >= (unixepoch() - 21 * 86400) * 1000
+  AND h.views >= 50
+  AND length(trim(h.text)) BETWEEN 1 AND 320
+  AND h.orig_text IS NOT NULL AND trim(h.orig_text) <> ''
+ORDER BY h.views DESC
+LIMIT 40;
+```
+
+`parent_snippet` is what lets a winner be placed in a room by eye — a reply whose
+parent was never scraped is dropped above for exactly that reason ("nothing
+answered" is not a `general` exemplar). Dedup by text after reading: the same
+line replied under nine posts is one exemplar, and the copy to keep is the one
+that did best.
+
+The two thresholds are opening guesses (§7.19). The 2026-08-07 baseline is 183
+views per reply, so the 50-view floor is roughly 3.7× under the corpus — a reply
+below it underperformed, and showing it as something that worked teaches the
+wrong shape.
+
 ## The cohort split: my drafts vs Grok's
 
 `radar_drafts.model` is copied onto the confirmed `reply_drafts.model`, so
