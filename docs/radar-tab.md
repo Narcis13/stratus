@@ -41,6 +41,8 @@ That's the Radar's whole job:
 
 **A dismissal now expires after 24 hours.** The dismissed list used to be a permanent blocklist of the last 500 ids — dismiss enough and tweets stopped entering the queue for reasons you couldn't see. A tombstone only has to outlive the tweet it buries (a sweep won't re-admit anything older than your age bound anyway), so it lasts a day and then stops mattering. **A ⊕ pin overrides its own tombstone**: dismissing something and then deliberately pinning it is you changing your mind, and it used to be answered with silence.
 
+**A dismissal is also sent to the server now (2026-08-18).** It used to live only in this browser, which meant a Claude Code session working the queue still saw everything you had waved off — the panel read **Queue (35)** and the session read **55**, and it drafted replies to tweets you'd already thrown away. Every dismissal path (the ✕, **Clear**, the rows a drafting pass consumes, the ones a curated pass drops) now also stamps the server copy, so *"I already decided about this one"* is a fact stratus holds too. The rules are the same on both sides: a re-sighting doesn't undo it, a ⊕ pin does, and it is one-way otherwise. It is a **best-effort** send — fire-and-forget, never retried, and it can never delay or fail the queue write you're waiting on — so if the server is down or unset, the panel behaves exactly as before and one row may drift back into the server's view of the queue until you dismiss it again.
+
 Drafted replies are also saved server-side and rehydrate into the queue the next time you open the panel, with the variants the room allowed intact.
 
 ---
@@ -166,10 +168,11 @@ Two things change because of it:
 
 - **What your sweep admitted outlives the browser.** The in-panel queue still ages out after 24 hours and still holds 500 rows; the server copy is one row per tweet, kept **60 days**, and it is what lets you ask *"what did I sweep past on Tuesday and never answer"* long after the card is gone.
 - **A Claude Code session can read that queue and write replies back into it.** Three MCP tools do it (see **[the MCP server](./s2-mcp-server.md)**): `x_radar` lists what your sweep admitted — with `admitted` **recomputed against today's sweep filters**, so changing a preset legitimately re-reads history — `x_radar_tweet` shows one tweet's whole history, and `x_radar_draft_reply` composes 2–3 angle variants straight into the Radar queue. The `radar-analyst` skill is the protocol for doing it well.
+- **A session can ask for *the queue you are looking at*, not just the corpus.** `x_radar({queue: true})` applies this panel's own three rules server-side — seen in the last 24 hours, not dismissed, not already worked — so its count and the **Queue (N)** in the header are the same number. Without it (`days: 7`, say) you get the review read instead: everything swept that week, dismissals and worked rows included, each row saying which it was. That is the right question for *"what did I scroll past on Tuesday"* and the wrong one for *"what should I answer now"*.
 
 ### Drafting from a terminal session
 
-1. Sweep as usual, so the tweets are in the queue (**don't Clear first** — a dismissed tweet's composed draft is not re-entered, and you'd have to go looking for it in the drafts list).
+1. Sweep as usual, so the tweets are in the queue, and **don't Clear between the session's read and the Fetch** — the server now knows a cleared queue is cleared, so a session reading `queue: true` won't draft against rows you already dismissed; but if you clear *after* it has composed, that draft is not re-entered into the queue and you'd have to go looking for it in the drafts list.
 2. In a Claude Code session, ask for a Radar pass. It reads the corpus, picks the rows worth answering, and composes variants for each.
 3. Press **Fetch drafts**. The rows turn reply-ready in place — same card, same angle tabs, same click-to-copy hand-off — without a remount.
 4. Pick an angle, paste on X. Exactly the manual paste every other path here ends in: **nothing about this posts for you.**

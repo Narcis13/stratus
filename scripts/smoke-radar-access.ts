@@ -6,9 +6,12 @@
 // row 400s the batch with nothing written -> a 61-day-old sighting is pruned by
 // the next POST -> GET the list (the three orders are three different
 // sequences, the summary counts, the `admitted` FLIP when the sweep config
-// moves) -> GET one -> compose 2 variants -> compose again (the first row is
-// expired, exactly one `ready` survives) -> confirm (the `reply_drafts` row's
-// `model` and `sourcePostedAt`) -> the same tweet now reads `worked`.
+// moves) -> GET one -> the LIVE QUEUE (queue=true lists the three, a PATCH
+// dismisses one, a re-PATCH updates nothing) -> compose 2 variants -> compose
+// again (the first row is expired, exactly one `ready` survives) -> confirm
+// (the `reply_drafts` row's `model` and `sourcePostedAt`) -> the same tweet now
+// reads `worked` and leaves the queue -> a `manual`-band re-ingest (the pin)
+// is the one thing that puts a dismissed row back.
 //
 // There is NO `--live` flag, and the absence is the finding (D171c): nothing
 // under `/x/radar` — sightings, compose, confirm — can reach `xFetch` or
@@ -155,6 +158,7 @@ interface SightingRow {
   ageMinAtLastSeen: number | null;
   admitted: boolean | null;
   worked: boolean;
+  dismissed: boolean;
   drafted: boolean;
   replied: boolean;
   seenCount: number;
@@ -164,6 +168,7 @@ interface SightingRow {
 
 interface ListBody {
   days: number;
+  queue: boolean;
   order: string;
   sweep: SweepConfig;
   count: number;
@@ -172,6 +177,7 @@ interface ListBody {
     total: number;
     admitted: number;
     worked: number;
+    dismissed: number;
     unworkedAdmitted: number;
     byBand: Record<string, number>;
     bySourcePath: Record<string, number>;
@@ -232,6 +238,19 @@ const ROWS: Record<string, unknown>[] = [
 
 function idsOf(list: SightingRow[]): string[] {
   return list.filter((s) => s.tweetId.startsWith(TWEET_PREFIX)).map((s) => s.tweetId);
+}
+
+// The queue read, asked for by MEMBERSHIP (sorted) rather than by rank — the
+// three orders are asserted once, in section 3, and re-asserting them here
+// would make an ordering change look like a queue-predicate bug. The two echo
+// checks ride along on every call because they are the cheap half of the
+// contract: `queue: true` says which predicate produced the list, and `days: 1`
+// says the 24 h TTL window was used and any `days` was ignored.
+async function queueIds(): Promise<string[]> {
+  const body = (await get(`/x/radar/sightings?handle=${HANDLE}&queue=true`)).body as ListBody;
+  if (body.queue !== true) fail('the queue read does not echo `queue: true`');
+  if (body.days !== 1) fail(`queue=true reported days ${body.days}, expected the 24 h TTL window`);
+  return idsOf(body.sightings).sort();
 }
 
 // Leftovers from an aborted run would turn the first insert into an update.
@@ -463,9 +482,52 @@ const missing = await get(`/x/radar/sightings/${GHOST}`);
 if (missing.status !== 404) fail(`an unknown tweet id returned ${missing.status}, expected 404`);
 ok('the detail read carries the sighting + its (empty) draft and reply history');
 
-// -------------------------------------------------------------- 4. compose
+// -------------------------------------------------------- 4. the live queue
 
-console.log('4. compose');
+console.log('4. the live queue');
+
+// RQ.3. `queue=true` is the PANEL's predicate, server-side: last seen inside
+// the 24 h TTL, not dismissed, not worked. It exists because the panel's
+// dismissals used to live only in `chrome.storage.local` — the panel showed
+// `Queue (35)` and a drafting session read 55, re-surfacing ~20 tweets the
+// operator had already thrown away.
+if (JSON.stringify(await queueIds()) !== JSON.stringify([A, B, C].sort())) {
+  fail('queue=true does not list the three live, undismissed, unworked rows');
+}
+ok('queue=true lists the live queue and echoes the window it actually used');
+
+const dismiss = await patchJson('/x/radar/sightings', { tweetIds: [A], dismissed: true });
+if (dismiss.status !== 200) fail(`PATCH /radar/sightings returned ${dismiss.status}, expected 200`);
+if ((dismiss.body as { updated: number }).updated !== 1) {
+  fail(`the dismiss answered ${JSON.stringify(dismiss.body)}, expected updated 1`);
+}
+if (JSON.stringify(await queueIds()) !== JSON.stringify([B, C].sort())) {
+  fail('a dismissed row is still in the queue — the panel and an agent disagree again');
+}
+ok('a PATCHed dismissal leaves the queue (this is what the panel ✕ now mirrors)');
+
+// Dropped from the QUEUE, kept in the CORPUS (60-day retention) — and the
+// unfiltered read still explains itself rather than just being short one row.
+const withDismissed = (await get(`/x/radar/sightings?handle=${HANDLE}&days=1`)).body as ListBody;
+if (withDismissed.summary.total !== 3 || withDismissed.summary.dismissed !== 1) {
+  fail(
+    `the days-based read summarises ${JSON.stringify(withDismissed.summary)}, expected total 3 / dismissed 1`,
+  );
+}
+if (withDismissed.sightings.find((v) => v.tweetId === A)?.dismissed !== true) {
+  fail('the dismissed row does not read `dismissed: true` on an unfiltered read');
+}
+ok('the corpus keeps the row and says so — `dismissed` is a view field and a summary count');
+
+const reDismiss = await patchJson('/x/radar/sightings', { tweetIds: [A], dismissed: true });
+if ((reDismiss.body as { updated: number }).updated !== 0) {
+  fail(`a re-dismiss answered ${JSON.stringify(reDismiss.body)}, expected updated 0 — the ratchet`);
+}
+ok('a second dismiss of the same row updates nothing (§7.10 — the stamp is a ratchet)');
+
+// -------------------------------------------------------------- 5. compose
+
+console.log('5. compose');
 
 const ghost = await post('/x/radar/drafts/compose', {
   tweetId: GHOST,
@@ -553,9 +615,9 @@ if (expired.count !== 1 || expired.drafts[0]?.id !== draft.id) {
 }
 ok('composing again expires the previous ready row; exactly one survives');
 
-// -------------------------------------------------------------- 5. confirm
+// -------------------------------------------------------------- 6. confirm
 
-console.log('5. confirm');
+console.log('6. confirm');
 
 const confirmed = await post(`/x/radar/drafts/${B}/confirm`, {});
 if (confirmed.status !== 201) fail(`confirm returned ${confirmed.status}, expected 201`);
@@ -588,9 +650,9 @@ if (clicked.drafts[0]?.status !== 'clicked')
   fail('confirm did not ratchet the radar draft to clicked');
 ok('confirm lands a reply_drafts row (radar/copied, the cohort model, the true post time)');
 
-// ------------------------------------------------------------- 6. worked
+// ------------------------------------------------------------- 7. worked
 
-console.log('6. the loop closes');
+console.log('7. the loop closes');
 
 const worked = (await get(`/x/radar/sightings/${B}`)).body as {
   sighting: SightingRow;
@@ -615,9 +677,32 @@ if (idsOf(unworked.sightings).length !== 2 || unworked.sightings.some((v) => v.t
 }
 ok('drafting IS the work: the row leaves the unworked queue the moment compose returns');
 
-// ------------------------------------------------------------- 7. cleanup
+if (JSON.stringify(await queueIds()) !== JSON.stringify([C])) {
+  fail('the drafted tweet is still in the queue — a drafting pass would re-surface its own work');
+}
+ok('one dismissed and one drafted later, the live queue is down to the one untouched row');
 
-console.log('7. cleanup');
+// The server mirror of the panel's `purgeDismissed`: a ⊕ pin (band `manual`) is
+// the ONLY thing that clears a dismissal. A plain re-sighting must not, which is
+// why the tombstone survives the scroll that put the card back on screen — that
+// half is `corpus.test.ts`'s, because the 60 s recapture throttle would skip a
+// same-band re-POST here before the merge rule ever ran.
+const repinned = (
+  await post('/x/radar/sightings', {
+    rows: [wireRow({ tweetId: A, views: 1600, ageMin: 31, band: 'manual', sourcePath: '/home' })],
+  })
+).body as IngestBody;
+if (repinned.updated !== 1 || repinned.skippedRecent !== 0) {
+  fail(`the ⊕ re-pin answered ${JSON.stringify(repinned)}, expected 1 updated`);
+}
+if (JSON.stringify(await queueIds()) !== JSON.stringify([A, C].sort())) {
+  fail('a manual-band re-ingest did not clear the dismissal — the pin is the one way back');
+}
+ok('a ⊕ pin (band `manual`) is the one thing that puts a dismissed row back in the queue');
+
+// ------------------------------------------------------------- 8. cleanup
+
+console.log('8. cleanup');
 
 cleanup();
 const leftSightings = db
