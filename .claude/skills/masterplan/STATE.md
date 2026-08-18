@@ -1,56 +1,60 @@
 # Masterplan execution state
 
 > Dynamic memory for `/masterplan`. Updated after EVERY task, in the task's own commit.
-> Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10 + Wave-6 seeds D141–D144 + Wave-7 seeds D172–D174).
+> Plan: `plans/MASTERPLAN.md` (static — order, reasoning levels, waves, D1–D10 + Wave-6 seeds D141–D144 + Wave-7 seeds D172–D174 + Wave-8 seeds D185–D187).
 > Codemap: `.claude/skills/plan-feature/references/codemap.md` (updated per task too).
 > History: `.claude/skills/masterplan/STATE-ARCHIVE.md` (frozen, grep-only — closed-lane deviations, gotchas, priors, ledger rows).
 > Debt: `.claude/skills/masterplan/VERIFY-DEBT.md` (**unpaid**, not history — browser-verify + CA.2. Read it when you have Chrome open; skip it otherwise).
 
-## WAVE 8 IS OPEN — 148/149. Next: RA.8 closes the wave (and the masterplan).
+## THE MASTERPLAN IS CLOSED — Wave 8 at 8/8, 149/149 overall. There is no next task.
 
-Waves 0–7 closed at 141/141 (RC.5, 2026-07-28). `d968fe9` re-opened the masterplan with **Wave 8 (RA —
-`plans/2026-08-17-radar-access.md`, 8 tasks)**: the Radar's swept queue, readable and draftable from a
-Claude Code session. **The whole wave is $0** — no `xFetch`, no `askLLM`, no image call on any path; reply
-drafting moves off Grok onto the operator's own session, so RA can only reduce spend. RA.1 shipped the
-table + ingest + the D185 rule move and did the re-opening below.
+Waves 0–7 closed at 141/141 (RC.5, 2026-07-28). `d968fe9` re-opened it with **Wave 8 (RA —
+`plans/2026-08-17-radar-access.md`, 8 tasks)**: the Radar's swept queue, readable and draftable from a Claude Code
+session. RA.8 shut it again on 2026-08-18. **The whole wave was $0** — no `xFetch`, no `askLLM`, no image call on
+any path; reply drafting moved off Grok onto the operator's own session, so RA could only *reduce* spend.
+**What it shipped is in `docs/PHASE-HISTORY.md`** (the RA entry, seven sub-findings) and in codemap §3.4/§4/§5/§6/§9.
+Everything lane-specific — the whole RA register D188–D194, its 22 gotchas, its ledger rows and its lock table —
+is in `STATE-ARCHIVE.md` under **"Archived at RA.8"**. Grep it by task id or by the filename the lane built.
 
-**What is still owed, and it is not a task.** `VERIFY-DEBT.md` holds **eighteen** unpaid items — browser
-checks that shipped with automated gates only, plus CA.2 step 2. Two came out of Wave 7 (`0m` HM, `0n` RC);
-`0n(b)` and `0l` are the only two that spend (~$0.003 and ~$0.010). Nothing there needs a plan or a session
-of its own: fold them into whichever session next has Chrome open on the panel, and **delete each entry as
-you pay it**. That file is deliberately not in the archive — a debt filed among history stops being owed.
+**A new lane starts by writing a plan (`/plan-feature`), registering it in `plans/MASTERPLAN.md`, and re-opening the
+ledger below in that lane's FIRST commit** — RA.1 is the worked example of the re-opening, and the one thing it got
+right that is worth copying: it **recounted** the `current state` numbers off the running code instead of carrying
+the previous line forward, and found three of them stale.
 
-**Where the lane detail went.** Everything task-specific is in `STATE-ARCHIVE.md`, section by closing task:
-Waves 0–4 at UI.11, Wave 5 at GT.9, Wave 6 at JD.8, the Wave-7 HM lane at HM.5, and **the Wave-7 RC lane +
-all ten Wave-7 ledger rows + D176/D177/D179/D181/D183/D184 at RC.5**. Grep it by task id or by the filename
-the lane built, before touching that file. The load-bearing half is also in codemap §5/§7/§10.
+**What is still owed, and it is not a task.** `VERIFY-DEBT.md` holds **twenty-eight** unpaid items — browser checks
+that shipped with automated gates only, plus CA.2 step 2. The newest is `0w`, RA's own (the sighting mirror per page,
+the kill switch, the **Fetch drafts** hand-off, the pick, and one open question about scoreless angle tabs); `0n(b)`
+and `0l` are the only two that spend (~$0.003 and ~$0.010). Nothing there needs a plan or a session of its own: fold
+them into whichever session next has Chrome open on the panel, and **delete each entry as you pay it.** That file is
+deliberately not in the archive — a debt filed among history stops being owed. **The ceiling on all of them is the
+same and is structural:** the stratus panel is a Chrome *side panel*, a page tab cannot read another extension's
+`chrome.storage.local`, and the extension service worker has no console reachable from a coding session — what they
+need is the human at the browser, not a session with Chrome tools loaded.
 
-**Size discipline (added 2026-07-23 at 339 KB; paid eleven times since — read this before a new wave
-re-grows the file).** STATE.md must stay loadable in a **single `Read`**, and the limit that bites is the
-tool's **token** cap (~25k), not the 256 KB byte cap. **The budget is measured: at 61.7 KB a single `Read`
-came back TRUNCATED at 25,023 tokens, so the real ratio is ≈405 tokens/KB and the ceiling is ≈61.5 KB. Aim
-at 60 KB and leave the last 1.5 KB unspent.** Measure BYTES with `wc -c`, not `.length` — this file is full
-of multibyte `—`/`≥`/`✓` and a character count reads ~1.5 KB under the truth. **Five lessons, each of which
-cost real sessions:** (1) *the breach is never one big entry, it is six good ones that each looked
-affordable* — Wave 6 went 48 KB → 156 KB in fifteen tasks; (2) *a closing pass archives the lane in front of
-it and misses the weight behind it* — UI.17 left Wave 5's ledger rows and every session until GT.9 paid for
-them, so **also ask what stopped binding two waves ago**; (3) *"it still binds an open task" is a reason to
-DISTIL, not to keep 19 KB*; (4) **an ORDINARY task breaches it too, so `wc -c` between entries, not only
-before the commit** — JD.5 needed two archive passes in one task; (5) **when a lane CLOSES, its hot-file
-lock row and its pointer lines are weight, not state** — a pointer to an archived block that no open task
-needs is 2 KB of "go read this, though nobody has to". Never "fix" a breach by deleting something an open
+**Size discipline (added 2026-07-23 at 339 KB; paid twelve times since — read this before a new wave re-grows the
+file).** STATE.md must stay loadable in a **single `Read`**, and the limit that bites is the tool's **token** cap
+(~25k), not the 256 KB byte cap. **The budget is measured: at 61.7 KB a single `Read` came back TRUNCATED at 25,023
+tokens, so the real ratio is ≈405 tokens/KB and the ceiling is ≈61.5 KB. Aim at 60 KB and leave the last 1.5 KB
+unspent.** Measure BYTES with `wc -c`, not `.length` — this file is full of multibyte `—`/`≥`/`✓` and a character
+count reads ~1.5 KB under the truth. **Five lessons, each of which cost real sessions:** (1) *the breach is never one
+big entry, it is six good ones that each looked affordable* — Wave 6 went 48 KB → 156 KB in fifteen tasks; (2) *a
+closing pass archives the lane in front of it and misses the weight behind it* — UI.17 left Wave 5's ledger rows and
+every session until GT.9 paid for them, so **also ask what stopped binding two waves ago**; (3) *"it still binds an
+open task" is a reason to DISTIL, not to keep 19 KB*; (4) **an ORDINARY task breaches it too, so `wc -c` between
+entries, not only before the commit** — JD.5 needed two archive passes in one task; (5) **when a lane CLOSES, its
+hot-file lock row and its pointer lines are weight, not state.** Never "fix" a breach by deleting something an open
 task needs; if a pass slips, pay it as a standalone housekeeping commit (the `55c6d19`/`c9c8ade` precedent).
 
-- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `docs(radar): RA.7 radar-analyst skill`, parent `8cadf02` (RA.6). **Step 0 is one command:** `git log -1 --format='%h %s'`.
-- **current state of the repo (RECOUNTED at RA.1 — the pre-RA line here was three lanes stale and the plan predicted it; every number below was read off the code, not carried forward):** suite **2448** across 127 files (RA.4 added no file — +5 in `radar/corpus.test.ts`, +7 in `routes/radar.test.ts`, +1 in `src/mcp.test.ts`); tables **43**; migrations through **`0029_blushing_expediter`** — **the journal is FREE from `0030`**; registry **15 groups / 61 knobs, 31 mirrored** and **17 prompt keys** (both read out of the running registry, not off any doc — see the gotcha: `docs/settings-tab.md` currently claims 67/16 and 16, and is wrong on all three); MCP **28 tools** (3 schema / 19 curated / 6 write — RA.3 took it 25 → 27, RA.4 27 → 28; **no remaining RA task adds one**); smoke scripts **39**; extension tsconfig `include` shims **11**; whole-repo lint **0 errors**. The four multi-file moves a new task will hit, each with the assertions that make them fail loudly: **a mirrored knob is SEVEN edits** — `registry.ts` (group array; order decides mirrored position), `registry.test.ts` **twice** (the group's exact key list *and* the exact mirrored list), `docs/settings-tab.md`'s **three** count strings (prose, asserted by nothing), plus extension-side `ServerConfig` + `SERVER_DEFAULTS` + `readServerConfig`, pinned by `serverSettings.test.ts`'s exact `Object.keys` list AND its full-blob `toEqual` (D181d — the server half alone ships a knob that silently does nothing). **RA needed none of it, and RA.2 CONFIRMED that rather than assuming it: D187's browser toggle left the registry untouched, so the 61/15/31 and 17 above still hold and `docs/settings-tab.md`'s three KNOB/PROMPT count strings are unmoved. What RA.2 did move in that doc is a different, unasserted trio — the behaviour-TOGGLE count, four → five (section head, opt-out recipe, troubleshooting line).** **A registry prompt key is FOUR** (`PROMPT_KEYS` + `PROMPT_SPECS`, the default exported from a **pure** module or the import cycles, `registry.test.ts`'s exact key list, and `docs/settings-tab.md`'s three counts). **An MCP tool bumps `src/mcp.test.ts`'s exact 28 and `docs/s2-mcp-server.md`'s counts in the same commit** — and RA.3 found there are **FOUR** count strings in that doc, not three: the prose total, the `## The tools` heading, the end-to-end verification line, AND the `### <tier> (N)` heading. **RA.4 corrected the fourth: it is the heading of the TIER you touched, not always Curated** (RA.4's tool is write-tier, so `### Write tier (5)` → `(6)` while Curated stayed 19), and it also found a **fifth and sixth** unasserted string the count changes: the intro's prose enumeration of the write tools ("five tiny non-billed writes (…)") and the §"Security & cost invariants" row claiming the write tier "tops out at a `draft` calendar row" — now two ceilings. **The `src/x/mcp.ts` row in codemap §3.3 also carries the counts and was 25/17/5 stale through RA.3; RA.4 fixed it. Bump both it and §6.** **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git diff --stat src/db/migrations/` plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0 (D177a).
-- **next-up:** **RA.8** — the last task in the wave AND in the masterplan (149/149): `scripts/smoke-radar-access.ts` ($0, no `--live`, the `smoke-passive-harvest.ts` 888-id/`ra_*`-handle safety pattern), the docs-sync (PHASE-HISTORY entry, `docs/radar-tab.md`, `docs/s2-mcp-server.md` — **verify RA.3/RA.4 already moved all six strings rather than assuming**, `docs/settings-tab.md` unchanged-but-confirmed), the codemap+STATE close-out, and the deferred browser checks. **Two RA.8 items are already satisfied and should be confirmed, not redone:** done-when #7 (RA.6 named the 2026-07-27 stop in `docs/harvest-tab.md`) and the MCP doc counts. **RA.8 also owes the archive pass** — the lane closes, so RA's D-entries/gotchas move to `STATE-ARCHIVE.md` and STATE.md keeps only what still binds (nothing will, once the wave is shut). **RA.7 changed no production source file** — two new files under `.claude/skills/radar-analyst/`, gates unmoved. **RA.6 likewise changed no production source file** — it was a diagnosis (D193): the passive `/home` corpus stopped because the `passiveHarvest` toggle was off, it is collecting again, and `content.ts` was never touched, so RA.7/RA.8 inherit the tree RA.5 left plus one smoke-script fix. **RA.8's done-when #7 is already satisfied** (the 2026-07-27 stop is named in writing in `docs/harvest-tab.md`); RA.8 still owns done-when #3/#5 and the browser checks RA.2/RA.5 deferred. Both the server and the extension halves of the lane are now DONE: `src/x/routes/radar.ts`, `src/mcp.test.ts`, `background.ts` and `Radar.tsx` are free, and no remaining task needs a migration, a registry knob or an MCP tool. **RA.7 must fold in D192 and the two RA.4 gotchas** — the skill has to say that a composed draft reaches the panel only after a **Fetch drafts** click, and that `worked` flips true the instant the compose returns. Standing gate reminders: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); biome forbids `delete process.env.X` / `: any` in `scripts/`, **non-null assertions (`x!`) anywhere**, a `let` assigned once, and a backtick string with no interpolation — it also sorts imports case-sensitively, collapses short chained calls, and rejects a `console.log` string-concat unless every operand interpolates (run `bunx biome check --write` on the changed files FIRST). Extension-touching work adds `cd extension && bun run build` **and** its own `typecheck`, then `grep -cE '^\s*import[ {]' extension/dist/content.js` == 0.
+- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `docs(radar): RA.8 radar-access docs-sync + $0 smoke-radar-access.ts`, parent `c02ff88` (RA.7). **Step 0 is one command:** `git log -1 --format='%h %s'`.
+- **current state of the repo (as of RA.8, 2026-08-18 — every number read off the code, not carried forward):** suite **2448** across 127 files; tables **43**; migrations through **`0029_blushing_expediter`** — **the journal is FREE from `0030`**; registry **15 groups / 61 knobs, 31 mirrored** and **17 prompt keys**; MCP **28 tools** (3 schema / 19 curated / 6 write); smoke scripts **40**; extension tsconfig `include` shims **11**; whole-repo lint **0 errors**. **`docs/settings-tab.md`'s count strings were FIXED at RA.8 and now agree with the registry** (they had claimed 67 knobs / 16 groups / 32 mirrored / 16 prompts; the 2026-08-12 read deletion had taken the whole **Mentions** group and four of five **Workers** knobs, and nothing asserts those strings). The four multi-file moves a new task will hit, each with the assertions that make them fail loudly: **a mirrored knob is SEVEN edits** — `registry.ts` (group array; order decides mirrored position), `registry.test.ts` **twice** (the group's exact key list *and* the exact mirrored list), `docs/settings-tab.md`'s **three** count strings (prose, asserted by nothing) **plus its group table row**, and extension-side `ServerConfig` + `SERVER_DEFAULTS` + `readServerConfig`, pinned by `serverSettings.test.ts`'s exact `Object.keys` list AND its full-blob `toEqual` (D181d — the server half alone ships a knob that silently does nothing). **A registry prompt key is FOUR** (`PROMPT_KEYS` + `PROMPT_SPECS`, the default exported from a **pure** module or the import cycles, `registry.test.ts`'s exact key list, and `docs/settings-tab.md`'s three prompt strings — the count ×2 and the prose enumeration). **An MCP tool is SIX doc strings plus three asserted numbers**: `src/mcp.test.ts`'s exact **28**, `scripts/smoke-mcp.ts`'s expected-names list, and in `docs/s2-mcp-server.md` the prose total, the `## The tools` heading, the end-to-end verification line, the `### <tier> (N)` heading **of the tier you touched**, the intro's prose enumeration of the write tools, and the §"Security & cost invariants" write-ceiling row — plus the counts in codemap §3.3's `mcp.ts` row **and** §6. **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git diff --stat src/db/migrations/` plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0 (D177a).
+- **next-up:** **nothing.** The masterplan is closed at 149/149 and `/masterplan next` has no eligible row. A new feature starts at `/plan-feature`; the unpaid browser checks are `VERIFY-DEBT.md`, not tasks. Standing gate reminders for whatever comes next: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); biome forbids `delete process.env.X` / `: any` in `scripts/`, **non-null assertions (`x!`) anywhere**, a `let` assigned once, and a backtick string with no interpolation — it also sorts imports case-sensitively, collapses short chained calls, and rejects a `console.log` string-concat unless every operand interpolates (run `bunx biome check --write` on the changed files FIRST). Extension-touching work adds `cd extension && bun run build` **and** its own `typecheck`, then `grep -cE '^\s*import[ {]' extension/dist/content.js` == 0.
 
 ## Ledger
 
 Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date) · `[s]` skipped (reason in deviations).
 
-**Waves 0–7 are CLOSED — 141/141.** Per-task entries (shas, parents, dates, notes) live in
-`STATE-ARCHIVE.md` — Waves 0–4 at UI.11, Wave 5 at GT.9, Wave 6 at JD.8, **Wave 7 at RC.5**. Grep by task id.
+**Waves 0–8 are CLOSED — 149/149.** Per-task entries (shas, parents, dates, notes) live in `STATE-ARCHIVE.md` —
+Waves 0–4 at UI.11, Wave 5 at GT.9, Wave 6 at JD.8, Wave 7 at RC.5, **Wave 8 at RA.8**. Grep by task id.
 
 - **Wave 0 — Foundations (13/13 ✓)**: UI.1, UI.8, UI.9, UI.10, ST.1–ST.9. Closed by `d1902e5` ST.9 studio docs+smoke.
 - **Wave 1 — Prompt & identity core (32/32 ✓)**: RU.1–RU.3, N.1–N.9, ME.1–ME.7, AI.1–AI.13. Closed by `f86e06a` AI.13 AI docs+smoke.
@@ -59,142 +63,44 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 - **Wave 4 — Authoring 3.0 (15/15 ✓)**: A3.1–A3.15. Took migration `0023_slimy_night_thrasher` (`articles`). Closed by `docs(authoring): Authoring 3.0 docs-sync + $0 smoke-authoring3.ts (A3.15)`, parent `819c61d`.
 - **Wave 5 — Settings moat + polish (16/16 ✓)**: UI.2–UI.7, UI.11–UI.17. Closed by `docs(ui): cockpit overhaul docs-sync + $0 smoke-settings.ts (UI.17)`, parent `7b10239`.
 - **Wave 6 — Coach, judge & growth tactics (25/25 ✓, + GT.5 `[s]` by design)**: SC.1–SC.9, GT.1–GT.9, JD.1–JD.8. Took migration `0024_soft_leopardon` (`draft_judgments`). Closed by `docs(judge): LLM-judge docs-sync + $0 smoke-judge.ts (JD.8)`, parent `fc44d1c`.
-- **Wave 7 — Radar follow-ups: curated drafting & humanize-at-pick (10/10 ✓)**: HM.1–HM.5 (project humanizer), RC.1–RC.5 (curated drafting). Took migration `0025_curvy_edwin_jarvis` (`radar_drafts.curation_score`). Closed by `docs(radar): RC docs-sync + $0 smoke-radar-curate.ts (RC.5)`, parent `80a2f2b`.
-- **Wave 8 — Radar access from a Claude Code session (6/8)**, plan `plans/2026-08-17-radar-access.md`, opened by `d968fe9` (`wave 8` — plan + MASTERPLAN registration only, no code, no STATE.md; RA.1 owed the re-opening and did it). **$0 lane.** Took migration `0029_blushing_expediter` (`radar_sightings`).
-  - `[x]` **RA.1** — `radar_sightings` + `POST /x/radar/sightings` + migration `0029` + the D185 `bandStickiness` move. `feat(radar): RA.1 radar_sightings table + $0 sighting ingest`, parent `d968fe9`, 2026-08-17. Gates: suite 2396/0 fail, typecheck ✓, lint ✓, extension typecheck+build ✓, `content.js` imports 0, one `bandStickiness` in the tree, `:memory:` boot → 3 `content_pillars`.
-  - `[x]` **RA.2** — background ships every sighting + the `radarSightingSync` toggle (D187: no registry knob, confirmed). `feat(extension): RA.2 mirror radar sightings to the server`, parent `0e7bf6c`, 2026-08-17. Gates: suite 2412/0 fail, typecheck ✓ (root + extension), lint ✓, extension build ✓, `content.js` imports 0. Browser end-to-end (rows landing per page, the toggle stopping them) is RA.8's — see the gotcha.
-  - `[x]` **RA.3** — `GET /x/radar/sightings(/:tweetId)` + `x_radar`/`x_radar_tweet` (MCP 25 → 27). `feat(radar): RA.3 sighting read layer + x_radar/x_radar_tweet`, parent `41f6a07`, 2026-08-17. Gates: suite 2435/0 fail, typecheck ✓, lint ✓ (no extension file touched). No schema, no migration, no registry knob.
-  - `[x]` **RA.4** — `POST /x/radar/drafts/compose` + `x_radar_draft_reply` (D186; MCP 27 → 28). `feat(radar): RA.4 compose radar drafts + x_radar_draft_reply MCP tool`, parent `f6c845b`, 2026-08-17. Gates: suite 2448/0 fail, typecheck ✓, lint ✓ (no extension file touched). No schema, no migration, no registry knob.
-  - `[x]` **RA.5** — Radar tab **Fetch drafts** action + the `rehydrateSightings` attach fix (D192). `feat(extension): RA.5 Fetch drafts action on the Radar tab`, parent `e9e9f76`, 2026-08-17. Gates: suite 2448/0 fail (unchanged — panel components carry no tests here, by the plan's own instruction), typecheck ✓ (root + extension), lint ✓, extension build ✓, `content.js` imports 0. The click itself is still RA.8's browser check.
-  - `[x]` **RA.6** — passive `/home` capture repair: **cause named = the `passiveHarvest` toggle was OFF** (D193). `fix(harvest): RA.6 passive timeline capture — the passiveHarvest toggle was off`, parent `64d22d9`, 2026-08-18. **No production source file changed** — one stale assertion in `scripts/smoke-passive-harvest.ts` + `docs/harvest-tab.md`. Gates: suite 2448/0 fail (unchanged), typecheck ✓, lint ✓, smoke `SMOKE PASS ($0)`; no extension build owed (`content.ts` untouched). Verified live: 80 `mode='timeline'` rows landed after the flip, first since 2026-07-27 06:xx UTC.
-  - `[x]` **RA.7** — the `radar-analyst` skill (`SKILL.md` + `references/queries.md`). `docs(radar): RA.7 radar-analyst skill`, parent `8cadf02`, 2026-08-18. **No production source file changed.** Gates: suite 2448/0 fail (unchanged — documentation, the plan's own "Tests: none"), typecheck ✓, lint ✓ (biome checked 424 files), no extension build owed. Extra verification the plan didn't ask for: all 8 `queries.md` recipes run through `runSelect()` against a freshly migrated DB (D194d).
-  - `[ ]` **RA.8** — RA docs-sync + `$0 scripts/smoke-radar-access.ts` + the browser end-to-end check. Deps all. high.
+- **Wave 7 — Radar follow-ups: curated drafting & humanize-at-pick (10/10 ✓)**: HM.1–HM.5, RC.1–RC.5. Took migration `0025_curvy_edwin_jarvis` (`radar_drafts.curation_score`). Closed by `docs(radar): RC docs-sync + $0 smoke-radar-curate.ts (RC.5)`, parent `80a2f2b`.
+- **Wave 8 — Radar access from a Claude Code session (8/8 ✓)**: RA.1–RA.8, plan `plans/2026-08-17-radar-access.md`, opened by `d968fe9`. **$0 lane.** Took migration `0029_blushing_expediter` (`radar_sightings`). Closed by `docs(radar): RA.8 radar-access docs-sync + $0 smoke-radar-access.ts`, parent `c02ff88`, 2026-08-18.
 
 ## Hot-file locks
 
-A lane claims a file before starting, releases on commit. **RA.1 released everything it held** — no file is
-locked right now. The documented way to reach a closed lane's file notes is to **grep `STATE-ARCHIVE.md` by
-filename** before touching a file that lane built.
+**Nothing is locked. Every lane is closed.** A new lane declares its locks here in its first commit; the documented
+way to reach a closed lane's file notes is to **grep `STATE-ARCHIVE.md` by filename** before touching a file that
+lane built. One standing invariant survives the table: **never run two migration-generating tasks in parallel
+sessions** (journal conflicts), ignore any hardcoded migration number in plan text — *a plan quoting one is quoting
+the day it was written* — and always `bun run db:generate` against the current journal, then inspect the SQL for
+dropped seed INSERTs (codemap §4). The journal is free from **`0030`**.
 
-| File | Owner |
-|---|---|
-| `src/x/routes/radar.ts` | — (**free for good — no remaining RA task touches it.** RA.1 added `POST /radar/sightings`; RA.3 added both GETs after it (static before `:tweetId`, §7.20); RA.4 added `POST /radar/drafts/compose` in the `/radar/drafts` block above the `:tweetId` forms, plus four file-local helpers at the bottom from RA.3 — `loadSightingContext`, `compareSightings`/`sightingTieBreak`, `intParam`, `boolParam`. The file is 990 lines and `$0` by construction; its header says nothing in it may import `xFetch`/`askLLM`.) |
-| `src/mcp.test.ts`'s exact tool count (**28**) | — (**free for good — no remaining RA task adds a tool.** The next MCP task anywhere in the repo owes, in one commit: this exact number, `scripts/smoke-mcp.ts`'s expected-names list, `docs/s2-mcp-server.md`'s **six** strings, and the counts in codemap §3.3's `mcp.ts` row **and** §6 — see the recount sentence in `current state`.) |
-| `extension/src/background.ts` | — (free; **RA.2 and RA.5 both touched it and both released it**, and no remaining RA task needs it. RA.2 added `shipSightings` + `extension/src/shared/radarIngest.ts`; RA.5 changed `rehydrateSightings`'s "already in the buffer" branch from a skip to a draft-attach, D192.) |
-| `extension/src/sidepanel/Radar.tsx` | — (free; RA.5 was the lane's only edit — `pullDrafts` + the **Fetch drafts** action button.) |
-| `extension/src/shared/radar.ts` | — (free; **RA.1 already made its edit** — the `RadarBand` alias + the `bandStickiness` import. RA.2/RA.5 touch the extension elsewhere.) |
-| `src/db/migrations/` journal (any migration task) | — (**RA.1 took `0029_blushing_expediter` (`radar_sightings`); the next migrating task owns `0030`.** No later RA task needs a migration — the lane is one table wide. JD.4 took `0024_soft_leopardon` (`draft_judgments`) before it. Standing invariant: never run two migration-generating tasks in parallel sessions (journal conflicts), ignore any hardcoded number in plan text — **JD.4's plan said "0018", which is RL.2's `reply_lists`; a plan quoting a migration number is quoting the day it was written** — and always `bun run db:generate` against the current journal, then inspect the SQL for dropped seed INSERTs, codemap §4) |
 
 ## Deviations & decisions register
 
-**Wave 8 (open) — D185–D188.** D185–D187 are the plan's own seeds (full text in `plans/MASTERPLAN.md`
-§"Wave-8 seeds"): **D185** the `bandStickiness` move (done at RA.1), **D186** the `draftRowToSighting`
-contract that binds RA.4, **D187** the browser-toggle kill switch that binds RA.2. New at RA.1:
-
-- **D188** (RA.1, binds RA.2 and any later reader of `radar_sightings`): **three places the plan and the
-  code had to be reconciled, and one of them changes the wire contract.** **(a) The merge's freshness
-  tie-break is `>=`, not `>`.** The plan's rule was "metrics only move when the incoming sighting is
-  newer", which read as strict — and it is wrong in the one case the route deliberately creates: a band
-  change punches through the 60s throttle, so the second POST lands in the *same millisecond* as the
-  first, `newer` was false, and an ACCEPTED re-sighting stored nothing but a bumped `seen_count`. Ties now
-  resolve to the incoming row (the same "fresher copy wins" tie-break the batch dedup and the band ratchet
-  already use); only a strictly-older sighting is held back, which is the case the guard exists for. A
-  route test would not have caught this — the corpus unit test did, via the route test failing on a real
-  clock. **(b) `§7.407`, cited five times in the plan header, is not a codemap section.** §7 stops at 36.
-  The rules it names ("free-text/server-owned parent, lazy prune, warn-and-drop client, throttle mirrors
-  the server window, gate order is the perf contract") are the HV.1 passive-ingest ones and are readable
-  off `POST /harvest/passive` in `routes/harvest.ts` — read them there, not by grepping the codemap. Same
-  for `§7.415a`. **(c) `parseSightingWireRow` takes `nowMs` as a second parameter** (defaulted), which the
-  plan's signature did not have: `seenAt` both defaults to now AND is clamped to ≤ now, and neither is
-  testable if the module reads its own clock. RA.2's throttle must assume the server may clamp a
-  fast-clock `seenAt` down.
-
-- **D189** (RA.2, binds RA.3/RA.4/RA.8 and any future ingest pair): **`toSightingWireRow` returns
-  `SightingWireInput | null`, which the plan's signature did not allow — and the reason generalizes.**
-  RA.1's route parses every row before writing any and **400s the whole batch on its first bad row**
-  (deliberate: a client shipping 100 rows a minute has to know which reader drifted). RA.2's client is
-  warn-and-drop and never retries (also deliberate: a lost sighting must never cost a user action).
-  Each half is right on its own; composed, **one unrepresentable row silently costs up to 99 good ones**,
-  and nothing logs why. So the mapper refuses the row client-side: a failed REQUIRED field (`tweetId`,
-  `handle`, non-finite/negative counts, `ageMin` past the server's one-year ceiling) drops the row, a
-  failed OPTIONAL field (`url`/`author`/`sourcePath` too long) is sent as `null`, since unknown is legal
-  there and losing a display name is no reason to lose a sighting. The four ceilings are **restated**
-  in `shared/radarIngest.ts` (§7.33 — the extension cannot import `src/x/radar/corpus.ts`, whose
-  `MAX_AGE_MIN` is module-private), so **a future change to any of them is a two-file change**. The one
-  real-world casualty is a ⊕ pin on a tweet older than a year: the server calls that a parse bug, the
-  page does not, and the pin still enters the local queue and drafts normally — it just isn't mirrored.
-  Left as-is rather than widening the server's ceiling, because `src/x/routes/radar.ts` is RA.3/RA.4's
-  hot file; revisit there if a real pin is ever lost.
-
-- **D190** (RA.3, binds RA.4 and any later reader of this corpus): **three calls the plan's route table did not make, and one of them is a rule worth reusing.** **(a) `admitted` and `worked` got their OWN 400 codes** (`invalid_admitted` / `invalid_worked`), beyond the plan's five. The repo's existing boolean query params are lenient (`c.req.query('retired') === 'true'`), and that is right for them — they are opt-in switches whose default is off, so a typo costs you the switch. These two **narrow a result set**: `admitted=1` reading as "no filter" hands back a full list the caller believes is filtered, which is a *wrong answer*, not a missing one. Rule: a lenient boolean is fine for a flag, never for a filter. **(b) A read ceiling was added the plan did not have.** "Read the window, then sort in JS" is correct at the default 7 days and is ~120k rows at `days=60`, so `SIGHTING_SCAN_CAP = 5000` bounds the SQL read (newest-first, `+1` so `truncated` is a fact rather than an inference from a full page) and the body reports `scanned`/`truncated`. Paired with the `summary`-covers-the-whole-filtered-set / `sightings[]`-is-the-`limit`-slice split, so `count < summary.total` means the LIST was cut and the ANSWER was not (D184b — state the claim the surface cannot make). **(c) The detail response carries `sweep` and returns the sighting as the same enriched VIEW**, not the raw row the plan's `{sighting, drafts[], replies[]}` implied: `sighting.admitted` is meaningless without the config that produced it, and two shapes for one row is how a consumer ends up with two parsers. Also worth carrying forward: the plan said to drive the config-flip test through `PATCH /x/settings`; `radar.test.ts` is a bare-Hono mount of the radar router alone and already has the `setSettings`/`resetSettings`-in-a-`finally` precedent (the `x.radar.draftTtlH` test), so that is what was used — the registry is the same object either way.
-
-- **D191** (RA.4, binds RA.5/RA.7/RA.8 and any later writer of `radar_drafts`): **three plan-vs-code
-  reconciliations, and the middle one is a number the plan could not have known was missing.**
-  **(a) `sightingVpm` did not exist.** The plan's Design section lists it among `corpus.ts`'s functions,
-  but RA.1/RA.3 inlined `round2(views / max(ageMin,1))` inside `buildSightingViews` with a module-private
-  `round2`. RA.4 needs the same number for `signals.vpm`, so rather than write the formula a second time
-  it was **extracted and exported**, with `buildSightingViews` now calling it — the view's `vpm` and a
-  draft's `signals.vpm` are the same rule by construction, not by agreement (§7.27). `coerceBand` was
-  exported for the same reason: the compose route has to narrow the stored free-text band, and the
-  "a legacy verdict means sweep" fold already had two copies (here and `extension/src/shared/radar.ts`).
-  **(b) "Fall back to the stored age relationship when `posted_at` is null" names a relationship the row
-  does not carry.** `first_seen_at`/`last_seen_at` are CAPTURE times; the only post-time fact is
-  `posted_at`, and the view's own `ageMinAtLastSeen` is null exactly when it is. So the fallback had to be
-  chosen, not looked up: **`now − last_seen_at`**, a lower bound (the post demonstrably existed when the
-  queue last saw it), and never null — because a null `signals` is the invisible-draft case (D186), which
-  is strictly worse than an age we can defend. Only reachable on a hand-written row; the ingest always
-  derives a `posted_at`. **(c) Validation is stricter than the plan's five codes in one place and looser
-  in another.** The 400s carry an **`index`** (which variant failed — the ingest's own convention, and a
-  caller shipping three variants needs to know which one), and `invalid_angle` echoes `allowed`. But the
-  stored `angle` column stays free text: it holds rows written before `observation`/`question` existed,
-  and RA.4 only refuses what a caller writes TODAY. Same split as `band` — strict on the wire, tolerant
-  in the column.
-
-- **D192** (RA.5, binds RA.7 and RA.8): **the plan's "no message-type or background change is needed" was wrong, and the way it was wrong is the general lesson.** The claim is true of the WIRE — `stratus/radar-rehydrate` already answers `{ok, added}` — and false of the BEHAVIOUR behind it. `rehydrateSightings` (`background.ts`) skips every tweetId the buffer already holds, and until RA.4 that skip could not lose anything: the only writer of `radar_drafts` was the Grok batch, which attaches its replies on the way back through `attachReplies`, so "already held" implied "already drafted". `x_radar_draft_reply` composes for tweets sitting in the LIVE queue — the operator sweeps, a session reads `x_radar` and drafts the best rows, and every one of those tweets is in `chrome.storage.local` under a 24 h TTL — so **the whole row was dropped and Fetch drafts would have answered `up to date` with the draft on the server**, satisfying every gate and the plan's Edit list while failing the plan's own done-when (#3, and RA.5's "pulls server drafts into the queue"). Fixed in the same task rather than filed, because a one-file task whose button does nothing is not a shippable half. **The fix does not weaken the rule the skip existed for:** a live row is never REPLACED (its capture-fresh signals still beat an hours-old draft row's, which is what `mergeSightings` would get wrong) — only `reply`/`variants` are attached, the exact shape `attachReplies` writes, and a row already carrying that `replyText` is left untouched **and uncounted**, so a second click still says `up to date` and every pre-RA.4 path is a byte-identical no-op. `rehydrateSightings`'s return value widened from "rows that entered" to "rows that entered **or gained a draft**", which is what the note line reports. **Generalize this:** "no change needed in file X" in a plan is a claim about *code the plan read at writing time*, and a lane that adds a second writer to a table invalidates every "this could only mean…" comment written when there was one. Two smaller divergences in the same task: the note line got a third arm the plan didn't list (`Fetch failed — the queue is unchanged`, because a silent failure on a $0 button reads as "no drafts"), and the button is disabled while `busy !== null` as well as while pulling — it spends nothing, but `note` has one owner and a fetch report landing mid-batch would overwrite what the click that spent money is reporting. Also, for the record: the plan cites **`§7.435`** in Task 5's Edit list; like the `§7.407` D188(b) caught, it is not a codemap section (§7 stops at 36). Treat every `§7.4xx` in this plan as prose.
-
-- **D193** (RA.6, binds RA.8 and any future "why did this capture stop" session): **the plan's step 1 came back RED, and what that turned out to mean is the transferable half.** `scripts/smoke-passive-harvest.ts` failed its last assertion — not because the route was broken (it wasn't; every other step was green) but because `db96a4c` (2026-08-11) renamed `FunnelCell.band` → `bucket` and the script still read `c.band`. **A smoke casts `await res.json()`, so no typecheck, test or lint covers the field names it asserts** — this one was red for a week with nobody the wiser. Fixed here (4 lines + 3 comments) rather than filed, because "the route is fine" is step 1's whole output and cannot be reported off a red script. **Two rules out of it:** renaming a field on a response any smoke reads is a two-file change, like the doc count strings — `grep -rn '<oldField>' scripts/` before landing the rename; and a red smoke is evidence about the SCRIPT until you have located the assertion. **The diagnosis itself deviated from the plan's How in one way worth copying:** candidates 1 and 3 were *disproved with data* rather than eliminated by inspection — the reader was proved alive by `radar_drafts` taking rows on nearly every day of the 21-day gap (same `readTweetCapture`, same `applyCapture` call site, one line above `recordPassiveHarvest`), and the transport by `posts`/`replies`/`thread` rows arriving throughout. **Generalize:** when one capture stops, find what else rides the same code and check whether it stopped too; if nothing else did, the fault is in that feature's own state gates, not in shared machinery. The cause was candidate 2 (the toggle), confirmed with the operator, and the plan's prescribed remedy — flip it back, write the note — is exactly what shipped. **What was deliberately NOT built, and it is a standing offer, not a to-do:** a *dated* off-state on the Harvest tab's passive line ("Passive capture off — no timeline rows since Jul 27"). The toggle applies on click with no Save and no confirmation, its only feedback is an undated grey line on a tab opened weeks apart, and both readers go quiet rather than empty — that is the whole mechanism by which 21 days passed. It is a change to a shipped surface, so it got the same treatment the plan reserved for the path-gate widening: written down in `docs/harvest-tab.md`, implemented only on a decision.
-
-- **D194** (RA.7, binds RA.8 and any future skill-authoring task): **four places the plan's How and the code disagreed, and the last one is a method.**
-  **(a) "each a *different* angle from `REPLY_ANGLES`" is one angle too wide.** `network` is in that union but is deliberately outside every `ReplyMode`'s angle set (`src/shared/replyMode.ts`): it is a different OBJECTIVE — written to the author, not to the reply stack — and `trimToModeAngles` exists precisely so a reach draft can never offer it. The skill therefore lists the five reach angles and scopes `network` to an explicit relationship ask. Following the plan literally would have had the operator's own drafting undercut a narrowing the drafting path enforces.
-  **(b) The plan's "admitted-but-never-worked over 30 days" recipe is not writable in SQL.** `admitted` is `passesSweep` against `sweepConfigFromSettings()` — the live registry, not a column (§7.12, and deliberately so). The recipe types the four gates in as literals with a comment naming each (`-- sweep.minViews`…) and the file's header says, once, that SQL cannot recompute the verdict and the numbers must be read off `x_radar`'s echoed `sweep` block first. **An approximation that does not announce itself is the failure mode here**, not the approximation.
-  **(c) The cohort split's outcome source is `harvest_rows`, not `metrics_snapshots`.** The plan's Design says "read-time SQL over `reply_drafts` → outcomes", which is how `GET /replies/outcomes` still works — and that route joins `metrics_snapshots`, **frozen since 2026-08-12** (invariant #8). The only live own-reply metrics are the $0 DOM harvest (`mode='replies'`, latest capture per `tweet_id` — `latestOwnReplyRows`'s own shape). So the `model='claude-code-mcp'` vs Grok recipe joins `posted_tweet_id` → that, carries the n≥20 gate, and says the Claude cohort starts at n=0 on 2026-08-17 so an early lead is a young cohort. **Any later "outcomes" query anywhere inherits this**: the snapshot tables answer history, the harvest answers now.
-  **(d) A documentation task CAN have a gate, and this one did.** "Tests: none (documentation)" left the eight SQL recipes unverified, and a recipe naming a column that does not exist is exactly the failure the doc-count-string rule exists to prevent. So every block was extracted and run through **`runSelect()` — the same function `x_query` calls** — against a freshly migrated DB (`SQLITE_PATH=<tmp>` so `inspect.ts`'s readonly connection and the primary agree; see the standing gotcha), which proves both that they parse and that every identifier is real, and costs nothing. Copy this for any future skill/doc that ships SQL. Throwaway script, not committed.
-
-**All 184 earlier D-entries are in `STATE-ARCHIVE.md`** — grep by task id or by the filename the lane built.
-Waves 0–3, the Wave-4 closer D127, the registry lane D128–D133, the polish lane D134–D140, the GT/SC lanes,
-the whole JD lane (D149/D160/D162–D171) at JD.8, the HM lane (D175/D178/D180/D182) at HM.5, and the RC lane
-(D176/D177/D179/D181/D183/D184) at RC.5. What stays below is only what is **standing** — true of the repo
-regardless of what you are building — plus D171 and D184, whose findings bind any future smoke or docs pass.
+**Every lane's register is in `STATE-ARCHIVE.md`** — grep by task id or by the filename the lane built. Waves 0–3,
+the Wave-4 closer D127, the registry lane D128–D133, the polish lane D134–D140, the GT/SC lanes, the whole JD lane
+(D149/D160/D162–D171) at JD.8, the HM lane (D175/D178/D180/D182) at HM.5, the RC lane (D176/D177/D179/D181/D183/D184)
+at RC.5, and **the whole RA lane (D188–D194) at RA.8**. What stays below is only what is **standing** — true of the
+repo regardless of what you are building — plus D171 and D184, whose findings bind any future smoke or docs pass.
 
 - **D7** (standing): all NEW UI from Wave 1 on uses UI.10 primitives + `--strat-*` tokens; Wave-5 polish passes touch only pre-masterplan tabs.
 - **D97** (standing, bookkeeping): **the ledger records the commit SUBJECT LINE, not a sha.** Three tasks in a row wasted a Step-0 investigation proving a recorded sha was an amend-orphan, and every time the resolution was "the subject line is the identity". A sha can only be written into the commit that changes it by amending, which changes it again — the churn is structural, not carelessness. Ledger entries carry the subject line + the PARENT sha (stable, already in history), the codemap header stamps `<parent>+<TASK>`, and Step 0 is `git log -1 --format='%h %s'`.
 - **D113(d)/(e)** (GR.10, standing — binds every future smoke; parts (a)–(c) are in the archive): **(d) A smoke over a surface whose READS WRITE cannot follow `smoke-passive-harvest.ts`.** D98c's namespace-then-delete rule assumes every write is attributable; two Guardrails writes are GLOBAL (a complete-run reconcile marks EVERY unseen live handle `gone`; `GET /following/queue` releases rows at read time). So `smoke-guardrails.ts` additionally **snapshots and restores** every foreign `following.status` (from the success path AND from `fail()`), plus `commitments` and the seeded `streaks`/`digests` keys — and, because its fixtures sit inside today's window while `GET /x/brief` writes the C9 diary, it closes by **re-reading the brief** so the diary describes clean data rather than deleted fixtures. Copy this, not D98c alone. **(e) A fixture fact the plan's sequence hides:** "unseen" in the reconcile is `last_run_id != runId` — per **run**, not per batch, so proving `gone`/`confirmed` needs TWO runs.
 - **D171** (JD.8, standing — binds every future closing docs-sync and every future smoke; full four-part text in the archive): **the two halves that outlived their lane.** **(a) A task whose output is a PROMPT or a SELECTION RULE changes what every draft says, and belongs in the tab doc of the surface that RENDERS it** — "which tab does the user see this on" always has an answer, even when "which tab did I edit" does not. GT.9 wrote this as a note and JD.1 shipped invisible three tasks later, which is how a note fails; RC.1 is what it looks like when it works (a prompt task with no tab of its own wrote its paragraph into `docs/settings-tab.md`, where the Prompts subtab renders it). **(c) `--live` is not a style choice: ask what a $0 run cannot claim, and if that list is empty ship no flag.** Also (b): a phase line goes in `PLAN.md`'s blockquote block above §"Product, in one paragraph each", never §"Phased build", which is the original five-phase build-out and takes no new phases.
-- **D184** (RC.5, standing — the masterplan's last entry; full text in the archive): **two findings that bind any future work.** **(a) A BEST-EFFORT write must be verified by a READ-BACK, and the failure message must name the real cause.** `persistRadarDrafts` swallows insert failures by design (§7.8), so a missing column is **zero rows**, not a throw — a smoke asserting "the call didn't throw" is green on an unmigrated database. Generalizes to every `safeLog…`/`persist…` side hook. **(b) State the claim a smoke cannot make, in its header.** RC.5 could not prove "a ⊕ pin never reaches the curate request" — that is the panel's `partitionForCurate`, and `scripts/` may not import the extension build (§5) — so it says so and proves the two halves the route layer owns instead. A silently dropped done-when reads as coverage the script does not have.
+- **D184** (RC.5, standing — Wave 7's last entry; full text in the archive): **two findings that bind any future work.** **(a) A BEST-EFFORT write must be verified by a READ-BACK, and the failure message must name the real cause.** `persistRadarDrafts` swallows insert failures by design (§7.8), so a missing column is **zero rows**, not a throw — a smoke asserting "the call didn't throw" is green on an unmigrated database. Generalizes to every `safeLog…`/`persist…` side hook. **(b) State the claim a smoke cannot make, in its header.** RC.5 could not prove "a ⊕ pin never reaches the curate request" — that is the panel's `partitionForCurate`, and `scripts/` may not import the extension build (§5) — so it says so and proves the two halves the route layer owns instead. A silently dropped done-when reads as coverage the script does not have.
+- **D195** (RA.8, standing — the masterplan's last entry; three divergences from the closing task's own plan text, and each one generalizes). **(a) A smoke that needs a config must BRING one, not trust the operator's.** The plan's "mount `settings` for the admitted-flip check" left open *what* to flip; against the real DB the live sweep filters are whatever the operator last tuned, so fixtures built to "clear the gates" are only deterministic by luck. `smoke-radar-access.ts` instead PATCHes the **eight admission knobs** to a known wide-open set (asserting all three rows admitted), then moves **one** knob and asserts two verdicts change — which is a stronger claim than the plan's, because the only variable is the knob. Both the patch and the row deletes snapshot-restore by `isDefault` from `fail()` as well as the success path (D113(d)). **(b) "Confirm the counts are still right rather than assuming" found them wrong, and a closing task fixes what it finds.** `docs/settings-tab.md` claimed 67 knobs / 16 groups / 32 mirrored / 16 prompts against a registry of **61 / 15 / 31 / 17** — the 2026-08-12 read deletion had taken the whole **Mentions** group and four of five **Workers** knobs with the billed reads they configured, and nothing asserts any of those strings. RA.1 had recorded it as "not RA's to fix", which was right while a next task existed; with the masterplan closing there is no next task, and a wrong number left behind with a note pointing at nobody is worse than a five-minute edit. **Generalize: a "not mine to fix" deferral is a bet that someone comes after you. The task that closes the lane is the one that loses that bet.** **(c) The browser end-to-end went to `VERIFY-DEBT.md` (`0w`) rather than being done, and the reason is structural rather than scheduling.** The RA.2 gotcha said "do them at RA.8 rather than filing a sixth debt entry" — but the panel is a Chrome *side panel*, a page tab cannot read another extension's `chrome.storage.local`, and the service worker has no console a coding session can reach, so RA.8 could not have paid them however long it sat. Filing beats claiming: `0w` names the five checks and the one open question (whether the angle-tab strip renders a **scoreless** composed variant gracefully) so the human at the browser can walk them in one sitting.
 
 ## Gotchas log
 
 Things the next implementer must know that aren't obvious from the code. Append-only, one line each, newest last.
 
-**All 200+ closed-lane gotchas are in `STATE-ARCHIVE.md`** — grep it by task id or filename before touching
-a file a closed lane built (Wave 6's at JD.8, the HM lane's at HM.5, the RC lane's at RC.5). What stays
-below is the standing set: test/lint/typecheck traps that bite any task, and the Wave-3 carry-forward, whose
-four items are about how this repo's tests, docs and fixtures work rather than about any lane.
+**Every closed lane's gotchas are in `STATE-ARCHIVE.md`** — grep it by task id or filename before touching a file a
+closed lane built (Wave 6's at JD.8, the HM lane's at HM.5, the RC lane's at RC.5, **the RA lane's 22 at RA.8**).
+What stays below is the standing set: test/lint/typecheck traps that bite any task, the Wave-3 carry-forward, and
+the three RA findings that are about the repo rather than about the Radar.
 **Browser-verification debt is not here — it is `VERIFY-DEBT.md`**; a debt parked among facts reads as a fact.
 
-- **RA.1 — `docs/settings-tab.md`'s three count strings are STALE, and nothing asserts them.** The doc says
-  "**67 knobs in 16 groups**" and "**16 prompts**" (×2); the running registry says **61 knobs / 15 groups /
-  31 mirrored** and **17 prompt keys** (`reply-batch-network` is the 17th). RA.1 recounted rather than
-  carried forward, and the numbers in the `current state` line above are the recount. **RA touches none of
-  them** (D187 — the sighting feed's switch is a browser toggle), so this is not RA's to fix; but the next
-  task that "bumps the three count strings" must bump them *from the truth*, not from the doc, or it ships
-  a fourth wrong number. Same lesson as the MCP doc being 5 tools stale for four phases.
-- **RA.1 — the sighting ingest's two twins live on opposite sides of the wire and nothing links them in
-  code.** `SIGHTING_RECAPTURE_MS` (`src/x/routes/radar.ts`) mirrors `RADAR_RESEND_MS`
-  (`extension/src/content.ts:3108`) at 60s, *including* the "unless the band changed" clause. If RA.2 gives
-  the background its own throttle, it must be the same window: shorter on the client and the wire carries
-  rows the server can only count as `skippedRecent`; longer and the corpus silently loses re-sightings.
-  Both files say so in a comment — that comment is the only link.
 - **Settings types are extension-local mirrors.** The extension MUST NOT import `src/x/settings/registry.ts` (§5 build-isolation); it mirrors the `GET /x/settings` JSON in `extension/src/shared/types.ts`, and a new server-side `SettingDef` field is hand-synced there. **The same wall bites `scripts/`, in the other direction:** a smoke may not import the extension build, which is why `smoke-humanizer.ts` keeps a local `mulberry32` and `smoke-radar-curate.ts` cannot test `partitionForCurate`. (Full block in the archive; grep `Settings types are`.)
 - **`exactOptionalPropertyTypes` pass-through pattern (UI.10):** primitives forwarding a maybe-undefined optional (`Slider.unit`, `SettingRow.onReset`, `GearPopover.onReset`/`label`) type the prop as `T | undefined` explicitly — else TS rejects `prop={maybeUndefined}`. Reuse this for new primitives that relay optionals. Root tsconfig also has **`noUncheckedIndexedAccess`**, so `arr[0]` is `T | undefined` — name your fixtures as consts rather than indexing them in a script.
 - **`inspect.test.ts` fails 2/2 under bare `bun test`, GREEN under `bun run test`** (the canonical `SQLITE_PATH=:memory: bun test`). `src/db/client.ts` defaults to `:memory:` when `NODE_ENV==='test'`, but `src/x/data/inspect.ts`'s readonly connection still defaults to `./stratus.db` when `SQLITE_PATH` is unset — the primary writes memory, the readonly reads the file, seeded rows are invisible. **Always gate with `bun run test`.** One-line fix for a future data-core task: make `inspect.ts` honor the same `NODE_ENV==='test'` default (or have `client.ts` `process.env.SQLITE_PATH ??=` set it so both agree).
@@ -202,97 +108,27 @@ four items are about how this repo's tests, docs and fixtures work rather than a
 - **NT.1: extension typecheck does NOT cover `*.test.ts`** — `extension/tsconfig.app.json` has `"exclude": ["src/**/*.test.ts"]`, and root `tsconfig.json` only includes `src/**/*` + `scripts/**/*` + `drizzle.config.ts`. So an extension test file is checked by **`bun run test` alone**; a type error in one is invisible to both typechecks.
 - **NT.7: `app.request(...)` is typed `Response | Promise<Response>`.** A helper declared `function f(): Promise<Response> { return app.request(...) }` fails root typecheck; make the helper `async`. `bun run typecheck` covers `scripts/**`, so this bites in smoke scripts, not in route suites (which `await` inline).
 - **CLAUDE.md was slimmed to guardrails-only (2026-07-23, out-of-skill docs refactor).** The full phase-entry ledger moved **verbatim** to `docs/PHASE-HISTORY.md`. **Every docs-sync task (MASTERPLAN global rule 6, codemap §7 rule 29) appends its phase entry to `docs/PHASE-HISTORY.md`, NOT CLAUDE.md**; CLAUDE.md changes only when a guardrail (invariant, workflow, stack quirk) changes. Plan text still saying "CLAUDE.md phase entry" means the history file.
-- **Wave-3 carry-forward — the four repo-wide facts (everything else HV/GR is in the archive):** **(1) MCP tool count is asserted exactly.** `src/mcp.test.ts` asserts **23**; every future tool bumps that number *and* `docs/s2-mcp-server.md`'s three counts (total / curated tier / write tier) **in the same commit** — that doc was silently 5 tools stale for four phases. **(2) Docs assert user-visible strings.** `docs/harvest-tab.md`, `docs/playbook-tab.md`, `docs/people-tab.md`, `docs/today-tab.md`, `docs/composer-tab.md`, `docs/replies-tab.md`, `docs/radar-tab.md` and `docs/settings-tab.md` quote real copy — **reword a quoted string and you owe the doc in the same commit** (`docs/today-tab.md` is numbered §1–§18, so an inserted card renumbers rather than appends). **(3) Real-DB fixture rules that outlive their lane:** a seeded `posts_published` row is written **`retired: true`** (NT.7 — otherwise it is a candidate for the daily *billed* pass), a `following` fixture needs a `following_runs` row first (`last_run_id` is a notNull FK), people-layer handles must be **≤15 chars** (longer ones are silently skipped and the assertions go vacuous), and any suite touching `scheduled_posts`/`posts_published` inside the monitor's windows must delete its rows in `afterAll` — `monitor.test.ts` asserts `clusterCount === baseline + 1` and a leaked pending pair breaks a different file. **(4) Five reads WRITE and none of them may be polled:** `/radar/drafts` (48h expiry), `/following/queue` (release + revoke), `/x/goals`, `/x/brief` and `/x/digest` (all three settle `active → achieved|missed`). A3.8's Today card and A3.14's week board both sit on `/x/brief` — a refresh loop there silently advances goal statuses.
+- **Wave-3 carry-forward — the four repo-wide facts (everything else HV/GR is in the archive):** **(1) MCP tool count is asserted exactly.** `src/mcp.test.ts` asserts **28** (RA.4 last moved it); every future tool bumps that number *and* the **six** unasserted strings in `docs/s2-mcp-server.md` — see the `current state` line above for the full six-plus-three move — **in the same commit**. That doc was silently 5 tools stale for four phases, and its `### <tier> (N)` heading was found stale again at RA.3. **(2) Docs assert user-visible strings.** `docs/harvest-tab.md`, `docs/playbook-tab.md`, `docs/people-tab.md`, `docs/today-tab.md`, `docs/composer-tab.md`, `docs/replies-tab.md`, `docs/radar-tab.md` and `docs/settings-tab.md` quote real copy — **reword a quoted string and you owe the doc in the same commit** (`docs/today-tab.md` is numbered §1–§18, so an inserted card renumbers rather than appends). **(3) Real-DB fixture rules that outlive their lane:** a seeded `posts_published` row is written **`retired: true`** (NT.7 — otherwise it is a candidate for the daily *billed* pass), a `following` fixture needs a `following_runs` row first (`last_run_id` is a notNull FK), people-layer handles must be **≤15 chars** (longer ones are silently skipped and the assertions go vacuous), and any suite touching `scheduled_posts`/`posts_published` inside the monitor's windows must delete its rows in `afterAll` — `monitor.test.ts` asserts `clusterCount === baseline + 1` and a leaked pending pair breaks a different file. **(4) Five reads WRITE and none of them may be polled:** `/radar/drafts` (48h expiry), `/following/queue` (release + revoke), `/x/goals`, `/x/brief` and `/x/digest` (all three settle `active → achieved|missed`). A3.8's Today card and A3.14's week board both sit on `/x/brief` — a refresh loop there silently advances goal statuses.
 
-- **RA.2 — the 60 s window now has THREE copies, and the middle one is the non-obvious one.**
-  `RADAR_RESEND_MS` (`content.ts`) throttles ONE page's captures; `RADAR_INGEST_RESEND_MS`
-  (`shared/radarIngest.ts`) throttles what reaches the wire from EVERY tab at once — two x.com tabs hold
-  two independent content-side maps and a reload empties one, so the background's map is not redundant
-  with the page's; `SIGHTING_RECAPTURE_MS` (`routes/radar.ts`) has the last word. All three carry the
-  same "unless the band changed" clause, and all three are 60 s **by agreement, not by construction** —
-  each file says so in a comment, and that comment is still the only link.
-- **RA.2 — only PAGE reports are mirrored, and that is load-bearing for RA.5.** `shipSightings` hangs off
-  the `isRadarReport` branch's success arm, so a sighting rehydrated out of `radar_drafts`
-  (`rehydrateSightings`) is never shipped back to the server that just served it, and a failed buffer
-  write mirrors nothing. RA.5's **Fetch drafts** reuses `stratus/radar-rehydrate`, which is a different
-  branch — **do not "unify" the two by moving the ship hook into `addSightings`**, or MCP-composed drafts
-  will loop back into `radar_sightings` as fake sightings with the wrong `source_path`.
-- **RA.2 — three `Settings` object literals live OUTSIDE `sidepanel/storage.ts`** and a tenth field has
-  to reach all of them: `Settings.tsx`'s `currentSettings` memo (**and its deps array**), `Settings.tsx`'s
-  `onSave` `next`, and `sidepanel/storage.test.ts`'s round-trip blob. Typecheck catches every one, so this
-  is a "why did tsc fail" note, not a trap — but the deps array is the one that type-checks green while
-  going stale, so add the field there in the same edit.
-- **RA.2 — what is still BROWSER-UNVERIFIED, and it is RA.8's done-when #3/#5, not a new debt entry.**
-  Everything RA.2 shipped is gated by unit tests and a build; nothing proves rows actually land with the
-  right `source_path` from `/home`, `/search` and a list page, that a ⊕ pin lands one, that
-  `radarSightingSync: false` stops the POSTs, or that an unconfigured server stays silent. The plan
-  already owns those as RA.8's checks — do them there rather than filing a sixth `VERIFY-DEBT` entry.
-
-- **RA.3 — `docs/s2-mcp-server.md` has FOUR count strings, not three, and the fourth is the one that rots.**
-  The prose total (§intro), the `## The tools` heading, the end-to-end verification line — and
-  **`### Curated tier (N)`**, which nothing asserts and which no previous MCP task is recorded as
-  having touched. RA.3 moved it 17 → 19 along with 25 → 27 in the other three. RA.4 owes all four.
-- **RA.3 — `admitted` is judged at the LAST SIGHTING's age, and that is load-bearing, not incidental.**
-  Judging at `now` makes every row older than `maxAgeMin` (default 60 min) read `false`, so the whole
-  field would say nothing about anything but the last hour. It is the `deriveTimelineBucket` reading
-  (playbook.ts) — **minus** that function's `verifiedOnly: false` override, which exists only because
-  the passive corpus never recorded a badge; `radar_sightings.verified` IS stored, which is the whole
-  reason RA's verdict is exact rather than approximate. A `corpus.test.ts` case pins it (a row last
-  seen 5 days ago with a 12-minute age still admits). Do not "fix" it to `now`.
-- **RA.3 — the two unknowns in `passesSweep` resolve in OPPOSITE directions on purpose.**
-  Unknown `verified` REFUSES (the module's own gate rule: a drifted badge selector must surface as an
-  empty queue, not as a filter that silently stopped filtering). Unknown `likes` reads as **0**, the
-  lenient direction — because that is what the page itself passes (`cap.likes` is 0 when X renders no
-  like count), and failing on unknown there would filter out exactly the quiet posts the sweep exists
-  to find. The test asserts a `likes: 25` case beside it so the ceiling is proved non-vacuous.
-- **RA.3 — both sighting GETs write NOTHING, and one line is all it would take to break that.**
-  `GET /radar/drafts` flips stale `ready` rows to `expired` on the way (lazy TTL). The sighting reads
-  deliberately do not: an agent paging the corpus must not advance the panel's queue. The visible cost
-  is that a stale `ready` draft still reads `ready` in `GET /radar/sightings/:tweetId` until a panel
-  read flips it — accepted, and asserted by a 100h-old fixture. Same property `GET /radar/placed-today`
-  is built on, and the same reason: a route that writes cannot be paged.
-- **RA.3 — the ordering fixtures are built so the three orders are three DIFFERENT sequences.**
-  With the obvious fixture set (`views` roughly tracking `vpm`) `order=views` and `order=vpm` return
-  the same list and the parameter is untested by construction. `routes/radar.test.ts`'s RA.3 block sets
-  views/age/last-seen so all three rankings differ. Keep that property if you add a fixture.
-- **RA.4 — the compose route's `model` string is a CONTRACT, not a label, and RA.7/RA.8 both depend on
-  it.** `COMPOSE_MODEL = 'claude-code-mcp'` is copied onto `reply_drafts.model` by the confirm route, so
-  every "did Claude's drafting beat Grok's" split is `WHERE model = 'claude-code-mcp'` over `reply_drafts`
-  → outcomes. Change the string and the cohort silently starts over at n=0 with no error anywhere. It is
-  asserted in `routes/radar.test.ts` (both at compose and after confirm) and in `src/mcp.test.ts`.
-- **RA.4 — a composed draft makes its own sighting read `worked: true` immediately, by design.** RA.3's
-  `worked` counts a `radar_drafts` row of ANY status, so the moment `x_radar_draft_reply` returns, that
-  tweet leaves the `worked=false` queue. That is correct — the composing IS the work — but it means an
-  analyst session cannot use `worked=false` to re-find what it drafted five minutes ago; use
-  `x_radar_tweet` or `GET /radar/drafts`. Worth stating in the RA.7 skill so it doesn't read as a bug.
-- **RA.4 — `GET /radar/drafts?tweetId=` is the surface that proves a composed draft is real, and it is
-  not the one the route returns.** The 201 body is the inserted row; the panel rehydrates through
-  `GET /radar/drafts`, which applies the lazy TTL flip and its own status defaulting. The happy-path test
-  re-reads through it for exactly that reason. RA.5's button and RA.8's browser check should assert the
-  same way — a 201 is not evidence the Radar shows anything.
-- **RA.5 — "without a remount" is free, and knowing why keeps a later task from re-inventing it.** The button writes no panel state at all: the background is the single writer (§7.24), and `useRadarSightings`'s `chrome.storage.onChanged` listener repaints the queue from the buffer write. Anything that tries to `setSightings` from a fetch response is fighting that listener.
-- **RA.5 — the plan's "Read first" line numbers for `background.ts` are stale** (it says `1020–1028`). The `stratus/radar-rehydrate` handler is at **`:1121`**, `rehydrateFromServer` at **`:673`**, `rehydrateSightings` above it. `Radar.tsx`'s numbers were close enough. Grep, don't seek.
-- **RA.5 — a dismissed tweet's composed draft still never comes back, and that is deliberate.** `rehydrateSightings` filters `gone` before both the enter and the attach branches, so if the operator cleared the queue (or a drafting pass emptied it) before the session composed, **Fetch drafts** reports `up to date` and the draft is only reachable through `GET /radar/drafts`. A tombstone lives 24 h (`RADAR_DISMISSED_TTL_MS`). RA.7's skill should tell the operator to compose against a queue they have not yet cleared; RA.8's browser check should not clear first.
-- **RA.6 — the passive `/home` corpus has a 2026-07-27 → 2026-08-17 HOLE, and every reader of it must be
-  read with that in mind.** 799 `mode='timeline'` rows across four days (Jul 24–27), then nothing for 21
-  days, then live again. **`GET /harvest/affinity`'s "distinct days" and the Playbook's Timeline funnel are
-  therefore computed over a 4-day + a resumed window, not a continuous month** — the affinity `minDays 3`
-  floor in particular is nearly unreachable until the new stretch is a week deep. **RA.7's skill must not
-  present the passive corpus as "what the algorithm fed me lately"** without saying so; that half of the
-  Radar story only becomes trustworthy again around late August. `x_query` the one-liner in
-  `docs/harvest-tab.md` before quoting either reader.
-- **RA.6 — `chrome.storage.local` is unreachable from every tool in this session, so a toggle question goes
-  to the operator.** The stratus panel is a Chrome *side panel*, not a tab, and a page tab cannot read
-  another extension's storage — the claude-in-chrome MCP drives tabs only, and the extension service worker
-  has no console you can reach from here. `VERIFY-DEBT.md`'s browser items have the same ceiling: what they
-  actually need is the human at the browser, not a session with Chrome tools loaded.
-- **RA.7 — `.claude/skills/radar-analyst/` is now a RENAME-COUPLED surface, like the quoted strings in `docs/*.md`.** It names tools (`x_radar`, `x_radar_tweet`, `x_radar_draft_reply`, `x_niche`, `x_me`, `x_playbook`, `x_person`, `x_settings`, `x_query`, `x_cost`), routes (the three `/x/radar/…` ones, `/cost/daily`), response fields (`summary.unworkedAdmitted`, `sweep.maxAgeMin`, `sourcePath`, `ageMinAtLastSeen`, `truncated`/`scanned`), a storage key (`radarSightingSync`), the model string `claude-code-mcp`, the panel's three note strings (`N new drafts` / `up to date` / `Fetch failed — the queue is unchanged`) and ~20 real column names. Nothing asserts any of it. A task renaming any of them owes this skill in the same commit; the cheap check for the SQL half is D194d's `runSelect()` sweep.
-- **RA.7 — the skill deliberately does NOT mention coach scores on the angle tabs.** `docs/radar-tab.md` documents a per-variant score on drafted rows; a composed variant is `{text, angle}` only, and whether the tab strip renders scoreless variants gracefully was **not verified** (it is a panel-render question, and RA.8's browser check is where it can be seen). Saying nothing was the honest option — if the browser check shows a gap, that is a finding about `variantChips`, not about the skill's copy.
-- **RA.3 — `worked` is deliberately asymmetric across its two halves.** ANY `radar_drafts` status
-  counts (an expired draft still means I worked it), but `reply_drafts` counts **only `status='posted'`**
-  — a `copied` draft never reached anyone. Both halves are pinned by their own fixture. RA.4's composed
-  drafts will therefore read `worked: true` the instant they are written, which is correct: the
-  composing *is* the work.
+- **RA.6 — a smoke script casts `await res.json()`, so NOTHING type-checks the field names it asserts.**
+  `scripts/smoke-passive-harvest.ts` was red for a week because `db96a4c` renamed `FunnelCell.band` → `bucket`;
+  no typecheck, test or lint covers a smoke's assertions about a response shape. **Renaming a field on a response
+  any smoke reads is a two-file change** — `grep -rn '<oldField>' scripts/` before landing it — and **a red smoke
+  is evidence about the SCRIPT until you have located the assertion.** (Also in codemap §7 as the RA.6 addendum.)
+- **RA.7 — `.claude/skills/radar-analyst/` is a RENAME-COUPLED surface, like the quoted strings in `docs/*.md`.**
+  It names ten MCP tools, four routes, a dozen response fields, a storage key (`radarSightingSync`), the model
+  string `claude-code-mcp`, the panel's three note strings and ~20 real column names. Nothing asserts any of it.
+  A task renaming any of them owes this skill in the same commit; the cheap check for the SQL half is D194d's
+  `runSelect()` sweep. Same rule for `.claude/skills/stratus/`.
+- **RA.7/D194d — a documentation task CAN have a gate, and a doc shipping SQL should have one.** Extract every
+  block and run it through **`runSelect()`** — the same function `x_query` calls — against a freshly migrated DB
+  (`SQLITE_PATH=<tmp>` so `inspect.ts`'s readonly connection and the primary agree; see the `inspect.test.ts`
+  gotcha above). It proves the recipes parse AND that every identifier is real, and costs nothing. Throwaway
+  script, not committed.
+- **RA.6 — `chrome.storage.local` is unreachable from every tool in a coding session, so a toggle question goes to
+  the operator.** The stratus panel is a Chrome *side panel*, not a tab; a page tab cannot read another extension's
+  storage, the claude-in-chrome MCP drives tabs only, and the extension service worker has no console you can reach
+  from here. Every `VERIFY-DEBT.md` browser item has the same ceiling: what they need is the human at the browser.
 
 ## Planning-error log
 

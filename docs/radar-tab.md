@@ -139,6 +139,7 @@ A **preset** is all eleven filters saved under a name, so a hunt you have tuned 
 - **Draft replies (N)** — makes **one** Grok call for every un-drafted tweet in the queue (**20 at a time by default**). Each post is resolved into its own room and receives that room's angle set: 2 or 3 variants in English, or one `extends` variant when the batch resolves to another language. The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded — and **clears everything it didn't draft** (see below). In the **Cannon** view the same button drafts the cannon rows instead, and consumes only those.
 - **Curate & draft (N)** — the same thing, but it grades first. See below. **These two are the only buttons on the tab that spend money.** It renders in the **Queue view only** — see *The Cannon*, below, for why.
 - **Clear** — dismisses everything currently shown in the view you're looking at. In the Cannon view that means exactly the rows on screen, never the ones the 30-minute cutoff is hiding. Dismissed tweets don't re-enter the queue for 24 hours, even though the page keeps re-sighting them while they're on screen — and a ⊕ pin puts one back immediately if you change your mind.
+- **Fetch drafts** — pulls replies that were drafted **outside this browser** into the queue: a Claude Code session writing through `x_radar_draft_reply` (see *Drafting from a terminal session*, below). **$0**, and it is never polled — press it when you know something is waiting. The note line answers `N new drafts`, `up to date`, or `Fetch failed — the queue is unchanged`. It is disabled while a drafting pass is running, because the note line has one owner and a fetch report landing mid-batch would overwrite what the click that spent money is reporting.
 - **⚙** (next to the header buttons) — the batch sizes. Three numbers live in there: the radar's own **draft cap**, the **batch cap the server enforces**, and the **curated batch size**. A plain click sends the *lower of the first two*, so raising one past the other can't buy you a refused click; the third sizes a curated pass and is itself capped by the server's batch cap. What lands on the radar at all isn't here — that's the sweep ⚙ next to **Start sweep**. (⊕ pins and fresh posts by your circle get in regardless of the sweep filters — see the three ways in, above.)
 
 ### A pass empties the queue
@@ -150,6 +151,33 @@ Cleared rows are dismissed the same way the ✕ dismisses, so they don't re-ente
 **A failed call clears nothing.** If the drafting call itself fails — server unreachable, a 500, a bad token — the queue is untouched and the note ends in `· queue kept`. A dead call is not a verdict on any tweet, and it's the one failure on this tab that couldn't be undone. Retry is one click.
 
 **In the Cannon view a pass consumes only the cannon rows**, never the queue rows the view isn't showing.
+
+---
+
+## The queue also lives on the server — and a terminal session can draft into it
+
+Since **2026-08-17** every sighting the Radar queues is *also* mirrored to stratus at capture time — sweep rows, cannon rows, circle rows and your ⊕ pins alike — along with **the page it came from** (`/home`, `/search`, a list, a profile). It is the same $0 DOM read the queue already did; nothing extra is fetched and nothing is charged.
+
+Two things change because of it:
+
+- **What your sweep admitted outlives the browser.** The in-panel queue still ages out after 24 hours and still holds 500 rows; the server copy is one row per tweet, kept **60 days**, and it is what lets you ask *"what did I sweep past on Tuesday and never answer"* long after the card is gone.
+- **A Claude Code session can read that queue and write replies back into it.** Three MCP tools do it (see **[the MCP server](./s2-mcp-server.md)**): `x_radar` lists what your sweep admitted — with `admitted` **recomputed against today's sweep filters**, so changing a preset legitimately re-reads history — `x_radar_tweet` shows one tweet's whole history, and `x_radar_draft_reply` composes 2–3 angle variants straight into the Radar queue. The `radar-analyst` skill is the protocol for doing it well.
+
+### Drafting from a terminal session
+
+1. Sweep as usual, so the tweets are in the queue (**don't Clear first** — a dismissed tweet's composed draft is not re-entered, and you'd have to go looking for it in the drafts list).
+2. In a Claude Code session, ask for a Radar pass. It reads the corpus, picks the rows worth answering, and composes variants for each.
+3. Press **Fetch drafts**. The rows turn reply-ready in place — same card, same angle tabs, same click-to-copy hand-off — without a remount.
+4. Pick an angle, paste on X. Exactly the manual paste every other path here ends in: **nothing about this posts for you.**
+
+**It costs stratus nothing.** The drafting happens in *your* Claude Code session, so no Grok call is made and no cost row is written — a terminal-drafted reply is genuinely $0 on this side. Those drafts are tagged `claude-code-mcp` in the database, which is what keeps them separable from Grok batch drafts when you later ask which cohort earned more.
+
+**Two behaviours worth knowing before they surprise you:**
+
+- **A tweet reads as *worked* the moment a draft is composed for it**, not when you paste. That is correct — the composing *is* the work — but it means a session can't use "unworked" to re-find what it drafted five minutes ago.
+- **Composing again expires the previous draft** for that tweet, so the newest one is always what the queue shows. Two writers (Grok's batch and a terminal session) would otherwise race over which draft you see.
+
+**Turning the mirror off** is one switch in the side panel's own **Settings → Behavior & privacy**: *Mirror Radar sightings to stratus (default on, $0)*. It is a browser toggle rather than a server knob — the human at the browser owns it — and it ships **on**. Flip it off and capture, ranking, drafting and the Cannon all behave exactly as before; only the server copy (and therefore the three MCP tools) goes quiet.
 
 ---
 
@@ -399,6 +427,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **[Today](./today-tab.md)** — the rest of the daily loop: quests, follow-ups, conversations, quota.
 - **[Replies](./replies-tab.md)** — Reply Master (one tweet, deeper context) and the canned reply lists.
 - **[Playbook](./playbook-tab.md)** — which angles and which situations actually earn views and profile visits.
+- **[The MCP server](./s2-mcp-server.md)** — `x_radar`, `x_radar_tweet` and `x_radar_draft_reply`: reading the sighting corpus and composing replies into this queue from a Claude Code session.
 - **[On x.com itself](./s6-augmented-ui.md)** — the ⊕ button, the band border, the timeline chips and the context panel.
 - **[Settings → Tuning](./settings-tab.md)** — the eleven **Sweep** filters (the same ones the ⚙ here edits), the two batch caps, the curated batch size and the four **Cannon** knobs. The reply-band thresholds are **[no longer there](./settings-tab.md#the-reply-band-left-this-tab)**.
 - **[Settings → Prompts](./settings-tab.md#prompts-editor-the-prompts-subtab)** — `reply curation`, the topic-agnostic hook rubric that decides what counts as filler and returns each post's room.
