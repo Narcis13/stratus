@@ -36,7 +36,7 @@ free to the operator.
 
 | Tool | Use |
 |---|---|
-| `x_radar` | The corpus, and the whole input. Filters: `days` (default 7, max 60), `band`, `handle`, `admitted`, `worked`, `order` (`vpm`/`views`/`lastSeen`), `limit` (default 50, max 200). |
+| `x_radar` | The corpus, and the whole input. Filters: `queue` (the live panel queue — the default read), `days` (default 7, max 60), `band`, `handle`, `admitted`, `worked`, `order` (`vpm`/`views`/`lastSeen`), `limit` (default 50, max 200). |
 | `x_niche` | Read once per pass. The operator's material, for the minority of posts that earn it. |
 | `x_radar_draft_reply` | Write 1–3 angle variants into the queue as a `ready` draft. The only write. |
 
@@ -57,7 +57,7 @@ If this session has no `stratus` MCP tools connected, the same three routes are
 reachable over HTTP with the stratus skill's helper:
 
 ```bash
-bash .claude/skills/stratus/scripts/api.sh GET  "/x/radar/sightings?days=3&worked=false"
+bash .claude/skills/stratus/scripts/api.sh GET  "/x/radar/sightings?queue=true"
 bash .claude/skills/stratus/scripts/api.sh GET  "/x/radar/sightings/<tweetId>"
 bash .claude/skills/stratus/scripts/api.sh POST "/x/radar/drafts/compose" '{"tweetId":"…","variants":[{"text":"…","angle":"extends"}]}'
 ```
@@ -66,15 +66,29 @@ bash .claude/skills/stratus/scripts/api.sh POST "/x/radar/drafts/compose" '{"twe
 
 **Two calls before you write, and then the queue.**
 
-1. **`x_radar`** — one call is the whole corpus, and it is the input. Filter
-   `worked: false` and the operator's window (`days: 1` for "today", 3 for a
-   working session, 7+ for a review), and raise `limit` to cover the window when
-   the queue is large (default 50, max 200). The response carries `summary` over
-   the **entire filtered population**, while `sightings[]` is only the `limit`
-   slice: `count < summary.total` means the *list* was cut, not the answer. If
+1. **`x_radar({ queue: true })`** — the default read, and one call is the whole
+   input: **the tweets in the operator's panel right now** — seen in the last
+   24 h, not dismissed, not worked. It answers *"what is still open in front of
+   me"*, which is the question a drafting pass is for. `queue: true` **ignores
+   `days`** (the window is the panel's own TTL, and the response echoes
+   `days: 1` — the window actually used, not the parameter that was dropped) and
+   refuses `worked: true` (`invalid_queue_combo`); `admitted`, `band`, `handle`,
+   `order` and `limit` all still combine. Raise `limit` when the queue is large
+   (default 50, max 200).
+
+   **The review read is a different question**: `days` + `worked: false` answers
+   *"what did my sweep admit over this window that I never answered"* — the
+   60-day corpus, including rows the operator dismissed in the panel and rows
+   that aged out of the 24 h queue. Use it when they ask about the week or the
+   backlog, never as the input to a drafting pass.
+
+   Either way the response carries `summary` over the **entire filtered
+   population**, while `sightings[]` is only the `limit` slice:
+   `count < summary.total` means the *list* was cut, not the answer. If
    `truncated` is true the SQL scan itself hit its cap — narrow `days` or `handle`
-   rather than quoting totals. The row already carries `drafted` / `replied` and
-   the `stage` / `isTarget` join, so no second call is needed to know either.
+   rather than quoting totals. The row already carries `drafted` / `replied`,
+   `dismissed`, and the `stage` / `isTarget` join, so no second call is needed to
+   know any of them.
 2. **`x_niche`** — once, at the top of the pass. Not because every reply uses it
    (most use none of it) but because the few posts genuinely about building, code,
    AI or solo business are the ones where the operator's own material is the edge,
@@ -101,23 +115,19 @@ from the sighting row and the tweet text alone.
 viral. A 200k-view platitude sitting under 1,200 replies is a worse target than a
 12k-view post with 9 replies still climbing.
 
-### Stage 1 — drop before ranking
+### Stage 1 — the one hard drop
 
-- **Already worked.** Filter it in the `x_radar` call (`worked: false`) rather
-  than by hand.
-- **Aged out.** `postedAt` older than the echoed `sweep.maxAgeMin` by hours means
-  the reply lands under a dead post. A composed draft resurrects the card in the
-  panel even for a tweet that aged out of the browser's 24 h queue, so this check
-  is the only thing standing between the operator and a reply to yesterday.
-- **`bait: true`.** The capture flagged it as engagement bait; a reply there lands
-  in a farm, under a thousand others.
-- **Unanswerable from the text alone** — a body that is an empty caption over an
-  image, a mid-thread fragment whose referent is not there, a bare link drop, or a
-  text clamped at 500 characters whose only hook is in the part that was cut.
-  reply-craft §3 is the full list of what you cannot see.
-- **`admitted: false`** is a demotion, not a drop: name the gate it fails
-  (`minViews`, `maxAgeMin`, `verifiedOnly`…) and remember today's config may not
-  be the one that captured it.
+Exactly one thing leaves before ranking: **a row that cannot be answered without
+inventing something.** An empty caption over an image, a mid-thread fragment
+whose referent is not in the text, a bare link drop, or a body clamped at 500
+characters whose only hook is in the part that was cut. reply-craft §3 is the
+full list of what a sighting cannot show you — that list is the test, and it is
+the only test at this stage.
+
+Nothing else is dropped here. "Already worked" is not a line any more:
+`queue: true` filters it server-side. Everything else that used to be a drop is
+a rank penalty below, because a thin queue is better served by a ranked tail than
+by an empty one.
 
 ### Stage 2 — rank what survives, on the row
 
@@ -138,24 +148,43 @@ Two boosts, also in the row:
   operator camps that handle; `manual` was pinned by hand with ⊕. All three mean
   the operator already decided this account matters.
 
+Three penalties — these rank low, they do not disappear:
+
+- **`bait: true`** ranks near the bottom: the capture flagged it as engagement
+  bait, so a reply lands in a farm under a thousand others. Worth drafting only
+  when the queue cannot fill the number without it.
+- **Aged past `sweep.maxAgeMin`** ranks low for the same reason a stale post is a
+  bad target: the reply arrives under something that has stopped moving. A
+  composed draft resurrects the card in the panel even for a tweet the browser
+  queue has let go, so an old row reaching the operator is a real outcome, not a
+  hypothetical — rank it accordingly rather than pretending it is fresh.
+- **`admitted: false`** is a demotion, not a drop: name the gate it fails
+  (`minViews`, `maxAgeMin`, `verifiedOnly`…) and remember today's config may not
+  be the one that captured it.
+
 No formula, and don't invent one: these are ordered by how much they should move a
-row, and a weighted score here would be false precision. Carry roughly **1.4×**
-the requested number into stage 3.
+row, and a weighted score here would be false precision.
 
-### Stage 3 — the answerability pass
+### Stage 3 — fill the number
 
-Read the text of the shortlist properly, and keep only what can be answered
-without inventing anything **and** offers a hook: a concrete noun, a number, a
-claim to push against, a detail worth noticing. A generic motivational post at
-200k views is unanswerable in the way that matters — every reply under it is
-interchangeable with four hundred others. This stage is what turns the shortlist
-into the final number.
+Take the ranked survivors and draft down the list until N is met. That is the
+whole stage: the ranking decided the order, and N decides where to stop.
+
+**If fewer than N survive stage 1, draft every survivor and say so in one line
+naming the test** — "the queue held 14 rows; 3 could not be answered without
+inventing something, so 11 drafted, not the 20 you asked for." Never pad the
+count with rows that fail the fabrication test, and never quietly return fewer
+than N without saying it: an unexplained short count reads as a bug, and a padded
+one puts a fabricated reply under the operator's name.
 
 ### Stage 4 — spread, then order
 
 - **At most 2 per handle** unless the operator says otherwise. Fifteen replies to
   one camped account in a single pass is a pass wasted and a pattern that reads
-  badly from outside.
+  badly from outside. On a queue dominated by one account this rule can hold the
+  count below N on its own — that is a **shortfall to report** in the same line
+  as any other ("…12 drafted; the ≤2-per-handle spread capped it, @x owned 21 of
+  the 30 rows"), never a rule to break to hit a number.
 - Order the output the way they should be pasted: fastest and freshest first,
   because those are the ones that decay while the operator works.
 
@@ -163,8 +192,8 @@ into the final number.
 
 Never row by row — nobody audits 65 rejections. One line does it:
 
-> 90 in the window → 12 already worked, 18 aged out, 7 bait, 9 unanswerable from
-> text, 19 outranked → **25 drafted**.
+> 35 in the queue → 4 unanswerable from text → **25 drafted**, 6 left (ranked
+> below the cut).
 
 With no number named, work **5–10 tweets**, not the whole queue.
 
@@ -270,6 +299,7 @@ Mechanics worth knowing so the report is accurate:
 | `band` | **Why** the row is here, never a judgement: `sweep` = the numeric filters admitted it; `manual` = pinned by hand with ⊕; `cannon` = camped-roster capture (metric gates bypassed); `roster` = a fresh post by someone in the circle (metric gates bypassed). |
 | `admitted` | Would today's filters admit this capture, judged at the age it had when last seen. `null` = no known post time. |
 | `worked` | A `radar_drafts` row of any status exists **or** a reply was posted. |
+| `dismissed` | The operator waved this row off in the panel — a decision, not work. `queue: true` excludes it; a `days` read still returns it. |
 | `vpm` / `ageMinAtLastSeen` | Views per minute, and the age, **at the last sighting** — not now. |
 | `sourcePath` | The x.com pathname it was captured on. The one thing the passive `/home` corpus cannot answer. |
 | `stage` / `isTarget` | Joined from the people layer at read time. A retired person reads `stage: null`. |
@@ -281,6 +311,12 @@ Mechanics worth knowing so the report is accurate:
 - **A composed draft makes its own sighting read `worked: true` immediately.**
   Correct — the composing *is* the work — but it means `worked: false` cannot
   re-find what you drafted five minutes ago. Use `x_radar_tweet` for that.
+- **A dismissal in the panel now mirrors to the server**, so a card the operator
+  waved off with **Clear** leaves the `queue: true` read too — that is the point,
+  not a lost row. It is still in the corpus: any `days`-based read shows it
+  (`dismissed: true` on the row, counted in `summary.dismissed`) for the full 60
+  days. A queue that shrank between two reads usually means the human triaged it,
+  not that the sweep stopped working.
 - **`admitted` flips when the operator retunes their sweep.** By design; the
   alternative would freeze a rule they change weekly.
 - **The sighting reads write nothing** — no TTL flip, no queue advance. A draft
