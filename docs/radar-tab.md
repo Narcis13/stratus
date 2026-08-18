@@ -57,7 +57,7 @@ Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button.
 
 ### 2. During an armed sweep
 
-Press **Start sweep** in the Radar header. While it runs, a tweet you scroll past enters the queue if it clears **your** filters — eleven numbers you own, typed into the **⚙** next to the button (or the **Sweep** group in **Settings → Tuning**; same knobs, same values). This is the **only** admission rule there is:
+Press **Start sweep** in the Radar header. While it runs, a tweet you scroll past enters the queue if it clears **your** filters — thirteen settings you own, typed into the **⚙** next to the button (or the **Sweep** group in **Settings → Tuning**; same knobs, same values). This is the **only** admission rule there is:
 
 | Filter | Default | What it admits |
 |---|---|---|
@@ -68,10 +68,14 @@ Press **Start sweep** in the Radar header. While it runs, a tweet you scroll pas
 | **Min replies** | 0 (no floor) | A floor on "is anyone actually there". |
 | **Max replies** | 40 | Past this you're buried in the thread. The old reply band's "still near the top" number, restated. |
 | **Max tweet age** | 60 min | Nothing older is swept in. **The one age rule** — it applies to every arm, including the two bypasses below, and it is what keeps them from flooding the queue. |
+| **Photos & videos** | `any` | Whether a tweet's own media decides it in or out. `any` is the gate off. `with` admits only tweets carrying a photo/video — the post already earned the look and your reply rides it. `without` admits only plain-text posts, where nothing competes with your reply for attention. A link preview's thumbnail is **not** media (the tweet is a link); a quoted tweet's photo **is**, because the cell in front of you does show one. Ships neutral because neither direction is measured yet — pick one, run a session, look at the queue. |
+| **Skip promoted posts** | **on** | Drops ads. Unlike the numbers around it this is not an opening guess: a reply under somebody's ad spend reaches the advertiser's audience on the advertiser's terms. Most ads never reached the queue anyway — they render no metrics label, so nothing could read them — this closes the ones that do. |
 | **Verified authors only** | **on** | Only sweep in tweets whose author carries the verified badge — only Premium viewers' impressions count toward the goal, so a reply under an unverified author is unpaid work. |
 | **Camped accounts bypass** | **on** | A post by someone on your camped **cannon roster** gets in without meeting the metric filters — a three-minute-old post has no numbers yet, and that is exactly when the slot under it is open. Still obeys the max age. Chip: `cannon`. |
 | **Circle accounts bypass** | off | Same, for people in your CRM circle. Chip: `your circle`. |
 | **Sweep auto-stop** | 30 min | How long one armed sweep lasts. Not a filter. |
+
+**The two bypasses skip the *metric* filters only.** Max tweet age, the media gate and the ads switch are enforced on every arm — an ad is an ad whoever is camped on it, and a media rule is a rule about your own reply rather than about the author's numbers.
 
 **On every maximum except the age one, `0` means "no ceiling"** — two of them ship as real ceilings now, but type a 0 into one yourself and that ceiling comes off. The age bound is the exception and it is always enforced — its floor in the settings is 1 minute, and 0 there is refused rather than read as "unlimited".
 
@@ -109,7 +113,7 @@ Directly under the Queue / Cannon / Clicked strip, in **all three views** (a swe
 
   The ended notice only appears for an expiry the panel actually watched — a Stop you pressed goes straight back to `Manual`, and opening the panel long after a sweep expired shows plain `Manual` too. The notice exists to catch an auto-stop mid-session, not to report history.
 
-- **⚙** — the eleven sweep filters, typed as exact numbers, with the same reset dots and refusal messages as the Settings tab, and a **Reset to defaults** button at the foot of the card that drops every override on it back to the shipped numbers in one request (greyed out when nothing is overridden). Its note states the split so the band stays legible: *these numbers are the only thing that decides what a sweep admits; the reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune.*
+- **⚙** — the thirteen sweep filters (eight numbers, four switches and the media dropdown), with the same reset dots and refusal messages as the Settings tab, and a **Reset to defaults** button at the foot of the card that drops every override on it back to the shipped numbers in one request (greyed out when nothing is overridden). Its note states the split so the band stays legible: *these numbers are the only thing that decides what a sweep admits; the reply band still draws the on-page border and gates a single reply draft, but it is a fixed classifier now, not a filter you tune.*
 
 ### Saved presets
 
@@ -118,15 +122,15 @@ At the top of that ⚙ card, above the filters themselves, is a two-line strip:
 **`[ Pick a preset… ▾ ]  [Load]  [Delete]`**
 **`[ Name this combination… ]  [Save current]`**
 
-A **preset** is all eleven filters saved under a name, so a hunt you have tuned once can be re-aimed in a click. Hunting small accounts (a few hundred impressions, a handful of likes) and hunting big ones are the same eleven numbers at different settings, and re-typing them at the start of every session is how a filter set quietly drifts into something you never chose. Ships with **none** — today's defaults already are the small-account setting, so the first preset is one you save yourself.
+A **preset** is all thirteen filters saved under a name, so a hunt you have tuned once can be re-aimed in a click. Hunting small accounts (a few hundred impressions, a handful of likes) and hunting big ones are the same thirteen settings at different values, and re-typing them at the start of every session is how a filter set quietly drifts into something you never chose. Ships with **none** — today's defaults already are the small-account setting, so the first preset is one you save yourself.
 
-- **Save current** snapshots the eleven filters *exactly as they stand right now*, under the name you typed. Re-using a name **overwrites** it — a preset is a bookmark for a config you keep re-aiming, so re-saving is the ordinary act, not an error. Cap: **20 presets**, and the 21st *new* name is refused rather than quietly evicting your oldest.
-- **Load** overwrites all eleven filters with the preset's. It is one click and it is destructive, so the strip sits *above* the rows it moves — cause above effect. Names match case-insensitively.
+- **Save current** snapshots the thirteen filters *exactly as they stand right now*, under the name you typed. Re-using a name **overwrites** it — a preset is a bookmark for a config you keep re-aiming, so re-saving is the ordinary act, not an error. Cap: **20 presets**, and the 21st *new* name is refused rather than quietly evicting your oldest.
+- **Load** overwrites all thirteen filters with the preset's. It is one click and it is destructive, so the strip sits *above* the rows it moves — cause above effect. Names match case-insensitively.
 - **Delete** removes the preset and asks first. It never touches the filters themselves: a deleted preset can't be recovered by re-loading, but the config you were running is exactly where you left it.
 
-**A load reaches the page, not just the panel.** The eleven values are stored on the server (in `app_settings`, so they survive an extension reinstall, and MCP can read them), and loading one writes them back through the same validation the ⚙ rows use — the floors and ceilings are still the guard, and a preset saved before one moved is refused whole rather than half-applied. The extension is then told to re-pull immediately, so the content script starts admitting on the new filters at once instead of at its next refresh.
+**A load reaches the page, not just the panel.** The thirteen values are stored on the server (in `app_settings`, so they survive an extension reinstall, and MCP can read them), and loading one writes them back through the same validation the ⚙ rows use — the floors and ceilings are still the guard, and a preset saved before one moved is refused whole rather than half-applied. The extension is then told to re-pull immediately, so the content script starts admitting on the new filters at once instead of at its next refresh.
 
-**Only a name ever leaves the panel.** Save snapshots server-side and Load writes back server-side; the panel never holds its own copy of the eleven numbers, so there is no second place they can be wrong.
+**Only a name ever leaves the panel.** Save snapshots server-side and Load writes back server-side; the panel never holds its own copy of the thirteen values, so there is no second place they can be wrong.
 
 **Both writes are optimistic and roll back honestly.** If arming fails the row goes back to `Manual`; if stopping fails the row goes back to **`Sweeping`** and says so — because the page really is still capturing, and a row claiming a stop that did not happen is the one lie this control cannot afford.
 
@@ -429,5 +433,5 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 - **[Playbook](./playbook-tab.md)** — which angles and which situations actually earn views and profile visits.
 - **[The MCP server](./s2-mcp-server.md)** — `x_radar`, `x_radar_tweet` and `x_radar_draft_reply`: reading the sighting corpus and composing replies into this queue from a Claude Code session.
 - **[On x.com itself](./s6-augmented-ui.md)** — the ⊕ button, the band border, the timeline chips and the context panel.
-- **[Settings → Tuning](./settings-tab.md)** — the eleven **Sweep** filters (the same ones the ⚙ here edits), the two batch caps, the curated batch size and the four **Cannon** knobs. The reply-band thresholds are **[no longer there](./settings-tab.md#the-reply-band-left-this-tab)**.
+- **[Settings → Tuning](./settings-tab.md)** — the thirteen **Sweep** filters (the same ones the ⚙ here edits), the two batch caps, the curated batch size and the four **Cannon** knobs. The reply-band thresholds are **[no longer there](./settings-tab.md#the-reply-band-left-this-tab)**.
 - **[Settings → Prompts](./settings-tab.md#prompts-editor-the-prompts-subtab)** — `reply curation`, the topic-agnostic hook rubric that decides what counts as filler and returns each post's room.

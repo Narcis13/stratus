@@ -24,7 +24,7 @@
 // React, no sidepanel module, nothing with its own dependencies.
 
 import { CANNON, type CannonThresholds } from '../cannon.ts';
-import { SWEEP, type SweepConfig } from '../radarSweep.ts';
+import { SWEEP, type SweepConfig, type SweepMediaFilter } from '../radarSweep.ts';
 
 /** chrome.storage.local key the background writes the flat blob to. */
 export const SERVER_SETTINGS_KEY = 'settings:server';
@@ -46,7 +46,7 @@ export interface ServerConfig {
    *  server's cannon routes read the same four knobs, so one number moves both
    *  sides; `scoreMin` is a MEASURED floor (see src/shared/cannon.ts). */
   cannon: CannonThresholds;
-  /** x.sweep.* — the eleven numbers an armed sweep admits on (RS.1), and now the
+  /** x.sweep.* — the thirteen knobs an armed sweep admits on (RS.1), and now the
    *  ONLY rule that decides what a tweet qualifies for. The server reads them
    *  too (`sweepConfigFromSettings`, for the Playbook's timeline funnel), so one
    *  number moves both sides; a `0` on any `max*` means no ceiling. */
@@ -154,6 +154,20 @@ function readBoolean(blob: ServerSettingsBlob, key: string, fallback: boolean): 
   return typeof v === 'boolean' ? v : fallback;
 }
 
+// The mirror's first ENUM key. Same per-key discipline as the rest, and the
+// membership test is the point: a blob carrying a value this build has never
+// heard of — a knob whose options were widened server-side — falls back to the
+// baked default rather than reaching `passesContentGates` as a string that
+// matches neither branch and silently disables the gate.
+function readMediaFilter(
+  blob: ServerSettingsBlob,
+  key: string,
+  fallback: SweepMediaFilter,
+): SweepMediaFilter {
+  const v = blob[key];
+  return v === 'any' || v === 'with' || v === 'without' ? v : fallback;
+}
+
 function readHours(blob: ServerSettingsBlob, key: string, fallback: number[]): number[] {
   const v = blob[key];
   if (!Array.isArray(v) || v.length === 0) return fallback;
@@ -173,7 +187,7 @@ function readCannon(blob: ServerSettingsBlob): CannonThresholds {
   };
 }
 
-// Same per-key discipline again, and here it is the sharpest: these eleven are
+// Same per-key discipline again, and here it is the sharpest: these thirteen are
 // the ONLY rule deciding what an armed sweep captures, so a corrupt `minViews`
 // dropping the other ten back to baked would quietly re-open the intake with a
 // config the user never chose. Per key, the baked `SWEEP` value stands in.
@@ -186,6 +200,8 @@ function readSweep(blob: ServerSettingsBlob): SweepConfig {
     minReplies: readNumber(blob, 'x.sweep.minReplies', SWEEP.minReplies),
     maxReplies: readNumber(blob, 'x.sweep.maxReplies', SWEEP.maxReplies),
     maxAgeMin: readNumber(blob, 'x.sweep.maxAgeMin', SWEEP.maxAgeMin),
+    media: readMediaFilter(blob, 'x.sweep.media', SWEEP.media),
+    excludeAds: readBoolean(blob, 'x.sweep.excludeAds', SWEEP.excludeAds),
     verifiedOnly: readBoolean(blob, 'x.sweep.verifiedOnly', SWEEP.verifiedOnly),
     campedBypass: readBoolean(blob, 'x.sweep.campedBypass', SWEEP.campedBypass),
     circleBypass: readBoolean(blob, 'x.sweep.circleBypass', SWEEP.circleBypass),

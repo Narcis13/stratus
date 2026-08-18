@@ -70,7 +70,7 @@ The tab rail is grouped into five sections — **Operate**, **Author**, **Librar
 
 | Tab | What it's for |
 |---|---|
-| **[Settings](./settings-tab.md)** | Connect the extension to your server; your niche, privacy, behavior and appearance; the AI provider and the prompt editor; and **Tuning** — the 61 knobs stratus makes its decisions with, searchable, with the bounds and reasoning attached. **Configure this first.** |
+| **[Settings](./settings-tab.md)** | Connect the extension to your server; your niche, privacy, behavior and appearance; the AI provider and the prompt editor; and **Tuning** — the 63 knobs stratus makes its decisions with, searchable, with the bounds and reasoning attached. **Configure this first.** |
 
 ---
 

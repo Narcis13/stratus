@@ -35,6 +35,19 @@
 //                    the thread". Restated for the same reason as minViews.
 //   maxAgeMin    60  opening guess. CANNON.maxAgeMin is 30 and is about a
 //                    *slot*; this is about a *feed session*.
+//   media     'any' ships neutral — the filter exists, off. A timeline is
+//                    mixed and neither direction is the measured one yet: 'with'
+//                    hunts the posts whose media already earned the attention,
+//                    'without' hunts the plain-text posts where a reply is the
+//                    only thing to look at. Ships 'any' because shipping either
+//                    opinion would halve the intake on a guess (§7.19).
+//   excludeAds  true ships ON, and it is the one default here that is not a
+//                    guess: a promoted post is somebody's ad spend, replies
+//                    under it reach the advertiser's audience on the
+//                    advertiser's terms, and there is no reading of the four
+//                    goals under which one belongs in the queue. Most ads never
+//                    reached the gate anyway (no metrics label ⇒ no capture);
+//                    this closes the ones that do.
 //   verifiedOnly true ships ON, on the monetization pivot's own argument: only
 //                    Premium viewers' impressions count toward the 500K, so a
 //                    reply under an unverified author's post is unpaid work.
@@ -54,6 +67,11 @@
 // Recalibrate from measured outcomes at n >= 100 swept rows — the `band` column
 // on `radar_drafts` carries the origin, so the question is one SQL query — never
 // from a session's impression.
+
+/** What the media gate is set to. `'any'` is not "no opinion about media" but
+ *  "the gate is off" — the same shape as a `0` ceiling, spelled as an enum
+ *  because the two directions are opposite intents rather than ends of a range. */
+export type SweepMediaFilter = 'any' | 'with' | 'without';
 
 /** What a sweep is allowed to admit. Every `max*` field uses **0 to mean "no
  *  ceiling"**, and that is the only sentinel in this module; a `min*` needs none
@@ -75,6 +93,13 @@ export interface SweepConfig {
   maxReplies: number;
   /** Minutes old past which nothing is swept — ALWAYS enforced, no sentinel. */
   maxAgeMin: number;
+  /** Photos/videos: sweep everything ('any'), only tweets carrying media
+   *  ('with'), or only tweets without it ('without'). A CONTENT gate — enforced
+   *  on every arm, bypasses included, like `maxAgeMin`. */
+  media: SweepMediaFilter;
+  /** Drop promoted/sponsored posts. The other content gate, same always-on
+   *  reach: an ad is an ad no matter who is camped on it. */
+  excludeAds: boolean;
   /** Only sweep in tweets whose author carries the verified badge. */
   verifiedOnly: boolean;
   /** Camped cannon accounts skip the METRIC gates (never the age gate). */
@@ -93,6 +118,8 @@ export const SWEEP: SweepConfig = {
   minReplies: 0,
   maxReplies: 40,
   maxAgeMin: 60,
+  media: 'any',
+  excludeAds: true,
   verifiedOnly: true,
   campedBypass: true,
   circleBypass: false,
@@ -101,13 +128,20 @@ export const SWEEP: SweepConfig = {
 
 /** One tweet as the page reads it. `verified: null` = unknown (the name block
  *  was unreadable), which is NOT the same as "not verified" — see `passesSweep`
- *  for which way this module resolves that. */
+ *  for which way this module resolves that. `hasMedia` carries the same
+ *  three-way reading; `promoted` does not, because "no promoted marker anywhere
+ *  in the article" is a complete answer rather than a missing anchor. */
 export interface SweepCandidate {
   views: number;
   likes: number;
   replies: number;
   ageMin: number;
   verified: boolean | null;
+  /** Photos or videos of its own. `null` = not read (the gate is off, or the
+   *  caller has no way to know — a stored row from before the column existed). */
+  hasMedia: boolean | null;
+  /** A promoted/sponsored post. `false` when the caller didn't look. */
+  promoted: boolean;
 }
 
 /** Does this tweet clear the filters?
@@ -126,6 +160,7 @@ export function passesSweep(c: SweepCandidate, cfg: SweepConfig = SWEEP): boolea
   if (cfg.maxReplies > 0 && c.replies > cfg.maxReplies) return false;
   // Always enforced — 0 is not a sentinel here, and the registry floor is 1.
   if (c.ageMin > cfg.maxAgeMin) return false;
+  if (!passesContentGates(c, cfg)) return false;
   // Deliberately the OPPOSITE direction from §7.11: unknown fails. This is a
   // GATE, not a bucket — admitting on unknown would silently defeat the filter,
   // whereas failing on unknown surfaces a drifted badge selector as a visibly
@@ -134,11 +169,51 @@ export function passesSweep(c: SweepCandidate, cfg: SweepConfig = SWEEP): boolea
   return true;
 }
 
+/** The two gates about WHAT the tweet is rather than how it is doing: ads and
+ *  media.
+ *
+ *  Split out and exported because they are **not metric gates**, and the
+ *  camped/circle bypasses skip only the metric ones. A promoted post is an ad
+ *  whoever is camped on it, and a media rule you set is a rule about your own
+ *  reply, not about the author's numbers — so `applyCapture`'s bypass arms call
+ *  this directly, exactly as they already enforce `maxAgeMin`. Keeping them in
+ *  one named predicate is what stops the three arms from drifting apart.
+ *
+ *  Unknown `hasMedia` REFUSES under either direction, the `verified` rule again:
+ *  a gate that admits on unknown has stopped being a gate. The asymmetry worth
+ *  knowing is that the page's reader answers `false`, never `null`, when its
+ *  selectors drift — so a drift empties the queue under `'with'` (visible) and
+ *  quietly lets media through under `'without'` (silent). That is the same
+ *  bargain `verifiedOnly` takes, and the same first move when a queue empties:
+ *  put the gate back to `'any'`. */
+export function passesContentGates(
+  c: Pick<SweepCandidate, 'hasMedia' | 'promoted'>,
+  cfg: SweepConfig,
+): boolean {
+  if (cfg.excludeAds && c.promoted) return false;
+  if (cfg.media === 'with' && c.hasMedia !== true) return false;
+  if (cfg.media === 'without' && c.hasMedia !== false) return false;
+  return true;
+}
+
 /** Whether the caller must read the verified badge off the DOM at all. One line
  *  on purpose, and NOT inlined at the call site: the gate-order perf contract
  *  above is only reviewable if the skip has a name. */
 export function sweepNeedsVerified(cfg: SweepConfig): boolean {
   return cfg.verifiedOnly;
+}
+
+/** Same contract for the media read: a scan that isn't filtering on media must
+ *  not pay for the querySelectorAll, and `'any'` is the shipped default, so the
+ *  ordinary scroll pays nothing. */
+export function sweepNeedsMedia(cfg: SweepConfig): boolean {
+  return cfg.media !== 'any';
+}
+
+/** And for the promoted marker. Cheap, but the same rule: with the gate off the
+ *  answer cannot change anything, so it isn't read. */
+export function sweepNeedsPromoted(cfg: SweepConfig): boolean {
+  return cfg.excludeAds;
 }
 
 // -------------------------------------------------------- the band ratchet
@@ -150,8 +225,8 @@ export function sweepNeedsVerified(cfg: SweepConfig): boolean {
  *
  *  - `manual` — the user pinned this tweet via the ⊕ button (RU.8).
  *  - `sweep`  — an armed sweep's filters admitted it (RS.2): the min/max
- *    impressions/likes/replies, age and verified-only rules above are the entire
- *    reason it is here. The ordinary way a row arrives.
+ *    impressions/likes/replies, age, media/ads and verified-only rules above are
+ *    the entire reason it is here. The ordinary way a row arrives.
  *  - `cannon` — a camped-roster capture (CQ.4), metric filters bypassed.
  *  - `roster` — a fresh post by someone already in my circle (GT.8), metric
  *    filters bypassed; the reciprocity lane is about who posted it.

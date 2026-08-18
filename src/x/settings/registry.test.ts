@@ -360,6 +360,8 @@ describe('registry adapter + grouping', () => {
       'x.sweep.minReplies',
       'x.sweep.maxReplies',
       'x.sweep.maxAgeMin',
+      'x.sweep.media',
+      'x.sweep.excludeAds',
       'x.sweep.verifiedOnly',
       'x.sweep.campedBypass',
       'x.sweep.circleBypass',
@@ -401,14 +403,14 @@ describe('registry adapter + grouping', () => {
   });
 
   // RS.1: the same UI.7 group-shape rule a third time. It matters more here than
-  // anywhere else — these eleven are the ONLY rule deciding what an armed sweep
-  // captures, so a knob with no key would be a filter the user can see the effect
-  // of and cannot move, and a server-scoped one would never reach the content
-  // script that is its only consumer.
+  // anywhere else — these thirteen are the ONLY rule deciding what an armed
+  // sweep captures, so a knob with no key would be a filter the user can see the
+  // effect of and cannot move, and a server-scoped one would never reach the
+  // content script that is its only consumer.
   test('the sweep group is exactly the predicate shape, every key mirrored', () => {
     const sweep = settingsByGroup().find((g) => g.id === 'sweep');
     const suffixes = (sweep?.defs ?? []).map((d) => d.key.replace('x.sweep.', ''));
-    expect(suffixes.length).toBe(11);
+    expect(suffixes.length).toBe(13);
     expect(suffixes.slice().sort()).toEqual(Object.keys(SWEEP).slice().sort());
     expect((sweep?.defs ?? []).every((d) => d.scope === 'mirrored')).toBe(true);
     // Capture binds the next mutation burst — nothing here arms a timer.
@@ -426,8 +428,26 @@ describe('registry adapter + grouping', () => {
     }
   });
 
-  test('the three sweep switches are booleans and validate as such', () => {
-    for (const k of ['x.sweep.verifiedOnly', 'x.sweep.campedBypass', 'x.sweep.circleBypass']) {
+  // The media gate is the group's only enum, and its options must BE the
+  // predicate's branches: an option `passesContentGates` has no arm for would be
+  // a setting the user can pick and the page silently ignores.
+  test("the media gate is an enum over exactly the rule's three branches", () => {
+    const media = SETTINGS_REGISTRY.find((d) => d.key === 'x.sweep.media');
+    expect(media?.type).toBe('enum');
+    expect(media?.options).toEqual(['any', 'with', 'without']);
+    expect(media?.default).toBe(SWEEP.media);
+    expect(settingsRegistry.validate('x.sweep.media', 'with')).toBeNull();
+    expect(settingsRegistry.validate('x.sweep.media', 'photos')).toBe('not_in_options');
+    expect(settingsRegistry.validate('x.sweep.media', true)).toBe('not_a_string');
+  });
+
+  test('the four sweep switches are booleans and validate as such', () => {
+    for (const k of [
+      'x.sweep.verifiedOnly',
+      'x.sweep.campedBypass',
+      'x.sweep.circleBypass',
+      'x.sweep.excludeAds',
+    ]) {
       expect([k, settingsRegistry.validate(k, true)]).toEqual([k, null]);
       expect([k, settingsRegistry.validate(k, false)]).toEqual([k, null]);
       expect([k, settingsRegistry.validate(k, 'true')]).toEqual([k, 'not_a_boolean']);

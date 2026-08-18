@@ -30,9 +30,12 @@ import {
   type SweepCandidate,
   type SweepConfig,
   type SweepSession,
+  passesContentGates,
   passesSweep,
   sweepActiveAt,
   sweepMinutesLeft,
+  sweepNeedsMedia,
+  sweepNeedsPromoted,
   sweepNeedsVerified,
 } from './radarSweep.ts';
 import { textLooksLikeReplyBait } from './replyBand.ts';
@@ -94,6 +97,7 @@ import type { ThreadCaptureResult } from './shared/thread.ts';
 import { findShowOriginalButtons, viewerLangOf } from './shared/translation.ts';
 import { buildTweetContextModel } from './shared/tweetContext.ts';
 import type { Dossier, TweetContextModel } from './shared/tweetContext.ts';
+import { readHasMedia, readPromoted } from './shared/tweetKind.ts';
 import type {
   AuthorProfile,
   PostContext,
@@ -2386,7 +2390,7 @@ function resetThreadCaptureBtn(btn: HTMLButtonElement): void {
 // tweet qualifies for, and the sweep gear on the Radar tab is the only place it
 // is tuned. Do not add a second, untunable opinion back onto the timeline.
 
-// RS.3: the eleven sweep knobs come from the mirrored settings blob the
+// RS.3: the thirteen sweep knobs come from the mirrored settings blob the
 // background writes (§7.24/7.25 — the page never fetches them itself), so the
 // page captures with exactly the numbers the panel shows. Baked
 // SERVER_DEFAULTS.sweep until the first read resolves: an unconfigured, offline
@@ -2655,21 +2659,31 @@ function applyCapture(article: HTMLElement, glance: GlanceMap): void {
       likes: cap.likes,
       replies: sig.replies,
       ageMin: sig.ageMin,
-      // The one DOM read this feature adds, and it is paid ONLY when the answer
-      // can still matter — `verifiedOnly` ships off, so the default scroll pays
-      // nothing. Do not hoist it out of this branch. `null` (unreadable name
-      // block) is a refusal inside passesSweep, deliberately: a drifted badge
-      // selector must show up as an empty queue, not as a filter that quietly
-      // stopped filtering.
+      // The DOM reads this feature adds, each paid ONLY when its answer can
+      // still matter — all three gates ship in a state where the read is
+      // skipped or cheap, so the default scroll pays close to nothing. Do not
+      // hoist them out of this branch. `null` (unreadable name block) is a
+      // refusal inside passesSweep, deliberately: a drifted badge selector must
+      // show up as an empty queue, not as a filter that quietly stopped
+      // filtering.
       verified: sweepNeedsVerified(sweepCfg) ? readVerified(article) : null,
+      hasMedia: sweepNeedsMedia(sweepCfg) ? readHasMedia(article) : null,
+      promoted: sweepNeedsPromoted(sweepCfg) ? readPromoted(article) : false,
     };
     const extras = { likes: cap.likes, verified: candidate.verified };
     if (passesSweep(candidate, sweepCfg)) {
       recordRadarSighting(article, 'sweep', sig, extras);
-    } else if (sweepCfg.campedBypass && isCampedSighting(article, sig, glance)) {
-      recordRadarSighting(article, 'cannon', sig, extras);
-    } else if (sweepCfg.circleBypass && isRosterSighting(article, sig, glance)) {
-      recordRadarSighting(article, 'roster', sig, extras);
+    } else if (passesContentGates(candidate, sweepCfg)) {
+      // The two bypasses skip the METRIC gates only — the same reading that
+      // already keeps `maxAgeMin` enforced on both arms. An ad is an ad whoever
+      // is camped on it, and a media rule is a rule about your own reply rather
+      // than about the author's numbers, so both arms sit BEHIND the content
+      // gates instead of around them.
+      if (sweepCfg.campedBypass && isCampedSighting(article, sig, glance)) {
+        recordRadarSighting(article, 'cannon', sig, extras);
+      } else if (sweepCfg.circleBypass && isRosterSighting(article, sig, glance)) {
+        recordRadarSighting(article, 'roster', sig, extras);
+      }
     }
   }
 

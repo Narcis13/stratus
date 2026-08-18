@@ -354,7 +354,9 @@ console.log('3. the corpus read');
 // A KNOWN sweep config, so `admitted` is a fact about the row rather than about
 // whatever the operator last tuned. Everything but the age gate is opened all
 // the way (0 = no ceiling), which leaves `maxAgeMin` as the single axis the
-// flip below moves.
+// flip below moves. The two CONTENT gates (media, ads) are absent on purpose:
+// `radar_sightings` stores neither signal, so `buildSightingViews` forces both
+// off — patching them here would imply they can move this read, and they can't.
 const PERMISSIVE: Record<string, number | boolean> = {
   'x.sweep.minViews': 0,
   'x.sweep.maxViews': 0,

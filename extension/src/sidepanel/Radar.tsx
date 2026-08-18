@@ -83,10 +83,11 @@ import { Section } from './ui/Section.tsx';
 // surface it acts on.
 const RADAR_KEYS = ['x.display.radarDraftCap', 'x.ai.batchReplyCap', 'x.radar.curatedCount'];
 
-// RS.4 — the eleven knobs an armed sweep admits on, ordered the way the row
-// reads them: the three metric pairs, then the age bound, then the three
-// switches, then the session length. Same `useSettingsEditor` the drafting gear
-// uses — one editor per tab, never one per gear (SettingsGear's header).
+// RS.4 — the thirteen knobs an armed sweep admits on, ordered the way the row
+// reads them: the three metric pairs, then the age bound, then the two content
+// gates (what the tweet IS), then the three switches, then the session length.
+// Same `useSettingsEditor` the drafting gear uses — one editor per tab, never
+// one per gear (SettingsGear's header).
 const SWEEP_KEYS = [
   'x.sweep.minViews',
   'x.sweep.maxViews',
@@ -95,6 +96,8 @@ const SWEEP_KEYS = [
   'x.sweep.minReplies',
   'x.sweep.maxReplies',
   'x.sweep.maxAgeMin',
+  'x.sweep.media',
+  'x.sweep.excludeAds',
   'x.sweep.verifiedOnly',
   'x.sweep.campedBypass',
   'x.sweep.circleBypass',
@@ -106,7 +109,7 @@ const SWEEP_KEYS = [
 // now deleted along with the classifier they fed — so this gear is the only
 // place admission is configured anywhere in the product.
 const SWEEP_NOTE =
-  'These numbers are the only thing that decides what a tweet qualifies for — nothing in Settings competes with them, and nothing marks up the timeline behind your back any more. A max of 0 means "no ceiling"; the age bound is enforced on every arm, including the two bypasses.';
+  'These are the only thing that decides what a tweet qualifies for — nothing in Settings competes with them, and nothing marks up the timeline behind your back any more. A max of 0 means "no ceiling"; the age bound, the media gate and the ads switch are enforced on every arm, including the two bypasses.';
 
 // How long "Sweep ended" stays up after the panel WATCHES a session expire, then
 // the row falls back to the manual line. An auto-stop the user never saw is the
@@ -196,8 +199,26 @@ function curateNote(res: CurateResponse): string {
     : `${head} · ${tail}`;
 }
 
-function useRadarSightings(): RadarSighting[] {
+// Returns the buffer plus an explicit re-read. The onChanged listener below is
+// still the live path (it is what repaints the queue mid-sweep), but a caller
+// that has just awaited a background WRITE cannot rely on the event alone: the
+// listener and the sendMessage response are two independent channels, and a
+// pull that resolves first would leave the panel showing the pre-write buffer
+// until something else remounted it. `refresh` closes that window without
+// making the panel a second writer (§7.24) — it only reads.
+function useRadarSightings(): { sightings: RadarSighting[]; refresh: () => Promise<void> } {
   const [sightings, setSightings] = useState<RadarSighting[]>([]);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const out = await chrome.storage.local.get(RADAR_SIGHTINGS_KEY);
+      setSightings(pruneStale(coerceSightings(out[RADAR_SIGHTINGS_KEY]), Date.now()));
+    } catch (err) {
+      // A failed re-read means the listener is the only path left, which is the
+      // pre-existing behaviour. Never a broken queue.
+      console.warn('[stratus] radar buffer re-read failed', err);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -228,7 +249,7 @@ function useRadarSightings(): RadarSighting[] {
     };
   }, []);
 
-  return sightings;
+  return { sightings, refresh };
 }
 
 function dismiss(tweetIds: string[]): void {
@@ -336,7 +357,8 @@ export function RadarSection({
   editor: SettingsEditor;
 }): JSX.Element {
   const server = useServerSettings();
-  const ranked = rankSightings(useRadarSightings());
+  const { sightings: buffered, refresh: refreshSightings } = useRadarSightings();
+  const ranked = rankSightings(buffered);
   const { queue, clicked } = splitClicked(ranked);
   const { ready, fresh } = groupQueue(queue);
   // CQ.5 — the arbitrage lane, read off the same queue the other two views use:
@@ -524,20 +546,26 @@ export function RadarSection({
   // C0: ask the background to pull the server's radar_drafts copy — after a
   // browser restart the session buffer is empty but paid-for drafts survive.
   // Returns how many rows entered the buffer, or `null` if the pull failed.
-  // Nothing here touches `sightings`: the background is the single writer
-  // (§7.24) and `useRadarSightings`'s onChanged listener repaints the queue, so
-  // a pull lands without a remount.
+  // Nothing here WRITES `sightings`: the background is the single writer
+  // (§7.24). The repaint has two paths on purpose — the onChanged listener, and
+  // an explicit re-read once the background reports done — because the listener
+  // alone left a pulled draft invisible until the next remount.
   const pullDrafts = useCallback(async (): Promise<number | null> => {
     const msg: RadarRehydrate = { type: 'stratus/radar-rehydrate' };
     try {
       const res: { ok?: boolean; added?: number } | undefined =
         await chrome.runtime.sendMessage(msg);
+      // Re-read after the background reports done. The onChanged listener
+      // usually beats us here and this is a no-op repaint; when it doesn't, this
+      // is what stops a pulled draft sitting invisible until the next remount
+      // (switching Chrome tabs and back used to be the only way to see it).
+      await refreshSightings();
       return res?.ok ? (res.added ?? 0) : null;
     } catch (err) {
       console.warn('[stratus] radar rehydrate failed', err);
       return null;
     }
-  }, []);
+  }, [refreshSightings]);
 
   useEffect(() => {
     void pullDrafts();

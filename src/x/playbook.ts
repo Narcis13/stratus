@@ -759,12 +759,14 @@ export type TimelineBucket = 'qualifies' | 'filtered' | 'unknown';
 
 const TIMELINE_BUCKET_ORDER: TimelineBucket[] = ['qualifies', 'filtered', 'unknown'];
 
-/** **`verifiedOnly` is deliberately forced OFF here.** `harvest_rows` never
- *  recorded the author's badge — the passive corpus predates the filter — so
- *  asking the real config would fail every row on unknown-verified (passesSweep
- *  resolves unknown as a refusal, by design) and print a 0% funnel that means
- *  nothing. The metric and age filters are evaluated exactly as configured; the
- *  badge one is not evaluated at all, and the page says so. */
+/** **`verifiedOnly` is deliberately forced OFF here — and so are the two content
+ *  gates.** `harvest_rows` never recorded the author's badge, whether the tweet
+ *  carried media, or whether it was promoted; the passive corpus predates all
+ *  three filters. Asking the real config would fail every row on unknown
+ *  (passesSweep resolves unknown as a refusal, by design) and print a funnel
+ *  that means nothing. The metric and age filters are evaluated exactly as
+ *  configured; the three content/identity ones are not evaluated at all, and the
+ *  page says so. */
 export function deriveTimelineBucket(
   row: TimelineSeenRow,
   cfg: SweepConfig = SWEEP,
@@ -772,8 +774,16 @@ export function deriveTimelineBucket(
   if (row.tweetTimeMs === null || !Number.isFinite(row.tweetTimeMs)) return 'unknown';
   const ageMin = Math.max(0, (row.capturedAtMs - row.tweetTimeMs) / 60_000);
   const passes = passesSweep(
-    { views: row.views, likes: row.likes, replies: row.comments, ageMin, verified: true },
-    { ...cfg, verifiedOnly: false },
+    {
+      views: row.views,
+      likes: row.likes,
+      replies: row.comments,
+      ageMin,
+      verified: true,
+      hasMedia: null,
+      promoted: false,
+    },
+    { ...cfg, verifiedOnly: false, media: 'any', excludeAds: false },
   );
   return passes ? 'qualifies' : 'filtered';
 }

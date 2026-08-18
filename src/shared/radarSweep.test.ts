@@ -5,17 +5,29 @@ import {
   type SweepCandidate,
   type SweepConfig,
   bandStickiness,
+  passesContentGates,
   passesSweep,
   startSweepSession,
   sweepActiveAt,
   sweepMinutesLeft,
+  sweepNeedsMedia,
+  sweepNeedsPromoted,
   sweepNeedsVerified,
 } from './radarSweep.ts';
 
 // A candidate that clears every shipped default, so each test moves exactly one
 // axis and the boundary it asserts is the only reason it passes or fails.
 function cand(over: Partial<SweepCandidate> = {}): SweepCandidate {
-  return { views: 1000, likes: 10, replies: 5, ageMin: 10, verified: true, ...over };
+  return {
+    views: 1000,
+    likes: 10,
+    replies: 5,
+    ageMin: 10,
+    verified: true,
+    hasMedia: null,
+    promoted: false,
+    ...over,
+  };
 }
 
 const with_ = (over: Partial<SweepConfig>): SweepConfig => ({ ...SWEEP, ...over });
@@ -128,6 +140,57 @@ describe('sweepNeedsVerified', () => {
   });
 });
 
+describe('passesContentGates — media and ads', () => {
+  // Shipped state: the media gate is off, so nothing about media can refuse.
+  test('the media gate is off by default, both readings admitted', () => {
+    expect(passesSweep(cand({ hasMedia: true }))).toBe(true);
+    expect(passesSweep(cand({ hasMedia: false }))).toBe(true);
+    expect(passesSweep(cand({ hasMedia: null }))).toBe(true);
+  });
+
+  test("'with' admits only a tweet carrying media", () => {
+    const cfg = with_({ media: 'with' });
+    expect(passesSweep(cand({ hasMedia: true }), cfg)).toBe(true);
+    expect(passesSweep(cand({ hasMedia: false }), cfg)).toBe(false);
+  });
+
+  test("'without' admits only a tweet carrying none", () => {
+    const cfg = with_({ media: 'without' });
+    expect(passesSweep(cand({ hasMedia: false }), cfg)).toBe(true);
+    expect(passesSweep(cand({ hasMedia: true }), cfg)).toBe(false);
+  });
+
+  // The `verified` rule again, and for the same reason: a gate that admits on
+  // unknown has stopped being a gate. Both directions refuse.
+  test('unknown media is a refusal under either direction', () => {
+    expect(passesSweep(cand({ hasMedia: null }), with_({ media: 'with' }))).toBe(false);
+    expect(passesSweep(cand({ hasMedia: null }), with_({ media: 'without' }))).toBe(false);
+  });
+
+  test('a promoted post is refused by default, admitted with the switch off', () => {
+    expect(passesSweep(cand({ promoted: true }))).toBe(false);
+    expect(passesSweep(cand({ promoted: true }), with_({ excludeAds: false }))).toBe(true);
+  });
+
+  // The predicate the bypass arms call directly: it must judge ONLY the two
+  // content gates, so a candidate failing every metric filter still passes it.
+  test('the exported predicate ignores the metric and age gates', () => {
+    expect(passesContentGates({ hasMedia: null, promoted: false }, SWEEP)).toBe(true);
+    expect(
+      passesContentGates({ hasMedia: true, promoted: false }, with_({ media: 'without' })),
+    ).toBe(false);
+    expect(passesContentGates({ hasMedia: null, promoted: true }, SWEEP)).toBe(false);
+  });
+
+  test('the skip helpers track their knobs both ways (the skipped DOM reads)', () => {
+    expect(sweepNeedsMedia(SWEEP)).toBe(false);
+    expect(sweepNeedsMedia(with_({ media: 'with' }))).toBe(true);
+    expect(sweepNeedsMedia(with_({ media: 'without' }))).toBe(true);
+    expect(sweepNeedsPromoted(SWEEP)).toBe(true);
+    expect(sweepNeedsPromoted(with_({ excludeAds: false }))).toBe(false);
+  });
+});
+
 describe('the shipped defaults', () => {
   // §7.19/§7.33: these are opening guesses, two of them restated from BAND's
   // numbers rather than imported. Pinned so a drift is an argument with a test.
@@ -140,6 +203,8 @@ describe('the shipped defaults', () => {
       minReplies: 0,
       maxReplies: 40,
       maxAgeMin: 60,
+      media: 'any',
+      excludeAds: true,
       verifiedOnly: true,
       campedBypass: true,
       circleBypass: false,
@@ -151,6 +216,14 @@ describe('the shipped defaults', () => {
     expect(SWEEP.verifiedOnly).toBe(true);
     expect(SWEEP.circleBypass).toBe(false);
     expect(SWEEP.campedBypass).toBe(true);
+  });
+
+  // The media gate ships NEUTRAL and the ads one ships ON, and the asymmetry is
+  // the argument: 'with' or 'without' would halve the intake on an unmeasured
+  // guess, while an ad has no reading under which it belongs in the queue.
+  test('the media gate ships off and the ads switch ships on', () => {
+    expect(SWEEP.media).toBe('any');
+    expect(SWEEP.excludeAds).toBe(true);
   });
 
   // The three ceilings ship as real bounds now, so the shipped set admits a

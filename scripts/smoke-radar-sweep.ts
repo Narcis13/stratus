@@ -49,6 +49,8 @@ import {
   type SweepCandidate,
   type SweepConfig,
   passesSweep,
+  sweepNeedsMedia,
+  sweepNeedsPromoted,
   sweepNeedsVerified,
 } from '../src/shared/radarSweep.ts';
 import { radarDrafts, replyDrafts } from '../src/x/db/schema.ts';
@@ -199,14 +201,24 @@ console.log('(a) the sweep group: shape, defaults, scope, refusals');
       fail(`${def.key} defaults to ${String(def.default)}, SWEEP says ${String(SWEEP[field])}`);
     if (def.scope !== 'mirrored') fail(`${def.key} is scope=${def.scope}, not mirrored`);
   }
-  ok('every default IS the SWEEP constant, and all eleven are mirrored');
+  ok('every default IS the SWEEP constant, and all thirteen are mirrored');
 
-  // The three booleans — a knob typed `number` would render a slider over a
-  // switch and validate the wrong way.
+  // The four booleans — a knob typed `number` would render a slider over a
+  // switch and validate the wrong way — and the one enum, whose options ARE the
+  // predicate's three branches: an option the rule has no branch for would be a
+  // setting the user can pick and the page silently ignores.
   const bools = group.defs.filter((d) => d.type === 'boolean').map((d) => d.key);
-  if (bools.sort().join(',') !== 'x.sweep.campedBypass,x.sweep.circleBypass,x.sweep.verifiedOnly')
+  if (
+    bools.sort().join(',') !==
+    'x.sweep.campedBypass,x.sweep.circleBypass,x.sweep.excludeAds,x.sweep.verifiedOnly'
+  )
     fail(`the boolean knobs are ${bools.join(', ')}`);
-  ok('the three switches are typed boolean; the other eight are numbers');
+  const enums = group.defs.filter((d) => d.type === 'enum');
+  if (enums.length !== 1 || enums[0]?.key !== 'x.sweep.media')
+    fail(`the enum knobs are ${enums.map((d) => d.key).join(', ')}`);
+  if ((enums[0]?.options ?? []).join(',') !== 'any,with,without')
+    fail(`x.sweep.media options are ${(enums[0]?.options ?? []).join(', ')}`);
+  ok("four switches typed boolean, one enum over the rule's own three branches, eight numbers");
 
   // Refused by CODE, through the same route MCP and the panel gear use. 0 is the
   // one interesting refusal in this group: it is a valid "no ceiling" on every
@@ -220,9 +232,15 @@ console.log('(a) the sweep group: shape, defaults, scope, refusals');
   if (overMax.status !== 400) fail(`autoStopMin: 241 expected 400, got ${overMax.status}`);
   const notABool = await req('/x/settings', 'PATCH', { 'x.sweep.verifiedOnly': 'yes' });
   if (notABool.status !== 400) fail(`verifiedOnly: 'yes' expected 400, got ${notABool.status}`);
-  if (!resolveSetting('x.sweep.maxAgeMin').isDefault)
+  // An enum's whole guard is its option list: 'photos' is the shape a caller
+  // guesses, and it must not become a stored value that matches no branch.
+  const badEnum = await req('/x/settings', 'PATCH', { 'x.sweep.media': 'photos' });
+  if (badEnum.status !== 400) fail(`media: 'photos' expected 400, got ${badEnum.status}`);
+  if (!resolveSetting('x.sweep.maxAgeMin').isDefault || !resolveSetting('x.sweep.media').isDefault)
     fail('a refused PATCH wrote an override row anyway');
-  ok('maxAgeMin:0 / autoStopMin:241 / verifiedOnly:"yes" refused by code, nothing written');
+  ok(
+    'maxAgeMin:0 / autoStopMin:241 / verifiedOnly:"yes" / media:"photos" refused, nothing written',
+  );
 }
 
 // ============================================================================
@@ -249,7 +267,9 @@ console.log('(b) GET /x/settings/values?scope=mirrored');
     fail(`the mirror still reads ${String(after.body[SENTINEL_KEY])} after the PATCH`);
   const stillEleven = SWEEP_KEYS.every((k) => k in after.body);
   if (!stillEleven) fail('an edit dropped a sibling key from the mirrored blob');
-  ok(`an edited ${SENTINEL_KEY} rides out on the same blob; the other ten are untouched`);
+  ok(
+    `an edited ${SENTINEL_KEY} rides out on the same blob; the other ${SWEEP_FIELDS.length - 1} are untouched`,
+  );
 }
 
 // ============================================================================
@@ -348,12 +368,22 @@ console.log('(c) passesSweep boundaries');
     minReplies: 1,
     maxReplies: 40,
     maxAgeMin: 60,
+    media: 'any',
+    excludeAds: false,
     verifiedOnly: false,
     campedBypass: true,
     circleBypass: false,
     autoStopMin: 30,
   };
-  const BASE: SweepCandidate = { views: 1_000, likes: 10, replies: 5, ageMin: 20, verified: null };
+  const BASE: SweepCandidate = {
+    views: 1_000,
+    likes: 10,
+    replies: 5,
+    ageMin: 20,
+    verified: null,
+    hasMedia: null,
+    promoted: false,
+  };
 
   const cases: Array<[string, Partial<SweepCandidate>, Partial<SweepConfig>, boolean]> = [
     ['a mid-range tweet', {}, {}, true],
@@ -402,30 +432,60 @@ console.log('(c) passesSweep boundaries');
       { verifiedOnly: true },
       false,
     ],
+    // The two content gates. They are NOT metric gates — the bypass arms in
+    // content.ts call `passesContentGates` on their own — so the cases here pin
+    // the same predicate the arms share.
+    ['media either way when the gate is off', { hasMedia: true }, {}, true],
+    ["media 'with' admits a tweet carrying media", { hasMedia: true }, { media: 'with' }, true],
+    ["media 'with' refuses a plain-text tweet", { hasMedia: false }, { media: 'with' }, false],
+    ["media 'without' admits a plain-text tweet", { hasMedia: false }, { media: 'without' }, true],
+    ["media 'without' refuses one carrying media", { hasMedia: true }, { media: 'without' }, false],
+    // Unknown refuses in BOTH directions — the verified rule again: a gate that
+    // admits on unknown has stopped being a gate.
+    ["unknown media refused under 'with'", { hasMedia: null }, { media: 'with' }, false],
+    ["unknown media refused under 'without'", { hasMedia: null }, { media: 'without' }, false],
+    ['a promoted post refused under excludeAds', { promoted: true }, { excludeAds: true }, false],
+    ['a promoted post admitted with the switch off', { promoted: true }, {}, true],
   ];
 
   for (const [label, cand, cfg, expected] of cases) {
     const got = passesSweep({ ...BASE, ...cand }, { ...CFG, ...cfg });
     if (got !== expected) fail(`${label}: expected ${expected}, got ${got}`);
   }
-  ok(`${cases.length} boundary cases, both sides of all six numeric gates`);
+  ok(`${cases.length} boundary cases, both sides of all six numeric gates and both content ones`);
 
   // The shipped defaults, sanity-checked as a set rather than key by key: a
   // 400-view, 12-minute-old post from a verified author with no likes is exactly
   // what the sweep exists to admit; a two-hour-old one is not, and neither is a
   // 5,000-view one now that maxViews ships as a real ceiling.
-  if (!passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 12, verified: true }))
+  const shipped = (over: Partial<SweepCandidate>): SweepCandidate => ({
+    views: 400,
+    likes: 0,
+    replies: 3,
+    ageMin: 12,
+    verified: true,
+    hasMedia: null,
+    promoted: false,
+    ...over,
+  });
+  if (!passesSweep(shipped({})))
     fail('the shipped SWEEP defaults refuse a 400-view 12-minute-old verified post');
-  if (passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 120, verified: true }))
+  if (passesSweep(shipped({ ageMin: 120 })))
     fail('the shipped SWEEP defaults admit a two-hour-old post');
-  if (passesSweep({ views: 5000, likes: 0, replies: 3, ageMin: 12, verified: true }))
+  if (passesSweep(shipped({ views: 5000 })))
     fail('the shipped SWEEP defaults admit a post past the shipped view ceiling');
+  // Ads ship excluded, media ships neutral: the one content refusal in the
+  // shipped set is the promoted post.
+  if (passesSweep(shipped({ promoted: true })))
+    fail('the shipped SWEEP defaults admit a promoted post');
+  if (!passesSweep(shipped({ hasMedia: true })) || !passesSweep(shipped({ hasMedia: false })))
+    fail('the shipped SWEEP defaults filter on media — the gate ships neutral');
   ok('the shipped SWEEP defaults admit a fresh mid-size post, refuse a stale or crowded one');
 
   // verifiedOnly ships ON, so the shipped set refuses an author the page could
   // not read a badge for. That is the gate working; it is also the reason an
   // empty queue and a drifted selector look alike.
-  if (passesSweep({ views: 400, likes: 0, replies: 3, ageMin: 12, verified: null }))
+  if (passesSweep(shipped({ verified: null })))
     fail('the shipped SWEEP defaults admit an unreadable author');
   ok('the shipped SWEEP defaults refuse an unreadable author (verifiedOnly ships ON)');
 
@@ -435,6 +495,14 @@ console.log('(c) passesSweep boundaries');
   if (!sweepNeedsVerified(SWEEP) || sweepNeedsVerified({ ...SWEEP, verifiedOnly: false }))
     fail('sweepNeedsVerified does not track verifiedOnly');
   ok('sweepNeedsVerified tracks verifiedOnly both ways (the skipped DOM read)');
+
+  // Same contract for the two content reads. The media one matters most: it is
+  // the only DOM read here that walks the whole article, and it ships skipped.
+  if (sweepNeedsMedia(SWEEP) || !sweepNeedsMedia({ ...SWEEP, media: 'with' }))
+    fail('sweepNeedsMedia does not track the media gate');
+  if (!sweepNeedsPromoted(SWEEP) || sweepNeedsPromoted({ ...SWEEP, excludeAds: false }))
+    fail('sweepNeedsPromoted does not track excludeAds');
+  ok('sweepNeedsMedia/sweepNeedsPromoted track their knobs (the media read ships skipped)');
 }
 
 // ============================================================================

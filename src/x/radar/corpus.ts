@@ -327,7 +327,14 @@ export interface SightingView {
    *
    *  Unlike the funnel this does NOT force `verifiedOnly` off — `verified` is
    *  stored here, so the badge gate is evaluated exactly as configured and the
-   *  answer is exact rather than approximate. `null` = unjudgeable (no age). */
+   *  answer is exact rather than approximate. `null` = unjudgeable (no age).
+   *
+   *  The two CONTENT gates (media, ads) are the funnel's case, not this one:
+   *  `radar_sightings` carries no media or promoted column, so they are forced
+   *  off rather than guessed. The consequence, stated so it isn't discovered:
+   *  with the media gate set to `with`/`without`, this flag can read `true` for
+   *  a stored row a live sweep would refuse today. It answers "would the METRIC,
+   *  age and badge filters admit this", which is what it has always answered. */
   admitted: boolean | null;
   drafted: boolean;
   replied: boolean;
@@ -423,8 +430,10 @@ export function buildSightingViews(
                 replies: r.replies,
                 ageMin: ageMinAtLastSeen,
                 verified: r.verified,
+                hasMedia: null,
+                promoted: false,
               },
-              cfg,
+              { ...cfg, media: 'any', excludeAds: false },
             ),
       drafted,
       replied,

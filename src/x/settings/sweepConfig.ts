@@ -14,12 +14,12 @@
 // so a PATCH moves the next call with no restart. The page half is
 // extension/src/shared/serverSettings.ts, fed by the mirrored blob.
 
-import type { SweepConfig } from '../../shared/radarSweep.ts';
+import type { SweepConfig, SweepMediaFilter } from '../../shared/radarSweep.ts';
 import { getSetting } from './registry.ts';
 
 /** Every `SweepConfig` field ↔ the registry key that holds it, in the order the
  *  gear reads them. Exhaustive by TYPE (`{[K in keyof SweepConfig]: string}`), so
- *  a twelfth field on the interface fails to compile until it is named here —
+ *  a fourteenth field on the interface fails to compile until it is named here —
  *  which is the point: a preset that silently omitted a knob would load a config
  *  the user believes they saved. Both directions below go through this map. */
 export const SWEEP_SETTING_KEYS: { [K in keyof SweepConfig]: string } = {
@@ -30,6 +30,8 @@ export const SWEEP_SETTING_KEYS: { [K in keyof SweepConfig]: string } = {
   minReplies: 'x.sweep.minReplies',
   maxReplies: 'x.sweep.maxReplies',
   maxAgeMin: 'x.sweep.maxAgeMin',
+  media: 'x.sweep.media',
+  excludeAds: 'x.sweep.excludeAds',
   verifiedOnly: 'x.sweep.verifiedOnly',
   campedBypass: 'x.sweep.campedBypass',
   circleBypass: 'x.sweep.circleBypass',
@@ -45,6 +47,8 @@ export function sweepConfigFromSettings(): SweepConfig {
     minReplies: getSetting<number>(SWEEP_SETTING_KEYS.minReplies),
     maxReplies: getSetting<number>(SWEEP_SETTING_KEYS.maxReplies),
     maxAgeMin: getSetting<number>(SWEEP_SETTING_KEYS.maxAgeMin),
+    media: getSetting<SweepMediaFilter>(SWEEP_SETTING_KEYS.media),
+    excludeAds: getSetting<boolean>(SWEEP_SETTING_KEYS.excludeAds),
     verifiedOnly: getSetting<boolean>(SWEEP_SETTING_KEYS.verifiedOnly),
     campedBypass: getSetting<boolean>(SWEEP_SETTING_KEYS.campedBypass),
     circleBypass: getSetting<boolean>(SWEEP_SETTING_KEYS.circleBypass),
@@ -57,8 +61,8 @@ export function sweepConfigFromSettings(): SweepConfig {
  *  the floors and ceilings are the policy guard (§ Decision 5), and a stored
  *  preset is not a way around them. Pure — no store read, so it is testable
  *  without a DB. */
-export function sweepSettingsPatch(cfg: SweepConfig): Record<string, number | boolean> {
-  const patch: Record<string, number | boolean> = {};
+export function sweepSettingsPatch(cfg: SweepConfig): Record<string, number | boolean | string> {
+  const patch: Record<string, number | boolean | string> = {};
   for (const [field, key] of Object.entries(SWEEP_SETTING_KEYS) as Array<
     [keyof SweepConfig, string]
   >) {

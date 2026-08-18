@@ -1,8 +1,8 @@
 // Named sweep presets (SP.1) — the one `app_settings` row, key 'sweep-presets',
-// that holds saved combinations of the eleven `x.sweep.*` knobs so the Radar can
-// be re-aimed in one click: a small-account hunt (a few hundred impressions, a
-// handful of likes) and a big-account one are the same eleven numbers at
-// different settings, and re-typing them per session is how a filter set drifts.
+// that holds saved combinations of the `x.sweep.*` knobs so the Radar can be
+// re-aimed in one click: a small-account hunt (a few hundred impressions, a
+// handful of likes) and a big-account one are the same thirteen settings at
+// different values, and re-typing them per session is how a filter set drifts.
 //
 // It REUSES UI.1's `app_settings` table the way `humanizer.ts` and
 // `src/llm/settings.ts` do (D1): 'sweep-presets' is NOT a registry key, so the
@@ -24,7 +24,7 @@
 // xFetch or askLLM — every route on top of it is $0.
 //
 // Nothing secret lives here: `app_settings` is explorer/MCP-visible by
-// construction (§7.16), and a preset is eleven filter numbers and a name.
+// construction (§7.16), and a preset is thirteen filter settings and a name.
 
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/client.ts';
@@ -85,6 +85,8 @@ function parseValues(raw: unknown): SweepConfig {
     minReplies: numberOr(v.minReplies, SWEEP.minReplies),
     maxReplies: numberOr(v.maxReplies, SWEEP.maxReplies),
     maxAgeMin: numberOr(v.maxAgeMin, SWEEP.maxAgeMin),
+    media: v.media === 'any' || v.media === 'with' || v.media === 'without' ? v.media : SWEEP.media,
+    excludeAds: typeof v.excludeAds === 'boolean' ? v.excludeAds : SWEEP.excludeAds,
     verifiedOnly: typeof v.verifiedOnly === 'boolean' ? v.verifiedOnly : SWEEP.verifiedOnly,
     campedBypass: typeof v.campedBypass === 'boolean' ? v.campedBypass : SWEEP.campedBypass,
     circleBypass: typeof v.circleBypass === 'boolean' ? v.circleBypass : SWEEP.circleBypass,

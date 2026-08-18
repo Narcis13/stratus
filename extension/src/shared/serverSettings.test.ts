@@ -218,6 +218,8 @@ describe('readServerConfig — sweep filters (RS.1)', () => {
       'x.sweep.minReplies': 1,
       'x.sweep.maxReplies': 25,
       'x.sweep.maxAgeMin': 90,
+      'x.sweep.media': 'with',
+      'x.sweep.excludeAds': false,
       'x.sweep.verifiedOnly': true,
       'x.sweep.campedBypass': false,
       'x.sweep.circleBypass': true,
@@ -231,6 +233,8 @@ describe('readServerConfig — sweep filters (RS.1)', () => {
       minReplies: 1,
       maxReplies: 25,
       maxAgeMin: 90,
+      media: 'with',
+      excludeAds: false,
       verifiedOnly: true,
       campedBypass: false,
       circleBypass: true,
@@ -243,7 +247,7 @@ describe('readServerConfig — sweep filters (RS.1)', () => {
     expect(readServerConfig(undefined).sweep).toEqual(SWEEP);
   });
 
-  test('one corrupt filter falls back alone — the other ten still apply', () => {
+  test('one corrupt filter falls back alone — the other twelve still apply', () => {
     const cfg = readServerConfig({
       'x.sweep.minViews': 'lots',
       'x.sweep.maxReplies': 12,
@@ -262,10 +266,20 @@ describe('readServerConfig — sweep filters (RS.1)', () => {
     expect(cfg.sweep.minViews).toBe(0);
   });
 
+  // The mirror's first enum: an unknown option must not reach the predicate,
+  // where it would match neither the 'with' branch nor the 'without' one and so
+  // silently disable a gate the user switched on.
+  test('an unknown media option falls back to the shipped gate', () => {
+    expect(readServerConfig({ 'x.sweep.media': 'without' }).sweep.media).toBe('without');
+    expect(readServerConfig({ 'x.sweep.media': 'photos' }).sweep.media).toBe(SWEEP.media);
+    expect(readServerConfig({ 'x.sweep.media': true }).sweep.media).toBe(SWEEP.media);
+  });
+
   test('a false switch reads as false, not as unset', () => {
     expect(readServerConfig({ 'x.sweep.campedBypass': false }).sweep.campedBypass).toBe(false);
     expect(readServerConfig({ 'x.sweep.campedBypass': 0 }).sweep.campedBypass).toBe(
       SWEEP.campedBypass,
     );
+    expect(readServerConfig({ 'x.sweep.excludeAds': false }).sweep.excludeAds).toBe(false);
   });
 });
