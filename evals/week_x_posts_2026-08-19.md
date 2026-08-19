@@ -110,7 +110,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ## Wednesday, August 19
 
-**12:05 — C1 · named options**
+**12:07 — C1 · named options**
 > Which one has quietly run your career?
 >
 > - Luck
@@ -126,7 +126,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**17:35 — B7 · escape hatch**
+**17:29 — B7 · escape hatch**
 > To change one field on one form at my hospital takes four signatures and six weeks.
 >
 > To ship a feature to a stranger on the internet takes me one evening.
@@ -143,7 +143,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**23:45 — B2 · escape hatch · NIGHT** *(US East 16:45)*
+**23:48 — B2 · escape hatch · NIGHT** *(US East 16:45)*
 > The most valuable software in the world is a spreadsheet somebody's mother built in 2009 that nobody is allowed to touch.
 >
 > What's yours?
@@ -152,7 +152,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**02:30 Thu — A1 · VERDICT · NIGHT** *(US East 19:30 — best slot of the block)*
+**02:37 Thu — A1 · VERDICT · NIGHT** *(US East 19:30 — best slot of the block)*
 > Thirty years of writing code.
 >
 > I haven't opened a debugger in four months. I describe the bug and read what comes back.
@@ -167,7 +167,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ## Thursday, August 20
 
-**07:40 — C11 · contrarian**
+**07:44 — C11 · contrarian**
 > Unpopular opinion: nobody is "too busy" to build.
 >
 > They're waiting for permission, and there is nobody left alive who can give it to them.
@@ -178,7 +178,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**09:55 — B6 · escape hatch**
+**10:02 — B6 · escape hatch**
 > At 25 I thought the scarce thing was money.
 >
 > At 51 I know it's uninterrupted hours.
@@ -189,7 +189,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**12:05 — B1 · escape hatch**
+**12:02 — B1 · escape hatch**
 > I do IT in a public hospital.
 >
 > The most important system in the building is a whiteboard.
@@ -204,7 +204,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**17:35 — C9 · unfair-angle practitioner ask**
+**17:36 — C9 · unfair-angle practitioner ask**
 > I have access to a real hospital, twenty small accounting firms, and thirty years of knowing which systems are held together with tape.
 >
 > I have no idea how to turn that into something people pay for.
@@ -221,7 +221,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**23:45 — C2 · named options · NIGHT**
+**23:44 — C2 · named options · NIGHT**
 > Only one of these is still worth teaching a child in 2030. Which?
 >
 > - Handwriting
@@ -235,7 +235,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**02:30 Fri — C5 · era ladder · NIGHT** *(highest ceiling in the set)*
+**02:33 Fri — C5 · era ladder · NIGHT** *(highest ceiling in the set)*
 > My grandmother's skill was growing food.
 >
 > My mother's skill was getting a job and keeping it.
@@ -252,7 +252,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ## Friday, August 21
 
-**07:40 — B5 · escape hatch · roll-call**
+**07:36 — B5 · escape hatch · roll-call**
 > Every good idea I've had, I had in Romanian.
 >
 > Every one I got paid for, I had to sell in English.
@@ -265,7 +265,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**09:55 — C3 · named options**
+**10:01 — C3 · named options**
 > What actually kills a side project?
 >
 > - The day job
@@ -277,7 +277,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**12:05 — B3 · escape hatch**
+**12:06 — B3 · escape hatch**
 > My parents kept every receipt in a shoebox under the bed.
 >
 > I keep everything in a cloud I don't own, can't see, and can't get back if they close it.
@@ -292,7 +292,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**17:35 — C8 · forced binary**
+**17:31 — C8 · forced binary**
 > Would you let AI read your medical file if it caught things your doctor missed?
 >
 > Yes or no. No conditions.
@@ -307,7 +307,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**23:45 — A3 · VERDICT · NIGHT**
+**23:38 — A3 · VERDICT · NIGHT**
 > I think in Romanian. I write my posts in English. Then I have AI fix the grammar before I send.
 >
 > Are those still my words?
@@ -318,7 +318,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**02:30 Sat — A6 · VERDICT · NIGHT**
+**02:25 Sat — A6 · VERDICT · NIGHT**
 > No CS degree. No bootcamp. No GitHub stars. No conference talk.
 >
 > Thirty years of shipping things people actually used.
@@ -333,7 +333,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ## Saturday, August 22
 
-**07:40 — C12 · confession · roll-call**
+**07:47 — C12 · confession · roll-call**
 > Let's do confessions. I'll go first.
 >
 > I check the analytics on a product with almost no users several times a day. Not for information. For company.
@@ -344,7 +344,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**09:55 — B4 · escape hatch**
+**09:51 — B4 · escape hatch**
 > The plumber charges more than the developer now. In Romania, and I suspect not only here.
 >
 > When did that flip?
@@ -355,7 +355,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**12:05 — A4 · VERDICT**
+**12:10 — A4 · VERDICT**
 > I used to write code. Now I mostly write instructions and say "no, not like that."
 >
 > My title didn't change. My job did.
@@ -370,7 +370,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**17:35 — C10 · contrarian + practitioner ask**
+**17:33 — C10 · contrarian + practitioner ask**
 > Everyone selling to developers is fighting over the same 200,000 people.
 >
 > I'm surrounded by accountants, nurses and clerks who would pay real money and have never bought software in their life.
@@ -385,7 +385,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**23:45 — C4 · named options · NIGHT**
+**23:40 — C4 · named options · NIGHT**
 > Your doctor is 30 minutes late. What's actually happening?
 >
 > - An emergency
@@ -399,7 +399,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**02:30 Sun — A7 · VERDICT · NIGHT**
+**02:27 Sun — A7 · VERDICT · NIGHT**
 > AI wrote most of the code in the thing I shipped this week.
 >
 > I decided what it should do, what to cut, and what was wrong three times.
@@ -412,7 +412,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ## Sunday, August 23
 
-**07:40 — B8 · escape hatch · roll-call**
+**07:42 — B8 · escape hatch · roll-call**
 > Nobody in my family had ever met a person who worked with computers. For twenty years I explained my job like a magic trick.
 >
 > First generation in anything — what did it cost you?
@@ -421,7 +421,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**09:55 — A8 · VERDICT**
+**09:54 — A8 · VERDICT**
 > My best three hours are 15:00 to 19:00. Never in the morning. Never after 21:00.
 >
 > Everyone tells me this is fixable.
@@ -432,7 +432,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**12:05 — C7 · forced binary**
+**12:12 — C7 · forced binary**
 > You can keep the salary you have now with no security at all, or half of it guaranteed for life.
 >
 > Pick.
@@ -445,7 +445,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**17:35 — A5 · VERDICT**
+**17:38 — A5 · VERDICT**
 > My SaaS made $0 last month. It also made $0 the month before.
 >
 > At what point do I have to stop calling myself a founder?
@@ -460,7 +460,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**23:45 — C6 · era ladder · NIGHT**
+**23:46 — C6 · era ladder · NIGHT**
 > 1970: they gave you a pension.
 >
 > 2000: they gave you a 401k.
@@ -473,7 +473,7 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 
 ---
 
-**02:30 Mon — A2 · VERDICT · NIGHT**
+**02:31 Mon — A2 · VERDICT · NIGHT**
 > I'm 51, I have a full-time job, and I build for three hours a night.
 >
 > Somewhere in that sentence is the word "hobbyist."
@@ -508,3 +508,46 @@ Checked against your last 90 originals. **Retired for this week** (all used with
 ---
 
 *Sources: `harvest_rows` (@sl1ma4 n=100, plus n=2,509 across the full corpus), your last 90 originals via `scheduled_posts`, `content_pillars`, and the doctrine in `evals/2026-08-03-question-forge-10.md`. Novelty checked; §4 lists what's retired.*
+
+---
+
+## 6. Queue state
+
+**All 28 submitted to stratus and pending as of 2026-08-19 11:25 EEST.** Verified against `GET /x/posts/scheduled?status=pending` — 28 rows, publisher worker live.
+
+Times above are the **actual scheduled times**. The §2 grid lists the slot *anchors*; each post carries a per-day minute jitter (distinct minute per slot column across the five days, never `:00`) so the cadence doesn't read as a cron job. Anchor → real time drift is at most 7 minutes, so the spacing and the US-timezone reasoning in §2 hold unchanged.
+
+| id | anchor | fires (Bucharest) | UTC | row |
+|---|---|---|---|---|
+| C1 | 12:05 | Wed 19 12:07 | 2026-08-19 09:07Z | `ac2481f0` |
+| B7 | 17:35 | Wed 19 17:29 | 2026-08-19 14:29Z | `75198a09` |
+| B2 | 23:45 | Wed 19 23:48 | 2026-08-19 20:48Z | `7e0d1ce2` |
+| A1 | 02:30 | Thu 20 02:37 | 2026-08-19 23:37Z | `8d782633` |
+| C11 | 07:40 | Thu 20 07:44 | 2026-08-20 04:44Z | `41b17d83` |
+| B6 | 09:55 | Thu 20 10:02 | 2026-08-20 07:02Z | `a89b5a86` |
+| B1 | 12:05 | Thu 20 12:02 | 2026-08-20 09:02Z | `c300f56c` |
+| C9 | 17:35 | Thu 20 17:36 | 2026-08-20 14:36Z | `7d441560` |
+| C2 | 23:45 | Thu 20 23:44 | 2026-08-20 20:44Z | `6b8075a2` |
+| C5 | 02:30 | Fri 21 02:33 | 2026-08-20 23:33Z | `902bf98d` |
+| B5 | 07:40 | Fri 21 07:36 | 2026-08-21 04:36Z | `0397019a` |
+| C3 | 09:55 | Fri 21 10:01 | 2026-08-21 07:01Z | `6efb0df2` |
+| B3 | 12:05 | Fri 21 12:06 | 2026-08-21 09:06Z | `2512ebef` |
+| C8 | 17:35 | Fri 21 17:31 | 2026-08-21 14:31Z | `a8e69755` |
+| A3 | 23:45 | Fri 21 23:38 | 2026-08-21 20:38Z | `ef8187c7` |
+| A6 | 02:30 | Sat 22 02:25 | 2026-08-21 23:25Z | `3fe65866` |
+| C12 | 07:40 | Sat 22 07:47 | 2026-08-22 04:47Z | `2a6d80d3` |
+| B4 | 09:55 | Sat 22 09:51 | 2026-08-22 06:51Z | `93b261d2` |
+| A4 | 12:05 | Sat 22 12:10 | 2026-08-22 09:10Z | `205de12a` |
+| C10 | 17:35 | Sat 22 17:33 | 2026-08-22 14:33Z | `3a7ef8e3` |
+| C4 | 23:45 | Sat 22 23:40 | 2026-08-22 20:40Z | `2377309e` |
+| A7 | 02:30 | Sun 23 02:27 | 2026-08-22 23:27Z | `eed59f0c` |
+| B8 | 07:40 | Sun 23 07:42 | 2026-08-23 04:42Z | `916337f5` |
+| A8 | 09:55 | Sun 23 09:54 | 2026-08-23 06:54Z | `191aa402` |
+| C7 | 12:05 | Sun 23 12:12 | 2026-08-23 09:12Z | `694b0f07` |
+| A5 | 17:35 | Sun 23 17:38 | 2026-08-23 14:38Z | `0089062b` |
+| C6 | 23:45 | Sun 23 23:46 | 2026-08-23 20:46Z | `bd0c53d1` |
+| A2 | 02:30 | Mon 24 02:31 | 2026-08-23 23:31Z | `4a040039` |
+
+The ten **YOURS (manual)** slots (14:15 and 21:10 daily) are deliberately empty in the queue — nothing will publish there unless you add it.
+
+To change one: `PATCH /x/posts/scheduled/:id` with `{text}` or `{scheduledFor}`. To drop one: `DELETE` the same path.
