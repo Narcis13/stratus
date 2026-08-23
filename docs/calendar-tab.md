@@ -83,10 +83,11 @@ Ghost slots aren't posts and never publish anything on their own. They only beco
 
 ### Scheduling a draft from the tray
 
-Each draft in the tray has two quick actions:
+Each draft in the tray has three quick actions:
 
 - **→ best slot** — stratus picks the best open slot in the week (respecting measured and audience signals and avoiding taken slots) and schedules the draft there in one click. A draft with a Studio visual is scheduled **manual** (it needs a hand-post); a plain one is scheduled **pending** (API). If the draft's text contains a link, scheduling it *pending* is refused — you'll see an inline nudge to **switch to Manual** (manual posts may hold links).
 - **edit** — opens the draft in the Composer.
+- **delete** — throws the draft away after a confirm. Drafting produces batches, so most of what lands in the tray is meant to be discarded; this is the one-click way to do it without a detour through the Composer. The row is deleted, not archived — there is no undo. The tray's eyebrow also carries a **clear all** action that deletes every unscheduled draft in one confirm; if some rows refuse (a thread member, or a row the publisher just claimed), the rest still go and a line reports how many didn't.
 
 You can also place a draft **exactly**: click a draft to **arm** it (it highlights), then click any **ghost slot** to drop it there. stratus schedules it at that hour with a natural, off-the-top-of-the-hour minute so it doesn't look robotic.
 

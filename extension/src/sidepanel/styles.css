@@ -720,6 +720,37 @@ button.danger:hover:not(:disabled) {
   border-radius: var(--strat-radius-sm);
   cursor: pointer;
 }
+.tray-delete-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.tray-delete-btn:hover:not(:disabled) {
+  border-color: var(--strat-danger);
+  color: var(--strat-danger);
+}
+.tray-delete-btn:disabled,
+.tray-clear-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tray-clear-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: var(--strat-radius-sm);
+  cursor: pointer;
+}
+.tray-clear-btn:hover:not(:disabled) {
+  border-color: var(--strat-danger);
+  color: var(--strat-danger);
+}
 
 /* harvest */
 .field select {

@@ -62,6 +62,7 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [marking, setMarking] = useState<string | null>(null);
   const [scheduling, setScheduling] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   // A3.14 — the draft armed for slot-picking: while set, ghost slots become
   // clickable and place it. null = just browsing.
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
@@ -145,6 +146,46 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
       } finally {
         setScheduling(null);
       }
+    },
+    [settings, load],
+  );
+
+  // Drafting produces batches (§8.1 lands three at a time), so most tray rows
+  // are meant to be thrown away — deleting one shouldn't cost a round trip
+  // through the Composer. `confirm` because it's unrecoverable: the row is gone,
+  // not archived.
+  const deleteDraft = useCallback(
+    async (draft: TrayDraft) => {
+      if (!confirm(`Delete this draft?\n\n${draft.snippet}`)) return;
+      setDeleting(draft.id);
+      setError(null);
+      try {
+        await api.remove(settings, draft.id);
+        setSelectedDraftId((cur) => (cur === draft.id ? null : cur));
+        await load();
+      } catch (e) {
+        setError(e instanceof ApiError ? e.message : 'Failed to delete');
+      } finally {
+        setDeleting(null);
+      }
+    },
+    [settings, load],
+  );
+
+  // Clearing the whole tray in one go — the batch-drafting escape hatch. Deletes
+  // run in parallel and independently: one 409 (a thread member, a row the
+  // publisher just claimed) doesn't strand the rest.
+  const clearTray = useCallback(
+    async (tray: TrayDraft[]) => {
+      if (!confirm(`Delete all ${tray.length} unscheduled drafts? This can't be undone.`)) return;
+      setDeleting('*');
+      setError(null);
+      const results = await Promise.allSettled(tray.map((d) => api.remove(settings, d.id)));
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      setSelectedDraftId(null);
+      setDeleting(null);
+      if (failed > 0) setError(`${failed} of ${tray.length} drafts could not be deleted.`);
+      await load();
     },
     [settings, load],
   );
@@ -310,7 +351,20 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
       </Section>
 
       {board.tray.length > 0 && (
-        <Section title={`Drafts · unscheduled (${board.tray.length})`}>
+        <Section
+          title={`Drafts · unscheduled (${board.tray.length})`}
+          actions={
+            <button
+              type="button"
+              className="tray-clear-btn"
+              onClick={() => void clearTray(board.tray)}
+              disabled={deleting != null}
+              title="Delete every unscheduled draft"
+            >
+              clear all
+            </button>
+          }
+        >
           <ul className="post-list day-card drafts-tray">
             {board.tray.map((d) => {
               const selected = selectedDraftId === d.id;
@@ -342,6 +396,15 @@ export function CalendarPanel({ settings, onEdit }: Props): JSX.Element {
                     </button>
                     <button type="button" className="tray-edit-btn" onClick={() => onEdit(d.id)}>
                       edit
+                    </button>
+                    <button
+                      type="button"
+                      className="tray-delete-btn"
+                      onClick={() => void deleteDraft(d)}
+                      disabled={deleting != null}
+                      title="Delete this draft"
+                    >
+                      {deleting === d.id ? '…' : 'delete'}
                     </button>
                   </div>
                 </li>
