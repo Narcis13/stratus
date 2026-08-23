@@ -1,6 +1,6 @@
 {
   "name": "stratus-extension",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "private": true,
   "type": "module",
   "description": "Chrome MV3 side-panel extension for stratus.",

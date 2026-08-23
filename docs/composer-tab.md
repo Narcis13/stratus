@@ -201,7 +201,7 @@ Below the scheduling controls, when you're writing a *new* post (not editing an 
 
 ### The pillar dropdown
 
-**Pillar** lets you steer which of your content themes ("pillars") the drafts should belong to. Leave it on **"any pillar (Grok declares)"** to let the AI choose, or pick a specific pillar from the list (the list is your own editable set of pillars, managed in the Voice tab). Each draft it returns is tagged with the pillar it belongs to.
+**Pillar** lets you steer which of your content themes ("pillars") the drafts should belong to. It opens on **"No pillar (off-taxonomy)"** — the default — which tells the drafter to ignore your pillar taxonomy entirely and write to the idea itself (or, with no idea, to your own life and work). Off-pillar drafts land on the Calendar with no pillar badge, and they don't feed the Playbook's pillar × register scorecard. Switch to **"any pillar (Grok declares)"** to let the AI pick one of your pillars, or name a specific pillar from the list (the list is your own editable set, managed in the Voice tab). The same dropdown steers thread drafting.
 
 ### The idea steer and the Idea Inbox dropdown
 
@@ -216,9 +216,9 @@ Both are optional. With neither filled in, Grok drafts from your general voice a
 
 Click **Generate 3 drafts (~$0.01)**. Each click makes one Grok call (roughly a cent) and returns **three register-distinct drafts** — three takes on the same idea in different tones:
 
-- **plain** — straightforward.
-- **spicy** — punchier, more opinionated.
-- **reflective** — more thoughtful.
+- **plain** — straightforward: the claim, stated and landed.
+- **spicy** — punchy and opinionated: a contrarian hook backed by something you lived.
+- **bait** — engineered to be *answered*: built on one of the proven engagement formats (would-you-rather, poll-list, confessional question, audience CTA) and ending in a real question or a forced pick. Not "like if you agree" — a question you'd answer yourself, in public. These measured roughly 2x the views of posts engineered to be admired, which is why the third slot is always one of them (it replaced the old **reflective** register on 2026-08-23; posts drafted before that keep their `reflective` badge).
 
 Each draft is shown as a card with its **register** badge, its **pillar** badge, a character count, and the full text. A line above the cards notes how many "winners" (your top past posts) were used as voice anchors and the exact cost.
 
@@ -286,7 +286,13 @@ The Composer also opens pre-loaded from two other places:
 
 ### Remix from Voice
 
-In the **Voice** tab (your swipe file of other people's tweets), the **Remix** button on a saved tweet sends you to the Composer with that tweet's *structure* queued as a drafting seed. You'll see a line reading *"remixing structure of tweet …"* with a ✕ to cancel it. When you generate drafts, Grok reuses the saved tweet's **shape** (its hook style, rhythm, line breaks) to write brand-new posts in your own words — it borrows the skeleton, never the content.
+In the **Voice** tab (your swipe file of other people's tweets), the **remix** button on a saved tweet sends you to the Composer and drops that tweet's text straight into the drafter's **Tweet remix** box. A line above reads *"remixing tweet …"* with a ✕ that clears both the box and the link, and a note under the box shows the tweet's extracted template (hook · skeleton · line breaks · length · device) when it has one.
+
+The box is an ordinary textarea, so you can edit what landed there, or **paste any tweet at all** — it doesn't have to be one you saved. Leave it empty to draft with no structure to remix.
+
+When you generate, the drafter treats that tweet as **loose inspiration**: it borrows the machinery (hook shape, the order the beats arrive in, line-break rhythm, length, closing device) and takes nothing off the surface — no words, phrases, claims, numbers or examples, and not the original's topic either. The subject stays yours (your idea, or your own material). The rule the prompt works to: if the original author read your post, they should recognise the shape and not a single sentence. Where the borrowed shape fights a register, the register wins and the shape bends.
+
+The box also feeds **thread** drafting — the same tweet, the same leash, applied to the thread's shape.
 
 ### Editing an existing post
 
@@ -305,9 +311,9 @@ A post that has already **posted** or is currently **publishing** is locked: its
 ## Common workflows
 
 **Draft three options with AI and schedule the best one**
-1. In a new post, optionally set a Pillar and type an Idea (or pick one from the Idea Inbox).
+1. In a new post, type an Idea (or pick one from the Idea Inbox); leave Pillar on **No pillar** unless you want the drafts to serve one of your declared pillars.
 2. Click **Generate 3 drafts**.
-3. Read the plain / spicy / reflective cards; click **More like this** on the closest one if you want to iterate.
+3. Read the plain / spicy / bait cards; click **More like this** on the closest one if you want to iterate.
 4. Click **Use this →** on your favorite, click **Best time** to pick a strong slot, and **Save changes**. The other two stay as drafts on the Calendar.
 
 **Write a thread with a link**

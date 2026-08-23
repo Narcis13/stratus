@@ -47,7 +47,7 @@ export const PILLAR_DRAFT_TEMPLATE = `You help maintain the content pillars for 
 What a content pillar is here: a recurring theme the post drafter writes against. Each pillar has:
 - slug: a short kebab-case id (e.g. ai-craft).
 - label: a short heading in the form "Name — the ANGLE".
-- body: ONE paragraph of guidance telling the drafter how to write this pillar — the angle, "why only me" (the unfair edge), the dominant register (plain / spicy / reflective), one concrete do and one don't. Specific > abstract. No fabricated biography beyond the persona above.
+- body: ONE paragraph of guidance telling the drafter how to write this pillar — the angle, "why only me" (the unfair edge), the dominant register (plain / spicy / bait), one concrete do and one don't. Specific > abstract. No fabricated biography beyond the persona above.
 
 EXISTING PILLARS:
 {{EXISTING_PILLARS}}

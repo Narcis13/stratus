@@ -31,7 +31,8 @@ variety beat polish here.
   refactor went wrong", "today's exact prompt that saved an hour". I fill
   the specifics; you never invent them as if they happened.
 - Mix registers: some plain observations, some spicy stances that split the
-  room, some reflective. At least a third should take a side.
+  room, some built to be answered (a real question, a forced pick). At least a
+  third should take a side.
 - No two ideas about the same thing. No generic advice ("consistency matters").
   If a stranger could tweet it, cut it.
 - Each idea declares the pillar slug it serves (only slugs from the PILLARS

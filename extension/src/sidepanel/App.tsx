@@ -14,6 +14,7 @@ import { SettingsPanel } from './Settings.tsx';
 import { StudioPanel, type StudioSeed } from './Studio.tsx';
 import { TodayPanel } from './Today.tsx';
 import { VoicePanel } from './Voice.tsx';
+import type { RemixSeed } from './api.ts';
 import { isConfigured, useSettings } from './storage.ts';
 import { EmptyState } from './ui/EmptyState.tsx';
 
@@ -80,7 +81,7 @@ export function App(): JSX.Element {
   const { settings, loading } = useSettings();
   const [tab, setTab] = useState<Tab>('today');
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [remixTweetId, setRemixTweetId] = useState<string | null>(null);
+  const [remixSeed, setRemixSeed] = useState<RemixSeed | null>(null);
   // C1: handle to open in the People dossier — any handle rendered anywhere in
   // the panel routes here via openPerson.
   const [personHandle, setPersonHandle] = useState<string | null>(null);
@@ -92,10 +93,11 @@ export function App(): JSX.Element {
     setTab('composer');
   };
   const clearEdit = () => setEditingId(null);
-  // §8.3 → §8.1: Voice tab's Remix button seeds the Composer drafter.
-  const startRemix = (tweetId: string) => {
+  // §8.3 → §8.1: Voice tab's Remix button seeds the Composer drafter — the
+  // tweet's text lands in the *Tweet remix* box, its template in the note.
+  const startRemix = (seed: RemixSeed) => {
     setEditingId(null);
-    setRemixTweetId(tweetId);
+    setRemixSeed(seed);
     setTab('composer');
   };
   const openPerson = (handle: string) => {
@@ -212,8 +214,8 @@ export function App(): JSX.Element {
           <ComposerPanel
             settings={settings}
             editingId={editingId}
-            remixTweetId={remixTweetId}
-            onClearRemix={() => setRemixTweetId(null)}
+            remixSeed={remixSeed}
+            onClearRemix={() => setRemixSeed(null)}
             onClearEdit={clearEdit}
             onSaved={onSaved}
             onEdit={startEdit}

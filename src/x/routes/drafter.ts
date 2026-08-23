@@ -4,7 +4,7 @@
 //
 //   POST /posts/draft  body: { pillar?, idea?, voiceTweetId?, model?, reasoningEffort? }
 //     One Grok structured-outputs call returning three register-distinct
-//     drafts (plain/spicy/reflective), each landing as a status='draft' row in
+//     drafts (plain/spicy/bait), each landing as a status='draft' row in
 //     the calendar with its pillar declared. Nothing posts until the human
 //     flips a row to 'pending' — the drafter writes drafts, never schedules.
 //
@@ -35,7 +35,7 @@ import {
 } from '../../llm/index.ts';
 import { metricsSnapshots, postsPublished, scheduledPosts, voiceTweets } from '../db/schema.ts';
 import { loadActiveNicheSafe } from '../niche/store.ts';
-import { type PillarDef, parsePillar } from '../posts/pillars.ts';
+import { NO_PILLAR, type PillarDef, parsePillar } from '../posts/pillars.ts';
 import {
   type PostPillar,
   type RemixSource,
@@ -88,6 +88,9 @@ const MACHINE_SOURCES = new Set(['drafter']);
 // prompt body, niche-suffixed at the call site.
 
 const TWEET_ID_RE = /^\d{1,32}$/;
+// The *Tweet remix* box holds one tweet, not an essay — a X post caps at 280,
+// and the cap leaves room for a quoted tweet pasted along with it.
+const MAX_REMIX_LENGTH = 2000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface RawBody {
@@ -97,6 +100,10 @@ interface RawBody {
   // draft call consumes it (status flip + backlink, routes/ideas.ts).
   ideaId?: unknown;
   voiceTweetId?: unknown;
+  /** The Composer's *Tweet remix* box: the tweet to borrow a shape from, as
+   *  free text (a saved swipe-file row, or anything pasted). Merged onto the
+   *  voice row's extracted template when both are sent. */
+  remixText?: unknown;
   tweetId?: unknown;
   // AI.7 draft-thread only: target tweet count, clamped 3–8.
   tweetCount?: unknown;
@@ -121,7 +128,8 @@ drafter.post('/posts/draft', async (c) => {
     pillars.map((p) => p.slug),
   );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, ideaId, model, provider, reasoningEffort } = parsed;
+  const { body, pillar, offPillar, idea, remixText, ideaId, model, provider, reasoningEffort } =
+    parsed;
 
   let remix: RemixSource | null = null;
   if (body.voiceTweetId !== undefined && body.voiceTweetId !== null) {
@@ -133,18 +141,35 @@ drafter.post('/posts/draft', async (c) => {
       .from(voiceTweets)
       .where(eq(voiceTweets.tweetId, body.voiceTweetId.trim()));
     if (!vt) return c.json({ error: 'voice_tweet_not_found' }, 404);
+    // The tweet text ships even when the template IS extracted — the fields say
+    // what shape to borrow, the tweet says what that shape sounds like (§10
+    // keeps it loose). The box, when the client sent one, wins: it is what the
+    // human was looking at and may have edited.
     remix = {
       hookType: vt.hookType,
       skeleton: vt.skeleton,
       lineBreakPattern: vt.lineBreakPattern,
       templateLength: vt.templateLength,
       device: vt.device,
-      rawText: vt.templateExtractedAt ? null : vt.text,
+      rawText: vt.text,
     };
+  }
+  if (remixText !== undefined) {
+    remix = remix
+      ? { ...remix, rawText: remixText }
+      : {
+          hookType: null,
+          skeleton: null,
+          lineBreakPattern: null,
+          templateLength: null,
+          device: null,
+          rawText: remixText,
+        };
   }
 
   return generateAndInsert(c, {
     pillar,
+    offPillar,
     idea,
     ideaId,
     remix,
@@ -168,7 +193,8 @@ drafter.post('/posts/reup', async (c) => {
     pillars.map((p) => p.slug),
   );
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, ideaId, model, provider, reasoningEffort } = parsed;
+  const { body, pillar, offPillar, idea, remixText, ideaId, model, provider, reasoningEffort } =
+    parsed;
 
   const tweetId = typeof body.tweetId === 'string' ? body.tweetId.trim() : '';
   if (!TWEET_ID_RE.test(tweetId)) return c.json({ error: 'invalid_tweet_id' }, 400);
@@ -185,9 +211,20 @@ drafter.post('/posts/reup', async (c) => {
 
   return generateAndInsert(c, {
     pillar,
+    offPillar,
     idea: steer,
     ideaId,
-    remix: null,
+    remix:
+      remixText === undefined
+        ? null
+        : {
+            hookType: null,
+            skeleton: null,
+            lineBreakPattern: null,
+            templateLength: null,
+            device: null,
+            rawText: remixText,
+          },
     model,
     provider,
     reasoningEffort,
@@ -208,10 +245,14 @@ drafter.post('/posts/draft-thread', async (c) => {
   if (pillars.length === 0) {
     return c.json({ error: 'no_pillars_for_niche', niche: loadActiveNicheSafe().slug }, 409);
   }
-  const slugs = pillars.map((p) => p.slug);
-  const parsed = await parseCommon(c.req.raw, slugs);
+  const pillarSlugs = pillars.map((p) => p.slug);
+  const parsed = await parseCommon(c.req.raw, pillarSlugs);
   if ('error' in parsed) return c.json({ error: parsed.error }, 400);
-  const { body, pillar, idea, ideaId, model, provider, reasoningEffort } = parsed;
+  const { body, pillar, offPillar, idea, remixText, ideaId, model, provider, reasoningEffort } =
+    parsed;
+  // Same off-pillar contract as /posts/draft: sentinel-only enum, `none` in the
+  // steer, NULL pillar on the inserted rows.
+  const slugs = offPillar ? [NO_PILLAR] : pillarSlugs;
 
   let tweetCount: number | undefined;
   if (body.tweetCount !== undefined && body.tweetCount !== null) {
@@ -237,7 +278,9 @@ drafter.post('/posts/draft-thread', async (c) => {
       persona: niche.persona,
       beliefs: niche.beliefs,
       template: prompt.body,
-      ...(pillar !== undefined ? { pillar } : {}),
+      ...(offPillar ? { offPillar: true } : {}),
+      ...(pillar !== undefined && !offPillar ? { pillar } : {}),
+      ...(remixText !== undefined ? { remixText } : {}),
       ...(idea !== undefined ? { idea } : {}),
       ...(tweetCount !== undefined ? { tweetCount } : {}),
       ...(guidance !== null ? { guidance } : {}),
@@ -306,7 +349,11 @@ drafter.post('/posts/draft-thread', async (c) => {
     return c.json({ error: 'thread_invalid', requestId: result.requestId }, 502);
   }
 
-  const { threadId, rows } = await insertThreadDraft(draft.pillar, draft.tweets, ideaId);
+  const { threadId, rows } = await insertThreadDraft(
+    offPillar ? null : draft.pillar,
+    draft.tweets,
+    ideaId,
+  );
 
   return c.json(
     {
@@ -446,6 +493,7 @@ export async function insertThreadDraft(pillar: string | null, tweets: string[],
 
 interface GenerateOptions {
   pillar: PostPillar | undefined;
+  offPillar: boolean;
   idea: string | undefined;
   ideaId: string | undefined;
   remix: RemixSource | null;
@@ -458,7 +506,9 @@ interface GenerateOptions {
 
 async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Response> {
   const winners = await topWinners();
-  const slugs = opts.pillars.map((p) => p.slug);
+  // Off-pillar: the enum is the sentinel alone, so every draft declares `none`
+  // and lands with a NULL pillar — the taxonomy never enters the prompt.
+  const slugs = opts.offPillar ? [NO_PILLAR] : opts.pillars.map((p) => p.slug);
   // Playbook guidance (C4): gated topStructures line from my own measured
   // winners, appended at the variable tail. Best-effort; null under the gate.
   const guidance = await loadPostGuidanceSafe();
@@ -478,7 +528,8 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
     persona: niche.persona,
     beliefs: niche.beliefs,
     template: prompt.body,
-    ...(opts.pillar !== undefined ? { pillar: opts.pillar } : {}),
+    ...(opts.offPillar ? { offPillar: true } : {}),
+    ...(opts.pillar !== undefined && !opts.offPillar ? { pillar: opts.pillar } : {}),
     ...(opts.idea !== undefined ? { idea: opts.idea } : {}),
     ...(guidance !== null ? { guidance } : {}),
     ...(meContext !== null ? { meContext } : {}),
@@ -529,7 +580,7 @@ async function generateAndInsert(c: Context, opts: GenerateOptions): Promise<Res
         text: v.text,
         status: 'draft',
         source: 'drafter',
-        pillar: v.pillar,
+        pillar: opts.offPillar ? null : v.pillar,
         // C4: the chosen register lands on the row so the Playbook's
         // pillar × register scorecard has something to aggregate.
         register: v.register,
@@ -652,7 +703,11 @@ export async function topWinners(limit = WINNERS_LIMIT): Promise<WinnerPost[]> {
 interface ParsedCommon {
   body: RawBody;
   pillar: PostPillar | undefined;
+  /** `pillar` is the NO_PILLAR sentinel, not a live slug — draft off-taxonomy. */
+  offPillar: boolean;
   idea: string | undefined;
+  /** Free-text tweet to remix the shape of (the Composer's *Tweet remix* box). */
+  remixText: string | undefined;
   ideaId: string | undefined;
   model: string | undefined;
   provider: LlmProvider | undefined;
@@ -669,8 +724,15 @@ async function parseCommon(
   }
   const body = raw as RawBody;
 
-  const pillar = parsePillar(body.pillar, slugs);
+  // The off-pillar sentinel is not a slug: it means "ignore the taxonomy for
+  // this batch" (the Composer's default). An active pillar that literally owns
+  // the slug wins, so parsePillar gets first refusal.
+  const pillar =
+    body.pillar === NO_PILLAR && !slugs.includes(NO_PILLAR)
+      ? NO_PILLAR
+      : parsePillar(body.pillar, slugs);
   if (pillar === 'invalid') return { error: 'invalid_pillar' };
+  const offPillar = pillar === NO_PILLAR && !slugs.includes(NO_PILLAR);
 
   let idea: string | undefined;
   if (body.idea !== undefined && body.idea !== null) {
@@ -679,6 +741,15 @@ async function parseCommon(
     }
     const trimmed = body.idea.trim();
     if (trimmed !== '') idea = trimmed;
+  }
+
+  let remixText: string | undefined;
+  if (body.remixText !== undefined && body.remixText !== null) {
+    if (typeof body.remixText !== 'string' || body.remixText.length > MAX_REMIX_LENGTH) {
+      return { error: 'invalid_remix_text' };
+    }
+    const trimmed = body.remixText.trim();
+    if (trimmed !== '') remixText = trimmed;
   }
 
   let ideaId: string | undefined;
@@ -716,5 +787,5 @@ async function parseCommon(
     reasoningEffort = r;
   }
 
-  return { body, pillar, idea, ideaId, model, provider, reasoningEffort };
+  return { body, pillar, offPillar, idea, remixText, ideaId, model, provider, reasoningEffort };
 }

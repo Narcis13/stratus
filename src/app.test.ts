@@ -131,6 +131,28 @@ describe.if(authed && Boolean(process.env.XAI_API_KEY))('drafter guards (§8.1/�
     expect(((await res.json()) as { error: string }).error).toBe('invalid_pillar');
   });
 
+  test('the off-pillar sentinel passes validation (still no spend)', async () => {
+    // reup rejects the tweet id AFTER the pillar check — a non-400 on the pillar
+    // is what we're asserting, and nothing reaches the LLM either way.
+    const res = await app.request('/x/posts/reup', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ pillar: 'none', tweetId: 'not-a-tweet-id' }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_tweet_id');
+  });
+
+  test('an over-long Tweet remix box → 400 before any spend', async () => {
+    const res = await app.request('/x/posts/draft', {
+      method: 'POST',
+      headers: AUTH,
+      body: JSON.stringify({ remixText: 'x'.repeat(2001) }),
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_remix_text');
+  });
+
   test('reup requires a numeric tweet id', async () => {
     const res = await app.request('/x/posts/reup', {
       method: 'POST',

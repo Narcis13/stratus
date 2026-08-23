@@ -85,7 +85,7 @@ export interface CreateThreadResponse {
 // Pillars are DB-backed and editable (§8.6) — a slug is any active pillar's id,
 // no longer a closed union. Kept as a string alias for readability.
 export type PostPillar = string;
-export type PostRegister = 'plain' | 'spicy' | 'reflective';
+export type PostRegister = 'plain' | 'spicy' | 'bait';
 
 export interface PostDraftBody {
   pillar?: PostPillar;
@@ -93,6 +93,20 @@ export interface PostDraftBody {
   /** C6: the Idea Inbox row the steer came from — the server consumes it. */
   ideaId?: string;
   voiceTweetId?: string;
+  /** The Composer's *Tweet remix* box: the tweet whose SHAPE the drafts borrow
+   *  (§10 of the post prompt keeps it loose). Sent alongside `voiceTweetId`
+   *  when the seed came from the Voice tab — the row supplies the extracted
+   *  template, this supplies the tweet the human is actually looking at. */
+  remixText?: string;
+}
+
+/** §8.3 → §8.1: what the Voice tab's *remix* button hands the Composer — the
+ *  tweet's own text for the *Tweet remix* box, plus its extracted template
+ *  line (null until the tweet has been extracted) for the note under it. */
+export interface RemixSeed {
+  tweetId: string;
+  text: string;
+  template: string | null;
 }
 
 // AI.7 — one LLM call drafts a whole thread; the head lands status='draft' and
@@ -101,6 +115,8 @@ export interface ThreadDraftBody {
   idea?: string;
   ideaId?: string;
   pillar?: PostPillar;
+  /** Same *Tweet remix* box as PostDraftBody — folded into the thread steer. */
+  remixText?: string;
   /** Target tweet count, clamped 3–8 server-side. */
   tweetCount?: number;
   model?: string;

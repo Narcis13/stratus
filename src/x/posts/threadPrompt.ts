@@ -12,9 +12,16 @@
 
 import type { GrokMessage } from '../../grok/index.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
-import { DEFAULT_PILLARS, DEFAULT_PILLAR_SLUGS, type PillarDef, renderPillars } from './pillars.ts';
+import {
+  DEFAULT_PILLARS,
+  DEFAULT_PILLAR_SLUGS,
+  NO_PILLAR,
+  type PillarDef,
+  renderPillars,
+} from './pillars.ts';
 import {
   BELIEFS_PLACEHOLDER,
+  OFF_PILLAR_BLOCK,
   PERSONA_PLACEHOLDER,
   type PostPillar,
   type WinnerPost,
@@ -195,6 +202,10 @@ export interface BuildThreadDraftOptions {
   pillar?: PostPillar;
   /** Optional steer (Romanian OK). */
   idea?: string;
+  /** The Composer's *Tweet remix* box — a tweet whose SHAPE the thread should
+   *  borrow. Folded into the steer with its own leash (the thread prompt has no
+   *  §10; the anti-copy rule rides the block itself). */
+  remixText?: string;
   /** Clamped 3–8 target count, folded into the steer. */
   tweetCount?: number;
   /** Gated Playbook guidance line (C4), appended at the variable tail. */
@@ -204,6 +215,10 @@ export interface BuildThreadDraftOptions {
   /** Registry-loaded prompt body (AI.3): the DB override when one exists, else
    *  the shipped default. Defaults to THREAD_PROMPT_TEMPLATE. */
   template?: string;
+  /** Off-pillar thread (the Composer's default "No pillar"): the PILLARS block
+   *  becomes the off-pillar instruction and the steer says so, so the thread
+   *  declares `none`. `pillar` is ignored when this is set. */
+  offPillar?: boolean;
 }
 
 export function buildThreadDraftInput(opts: BuildThreadDraftOptions): GrokMessage[] {
@@ -215,7 +230,9 @@ export function buildThreadDraftInput(opts: BuildThreadDraftOptions): GrokMessag
     .split(PERSONA_PLACEHOLDER)
     .join(opts.persona ?? DEFAULT_NICHE.persona);
   content = content.split(BELIEFS_PLACEHOLDER).join(opts.beliefs ?? DEFAULT_NICHE.beliefs);
-  content = content.split(PILLARS_PLACEHOLDER).join(renderPillars(pillars));
+  content = content
+    .split(PILLARS_PLACEHOLDER)
+    .join(opts.offPillar ? OFF_PILLAR_BLOCK : renderPillars(pillars));
   content = content.split(FEW_SHOT_PLACEHOLDER).join(renderFewShot(opts.winners));
   content = content.split(IDEA_PLACEHOLDER).join(renderSteer(opts));
   if (opts.meContext && opts.meContext.trim() !== '') {
@@ -232,10 +249,24 @@ export function buildThreadDraftInput(opts: BuildThreadDraftOptions): GrokMessag
 // placeholders — no separate {{PILLAR}} token like the post prompt).
 function renderSteer(opts: BuildThreadDraftOptions): string {
   const parts: string[] = [];
-  if (opts.pillar) parts.push(`Serve the "${opts.pillar}" content pillar.`);
+  if (opts.offPillar) {
+    parts.push(
+      `This thread is deliberately off-pillar: serve no content pillar and declare \`${NO_PILLAR}\` as the pillar.`,
+    );
+  } else if (opts.pillar) {
+    parts.push(`Serve the "${opts.pillar}" content pillar.`);
+  }
   if (typeof opts.tweetCount === 'number') parts.push(`Write exactly ${opts.tweetCount} tweets.`);
   const idea = opts.idea?.trim();
   if (idea) parts.push(idea);
+  // Last on purpose: the block ends in somebody else's tweet, so anything after
+  // it would read as part of that tweet.
+  const remix = opts.remixText?.trim();
+  if (remix) {
+    parts.push(
+      `Structure to remix — LOOSE inspiration, never source material. Borrow only the machinery of the tweet below (hook shape, the order the beats arrive in, line-break rhythm, length, closing device) and apply it to MY subject above. Take none of its words, phrases, claims, numbers, examples or its topic; if a phrase of it survives into a tweet of mine, that tweet is wrong. Same shape, my rhythm — not traced beat-for-beat:\n${remix}`,
+    );
+  }
   return parts.join('\n');
 }
 

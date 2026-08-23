@@ -228,7 +228,7 @@ Tails accept text edits only; schedule/status/delete go through the head
 ### 5.3 AI post drafting (Grok)
 
 `POST /x/posts/draft` makes one Grok structured-outputs call (~$0.006) and
-returns **three register-distinct drafts** — plain / spicy / reflective — that
+returns **three register-distinct drafts** — plain / spicy / bait — that
 land as `status='draft'` calendar rows with their pillar and register stamped.
 Nothing posts until a human promotes a keeper.
 

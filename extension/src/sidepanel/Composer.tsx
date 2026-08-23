@@ -12,6 +12,7 @@ import type {
   PostStatus,
   ReachCell,
   ReachFit,
+  RemixSeed,
 } from '../shared/types.ts';
 import { COACH_BAND_TONE, COACH_TONE } from './CoachChip.tsx';
 import { JudgePanel } from './JudgePanel.tsx';
@@ -57,8 +58,9 @@ import { Section } from './ui/Section.tsx';
 interface Props {
   settings: Settings;
   editingId: string | null;
-  /** §8.3 → §8.1: a swipe-file tweet whose structure the drafter should remix. */
-  remixTweetId: string | null;
+  /** §8.3 → §8.1: a swipe-file tweet whose structure the drafter should remix —
+   *  its text seeds the *Tweet remix* box, its template the note under it. */
+  remixSeed: RemixSeed | null;
   onClearRemix: () => void;
   onClearEdit: () => void;
   onSaved: (post: ScheduledPost) => void;
@@ -204,7 +206,13 @@ function nextEditStatus(
 
 type DraftCard = PostDraftResponse['drafts'][number];
 
-// "any pillar" stays static; the rest are fetched live (§8.6 editable pillars).
+// "No pillar" and "any pillar" stay static; the rest are fetched live (§8.6
+// editable pillars). NO_PILLAR is the default: off-taxonomy drafting, the
+// sentinel the drafter turns into a NULL `pillar` on the row.
+const NO_PILLAR: { value: string; label: string } = {
+  value: 'none',
+  label: 'No pillar (off-taxonomy)',
+};
 const ANY_PILLAR: { value: string; label: string } = {
   value: '',
   label: 'any pillar (Grok declares)',
@@ -212,8 +220,8 @@ const ANY_PILLAR: { value: string; label: string } = {
 
 const REGISTER_LABEL: Record<PostRegister, string> = {
   plain: 'plain',
-  spicy: 'spicy',
-  reflective: 'reflective',
+  spicy: 'spicy (punchy)',
+  bait: 'bait (answer me)',
 };
 
 // AI.8 — rewrite variant labels for the "Improve with AI" cards.
@@ -226,7 +234,7 @@ const REWRITE_KIND_LABEL: Record<RewriteVariant['kind'], string> = {
 export function ComposerPanel({
   settings,
   editingId,
-  remixTweetId,
+  remixSeed,
   onClearRemix,
   onClearEdit,
   onSaved,
@@ -275,10 +283,19 @@ export function ComposerPanel({
   // so the server consumes it (status flip + "seeded by" backlink).
   const [selectedIdeaId, setSelectedIdeaId] = useState('');
   const [openIdeas, setOpenIdeas] = useState<Idea[]>([]);
-  const [pillar, setPillar] = useState<PostPillar | ''>('');
+  // Default = off-pillar: most drafting is not about a declared pillar, and the
+  // taxonomy is one dropdown pick away when it is.
+  const [pillar, setPillar] = useState<PostPillar | ''>(NO_PILLAR.value);
   const [pillarOpts, setPillarOpts] = useState<Array<{ value: string; label: string }>>([
+    NO_PILLAR,
     ANY_PILLAR,
   ]);
+  // §8.3 remix — the box is the source of truth for what gets remixed: seeded
+  // by the Voice tab's *remix* button, editable, and free-typed/pasted works
+  // just as well (nothing here needs a saved row). `remixOf` is provenance:
+  // the tweetId whose extracted template the server should pull.
+  const [remixText, setRemixText] = useState('');
+  const [remixOf, setRemixOf] = useState<{ tweetId: string; template: string | null } | null>(null);
   const [drafting, setDrafting] = useState(false);
   const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [draftMeta, setDraftMeta] = useState<{ winnersUsed: number; costUsd: number } | null>(null);
@@ -337,17 +354,32 @@ export function ComposerPanel({
       .then((rows) => {
         if (!alive) return;
         setPillarOpts([
+          NO_PILLAR,
           ANY_PILLAR,
           ...rows.map((p) => ({ value: p.slug, label: `${p.slug} — ${p.label}` })),
         ]);
       })
       .catch(() => {
-        /* dropdown falls back to "any pillar"; Grok still declares one */
+        /* dropdown falls back to the two static options; off-pillar still works */
       });
     return () => {
       alive = false;
     };
   }, [settings]);
+
+  // A remix click lands the tweet in the box (replacing whatever was there —
+  // the click IS the intent) and remembers which row it came from.
+  useEffect(() => {
+    if (!remixSeed) return;
+    setRemixText(remixSeed.text);
+    setRemixOf({ tweetId: remixSeed.tweetId, template: remixSeed.template });
+  }, [remixSeed]);
+
+  const clearRemix = useCallback(() => {
+    setRemixText('');
+    setRemixOf(null);
+    onClearRemix();
+  }, [onClearRemix]);
 
   const isEditing = editingId !== null;
   const isThreadEdit = isEditing && original?.threadId != null;
@@ -665,7 +697,11 @@ export function ComposerPanel({
         ...(pillar ? { pillar } : {}),
         ...(effectiveIdea ? { idea: effectiveIdea } : {}),
         ...(ideaId ? { ideaId } : {}),
-        ...(remixTweetId ? { voiceTweetId: remixTweetId } : {}),
+        // Both, when the box was seeded from a saved tweet: the id fetches the
+        // extracted template server-side, the box carries the text the human
+        // is looking at (edits included).
+        ...(remixOf && remixText.trim() ? { voiceTweetId: remixOf.tweetId } : {}),
+        ...(remixText.trim() ? { remixText: remixText.trim() } : {}),
       });
       if (ideaId) {
         // Consumed server-side; drop the link and refresh the dropdown.
@@ -675,7 +711,6 @@ export function ComposerPanel({
       setDrafts(res.drafts);
       setDraftMeta({ winnersUsed: res.winnersUsed, costUsd: res.costUsd });
       if (seedIdea !== undefined) setIdea(seedIdea);
-      onClearRemix();
       const first = res.drafts[0];
       if (first) onSaved(first);
       // Best-effort cleanup of the candidates we just replaced, so regenerating
@@ -702,6 +737,7 @@ export function ComposerPanel({
         ...(pillar ? { pillar } : {}),
         ...(effectiveIdea ? { idea: effectiveIdea } : {}),
         ...(ideaId ? { ideaId } : {}),
+        ...(remixText.trim() ? { remixText: remixText.trim() } : {}),
       });
       if (ideaId) {
         setSelectedIdeaId('');
@@ -1308,10 +1344,10 @@ export function ComposerPanel({
       {!isEditing && (
         <div className="drafter">
           <Section title={threadMode ? 'Draft a thread with AI' : 'Draft with AI'}>
-            {remixTweetId && (
+            {remixOf && (
               <div className="status-line">
-                remixing structure of tweet <code>{remixTweetId}</code>{' '}
-                <button type="button" onClick={onClearRemix}>
+                remixing tweet <code>{remixOf.tweetId}</code>{' '}
+                <button type="button" onClick={clearRemix}>
                   ✕
                 </button>
               </div>
@@ -1362,6 +1398,31 @@ export function ComposerPanel({
                 placeholder="seed for the three drafts…"
               />
             </label>
+            <label className="field">
+              <span>Tweet remix (optional)</span>
+              <textarea
+                value={remixText}
+                onChange={(e) => {
+                  setRemixText(e.target.value);
+                  // Emptying the box drops the provenance too — no template
+                  // should ride along without the tweet it was extracted from.
+                  if (e.target.value.trim() === '') {
+                    setRemixOf(null);
+                    onClearRemix();
+                  }
+                }}
+                rows={3}
+                maxLength={2000}
+                placeholder="paste a tweet whose shape you want to borrow — or hit remix in the Voice tab"
+              />
+            </label>
+            <div className="muted drafter-remix-note">
+              {remixOf?.template
+                ? `template: ${remixOf.template} — the drafts borrow the shape, never the words.`
+                : remixText.trim()
+                  ? 'No extracted template — the AI derives the shape from the text itself. Loose inspiration: shape borrowed, words and topic never.'
+                  : 'Leave empty to draft without a structure to remix.'}
+            </div>
             <button
               type="button"
               onClick={() => void (threadMode ? draftThread() : generateDrafts())}
@@ -1414,7 +1475,7 @@ export function ComposerPanel({
               </div>
             ) : (
               <EmptyState
-                line="One plain, one spicy, one reflective — pick one inline to schedule."
+                line="One plain, one spicy, one bait — pick one inline to schedule."
                 hint="The other two stay as calendar drafts. Nothing posts until you schedule it."
               />
             )}

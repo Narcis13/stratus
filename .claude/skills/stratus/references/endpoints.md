@@ -187,7 +187,7 @@ Order: `scheduledFor asc nulls last, createdAt desc`. Returns an array.
 
 ### GET /x/posts/scheduled/:id
 
-Single row (`404 not_found` if unknown). A thread member additionally carries `thread: [...]` — all sibling rows ordered by `threadPosition`. Also carries `seededBy` — the Idea-Inbox provenance (`{id, text, status}` of the idea whose consume backlinked this row, or null) — and the `register` column (plain/spicy/reflective, stamped by the drafter; null on hand-written rows).
+Single row (`404 not_found` if unknown). A thread member additionally carries `thread: [...]` — all sibling rows ordered by `threadPosition`. Also carries `seededBy` — the Idea-Inbox provenance (`{id, text, status}` of the idea whose consume backlinked this row, or null) — and the `register` column (plain/spicy/bait, stamped by the drafter — `reflective` on rows drafted before 2026-08-23; null on hand-written rows).
 
 ### PATCH /x/posts/scheduled/:id
 
@@ -233,7 +233,7 @@ Returns `201 { threadId, segments: [rows] }`.
 
 ## Post drafter (Grok)
 
-Mounts only when `XAI_API_KEY` is set. Both routes make one Grok structured-outputs call (~$0.006) returning **three register-distinct drafts** (plain / spicy / reflective) that land as `status='draft'` rows in the calendar with their `pillar` — nothing posts until a human flips a row to `pending`. Few-shot grounded in the top-5 own posts by measured views.
+Mounts only when `XAI_API_KEY` is set. Both routes make one Grok structured-outputs call (~$0.006) returning **three register-distinct drafts** (plain / spicy / bait) that land as `status='draft'` rows in the calendar with their `pillar` — `pillar: 'none'` drafts off-taxonomy (the pillar block is replaced by an off-pillar instruction and the rows land with a NULL pillar). Nothing posts until a human flips a row to `pending`. Few-shot grounded in the top-5 own posts by measured views.
 
 ### POST /x/posts/draft
 
@@ -241,11 +241,12 @@ Body (all optional):
 
 - `pillar` — a slug from the active pillar set (`GET /x/pillars`) or `1|2|3` by sort order (`400 invalid_pillar`). Pillars are editable (§8.6); the seed set is `ai-craft|builder-51|unsexy-problems`. Omit to let Grok pick per draft.
 - `idea` (string, ≤2000 chars) — human steer; Romanian in, English out.
-- `voiceTweetId` (digits) — remix: lifts the saved tweet's extracted structure (hook/skeleton/line breaks/length/device) into the prompt (`404 voice_tweet_not_found`). Falls back to the raw text if the tweet was never extracted.
+- `voiceTweetId` (digits) — remix: lifts the saved tweet's extracted structure (hook/skeleton/line breaks/length/device) into the prompt (`404 voice_tweet_not_found`), **and the tweet's own text alongside it** (since 2026-08-23 the text ships whether or not a template was extracted).
+- `remixText` (string ≤2000, `400 invalid_remix_text`) — the Composer's *Tweet remix* box: the tweet to borrow a shape from, as free text. Sent with `voiceTweetId` it overrides that row's text (the box is what the human was looking at, edits included); sent alone it needs no saved row at all, and the model derives the machinery itself. §10 of the post prompt is the leash: shape borrowed, words/claims/specifics/topic never. `POST /posts/draft-thread` and `POST /posts/reup` take it too — the thread prompt folds it into the steer with the same rule inline.
 - `ideaId` (uuid, optional) — consume an Idea-Inbox idea: on success it flips to `consumed` backlinked to the **first** inserted draft row (`consumeIdeaSafe` — a Grok failure leaves the idea open). Invalid → `400 invalid_idea_id`.
 - `model`, `reasoningEffort` (`none|low|medium|high`, default `low`).
 
-Each inserted row stamps its `register` (plain/spicy/reflective — feeds the Playbook's pillar × register scorecard), and when the Playbook's post guidance clears its n≥20 gate the measured "structures that work" line is appended server-side at the prompt tail.
+Each inserted row stamps its `register` (plain/spicy/bait — feeds the Playbook's pillar × register scorecard), and when the Playbook's post guidance clears its n≥20 gate the measured "structures that work" line is appended server-side at the prompt tail.
 
 Returns `201 { drafts: [rows + register], winnersUsed, model, costUsd, requestId }`. Errors: `502 grok_upstream_error` / `502 grok_parse_error` / `429`.
 

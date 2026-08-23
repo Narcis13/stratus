@@ -317,9 +317,9 @@ Each row shows the **replies** count and its **share** of the week. Below the ta
 Your original posts carry two labels when drafted by stratus:
 
 - **pillar** — the content theme (your editable content pillars, e.g. "ai-craft", "builder-51").
-- **register** — the tone the draft was written in (plain / spicy / reflective).
+- **register** — the tone the draft was written in (plain / spicy / bait; `reflective` on rows drafted before 2026-08-23, when it was retired).
 
-Each row is one pillar-and-register combination with its result. Read it to find your money combinations — maybe your "spicy" takes on one pillar out-earn your "reflective" ones on another. Hand-written posts (ones that never went through the drafter) have no register, so this table fills in slowly and starts thin on purpose. If you've published no drafter posts yet it simply says so.
+Each row is one pillar-and-register combination with its result. Read it to find your money combinations — maybe your "spicy" takes on one pillar out-earn your "bait" ones on another. Hand-written posts (ones that never went through the drafter) have no register, and off-pillar drafts have no pillar, so this table fills in slowly and starts thin on purpose. If you've published no drafter posts yet it simply says so.
 
 ### My winning structures
 

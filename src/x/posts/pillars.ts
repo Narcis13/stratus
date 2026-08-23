@@ -25,7 +25,7 @@ export const DEFAULT_PILLARS: PillarDef[] = [
   {
     slug: 'builder-51',
     label: 'The 51-year-old builder — the WHO / WHY',
-    body: 'Atypical solopreneur journal; the reverse of the 22-year-old-SF-founder template. Rarity = memorability; I lived the 386→2026 arc, juniors can\'t fabricate it. Dominant register: reflective. Flashback → reframe → punchy landing. A specific tech reference (Turbo Pascal, DOS 3.1, 386) beats "back in my day." Don\'t overdo nostalgia. Real constraints (08–15 hospital job, Romania, building post-50) → forced creativity.',
+    body: 'Atypical solopreneur journal; the reverse of the 22-year-old-SF-founder template. Rarity = memorability; I lived the 386→2026 arc, juniors can\'t fabricate it. Dominant register: plain, told as a flashback → reframe → punchy landing. A specific tech reference (Turbo Pascal, DOS 3.1, 386) beats "back in my day." Don\'t overdo nostalgia. Real constraints (08–15 hospital job, Romania, building post-50) → forced creativity.',
   },
   {
     slug: 'unsexy-problems',
@@ -35,6 +35,13 @@ export const DEFAULT_PILLARS: PillarDef[] = [
 ];
 
 export const DEFAULT_PILLAR_SLUGS: string[] = DEFAULT_PILLARS.map((p) => p.slug);
+
+/** The off-pillar sentinel the drafter accepts in place of a slug — the
+ *  Composer's default. It rides the wire as a normal `pillar` value, renders as
+ *  the off-pillar instruction in the prompt, and lands as NULL in the row's
+ *  `pillar` column. A real active pillar whose slug is literally "none" wins
+ *  (the sentinel is only consulted when the live slug set doesn't claim it). */
+export const NO_PILLAR = 'none';
 
 // Kebab-case, 2–41 chars, starts alphanumeric. Keep it tight — the slug rides
 // in the structured-output enum and in historical `pillar` text columns.

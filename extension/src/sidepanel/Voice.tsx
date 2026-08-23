@@ -2,7 +2,14 @@ import { type JSX, useCallback, useEffect, useMemo, useState } from 'react';
 import { ChannelTagPicker } from './ChannelTags.tsx';
 import { PillarsPanel } from './Pillars.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
-import { ApiError, type VoiceAuthor, type VoiceTweet, type VoiceTweetsOpts, api } from './api.ts';
+import {
+  ApiError,
+  type RemixSeed,
+  type VoiceAuthor,
+  type VoiceTweet,
+  type VoiceTweetsOpts,
+  api,
+} from './api.ts';
 import { authorChip } from './chips.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
 import { useSettingsEditor } from './settingsEditor.ts';
@@ -13,8 +20,9 @@ import { type SubTab, SubTabs } from './ui/SubTabs.tsx';
 
 interface Props {
   settings: Settings;
-  /** §8.3 Remix: send a saved tweet's structure to the Composer drafter. */
-  onRemix: (tweetId: string) => void;
+  /** §8.3 Remix: send a saved tweet's text + extracted template to the
+   *  Composer drafter (it lands in the *Tweet remix* box). */
+  onRemix: (seed: RemixSeed) => void;
   /** C1: open a handle's dossier in the People tab. */
   onOpenPerson: (handle: string) => void;
 }
@@ -360,7 +368,7 @@ export function VoicePanel({ settings, onRemix, onOpenPerson }: Props): JSX.Elem
                       onCancelDelete={() => setConfirming(null)}
                       onConfirmDelete={() => void removeTweet(t)}
                       onExtract={() => void extractTweet(t)}
-                      onRemix={() => onRemix(t.tweetId)}
+                      onRemix={() => onRemix(remixSeedOf(t))}
                       onOpenPerson={onOpenPerson}
                     />
                   </li>
@@ -485,6 +493,29 @@ interface TweetRowProps {
   onRemix: () => void;
 }
 
+/** The extracted template as one line — shown under the tweet here, and handed
+ *  to the Composer's remix note. Null when the tweet was never extracted. */
+function templateLine(tweet: VoiceTweet): string | null {
+  const line = [
+    tweet.hookType,
+    tweet.skeleton,
+    tweet.lineBreakPattern,
+    tweet.templateLength,
+    tweet.device,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return line === '' ? null : line;
+}
+
+function remixSeedOf(tweet: VoiceTweet): RemixSeed {
+  return {
+    tweetId: tweet.tweetId,
+    text: tweet.text,
+    template: tweet.templateExtractedAt ? templateLine(tweet) : null,
+  };
+}
+
 function TweetRow({
   tweet,
   settings,
@@ -537,17 +568,7 @@ function TweetRow({
       )}
 
       {tweet.templateExtractedAt && (
-        <div className="voice-tweet-template muted">
-          {[
-            tweet.hookType,
-            tweet.skeleton,
-            tweet.lineBreakPattern,
-            tweet.templateLength,
-            tweet.device,
-          ]
-            .filter(Boolean)
-            .join(' · ')}
-        </div>
+        <div className="voice-tweet-template muted">{templateLine(tweet)}</div>
       )}
 
       <ChannelTagPicker

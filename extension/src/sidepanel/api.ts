@@ -179,6 +179,7 @@ import {
   type PromptSummary,
   type PromptsRestoreResult,
   type ReachFit,
+  type RemixSeed,
   type RepliesListOpts,
   type ReplyDraft,
   type ReplyDraftGenerated,
@@ -233,6 +234,7 @@ import type { Settings } from './storage.ts';
 export { ApiError };
 export type {
   ActiveTimesResponse,
+  RemixSeed,
   AudienceCapture,
   AiSettings,
   AiSettingsPatchBody,

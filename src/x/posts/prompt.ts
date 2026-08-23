@@ -11,7 +11,13 @@
 
 import type { GrokMessage } from '../../grok/index.ts';
 import { DEFAULT_NICHE } from '../niche/defaults.ts';
-import { DEFAULT_PILLARS, DEFAULT_PILLAR_SLUGS, type PillarDef, renderPillars } from './pillars.ts';
+import {
+  DEFAULT_PILLARS,
+  DEFAULT_PILLAR_SLUGS,
+  NO_PILLAR,
+  type PillarDef,
+  renderPillars,
+} from './pillars.ts';
 
 export const POST_PROMPT_TEMPLATE = `## The job
 
@@ -63,6 +69,8 @@ The target is **not** native-perfect, frictionless prose. That is exactly what A
 
 The active pillars (slug → what each covers) are listed at the end of this prompt under **PILLARS**. Each post declares which one it serves — use only the slugs listed there.
 
+**Off-pillar batches.** When the PILLARS block says the batch is off-pillar (my steer's \`<pillar>\` is then \`none\`), the taxonomy does not apply: write what the steer — or, with no steer, my actual life and work in §1/§6 — calls for, and declare \`none\` as the pillar on all three drafts. Off-pillar means off the taxonomy, never off-voice: every rule in §0–§3 and §7 still holds.
+
 ---
 
 ## 5. What I believe (take these positions — don't fence-sit, don't contradict them)
@@ -97,9 +105,9 @@ Use these as texture, not a checklist. One vivid, specific scene beats a paragra
 
 ## 8. The three registers (one draft each)
 
-- **plain** — clear, direct, zero ornament. Hook = fact → insight. (Best for ai-craft.)
-- **spicy** — opinion-forward, contrarian hook, high confidence. Hook = challenge → evidence. (Best for unsexy-problems, or ai-craft when taking a stance.)
-- **reflective** — narrative, personal, temporal contrast. Hook = scene → meaning. (Best for builder-51.)
+- **plain** — clear, direct, zero ornament. Hook = fact → insight. State the thing and land it.
+- **spicy** — punchy and opinion-forward: contrarian hook, high confidence, short hard lines, zero hedging. Hook = challenge → evidence. Pick the side most of my timeline would argue with, then back it with something I actually lived.
+- **bait** — engineered to be *answered*, not admired. Built on exactly one of the proven engagement formats in §9, it ends in a real question or a forced pick that costs a stranger one second to answer. Hook = provocation → the ask. Only ask what I'd answer myself, in public — a real question is not the engagement-bait §7 forbids.
 
 ---
 
@@ -118,22 +126,35 @@ Use these as texture, not a checklist. One vivid, specific scene beats a paragra
 - **Confessional question** — "be honest — …?": the thing people only admit in a reply. Only ask what I'd answer myself, in public.
 - **Audience CTA** — "show me the thing you're working on, I'll respond to every one" (X = whatever my audience actually makes). Use it only when I'm ready to reply to every single answer; a promise I don't keep costs more than the post earns.
 
-At most ONE of the three drafts may use one of these, and only when the topic fits — they're a rotation, not a house style. The skeleton is the borrowed part: fill it with my own material (§1/§6), the steer, or common knowledge, never with invented specifics. This is not the engagement-bait §7 forbids — no "like if you agree", no reply-for-reply trading, no question wrapped around a brag. A real question I actually want answered is not bait.
+The **bait** draft (§8) is built on exactly one of these — pick the format the topic fits, and rotate the pick across batches instead of defaulting to the same one. The plain and spicy drafts never use them. The skeleton is the borrowed part: fill it with my own material (§1/§6), the steer, or common knowledge, never with invented specifics. This is not the engagement-bait §7 forbids — no "like if you agree", no reply-for-reply trading, no question wrapped around a brag. A real question I actually want answered is not bait.
+
+---
+
+## 10. Remixing a tweet (only when a **Structure to remix** block is provided below)
+
+That block is somebody else's tweet — the one I liked enough to save. It is **inspiration, never source material**. What I want back is a post a reader would place next to it as an obvious sibling in *shape*, and that shares nothing else with it.
+
+- **Borrow the machinery only:** hook shape, the order the beats arrive in, line-break rhythm, sentence-length pattern, overall length, the closing device. If the block also lists an extracted template (hook / skeleton / line breaks / length / device), that list names the same machinery — follow it.
+- **Take nothing off the surface:** not its words, phrases, claims, numbers, names, examples — and not its topic. If a phrase of the original survives into my draft, the draft is wrong.
+- **The subject stays mine.** My steer, or my §1/§6 material. A remix that ends up being about the original's topic is a copy with the words swapped.
+- **Loose, not traced.** Matching the skeleton beat-for-beat and word-count-for-word-count reads as a knockoff. Same shape, my rhythm.
+- **The test:** if the original author read my post, they should recognise the shape and not a single sentence.
+- The remix binds *structure* only. §0–§3 and §7 (voice, anti-slop) outrank it, and all three registers of §8 still ship — where the borrowed shape fights a register (a poll-list skeleton on the plain draft, say), the register wins and the structure bends.
 
 ---
 
 ## The three drafts
 
-Produce **exactly three genuinely different drafts** — one per register (§8): plain, spicy, reflective. Not three paraphrases: three different takes on the topic.
+Produce **exactly three genuinely different drafts** — one per register (§8): plain, spicy, bait. Not three paraphrases: three different takes on the topic.
 
-- Each draft declares the pillar it serves. If my steer names a pillar, all three serve that pillar (the registers still differ).
+- Each draft declares the pillar it serves. If my steer names a pillar, all three serve that pillar (the registers still differ). In an off-pillar batch (§4) all three declare \`none\`.
 - Every specific must come from §1/§6, the steer, or common knowledge — never invented.
-- If a structure-to-remix is provided below, apply its *skeleton* (hook shape, line-break rhythm, length, closing device) to MY topic — transform the structure, never reuse its words, claims, or specifics.
+- If a structure to remix is provided below, work it the way §10 says: its skeleton (hook shape, beat order, line-break rhythm, length, closing device) applied to MY topic, with none of its words, claims, specifics or subject carried over.
 - Ship-ready. Final post text I could publish as-is.
 
 ## Output
 
-Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar": "…"}]} — exactly three posts; register one of plain / spicy / reflective (one each); pillar one of the slugs listed under PILLARS. Each text is ONLY the raw post text, exactly as it should appear on X — real newlines, no surrounding quotes, no markdown, no commentary.
+Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar": "…"}]} — exactly three posts; register one of plain / spicy / bait (one each); pillar one of the slugs listed under PILLARS — \`none\` in an off-pillar batch. Each text is ONLY the raw post text, exactly as it should appear on X — real newlines, no surrounding quotes, no markdown, no commentary.
 
 **PILLARS** (the active content pillars — each post's \`pillar\` must be one of these slugs):
 
@@ -143,7 +164,7 @@ Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar":
 
 {{MY_WINNERS}}
 
-**Structure to remix** (skeleton only — empty means none):
+**Structure to remix** (§10 — shape to borrow loosely, never material to reuse; empty means none):
 
 {{REMIX}}
 
@@ -156,7 +177,12 @@ Return JSON of the shape {"posts": [{"text": "…", "register": "…", "pillar":
 // arbitrary string declared by the active set, not a closed union.
 export type PostPillar = string;
 
-export const POST_REGISTERS = ['plain', 'spicy', 'reflective'] as const;
+// The three registers the drafter writes one draft each in. 'reflective' was
+// retired 2026-08-23 for 'bait' — the answer-me formats (§9) measured ~2x the
+// views of admire-me posts, so the third slot is now always one of them.
+// Historical rows keep register='reflective'; the Playbook reads the column as
+// free text, so old cells still aggregate.
+export const POST_REGISTERS = ['plain', 'spicy', 'bait'] as const;
 export type PostRegister = (typeof POST_REGISTERS)[number];
 
 export interface PostDraftVariant {
@@ -234,9 +260,12 @@ export interface WinnerPost {
   profileVisits: number | null;
 }
 
-/** Structure skeleton of a saved swipe-file tweet (§8.3). When the template
- *  columns haven't been extracted yet, `rawText` carries the tweet text and
- *  Grok derives the skeleton itself — structure only, never content. */
+/** Structure skeleton of a saved swipe-file tweet (§8.3). `rawText` carries the
+ *  tweet itself — the Composer's *Tweet remix* box, or the saved row's text —
+ *  and rides along even when the template columns ARE extracted: the extracted
+ *  fields say what shape to borrow, the tweet says what that shape sounds like
+ *  in the wild. §10 of the prompt is what keeps the second one loose (shape
+ *  borrowed, words/claims/topic never). */
 export interface RemixSource {
   hookType: string | null;
   skeleton: string | null;
@@ -285,7 +314,16 @@ export interface BuildPostDraftOptions {
    *  the shipped default. Defaults to POST_PROMPT_TEMPLATE so existing callers
    *  and tests are untouched. */
   template?: string;
+  /** Off-pillar batch (the Composer's default "No pillar"): the PILLARS block
+   *  becomes the off-pillar instruction instead of the taxonomy and the steer's
+   *  <pillar> renders as `none`, so all three drafts declare `none` (§4).
+   *  `pillar` is ignored when this is set. */
+  offPillar?: boolean;
 }
+
+/** What the PILLARS block says when the batch is deliberately off-pillar — the
+ *  template's §4 keys off it, and the structured-output enum is [NO_PILLAR]. */
+export const OFF_PILLAR_BLOCK = `(off-pillar batch — the content-pillar taxonomy does NOT apply to these drafts. Do not serve any pillar and do not mention the taxonomy; write what my steer asks for, or, with no steer, what my life and work in §1/§6 make me the one person who can say it. Declare \`${NO_PILLAR}\` as the \`pillar\` on all three drafts.)`;
 
 export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] {
   // split/join (not replace) so '$' in user content can't trigger
@@ -297,10 +335,14 @@ export function buildPostDraftInput(opts: BuildPostDraftOptions): GrokMessage[] 
     .split(PERSONA_PLACEHOLDER)
     .join(opts.persona ?? DEFAULT_NICHE.persona);
   content = content.split(BELIEFS_PLACEHOLDER).join(opts.beliefs ?? DEFAULT_NICHE.beliefs);
-  content = content.split(PILLARS_PLACEHOLDER).join(renderPillars(pillars));
+  content = content
+    .split(PILLARS_PLACEHOLDER)
+    .join(opts.offPillar ? OFF_PILLAR_BLOCK : renderPillars(pillars));
   content = content.split(WINNERS_PLACEHOLDER).join(renderWinners(opts.winners));
   content = content.split(REMIX_PLACEHOLDER).join(renderRemix(opts.remix ?? null));
-  content = content.split(PILLAR_PLACEHOLDER).join(opts.pillar ?? '');
+  content = content
+    .split(PILLAR_PLACEHOLDER)
+    .join(opts.offPillar ? NO_PILLAR : (opts.pillar ?? ''));
   content = content.split(IDEA_PLACEHOLDER).join(opts.idea?.trim() ?? '');
   // M1 (ME.3): the dynamic personal-context block rides the variable tail,
   // before guidance — same additive pattern, empty → no change.
@@ -338,9 +380,21 @@ function renderRemix(remix: RemixSource | null): string {
     remix.templateLength ? `length: ${remix.templateLength}` : null,
     remix.device ? `device: ${remix.device}` : null,
   ].filter(Boolean);
-  if (fields.length > 0) return fields.join('\n');
-  if (remix.rawText) {
-    return `No pre-extracted skeleton — derive it yourself from this tweet (hook shape, line-break rhythm, length, closing device) and apply it to MY topic. Never reuse its words, claims, or specifics:\n${remix.rawText}`;
+  const parts: string[] = [];
+  if (fields.length > 0) {
+    parts.push(`Extracted template — the machinery to borrow:\n${fields.join('\n')}`);
   }
-  return '(none)';
+  // The tweet ships alongside the extracted fields, not instead of them: a
+  // skeleton line says "stat hook → consequence", the tweet says what that
+  // sounds like. §10 is the leash — shape borrowed, surface never.
+  if (remix.rawText) {
+    const lead =
+      fields.length > 0
+        ? 'The tweet that template came from — LOOSE inspiration only (§10)'
+        : 'No pre-extracted template — derive the machinery yourself (hook shape, beat order, line-break rhythm, length, closing device) from this tweet, LOOSE inspiration only (§10)';
+    parts.push(
+      `${lead}: keep its shape, take none of its words, claims, specifics or topic:\n${remix.rawText}`,
+    );
+  }
+  return parts.length > 0 ? parts.join('\n\n') : '(none)';
 }

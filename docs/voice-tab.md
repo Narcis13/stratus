@@ -77,7 +77,7 @@ Each tweet row has a strip of **channel chips** (like `#ai`, `#builder`). Channe
 ### Per-tweet actions
 
 - **open ↗** — opens the original tweet on X in a new tab.
-- **remix** — sends this tweet's *structure* to the Composer's AI post drafter and switches you to the **Composer** tab, pre-seeded to write a new original post using this tweet's skeleton. It's the fast path from "I love how this is built" to "write me one like it." It reuses structure only — it never reproduces the saved tweet's content. (Remix works best after you've **extracted** the tweet, but you can remix any saved tweet.)
+- **remix** — switches you to the **Composer** tab and drops this tweet's text into the drafter's **Tweet remix** box, with its extracted template (when it has one) noted under it. It's the fast path from "I love how this is built" to "write me one like it." The tweet is loose inspiration for the *shape* only — the drafts take none of its words, claims or topic. (Remix works best after you've **extracted** the tweet, but you can remix any saved tweet, and you can edit or replace the text once it lands in the box.)
 - **extract** / **re-extract** — runs one AI pass (via Grok) that distills this single tweet into its template — hook type, skeleton, line-break pattern, length, and rhetorical device — and writes those onto the row (you'll see the template line appear). This costs a small amount (~$0.005). The button reads **extract** the first time and **re-extract** once a template exists.
 - **retire** / **unretire** — archives the tweet (hidden unless **Show retired** is on) or restores it. Use this to keep the library tidy without losing anything.
 - **delete** — permanently removes the tweet. It asks you to **confirm** first (with a **cancel** option).
@@ -161,7 +161,7 @@ While browsing X, click **Save to stratus** under any tweet whose writing you wa
 
 ### Remix a great tweet's structure into my own post
 
-Find a saved tweet whose shape you want to borrow, click **remix**. stratus jumps to the **Composer** with the AI drafter pre-seeded to write a *new, original* post using that tweet's skeleton. You supply your own topic and words; you inherit only the proven structure.
+Find a saved tweet whose shape you want to borrow, click **remix**. stratus jumps to the **Composer** with the tweet sitting in the drafter's **Tweet remix** box (and its extracted template noted under it). Type your idea, generate, and you get *new, original* posts built on that tweet's skeleton. You supply the topic and the words; you inherit only the proven structure — and you can edit what's in the box, or paste a tweet you never saved.
 
 ### Curate my content pillars
 

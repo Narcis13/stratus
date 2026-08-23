@@ -24,6 +24,7 @@ import {
 import { buildPillarDraftInput, parsePillarProposal } from './x/posts/pillarDraft.ts';
 import {
   DEFAULT_PILLARS,
+  NO_PILLAR,
   type PillarDef,
   isValidPillarSlug,
   parsePillar,
@@ -2194,6 +2195,31 @@ A background tension I own honestly: I scatter across too many projects out of e
     for (const p of DEFAULT_PILLARS) expect(content).toContain(`**${p.slug}** — ${p.label}`);
   });
 
+  test('offPillar swaps the PILLARS block for the off-pillar instruction', () => {
+    const [msg] = buildPostDraftInput({
+      winners: [],
+      pillars: [{ slug: 'edge-cases', label: 'Edge cases', body: 'body of edge-cases' }],
+      pillar: 'edge-cases',
+      idea: 'ceva despre spitale',
+      offPillar: true,
+    });
+    const content = msg?.content ?? '';
+    // The taxonomy never reaches the prompt, and the steer's pillar is the sentinel.
+    expect(content).toContain('off-pillar batch');
+    expect(content).not.toContain('**edge-cases** — Edge cases');
+    expect(content).toContain(`<pillar>${NO_PILLAR}</pillar>`);
+    expect(content).toContain('<idea>ceva despre spitale</idea>');
+    // …and off-pillar drafts declare the sentinel, which parses cleanly.
+    const parsed = parsePostDrafts(
+      JSON.stringify({ posts: [{ text: 'x', register: 'bait', pillar: NO_PILLAR }] }),
+      [NO_PILLAR],
+    );
+    expect(parsed?.[0]).toEqual({ text: 'x', register: 'bait', pillar: NO_PILLAR });
+    expect(
+      buildPostDraftsSchema([NO_PILLAR]).properties.posts.items.properties.pillar.enum,
+    ).toEqual([NO_PILLAR]);
+  });
+
   test('no winners renders the empty marker, $ in idea is safe', () => {
     const [msg] = buildPostDraftInput({ winners: [], idea: 'price it at $99 $& $`' });
     const content = msg?.content ?? '';
@@ -2213,8 +2239,29 @@ A background tension I own honestly: I scatter across too many projects out of e
         rawText: 'the swiped tweet body',
       },
     });
-    expect(msg?.content).toContain('derive it yourself');
+    expect(msg?.content).toContain('derive the machinery yourself');
     expect(msg?.content).toContain('the swiped tweet body');
+  });
+
+  test('an extracted template ships WITH the tweet it came from (loose inspiration)', () => {
+    const [msg] = buildPostDraftInput({
+      winners: [],
+      remix: {
+        hookType: 'stat',
+        skeleton: 'number → consequence',
+        lineBreakPattern: null,
+        templateLength: null,
+        device: null,
+        rawText: 'the swiped tweet body',
+      },
+    });
+    const content = msg?.content ?? '';
+    expect(content).toContain('hook: stat');
+    expect(content).toContain('skeleton: number → consequence');
+    // The tweet rides along instead of being dropped once a template exists.
+    expect(content).toContain('The tweet that template came from');
+    expect(content).toContain('the swiped tweet body');
+    expect(content).not.toContain('derive the machinery yourself');
   });
 
   test('parsePostDrafts accepts the schema shape and rejects junk', () => {
@@ -2223,12 +2270,18 @@ A background tension I own honestly: I scatter across too many projects out of e
         posts: [
           { text: 'a', register: 'plain', pillar: 'ai-craft' },
           { text: 'b', register: 'spicy', pillar: 'unsexy-problems' },
-          { text: 'c', register: 'reflective', pillar: 'builder-51' },
+          { text: 'c', register: 'bait', pillar: 'builder-51' },
         ],
       }),
     );
     expect(ok).toHaveLength(3);
     expect(ok?.[1]?.register).toBe('spicy');
+    expect(ok?.[2]?.register).toBe('bait');
+    // The retired register is not in the enum any more — it degrades to plain.
+    const retired = parsePostDrafts(
+      JSON.stringify({ posts: [{ text: 'r', register: 'reflective', pillar: 'ai-craft' }] }),
+    );
+    expect(retired?.[0]?.register).toBe('plain');
     expect(parsePostDrafts('not json')).toBeNull();
     expect(parsePostDrafts('{"posts":[]}')).toBeNull();
     expect(parsePostDrafts('{"posts":[{"text":""}]}')).toBeNull();

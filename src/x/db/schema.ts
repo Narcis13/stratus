@@ -145,7 +145,8 @@ export const scheduledPosts = sqliteTable(
     threadPosition: integer('thread_position'),
     // Content pillar declared by the drafter (§8.4) — feeds /x/metrics/pillars.
     pillar: text('pillar'),
-    // Register declared by the drafter (C4: plain | spicy | reflective) — feeds
+    // Register declared by the drafter (C4: plain | spicy | bait; `reflective`
+    // on rows drafted before 2026-08-23, when that register was retired) — feeds
     // the Playbook's pillar × register scorecard. Null on hand-written posts.
     register: text('register'),
     // Self-quote re-up (§8.5): when set, the publisher posts this row as a

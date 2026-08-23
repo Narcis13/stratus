@@ -2002,6 +2002,12 @@ button.danger:hover:not(:disabled) {
   flex-direction: column;
   gap: 8px;
 }
+/* §8.3 — the note under the drafter's *Tweet remix* box (template line, or
+   what happens without one). Sits tight under the field it explains. */
+.drafter-remix-note {
+  font-size: 11px;
+  margin-top: -4px;
+}
 .badge-pillar {
   background: var(--strat-pillar-bg);
   color: var(--strat-pillar);
@@ -2326,6 +2332,11 @@ button.danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--strat-danger) 15%, transparent);
   color: var(--danger);
 }
+.badge-bait {
+  background: color-mix(in srgb, var(--strat-ok) 15%, transparent);
+  color: var(--ok);
+}
+/* retired register, still worn by pre-2026-08-23 drafter rows */
 .badge-reflective {
   background: color-mix(in srgb, var(--strat-ok) 15%, transparent);
   color: var(--ok);
