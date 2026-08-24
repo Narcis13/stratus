@@ -1,4 +1,4 @@
-# MASTERPLAN — unified execution order for the 18 feature plans
+# MASTERPLAN — unified execution order for the 19 feature plans
 
 > **Created:** 2026-07-17. Combines every plan in `plans/` into one dependency-correct
 > execution order with per-task reasoning levels and parallel lanes.
@@ -7,6 +7,9 @@
 > **Extended 2026-08-17:** Wave 8 (RA — Radar access from a Claude Code session). This
 > RE-OPENS the masterplan, closed at RC.5 since 2026-07-28; STATE.md's ledger and its
 > stale "current state" numbers are re-opened by RA.1 (see the Wave 8 rationale).
+> **Extended 2026-08-24:** Wave 9 (OU — the Outliers advanced-search query builder). This
+> re-opens the masterplan a second time, closed at RA.8 since 2026-08-18; the ledger and the
+> now twice-stale "current state" numbers are re-opened by OU.1 (see the Wave 9 rationale).
 > **Execution state lives in `.claude/skills/masterplan/STATE.md`** — this file is the
 > static plan; never mark progress here.
 > **Driven by the `/masterplan` skill** — one task per session, codemap-first, state
@@ -34,6 +37,7 @@
 | HM | `2026-07-28-project-humanizer.md` | 5 | Project-level humanizer: server-owned jitter config + Radar humanize-at-pick |
 | RC | `2026-07-28-radar-curated-drafting.md` | 5 | Radar curation: score the queue, dismiss the noise, draft the top N |
 | RA | `2026-08-17-radar-access.md` | 8 | Swept sightings mirrored to the server + MCP read/draft tools + the radar-analyst skill |
+| OU | `2026-08-03-search-query-builder.md` | 8 | Outliers: X advanced-search compiler, clipboard hand-off, saved hunts (revised 2026-08-24) |
 
 Task IDs are `<code>.<n>` matching "Task n" in the source plan. **The source plan's task
 block is the implementation spec** — this file only fixes order, reasoning level, and
@@ -197,6 +201,32 @@ so the seeds take D172–D174; STATE continues from D175):
   The corollary for RA.8: the only doc counts this wave bumps are the MCP ones (25 → 28,
   `src/mcp.test.ts` + `docs/s2-mcp-server.md`, in the same commit as each tool), the table
   count (42 → 43) and the migration head (`0028` → `0029`).
+
+### Wave-9 seeds (OU — D195–D197)
+
+- **D195 — the plan's `[parallel-ok]` tag on OU.7 is WRONG; `Outliers.tsx` serializes
+  OU.5 → OU.6 → OU.7.** The plan file marks Task 7 parallel with Task 6 because it reads as a
+  server-and-content-script task, but its last bullet renders the capture-count footer *in the
+  tab*, so all three tasks write the same component. Either serialize them (the default) or
+  move the footer render into OU.6 and leave OU.7 purely server+content — decide once, in
+  OU.6's commit, and say which in STATE.md. This is the RC/HM `Radar.tsx` situation (D172)
+  repeating: a plan sizes tasks by concern, the masterplan sizes lanes by file.
+- **D196 — OU.1 owes the re-opening, and STATE.md's `current state` line is stale in two
+  places I can already name.** RA.1 is the worked example and the one thing worth copying is
+  that it **recounted** instead of carrying the line forward. Two numbers have moved since
+  RA.8 and neither is in STATE.md: the migration head is **`0030_famous_wrecker`** (RQ.1,
+  2026-08-19 — `radar_sightings.dismissed_at`), so **the journal is free from `0031`, not
+  `0030`**; and the registry is **63 knobs / 33 mirrored**, not 61/31 (SW.1 added
+  `x.sweep.media` + `x.sweep.excludeAds`, both mirrored). The codemap is authoritative for
+  both. Recount the rest (suite, tables, MCP, smoke scripts, shims) off the running code
+  anyway — that is the whole point of the exercise.
+- **D197 — the `/search` passive-harvest temptation is refused for the third time.** OU.7
+  stamps `voice_tweets.source` from a client-reported path; the obvious "improvement" is to
+  widen `isHomeTimelinePath` so `harvest_rows` also fills from a search-results page. HV.2
+  decision 2 defines that corpus as *what the algorithm fed me* — `loadTimelineFunnel` and
+  `GET /harvest/affinity` both read it that way — and RA.6 already declined to widen it after
+  diagnosing the passive-capture stop. Widening owes a provenance column and a review of both
+  readers, i.e. its own plan. Third refusal; record it, don't re-litigate it.
 
 ---
 
@@ -566,6 +596,84 @@ and RA.4 (**D186** — the null-`band`/null-`signals` drop, plus the two-writer 
 
 ---
 
+## Wave 9 — Outliers: the X advanced-search query builder (OU)
+
+Rationale: one plan written 2026-08-03 and **revised 2026-08-24**, and the wave that re-opens a
+masterplan closed at RA.8. It closes the last gap in goal 3's intake: the swipe file grows only
+from tweets that happen to cross the timeline, because finding *deliberately* — an outlier hunt
+by keyword, engagement floor and date window — means typing raw operator syntax into x.com from
+memory and re-typing it every session. OU compiles that syntax from a structured form, puts it on
+the clipboard for a manual paste (Open in X is the secondary), and saves useful hunts by name.
+The results page needs **no capture code at all**: `content.ts`'s save-button attach anchors on
+the reply button plus a permalink with no path gate, so every result already carries **Save to
+stratus** — verified by reading `content.ts:1325–1351`, not assumed.
+
+**The whole wave is $0** — no `xFetch`, no `askLLM`, no image call on any path, and that is the
+design rather than a happy accident: X API v2 has **no** `min_faves`/`min_retweets`/`min_replies`
+operator at any tier, so the API version of this feature would pay ~$0.005 per returned result to
+discard most of them. Invariant #8 says adding a billed read back is a decision made out loud;
+this wave makes the opposite one, on the record, and `searchRecent` stays deleted.
+
+Order: the migration task alone first (global rule 1), then the pure compiler and the settings
+group in parallel (fully disjoint trees), then the routes that depend on all three, then the tab,
+then its prefills and the provenance stamp, then docs-sync. **`extension/src/sidepanel/Outliers.tsx`
+is the wave's hot file** and the plan's own parallel tag on OU.7 is wrong about it — D195.
+
+**OU.1 owes the re-opening**, in its own commit: this file's legend, seeds and this section are
+already here, so what remains is STATE.md — the eight ledger rows, the Wave 9 hot-file locks, and
+a **recount** of the `current state` line, which is now stale in at least two named places (D196).
+Skip that recount and every later OU task inherits wrong counts and asserts against them.
+
+| Order | ID | Task | Depends | Reasoning |
+|---|---|---|---|---|
+| 9.1 | OU.2 | `saved_searches` table + migration (**plan says `0031`; verify — global rule 1**; runs alone) | — | **xhigh** |
+| 9.2 | OU.1 | Pure compiler `src/shared/searchQuery.ts` + `FAVES_LADDER` (**owes the re-opening, D196**) | — | **xhigh** |
+| 9.3 | OU.3 | `outliers` settings group — 6 server-scope knobs (default floors, window, sort) | — | high |
+| 9.4 | OU.4 | `/x/searches` CRUD + `compile` / `run` / `defaults` routes + mount | OU.1, OU.2, OU.3 | high |
+| 9.5 | OU.5 | Outliers tab — form, live preview, Copy + Open in X, saved list, the 12th shim | OU.1, OU.4 | high |
+| 9.6 | OU.6 | Prefills — channel keywords, target roster, faves ladder, `SettingsGear` | OU.5 | high |
+| 9.7 | OU.7 | `voice_tweets.source = 'outlier_search'` provenance + the footer count (**D195, D197**) | OU.4, OU.5, OU.6 | **xhigh** |
+| 9.8 | OU.8 | OU docs-sync + `$0 scripts/smoke-outliers.ts` + the browser pass | all | high |
+
+Parallelizable inside Wave 9: **OU.1 (`src/shared/`) alongside OU.3 (`src/x/settings/`)** — fully
+disjoint, and neither can start the other's file. Nothing else parallelizes: OU.4 needs all three
+of its predecessors, and OU.5 → OU.6 → OU.7 all write `Outliers.tsx` (D195). Serial constraints:
+**OU.2 runs alone** as the migration task (global rule 1) and must re-derive its number rather than
+trust the plan's `0031`; **`src/x/routes/searches.ts` is written once**, by OU.4, so no hot-file
+race exists on the server side; OU.8 closes after everything. This wave bumps **no MCP count** —
+there is no tool in it by decision, so `src/mcp.test.ts`'s exact **28** and the six
+`docs/s2-mcp-server.md` strings are untouched (confirm, don't assume). The doc counts it *does*
+bump are the table count, the migration head, the registry counts (`docs/settings-tab.md`'s
+count strings **plus** its group table row — none of them asserted by anything, and RA.8 found
+four of them already rotted), the smoke-script count, and the extension `include` shim count
+(11 → 12).
+
+**Reasoning-level notes.** No task is **max** — nothing here touches the prompt-template surgery
+chain, the publisher, or any billed path, so the substrate the rest of the repo stands on is never
+under the knife. Most of the wave is **high** by the rubric's first clause: OU.3 copies the
+`RADAR` block in `registry.ts`, OU.4 copies `replyLists.ts`'s CRUD ladder, OU.5/OU.6 copy an
+existing tab and the Voice/Radar gear pattern, and OU.8 is a docs-sync. The three **xhigh** tasks
+are each the rubric's second clause — a subtle mistake passes every test:
+
+- **OU.1** is single-file and pure, which normally reads *high*, and it is not, for one reason:
+  **X's parser is the oracle and it is off-machine.** A byte-exact golden test written by the same
+  session that wrote the compiler proves self-consistency, not correctness — get the OR-group
+  parenthesisation or an operator's spelling wrong and the query does not error, it returns the
+  *unfiltered firehose*, which looks exactly like a working feature with a generous niche. The
+  task carries a manual x.com spot check and a dated verification comment for precisely this
+  reason; treat that step as part of the implementation, not a formality.
+- **OU.2** is a migration (rubric: xhigh by category), plus the standing drizzle-kit dropped-seed
+  trap. DDL-only and small, but global rule 1 and the fresh-`:memory:` `content_pillars` count
+  both apply, and a number quoted from plan text is the exact failure this wave already found in
+  its own source plan (`0026`, written when the head was `0025`).
+- **OU.7** edits `content.ts` — the wave's only content-script touch, under the IIFE constraint —
+  and its failure mode is silent provenance corruption: extend the existing `onConflictDoUpdate`
+  set-clause to include `source` and every test still passes while a re-save from the timeline
+  quietly erases the hunt that found the tweet. First-save-wins is the rule; the re-save test in
+  the plan block is the only thing that catches breaking it.
+
+---
+
 ## Parallelism model (how many sessions at once)
 
 Practical ceiling: **2–3 concurrent sessions**, each owning a lane, coordinated through
@@ -589,6 +697,9 @@ STATE.md's hot-file locks:
   (RA.2, later RA.5) ∥ server/MCP (RA.3 → RA.4); `src/x/routes/radar.ts` and
   `src/mcp.test.ts`'s exact tool count serialize RA.1 → RA.3 → RA.4. RA.6 floats (it owns
   only `content.ts` + harvest docs) and RA.7 is docs-only; RA.8 closes alone.
+- **Wave 9:** OU.2 alone (migration), then 2 lanes — OU.1 (`src/shared/`) ∥ OU.3
+  (`src/x/settings/`) — and a single lane from OU.4 on, because OU.5 → OU.6 → OU.7 all write
+  `Outliers.tsx` (D195). OU.8 closes alone. Effective ceiling for this wave is **2**.
 
 Rules: a lane claims its hot files in STATE.md before starting and releases on commit;
 migration tasks always run alone; when in doubt, serialize — a merge conflict in
