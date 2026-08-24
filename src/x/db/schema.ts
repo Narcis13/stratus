@@ -1236,3 +1236,58 @@ export const radarSightings = sqliteTable(
     index('radar_sightings_handle_idx').on(t.handle, t.lastSeenAt),
   ],
 );
+
+// Saved outlier hunts (OU.2) — a named x.com advanced-search, kept so a hunt
+// worth repeating is re-loaded instead of retyped. `query` holds the STRUCTURED
+// params (a `SearchQuery`, OU.1), never the compiled string: a compiled string
+// cannot be loaded back into the form, and a compiler fix (an operator X
+// renames) then could never reach rows already saved. The string is derived on
+// every read.
+//
+// Stored NORMALIZED through `parseSearchQuery` at the storage boundary — the
+// same discipline `reply_lists.humanizer` uses with `parseHumanizerConfig` — so
+// the read path never re-validates.
+//
+// **`query` is a plain `text` column, deliberately NOT `text({ mode: 'json' })`.**
+// Drizzle parses a json column during result mapping, inside `.all()`, so ONE
+// row edited out of band (a sqlite CLI session, a restored backup) would throw
+// where no route code can catch it and take the whole list with it. Raw text
+// lets the read path `JSON.parse` per row and degrade that row to
+// `compiled: null` — visible, and therefore deletable.
+//
+// **A table, not an `app_settings` blob.** `settings/sweepPresets.ts` keeps
+// named presets in one blob with no migration, and that precedent does NOT
+// transfer: a sweep preset is snapshotted server-side from already-validated
+// registry values and never posted by a client, which is what makes loading one
+// blind safe. A saved search IS client-supplied structure — there is no registry
+// key shaped like a search — so it needs the strict parse on the way in, the
+// tolerant parse on the way out, and per-row identity for PATCH/DELETE.
+//
+// No seed by design (an empty list is a valid, byte-identical starting state,
+// and it sidesteps the drizzle-kit dropped-seed trap). **No index by design**
+// either: a single-user table of tens of rows sorted in memory needs none, and
+// an unused index is a claim about scale this feature does not have.
+export const savedSearches = sqliteTable('saved_searches', {
+  id: text('id')
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  name: text('name').notNull(),
+  // JSON of a normalized `SearchQuery` (src/shared/searchQuery.ts, OU.1).
+  query: text('query').notNull(),
+  // 'live' | 'top'. The column default exists only so the column can be notNull
+  // without every writer thinking about it — it is NOT the product default,
+  // which is the `x.outliers.sort` registry knob (`top`). OU.4 must resolve an
+  // omitted `sort` from the knob, never let this default stand in for it.
+  sort: text('sort').default('live').notNull(),
+  pinned: integer('pinned', { mode: 'boolean' }).default(false).notNull(),
+  // Null = never run (§7.11), never 0. Stamped by POST /x/searches/:id/run, and
+  // only when the stored query still compiles — a run that couldn't happen is
+  // not a run.
+  lastRunAt: integer('last_run_at', { mode: 'timestamp_ms' }),
+  createdAt: integer('created_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp_ms' })
+    .default(sql`(unixepoch() * 1000)`)
+    .notNull(),
+});
