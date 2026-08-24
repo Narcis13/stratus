@@ -45,6 +45,7 @@ import { promptsRouter } from './routes/prompts.ts';
 import { radar } from './routes/radar.ts';
 import { replies } from './routes/replies.ts';
 import { replyListsRouter } from './routes/replyLists.ts';
+import { searchesRouter } from './routes/searches.ts';
 import { settingsRouter } from './routes/settings.ts';
 import { sweepPresetsRouter } from './routes/sweepPresets.ts';
 import { createVoiceRouter } from './routes/voice.ts';
@@ -120,6 +121,13 @@ export function mountX(app: Hono): void {
   // RL: reply lists — premade canned replies. CRUD (and later /use) are pure SQL
   // and always mounted; only /generate (RL.4) needs an LLM and checks at runtime.
   app.route('/x', replyListsRouter);
+  // OU.4: Outliers — saved x.com advanced-search hunts + the stateless compile
+  // and defaults helpers the panel opens with. Always mounted (§7.22 does not
+  // apply: there is no LLM call here at all), and every route is $0 — pure SQL
+  // plus the dependency-free compiler in src/shared/searchQuery.ts. `/searches/
+  // compile` and `/searches/defaults` register above `/searches/:id` inside the
+  // router (§7.20).
+  app.route('/x', searchesRouter);
   // HM.2: the project-level humanizer config (one `app_settings` row) that the
   // Radar pick path reads. Always mounted, $0, static paths only — a sibling of
   // the per-list `humanizer` JSON, not a replacement for it.
