@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import { CANNON } from '../../shared/cannon.ts';
 import { SWEEP } from '../../shared/radarSweep.ts';
+import { SEARCH_LANGS } from '../../shared/searchQuery.ts';
 import {
   SETTINGS_REGISTRY,
   type SettingDef,
@@ -132,6 +133,7 @@ describe('registry adapter + grouping', () => {
       'radar',
       'sweep',
       'cannon',
+      'outliers',
       'workers',
       'budgets',
       'ai',
@@ -149,6 +151,7 @@ describe('registry adapter + grouping', () => {
       'Radar',
       'Sweep',
       'Cannon',
+      'Outliers',
       'Workers',
       'Budgets',
       'AI calls',
@@ -567,6 +570,73 @@ describe('registry adapter + grouping', () => {
     expect(settingsRegistry.validate('x.display.voiceListLimit', 500)).toBeNull();
     expect(settingsRegistry.validate('x.display.voiceListLimit', 501)).toBe('out_of_range');
     expect(settingsRegistry.validate('x.display.voiceListLimit', 19)).toBe('out_of_range');
+  });
+
+  // OU.3: the outliers group is DEFAULTS, not a rule — every knob here only
+  // decides what a fresh hunt form opens with, which is why none of them is
+  // mirrored: the panel reads them already resolved through
+  // `GET /x/searches/defaults` and has no client-side decision to make off them.
+  test('the outliers group is exactly the six hunt defaults, none mirrored', () => {
+    const outliers = settingsByGroup().find((g) => g.id === 'outliers');
+    expect(outliers?.label).toBe('Outliers');
+    expect(outliers?.defs.map((d) => d.key)).toEqual([
+      'x.outliers.minFaves',
+      'x.outliers.minRetweets',
+      'x.outliers.minReplies',
+      'x.outliers.sinceDays',
+      'x.outliers.lang',
+      'x.outliers.sort',
+    ]);
+    expect((outliers?.defs ?? []).every((d) => d.scope === 'server')).toBe(true);
+    // Defaults bind the next /x/searches/defaults read — nothing here arms a timer.
+    expect((outliers?.defs ?? []).every((d) => d.appliesOn === undefined)).toBe(true);
+
+    const byKey = new Map(SETTINGS_REGISTRY.map((d) => [d.key, d]));
+    expect(byKey.get('x.outliers.minFaves')?.default).toBe(400);
+    expect(byKey.get('x.outliers.minRetweets')?.default).toBe(0);
+    expect(byKey.get('x.outliers.minReplies')?.default).toBe(0);
+    expect(byKey.get('x.outliers.sinceDays')?.default).toBe(30);
+    expect(byKey.get('x.outliers.lang')?.default).toBe('');
+    // D200: the product default is `top`, and it is THIS knob — the
+    // saved_searches column default ('live') exists only so the column can be
+    // notNull, and must never stand in for an omitted sort.
+    expect(byKey.get('x.outliers.sort')?.default).toBe('top');
+  });
+
+  test('validation honors the OU.3 outliers ranges', () => {
+    // 0 is a real value on all three floors — it means "omit the operator",
+    // not "unknown" (the deliberate §7.11 carve-out the compiler documents).
+    for (const k of ['x.outliers.minFaves', 'x.outliers.minRetweets', 'x.outliers.minReplies']) {
+      expect([k, settingsRegistry.validate(k, 0)]).toEqual([k, null]);
+      expect([k, settingsRegistry.validate(k, 100_000)]).toEqual([k, null]);
+      expect([k, settingsRegistry.validate(k, 100_001)]).toEqual([k, 'out_of_range']);
+      expect([k, settingsRegistry.validate(k, -1)]).toEqual([k, 'out_of_range']);
+    }
+    // A zero-day window is not "no window" — `since` would be today, so the
+    // floor is 1 rather than a sentinel.
+    expect(settingsRegistry.validate('x.outliers.sinceDays', 1)).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.sinceDays', 0)).toBe('out_of_range');
+    expect(settingsRegistry.validate('x.outliers.sinceDays', 365)).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.sinceDays', 366)).toBe('out_of_range');
+
+    // The lang knob is a plain string on purpose: '' is the shipped value and
+    // an enum has no blank option, so the allowlist is enforced one layer up
+    // (the route drops an unknown code with a warn) and named in the
+    // description instead.
+    expect(settingsRegistry.validate('x.outliers.lang', '')).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.lang', 'ro')).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.lang', 'klingon')).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.lang', 5)).toBe('not_a_string');
+    // …and the description carries the allowlist INTERPOLATED from the constant,
+    // so the gear is where a user meets it and a code added to SEARCH_LANGS can
+    // never go unlisted here.
+    const langDesc = SETTINGS_REGISTRY.find((d) => d.key === 'x.outliers.lang')?.description ?? '';
+    expect(langDesc).toContain(SEARCH_LANGS.join(', '));
+
+    expect(settingsRegistry.validate('x.outliers.sort', 'live')).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.sort', 'top')).toBeNull();
+    expect(settingsRegistry.validate('x.outliers.sort', 'newest')).toBe('not_in_options');
+    expect(settingsRegistry.validate('x.outliers.sort', true)).toBe('not_a_string');
   });
 
   test('validation honors UI.3 ranges (fractional outperform ratio + bounds)', () => {

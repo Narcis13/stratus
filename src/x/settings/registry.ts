@@ -13,6 +13,7 @@ import * as store from '../../settings/store.ts';
 import type { SettingScope, SettingsRegistry } from '../../settings/store.ts';
 import { CANNON } from '../../shared/cannon.ts';
 import { SWEEP } from '../../shared/radarSweep.ts';
+import { SEARCH_LANGS } from '../../shared/searchQuery.ts';
 
 export type { SettingScope };
 export { SettingsError } from '../../settings/store.ts';
@@ -705,6 +706,92 @@ const CANNON_KNOBS: SettingDef[] = [
   },
 ];
 
+// Outliers (OU.3) — the DEFAULT shape of an outlier hunt, not a rule anything
+// enforces. Every knob here is a starting value handed to a fresh Outliers form
+// through `GET /x/searches/defaults`; the user overrides any of them per hunt,
+// and a saved search keeps its own copy. That is why all six are `scope:'server'`
+// and none is mirrored (§7.24 stays clean): the panel receives them already
+// resolved, inside a payload it asks for once, and there is no client-side
+// decision to make off them. The floors are flat hand-tuned numbers on purpose —
+// decision 10 records the measured version (P90 of the timeline corpus, or the
+// author's median × 3) and deliberately does not build it, because an honest
+// computed threshold needs a provenance line in the UI and a recalibration
+// clause, not a magic number wearing a lab coat.
+const OUTLIERS: SettingDef[] = [
+  {
+    key: 'x.outliers.minFaves',
+    group: 'outliers',
+    label: 'Default min likes',
+    description:
+      'Likes floor a fresh hunt opens with — the one number that decides whether you are reading outliers or reading the firehose. Start at 300–500 and raise it until the results thin out; the up/down stepper on the field walks a ladder for exactly that. 0 omits the operator entirely.',
+    type: 'number',
+    default: 400,
+    min: 0,
+    max: 100_000,
+    unit: 'likes',
+    scope: 'server',
+  },
+  {
+    key: 'x.outliers.minRetweets',
+    group: 'outliers',
+    label: 'Default min reposts',
+    description:
+      'Reposts floor a fresh hunt opens with. Ships OFF (0 = no operator) because likes and reposts measure the same thing on most posts, and stacking two floors thins results far faster than it sharpens them — raise this only when you are hunting specifically for things people forwarded.',
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 100_000,
+    unit: 'reposts',
+    scope: 'server',
+  },
+  {
+    key: 'x.outliers.minReplies',
+    group: 'outliers',
+    label: 'Default min replies',
+    description:
+      'Replies floor a fresh hunt opens with. Ships OFF (0 = no operator). This is the floor to raise when the hunt is for a reply target rather than for swipe-file copy: replies mean an argument is already happening, which is where one sharp reply gets read.',
+    type: 'number',
+    default: 0,
+    min: 0,
+    max: 100_000,
+    unit: 'replies',
+    scope: 'server',
+  },
+  {
+    key: 'x.outliers.sinceDays',
+    group: 'outliers',
+    label: 'Default window',
+    description:
+      'How far back a fresh hunt looks, in days from today. 30 is the compromise the swipe file wants: wide enough that a floor of a few hundred likes still returns a page, narrow enough that what comes back is still about the conversation you are in.',
+    type: 'number',
+    default: 30,
+    min: 1,
+    max: 365,
+    unit: 'days',
+    scope: 'server',
+  },
+  {
+    key: 'x.outliers.lang',
+    group: 'outliers',
+    label: 'Default language',
+    description: `Language code a fresh hunt opens with; empty means no \`lang:\` operator at all, which is what ships. Anything outside the compiler's allowlist (${SEARCH_LANGS.join(', ')}) is dropped with a warning rather than compiled — an unknown code returns zero results on X, which reads exactly like "no matches".`,
+    type: 'string',
+    default: '',
+    scope: 'server',
+  },
+  {
+    key: 'x.outliers.sort',
+    group: 'outliers',
+    label: 'Default results tab',
+    description:
+      'Which x.com results tab the Open in X button lands on. Ships `top` because an outlier hunt wants best-performing, not newest — `live` is the one to pick when you are hunting a conversation as it happens rather than a post that already won.',
+    type: 'enum',
+    default: 'top',
+    options: ['live', 'top'],
+    scope: 'server',
+  },
+];
+
 // Workers — the publisher is the only one left, so this group is one cadence
 // knob. `appliesOn:'restart'`: startXWorkers reads it ONCE to arm the timer
 // (decision 10 — no hot-reloading timers). The daily-pass hour, the winner
@@ -998,6 +1085,7 @@ export const SETTINGS_REGISTRY: SettingDef[] = [
   ...RADAR,
   ...SWEEP_KNOBS,
   ...CANNON_KNOBS,
+  ...OUTLIERS,
   ...WORKERS,
   ...BUDGETS,
   ...AI,
@@ -1017,6 +1105,7 @@ export const GROUP_LABELS: Record<string, string> = {
   radar: 'Radar',
   sweep: 'Sweep',
   cannon: 'Cannon',
+  outliers: 'Outliers',
   workers: 'Workers',
   budgets: 'Budgets',
   ai: 'AI calls',
