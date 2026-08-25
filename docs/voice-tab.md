@@ -27,6 +27,17 @@ You don't add tweets from inside the side panel. You add them **while browsing X
 
 Both buttons read the page only. No paid API call, no metrics polling, no cost.
 
+### Where the tweets come from — and where they *could* come from
+
+Waiting for good tweets to cross your timeline is the slow way to fill a swipe file. The **[Outliers](./outliers-tab.md)** tab is the deliberate way: it compiles an x.com advanced-search query (keywords, a minimum-likes floor, a date window) and hands it to you on the clipboard. The results are an ordinary x.com search page, so **Save to stratus** is right there on every result with no extra machinery — the search page is a capture surface for this library exactly like a profile or a timeline is.
+
+**stratus remembers which of the two it was.** Every saved tweet carries a `source`, written **once, by the save that created the row**:
+
+- `outlier_search` — you saved it off an x.com **search-results** page.
+- `extension_scrape` — anywhere else (timeline, profile, a single tweet's page).
+
+First save wins, deliberately: a tweet you found through a hunt and later re-save off your timeline keeps its `outlier_search` stamp, and vice versa. The column answers *how did this get into the library*, which is something only the first save can know. The Outliers tab reads that column back as its own report card — a count of how many tweets your hunts actually put in here over the last 30 days — so a hunt that produces nothing worth saving shows up as a number rather than as a feeling.
+
 ---
 
 ## The Tweets subtab

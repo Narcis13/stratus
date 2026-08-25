@@ -1446,3 +1446,198 @@ parents by D97.
   `voice.targets`), the last two in one `Promise.allSettled` so either failing degrades to a muted line instead of taking
   the tab down. **The capture count needs no fifth:** `GET /x/searches` already carries `capture` (D208a), so OU.7's footer
   is a render off state OU.5 already fetches.
+
+## Archived at OU.8 (2026-08-25) — THE WAVE-9 CLOSING PASS: the OU lane's remaining register, its gotchas, the Wave-9 ledger rows, the lock table and the lane narration
+
+> Wave 9 closed 8/8 and the masterplan closed with it at **157/157**. Everything below stopped binding an
+> open task the moment OU.8 landed. Moved verbatim (size discipline, lessons 2 and 5 — a closed lane's
+> ledger rows, lock rows and narration are weight, not state). Grep by task id (`OU.1`…`OU.8`), by
+> D-number (D203, D208, D209, D213–D220), or by filename (`searchQuery.ts`, `searches.ts`,
+> `Outliers.tsx`, `saved_searches`, `outlierSeed.ts`, `voice.test.ts`).
+
+### The Wave-9 lane narration (STATE.md header, 2026-08-24 → 2026-08-25)
+
+Waves 0–8 closed at 149/149 (RA.8, 2026-08-18). `4ebceb3` registered **Wave 9 (OU — `plans/2026-08-03-search-query-builder.md`, 8 tasks, revised 2026-08-24)** in `plans/MASTERPLAN.md`, and **OU.2 re-opened the ledger below** (2026-08-24). **Outliers**: an x.com advanced-search compiler with a clipboard hand-off and saved hunts, closing the last gap in goal 3’s intake — the swipe file grows only from tweets that happen to cross the timeline, because finding *deliberately* means typing raw operator syntax from memory every session. **The whole wave is $0 by design, not by luck:** X API v2 has **no** `min_faves`/`min_retweets`/`min_replies` operator at any tier, so the API version would pay ~$0.005 per returned result to discard most of them. Invariant #8 says adding a billed read back is a decision made out loud; this wave makes the opposite one on the record, and `searchRecent` stays deleted. **The results page needs no capture code at all** — `content.ts`’s save-button attach has no path gate, so every result already carries **Save to stratus**.
+
+**Between RA.8 and this commit, four lanes shipped OUTSIDE the skill** and are deliberately not in the ledger — they had their own plan files or none at all, and the masterplan was closed the whole time: **RQ.1–RQ.5** (`plans/2026-08-18-radar-live-queue.md`, migration `0030_famous_wrecker`), **SW.1** (the sweep’s media/ads gates — **this is where the two registry knobs came from that made STATE.md’s 61/31 stale**), **OFF-PILLAR/REMIX** (`813dafc`/`3868981`, the drafter’s register triple + off-pillar default), and `b92d783` (calendar tray draft-delete, **still unstamped in the codemap — OU.8 owes it a §5 line**). The codemap §11 log and its header stamps are the record for all four; grep it by lane code, not this file.
+
+**A new lane starts by writing a plan (`/plan-feature`), registering it in `plans/MASTERPLAN.md`, and re-opening the ledger below in that lane’s FIRST commit.** RA.1 and now OU.2 are the worked examples, and the one thing both got right is worth copying: **recount** the `current state` numbers off the running code instead of carrying the line forward. OU.2 recounted and found two stale (registry 61→63 knobs / 31→33 mirrored).
+
+**What is still owed, and it is not a task.** `VERIFY-DEBT.md` holds **twenty-eight** unpaid items — browser checks
+that shipped with automated gates only, plus CA.2 step 2. The newest is `0w`, RA's own (the sighting mirror per page,
+the kill switch, the **Fetch drafts** hand-off, the pick, and one open question about scoreless angle tabs); `0n(b)`
+and `0l` are the only two that spend (~$0.003 and ~$0.010). Nothing there needs a plan or a session of its own: fold
+them into whichever session next has Chrome open on the panel, and **delete each entry as you pay it.** That file is
+deliberately not in the archive — a debt filed among history stops being owed. **The ceiling on all of them is the
+same and is structural:** the stratus panel is a Chrome *side panel*, a page tab cannot read another extension's
+`chrome.storage.local`, and the extension service worker has no console reachable from a coding session — what they
+need is the human at the browser, not a session with Chrome tools loaded.
+
+### The header's `last-commit` + `current state` lines as OU.8 found them
+
+- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `feat(outliers): stamp swipe-file saves from search results (OU.7)`, parent `4580835`. **Step 0 is one command:** `git log -1 --format='%h %s'`. **Expect ad-hoc commits between masterplan tasks** — four lanes ran outside the skill since RA.8, so a HEAD that doesn’t name a task is normal now; reconcile against this line, not against the whole log.
+- **current state of the repo (as of OU.7, 2026-08-25 — recounted, not carried forward):** suite **2599** across **132** files (**OU.7 moved both again, and for a reason the next task should not mistake for drift**: `src/x/routes/voice.test.ts` is NEW — the scrape route had no suite at all, so the plan's "edit voice.test.ts" was an edit to a file that did not exist, D217. +9 tests, +1 file); tables **44**; migrations through **`0031_sharp_screwball`** — **the journal is FREE from `0032`**; registry **16 groups / 69 knobs, 33 mirrored** and **17 prompt keys** (unmoved since OU.3 — the six `x.outliers.*` are all `scope:'server'`); MCP **28 tools** (3 schema / 19 curated / 6 write) — **Wave 9 bumps none of them by decision**; smoke scripts **40**; extension tsconfig `include` shims **12** (OU.6 added no shim — `extension/src/shared/outlierSeed.ts` is IN-tree); panel tabs **15**; whole-repo lint **0 errors**. **`docs/settings-tab.md`’s count strings are CURRENT as of OU.3** (69 knobs / 16 groups / 33 mirrored / 17 prompts, plus the **Outliers** table row and the `### The sixteen groups` heading) — **re-read the strings before believing any staleness claim about them (D205, archived).** The four multi-file moves a new task will hit, each with the assertions that make them fail loudly: **a mirrored knob is SEVEN edits** — `registry.ts` (group array; order decides mirrored position), `registry.test.ts` **twice** (the group’s exact key list *and* the exact mirrored list), `docs/settings-tab.md`’s **three** count strings (prose, asserted by nothing) **plus its group table row**, and extension-side `ServerConfig` + `SERVER_DEFAULTS` + `readServerConfig`, pinned by `serverSettings.test.ts`’s exact `Object.keys` list AND its full-blob `toEqual` (D181d — the server half alone ships a knob that silently does nothing); a **`scope:'server'`** group is three of those seven and no extension build (the `outliers` group is the worked example). **A registry prompt key is FOUR** (`PROMPT_KEYS` + `PROMPT_SPECS`, the default exported from a **pure** module or the import cycles, `registry.test.ts`’s exact key list, and `docs/settings-tab.md`’s three prompt strings). **An MCP tool is SIX doc strings plus three asserted numbers**: `src/mcp.test.ts`’s exact **28**, `scripts/smoke-mcp.ts`’s expected-names list, and in `docs/s2-mcp-server.md` the prose total, the `## The tools` heading, the end-to-end verification line, the `### <tier> (N)` heading **of the tier you touched**, the intro’s prose enumeration of the write tools, and the §"Security & cost invariants" write-ceiling row — plus the counts in codemap §3.3’s `mcp.ts` row **and** §6. **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git status --porcelain src/db/migrations/` (**not `git diff --stat`** — the new `.sql` and its snapshot are UNTRACKED, so a diff shows only the `_journal.json` append and reads like the SQL never landed) plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`’s `INSERT OR IGNORE` spellings make return 0 (D177a).
+
+### The Wave-9 ledger rows
+
+- **Wave 9 — Outliers: X advanced-search compiler, clipboard hand-off, saved hunts (7/8)**: plan
+  `plans/2026-08-03-search-query-builder.md` (written 2026-08-03, **revised 2026-08-24** — the revision is the spec,
+  the 08-03 text is superseded in six places it names). Registered in `plans/MASTERPLAN.md` by `4ebceb3`; ledger
+  re-opened by OU.2. **$0 lane — no `xFetch`, no `askLLM`, no image call on any path.** Took migration
+  `0031_sharp_screwball` (`saved_searches`); **the wave takes no further migration**. **The two no-dep tasks are spent —
+  from OU.4 on this is one serial lane.**
+  - [x] **OU.2** `saved_searches` table + migration `0031` — `feat(outliers): saved_searches table + migration 0031 (OU.2)`, parent `813dafc`, 2026-08-24. **Also carried the wave's re-opening** (D198). Schema-only: no route, no consumer, no new test.
+  - [x] **OU.1** pure compiler `src/shared/searchQuery.ts` + `FAVES_LADDER` — `feat(outliers): pure x.com search-query compiler + validator (OU.1)`, parent `6721b48`, 2026-08-24. **The x.com spot check was RUN, not deferred** — 2026-08-24, live, recorded in the module header (see the gotcha on the VERIFY-DEBT ceiling). 2 files, both new, **no consumer yet**: OU.4 mounts the route, OU.5 adds the shim. D201–D203.
+  - [x] **OU.3** `outliers` settings group, 6 `scope: 'server'` knobs — `feat(outliers): outliers settings group — default engagement floors + window (OU.3)`, parent `1ff9166`, 2026-08-24. Registry **63→69 knobs / 15→16 groups / mirrored UNMOVED at 33 / 17 prompts**, recounted not trusted — the plan's predicted 69/16/33 held. The repo's **first all-`server` group**, so §7.24's seven-edit move was the server three. D204–D206. **Its code half arrived in the working tree from a prior session and this task finished the docs half + bookkeeping** (D206).
+  - [x] **OU.4** `/x/searches` CRUD + `compile`/`run`/`defaults` + mount — `feat(outliers): /x/searches CRUD + compile/run/defaults routes (OU.4)`, parent `8e97de7`, 2026-08-24. 3 files, 2 new; **the composed app was hit for real**, not just the bare-Hono suite. Suite 2557 → **2583** / 130 files. D207–D209.
+  - [x] **OU.5** Outliers tab — form, live preview, Copy + Open in X, saved list, the 12th shim — `feat(outliers): Outliers tab — query builder, clipboard hand-off, saved hunts (OU.5)`, parent `37d8fd2`, 2026-08-25. 7 files, 2 new; **all extension-side**, so the gates were `bun run build` + the extension typecheck + a `dist` grep, and the **suite did NOT move (2583/130)** — panel components carry no unit tests (§5). Tabs **14 → 15**, shims **11 → 12**. The claim the grep alone cannot make was paid by a throwaway composed-app round-trip: the panel's local compile is **byte-identical** to what `POST /x/searches` stores. D210–D212.
+  - [x] **OU.6** prefills — channel keywords, target roster, faves ladder, `SettingsGear` — `feat(outliers): channel/target prefills, faves ladder, settings gear (OU.6)`, parent `385a70c`, 2026-08-25. 4 files, **2 new** (`extension/src/shared/outlierSeed.ts` + its test); all extension-side, and **`api.ts` needed no edit at all** — `channels.list` and `voice.targets` already existed, so the plan's "add only what is missing" added nothing. Suite **2583 → 2590 / 131** (D213 — the plan's own Tests bullet, not a slip). **The D195(plan) decision is taken: OU.7 keeps the footer** (D215). D213–D216.
+  - [x] **OU.7** `voice_tweets.source = 'outlier_search'` provenance + footer count — `feat(outliers): stamp swipe-file saves from search results (OU.7)`, parent `4580835`, 2026-08-25. **6 files, 1 new** — and the new one is `src/x/routes/voice.test.ts`, which the plan's Edit list assumed already existed (D217). Suite **2590 → 2599 / 132**. The client reports `location.pathname`, the server decides; `outlier_search` is **0 in both extension bundles**. The claim the unit tests cannot make — that the writer's literal and the footer's reader literal are the same string — was paid by a throwaway composed-app run (+1 for a `/search` save, +0 for a `/home` one). D217–D220.
+  - [ ] **OU.8** OU docs-sync + `$0 scripts/smoke-outliers.ts` + the browser pass — deps all, high. **Also owes `b92d783` a codemap §5 line** (unstamped since 2026-08-23).
+
+### The Wave-9 hot-file lock table
+
+## Hot-file locks
+
+**Nothing is held, and nothing in this wave will be again — OU.7 was the last writer of the last contended file.**
+OU.8 is a docs/smoke/codemap task; the only files it writes that anything else might are `docs/*.md`, the codemap and
+this file, and no other lane is open. The table is kept for one more task only because OU.8's archive pass is what
+deletes it (size discipline, lesson 5: a closed lane's lock rows are weight, not state).
+
+| File | Owner / order | Why |
+|---|---|---|
+| `extension/src/sidepanel/Outliers.tsx` | **released by OU.7** | The wave's hot file, written by OU.5, OU.6 and OU.7 in series. The plan tagged OU.7 `[parallel-ok]` and that tag was wrong (D195 in `plans/MASTERPLAN.md`) — its footer renders *in the tab*. The RC/HM `Radar.tsx` situation, repeated and correctly serialized: **a plan sizes tasks by concern, the masterplan sizes lanes by file.** |
+| `extension/src/content.ts` | **released by OU.7** | Taken by exactly one OU task, for exactly one field (`sourcePath`). §7.26 held: no `../searchQuery.ts` import, and the dist grep still reads 0 for all six Outliers strings in `content.js`. |
+| `src/x/routes/voice.ts` + `voice.test.ts` | **released by OU.7** | The provenance writer and its first-ever route suite. If a later task re-saves tweets, the one rule to keep is that `source` stays OUT of the `onConflictDoUpdate` set-clause. |
+| `src/x/routes/searches.ts` · `src/shared/searchQuery.ts` · `src/x/db/schema.ts` + migrations journal | **released by OU.4 / OU.1 / OU.2** | All finished and untouched since. The wave took no further migration; **the journal is free from `0032`** for any other lane. |
+
+**No lane-picking decision remains in this wave.** One standing invariant survives the table: **never run two
+migration-generating tasks in parallel sessions** (journal conflicts), ignore any hardcoded migration number in plan
+text — *a plan quoting one is quoting the day it was written* — and always `bun run db:generate` against the current
+journal, then inspect the SQL for dropped seed INSERTs (codemap §4). The documented way to reach a closed lane's file
+notes is to **grep `STATE-ARCHIVE.md` by filename** before touching a file that lane built.
+
+### The rest of the OU register (D203, D208, D209, D213–D220) — D198–D202/D204–D206 archived at OU.6, D207/D210/D211/D212 at OU.7
+
+- **The OU lane's spent register is in `STATE-ARCHIVE.md` — D198–D202/D204–D206 archived at OU.6, D207/D210/D211/D212 at OU.7** (the size discipline's early-archive clause; every one of them binds a task that has shipped). Grep the archive by the D-number or by `saved_searches`/`registry.ts`/`Outliers.tsx` if OU.8 needs the reasoning — **D207 is where the `sort`-has-one-authority rule is written down**, and it is also stated in codemap §3.4's `searches.ts` row. What stays below is D203 (the compiler's warn semantics, which OU.8's docs describe), D208/D209 (the route shapes and the capture window OU.8's smoke drives), and D213–D220.
+- **D203** (OU.1, standing for the compiler — **a multi-word term in `any`/`none` WARNS**). Not in the plan's rule list, but the same family as the `:`-in-a-keyword warn it does mandate, and it is a real mis-parse rather than a style opinion: `-build in public` compiles to `-build AND in AND public` (only "build" is excluded, and the other two words become REQUIRED), and a multi-word member inside the OR group ANDs within it. Both **warn and still compile** (§7.23a — the warn half never refuses). **A silent auto-quote to `-"build in public"` was considered and refused:** the compiled string is displayed live right where the user is looking, so a rewrite would be invisible in the one place it needed to be visible; the warn plus the visible string teaches what X will actually do. `all` is NOT warned — it is space-joined AND either way, so a multi-word term there means exactly what it looks like.
+- **D208** (OU.4, binds OU.5 and OU.8 — **three shape calls the plan's Design §3 table left open**). (a) **`GET
+  /x/searches` items are the SAME `{saved, compiled, url}` shape as `GET /x/searches/:id`.** The table specifies the
+  detail shape and says only `searches: [...]` for the list; making them identical means OU.5's Load path is one
+  function instead of two, and the list already has to carry `compiled` for its one-line preview. (b) **`POST
+  /x/searches/compile` answers `200` even when the query has errors**, with them in `problems` and `url: null` — it
+  is a *preview*, the form disables Copy off `problems` (§7.23a's warn/error split is already in the payload), and a
+  400 would tell it nothing the body doesn't. Only the WRITE paths 400 on an error problem, which is where refusing
+  actually prevents something (a stored row whose Copy button can never work). (c) **`GET /x/searches/defaults`
+  returns `problems` alongside `{query, ladder}`** — the plan's table omits the field but its How-text requires the
+  `lang` warn to go somewhere, and swallowing it would leave the one unvalidated knob (D204) silently ignored.
+- **D209** (OU.4, binds OU.7 — **the capture window is a local constant, deliberately not `x.outliers.sinceDays`**).
+  `capture.days` is `CAPTURE_WINDOW_DAYS = 30` in `routes/searches.ts`. Binding it to the registry knob was the
+  obvious move and is wrong: `sinceDays` is *how far back a hunt looks*, so re-tuning a hunt would silently redefine
+  what the footer counts and make two numbers on the same screen mean different things. The count itself is a real
+  `COUNT(*)` over `voice_tweets.source = 'outlier_search'` filtered on `savedAt` (not `createdAt` — the question is
+  when WE stashed it, not when it was posted), returning 0 until OU.7 stamps the source; a test inserts such a row
+  and asserts the number moves by one, which is the only way to prove a zero is a measurement rather than a literal.
+  **OU.7 therefore changes the writer and touches nothing here.**
+- **D213** (OU.6, corrects this file rather than the plan — **the suite MOVED, and the plan is why**). STATE's next-up
+  predicted "the suite count must NOT move from 2583/130", reasoning from §5's convention that panel components carry no
+  unit tests. That convention is about **components**; it is not a rule that a task touching only components may add no
+  test. Task 6's own Tests bullet says the opposite in advance: *"If any pure helper falls out of this task (e.g. a
+  dedupe-merge for the keyword append), put it in `extension/src/shared/` and bun-test it there rather than inlining it in
+  the component."* `mergeTerms` is exactly that helper — case-insensitive dedupe plus a cap with a `dropped` count, three
+  edge cases worth pinning — so it shipped as `extension/src/shared/outlierSeed.ts` + `outlierSeed.test.ts` (+7 tests, 131
+  files). **Generalize: a prediction in the next-up is a forecast, not a constraint; when the source plan explicitly
+  provides for the thing the forecast rules out, the plan wins and the forecast gets an entry.**
+- **D214** (OU.6, binds OU.7/OU.8 — **the ladder STEPS through `nextRung`/`prevRung`; the fetched `ladder` fills a
+  datalist**). The plan and this file both said "the rungs come from `api.searches.defaults()`'s `ladder` field so the panel
+  and server cannot disagree". Taken literally that requires a step function over an arbitrary array — i.e. a second copy
+  of `nextRung`/`prevRung` inside the panel, forking the exact logic OU.1 wrote and tested, and leaving those two exports
+  with no consumer in the tree. The disagreement it guards against **cannot occur**: `extension/src/searchQuery.ts` inlines
+  `src/shared/searchQuery.ts` into the build, and the route's `ladder` is literally `[...FAVES_LADDER]` from that same
+  module — the panel's rungs and the server's have one source, exactly as the *compiler* already does (OU.5 shipped a
+  locally-compiled preview on that basis, so requiring server authority for the rungs but not for the query would be
+  inconsistent). So: stepping calls the pure helpers, and the fetched `ladder` gets a **real** job instead of being dead
+  API surface (§7.33) — a shared `<datalist id="outlier-rungs">` on all three floor boxes, so the rungs are visible
+  without clicking. **Generalize: "so X and Y cannot disagree" is a claim about the import graph — check whether they
+  already share a source before paying a fork to enforce it.**
+- **D215** (OU.6, the decision `plans/MASTERPLAN.md`'s D195 left open, taken out loud — **OU.7 keeps the capture-count
+  footer**). D209 made the count a real `COUNT(*)` over `voice_tweets.source = 'outlier_search'`, which reads **0** until
+  OU.7 stamps that source. A footer shipped here would therefore render a correct number that looks like a broken feature
+  for one task — the same trap as OU.5's fresh form opening in an error state (last gotcha below), and the reason `dropped`
+  counts exist in `mergeTerms` at all. OU.7 already owns the writer that makes the number non-zero, so the footer costs it
+  nothing extra. Nothing about OU.8's smoke changes either way — it drives the route, not the tab.
+- **D216** (OU.6, binds OU.8's browser pass — **"New hunt" now RE-READS `GET /x/searches/defaults`**, and that is what makes
+  the gear observable). OU.5's New hunt replayed the mount-time seed, so done-when #6's "changing a default in the tab's
+  gear changes what the next fresh form opens with" would have been false until a panel reload — the gear would have looked
+  inert, which is worse than absent. `loadDefaults()` is now a `useCallback` used by both the mount effect and the button,
+  and a failed re-read falls back to the last seed we did get. **One window survives and is not worth closing:**
+  `useSettingsEditor` debounces its PATCH by 400 ms, so a New hunt clicked in the same breath as a slider drag can still
+  read the old number; closing the popover first is enough, and the code says so at the call site.
+
+- **D217** (OU.7, corrects the plan's Edit list — **`src/x/routes/voice.test.ts` did not exist**). The task block names it
+  as an existing file with "the two arms" to add, and it is not there: `ls src/x/routes/*.test.ts` has 38 entries and no
+  `voice.test.ts`, nothing anywhere hits `POST /x/voice/scrape`, and voice's *pure* helpers (`targetBand`,
+  `authorMomentum`, `rankTargets`) live in the mega-suite `src/test.test.ts` instead. So the wave's most-scraped route
+  had zero coverage. OU.7 created the file on the `searches.test.ts`/`replyLists.test.ts` bare-Hono harness and covered
+  only its own behaviour — the four body arms plus the re-save — rather than backfilling the route, which is a different
+  task with a different budget. It also deletes the `people`/`person_events` rows the scrape's best-effort people hooks
+  write, not just the voice rows: those hooks are invisible from the plan's Tests bullet and a leaked `people` row is
+  exactly the fixture that breaks a different file's count. **Generalize: a plan's Edit list is a claim about the repo at
+  writing time. `ls` the file before believing "add the two arms" — an Edit entry that turns out to be a Create changes
+  what the task's Tests bullet is asking for.**
+- **D218** (OU.7, the plan's `/search` rule made precise — **match the SEGMENT, cut the query first**). The How-text says
+  "`/search` prefix → `'outlier_search'`", and a literal `startsWith('/search')` also swallows `/searchlight`, which is a
+  real, claimable x.com handle (≤15 chars, legal characters) — somebody's profile stamped as a hunt, silently, forever,
+  because `source` is insert-only. And the plan's own Tests bullet passes `'/search?q=…'` while the content script sends
+  a bare `location.pathname`, which never carries a query: two shapes that must read identically or the test proves
+  something the wire never does. `scrapeSourceFor` therefore trims, cuts at the first `?`/`#`, then accepts `/search` or
+  `/search/`. **Generalize: "prefix" in a plan is nearly always "segment"; the moment a path prefix is also a legal
+  identifier in the same namespace, spell out which one you meant.**
+- **D219** (OU.7 — **`voice_authors.source` is a different vocabulary that happens to share a spelling, and is untouched**).
+  `grep 'extension_scrape' src/x` returns two writes, not one: the tweet insert *and* `fillAuthor`'s author stub. They are
+  different columns answering different questions — on `voice_authors`, `extension_scrape` means "first seen from a tweet"
+  and its sibling value is `profile_scrape` ("Save author" off the profile page). Stamping the author too was considered
+  and refused: D209's `COUNT(*)` reads `voice_tweets` only, so an author-side value would measure nothing, and the plan's
+  "**do NOT** add a new `source` value beyond these two" is about the tweet column's vocabulary — widening the author's
+  would break that instruction while appearing to follow it. **Generalize: before stamping "the source column", check how
+  many tables have one.**
+- **D220** (OU.7, binds OU.8 — **the writer/reader agreement was PAID for, and the smoke should keep paying it**). The
+  provenance string is written in `routes/voice.ts` (`SOURCE_OUTLIER`) and read in `routes/searches.ts` (`CAPTURE_SOURCE`)
+  — two literals in two files with nothing between them. A typo in either leaves the footer reading 0 forever, which is
+  D215's exact failure mode: a correct number that looks like a broken feature, and the one bug class no unit test in
+  either file can see (each is internally consistent). So OU.7 ran a throwaway script over the **composed** app — POST a
+  scrape with `sourcePath:'/search?q=…'`, POST one with `/home`, assert `GET /x/searches`'s `capture.savedFromSearch`
+  moved by exactly **+1** — against a temp `SQLITE_PATH`, never the real DB. The OU.4/OU.5 precedent, third use.
+  **OU.8's smoke should make this a permanent assertion rather than a one-off**, because it is the only check that
+  survives a later rename. **Generalize: when a value's writer and its reader are two literals in two files, the test
+  that matters spans both — and "each side has tests" is not that test.**
+
+### OU gotchas whose readers have all shipped
+
+- **OU.1 — the plan's Read-first pointer for the normalizing-validator shape is one file off.**
+  `parseHumanizerConfig` lives in **`src/shared/humanize.ts`** (HM.1 promoted it there verbatim);
+  `src/x/replyLists/engine.ts` only re-exports it. Read the shared copy — the exemplar's whole point is that it has
+  no DB and no store, which the engine's file no longer makes obvious.
+- **OU.4 — `x.outliers.lang` is settable to garbage by design, which is what makes its test possible.** The knob is a
+  plain `string` with no membership check (D204), so `setSettings({'x.outliers.lang':'zz'})` succeeds and
+  `/x/searches/defaults` is where it gets caught. Any future test needing an invalid registry value should look for a
+  knob shaped like this one — the validated knobs refuse in `setSettings` and never reach the consumer.
+- **OU.5 — the `dist/content.js` half of the shim grep is as load-bearing as the `dist/sidepanel.js` half.** The check is
+  `min_faves` / `-filter:replies` / `x.com/search` == **1 each in `sidepanel.js` and 0 each in `content.js`**: the compiler is
+  side-panel-only, the content script is a self-contained IIFE (§7.26), and pulling a 400-line module into it to read one
+  string would bloat every x.com page load. **OU.7 held that line** — its one `content.ts` field is a bare
+  `location.pathname` and the SERVER decides the source; the grep is now six strings (see OU.7's entry below).
+- **OU.5 — a FRESH Outliers form is deliberately in an error state, and it looks like a bug.** The registry defaults are
+  `minFaves` + `since` + `sort` and nothing else, so the compile raises *"Filters and floors narrow a search, they don't find
+  one"* with Copy and Open both disabled until a keyword/phrase/handle/hashtag is typed. That is done-when #5 working, not a
+  broken tab — if OU.6 or the OU.8 browser pass gets a "the tab opens broken" report, this is it.
+- **OU.6 — `GET /x/voice/targets` answers `targets: []` whenever `account_snapshots` is empty**, because there is no "my
+  size" to band against — and that table has been frozen since 2026-08-12 (invariant #8). So the roster picker legitimately
+  does not render on a fresh DB, and on an old one the band comes from a stale follower count. The tab says
+  *"No roster in the 2–10× band yet — the From box takes any handle"* rather than showing nothing, so **OU.8's browser pass
+  should not file a missing picker as a bug** without checking that table first.
+- **OU.7 — the shim grep now has a SIXTH string, and the new one is asserted at 0 on BOTH sides.** The check is
+  `min_faves` / `-filter:replies` / `x.com/search` / `x.outliers.minFaves` / `outlier-rungs` == **1 each in
+  `dist/sidepanel.js`, 0 each in `dist/content.js`**, plus **`outlier_search` == 0 in BOTH** — the provenance
+  vocabulary is the server's, and the extension never names it. If a later task finds that string anywhere in the
+  bundle, something has moved the decision to the client (§7.16).

@@ -57,6 +57,7 @@ The tab rail is grouped into five sections — **Operate**, **Author**, **Librar
 | Tab | What it's for |
 |---|---|
 | **[Voice](./voice-tab.md)** | Your swipe file of others' tweets + your editable content pillars; extract reusable templates. |
+| **[Outliers](./outliers-tab.md)** | An x.com advanced-search query builder — fill in a form, get the exact operator string, copy it into X. Finds the posts worth saving or replying to instead of waiting for them to cross your timeline. **$0.** |
 | **[Replies](./replies-tab.md)** | "Reply Master" — AI-draft strong replies to the right tweets (band-gated to save money), then paste them yourself. Also holds the **Lists** subtab of premade canned replies. |
 | **[Harvest](./harvest-tab.md)** | Bulk-collect tweets from a page you're viewing into a CSV (and into stratus) — free, no API. Also documents the automatic **passive timeline harvest** that runs while you scroll x.com/home. |
 
@@ -70,7 +71,7 @@ The tab rail is grouped into five sections — **Operate**, **Author**, **Librar
 
 | Tab | What it's for |
 |---|---|
-| **[Settings](./settings-tab.md)** | Connect the extension to your server; your niche, privacy, behavior and appearance; the AI provider and the prompt editor; and **Tuning** — the 63 knobs stratus makes its decisions with, searchable, with the bounds and reasoning attached. **Configure this first.** |
+| **[Settings](./settings-tab.md)** | Connect the extension to your server; your niche, privacy, behavior and appearance; the AI provider and the prompt editor; and **Tuning** — the 69 knobs stratus makes its decisions with, searchable, with the bounds and reasoning attached. **Configure this first.** |
 
 ---
 

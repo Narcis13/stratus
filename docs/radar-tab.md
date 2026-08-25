@@ -57,6 +57,9 @@ Every tweet's action row on x.com carries a round **⊕ "Add to Radar"** button.
 
 **The ⊕ stays lit on tweets that are already queued.** Scroll away, scroll back, and the button on a queued tweet renders in its filled state with the tooltip *"Already in the Radar queue"* — so you never pin the same post twice or wonder whether the click registered. Dismiss the row in the panel and the ⊕ goes back to empty on the next scan.
 
+**Hunting for something to pin, rather than waiting for it.** The ⊕ attaches to any tweet x.com renders, which includes the results of a search. The **[Outliers](./outliers-tab.md)** tab builds those searches for you — a form (keywords, a **min replies** floor, a date window) compiled into X's own operator syntax and handed over on the clipboard, at **$0**. Raising the *replies* floor rather than the likes floor is the move when you're hunting reply targets specifically: replies mean an argument is already happening, which is where one sharp reply gets read. Then ⊕ the results you want and come back here to draft.
+
+
 ### 2. During an armed sweep
 
 Press **Start sweep** in the Radar header. While it runs, a tweet you scroll past enters the queue if it clears **your** filters — thirteen settings you own, typed into the **⚙** next to the button (or the **Sweep** group in **Settings → Tuning**; same knobs, same values). This is the **only** admission rule there is:
