@@ -50,6 +50,7 @@ import { SettingsGear } from './SettingsGear.tsx';
 import {
   ApiError,
   type Channel,
+  type SavedSearchCapture,
   type SavedSearchItem,
   type VoiceTarget,
   type VoiceTargets,
@@ -302,6 +303,19 @@ function lastRunLine(iso: string | null): string {
 
 // ---------------------------------------------------------------- small parts
 
+/** The feature's own report card (D209/D215) — a real COUNT over `voice_tweets`
+ *  rows stamped `outlier_search`, in a window the SERVER owns (deliberately not
+ *  `x.outliers.sinceDays`: re-tuning how far back a hunt looks must not silently
+ *  redefine what the counter underneath it measures). Zero is a reading, not an
+ *  absence, so it says so rather than hiding the line. */
+function captureLine(c: SavedSearchCapture): string {
+  const n = c.savedFromSearch;
+  if (n === 0) {
+    return `No tweets saved from search results yet — Save to stratus on any result counts here (last ${c.days} days).`;
+  }
+  return `${n} tweet${n === 1 ? '' : 's'} saved from search results, last ${c.days} days.`;
+}
+
 function Problems({ list }: { list: Problem[] }): JSX.Element {
   if (list.length === 0) return <></>;
   return (
@@ -420,6 +434,7 @@ export function OutliersPanel({ settings }: Props): JSX.Element {
   const [seedsError, setSeedsError] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
   const [saved, setSaved] = useState<SavedSearchItem[]>([]);
+  const [capture, setCapture] = useState<SavedSearchCapture | null>(null);
   const [name, setName] = useState('');
   const [loadedId, setLoadedId] = useState<string | null>(null);
   const [copied, setCopied] = useState<'yes' | 'no' | null>(null);
@@ -447,6 +462,9 @@ export function OutliersPanel({ settings }: Props): JSX.Element {
     try {
       const res = await api.searches.list(settings);
       setSaved(res.searches);
+      // The count rides on the list call OU.5 already makes (D208a) — the footer
+      // is a render off state we fetch anyway, never a fifth mount read.
+      setCapture(res.capture);
     } catch (e) {
       setError(errMsg(e, 'Could not load saved hunts'));
     }
@@ -1093,6 +1111,8 @@ export function OutliersPanel({ settings }: Props): JSX.Element {
           </ul>
         )}
       </Section>
+
+      {capture && <p className="outlier-capture">{captureLine(capture)}</p>}
     </div>
   );
 }

@@ -1379,3 +1379,70 @@ parents by D97.
   recount are all findings from that review. **Generalize: an uncommitted tree at Step 0 is a ledger disagreement, not
   a head start.** A dirty tree that lands inside the NEXT task's commit erases a task from the ledger permanently, which
   is exactly the record `/masterplan sync` exists to protect.
+
+## Archived at OU.7 (2026-08-25) — four register entries and six gotchas whose readers have all shipped
+
+> Lifted verbatim from `STATE.md` under the size discipline (57.4 KB before OU.7's own entries). Every block below
+> binds a task that has shipped: D207 → OU.5, D210/D211 → OU.5/OU.6, D212 → OU.5, and the six gotchas → OU.3/OU.4/
+> OU.5/OU.6/OU.7. Grep by D-number, by task id, or by `Outliers.tsx` / `searches.ts` / `registry.ts`.
+
+- **D207** (OU.4, binds OU.5 — **`sort` has exactly ONE authority and it is the COLUMN; the stored JSON never carries it**).
+  D200/D201 settled where the *default* comes from and left open where the *value* lives, and the table plus the
+  `SearchQuery` type give it two homes. The route resolves `body.sort ?? normalizedQuery.sort ?? x.outliers.sort`
+  (never the column's `'live'`), writes it to the **column**, and **strips `sort` out of the JSON** it stores
+  (`storedQuery()`); every read merges the column back in, so the API always hands out a *complete* `SearchQuery`
+  while the two representations can never diverge. The alternative — store it in both and keep them in sync — was
+  refused because a disagreement between them would be invisible, which is the same failure D200 was written about
+  one layer down. **Consequence for OU.5:** the form binds straight to `saved.query` (its `sort` field is populated)
+  and posts the whole object back; an explicit body `sort` is accepted but redundant, because a patched query's own
+  `sort` field moves the column with it. A test reads the raw column and asserts the JSON has no `sort` key.
+- **D210** (OU.5, binds OU.6/OU.8 — **a hand-off is a run, whichever button did it**). Task 5's How-text attaches the
+  `api.searches.run(id)` stamp to the **Open in X** bullet, but names the clipboard in the same sentence's failure clause
+  ("must never block the clipboard or the tab"). Stamping only Open would make `last_run_at` mean *the last time I used the
+  secondary button* — and the 08-24 revision made **Copy the primary hand-off** precisely because pasting is what the user
+  actually does. So **both paths stamp**, fire-and-forget, and the response's `lastRunAt` is patched into local list state
+  rather than triggering a refetch. An unsaved ad-hoc query still skips it entirely (there is no row). Nothing about OU.8's
+  smoke changes — it drives `POST /searches/:id/run` directly.
+- **D211** (OU.5, binds OU.6 — **phrases split on NEWLINES only; every other list field splits on commas OR newlines**).
+  Not a rule the plan states. `splitTerms` is `/[\n,]/` so a pasted list works either way, but a comma inside an exact
+  wording is *part of the phrase* — cutting `"build in public, fast"` into two phrases would silently change what X matches,
+  and the compiler cannot detect it because both halves are legal. It is the one field where the separator choice changes
+  semantics rather than ergonomics. **Consequence for OU.6:** the channel-keyword prefill targets `any`, which is
+  comma-joined, so appending is `set({ any: [...existing, ...fresh].join(', ') })` — string-level, deduped against what is
+  already there, and `parseSearchQuery` does the trimming.
+- **D212** (OU.5, standing for any client that previews a server-normalized value — **the panel runs the NORMALIZER, not
+  just the formatter**). `toQuery(form)` is literally `parseSearchQuery({...raw form strings...})` rather than a hand-built
+  `SearchQuery`. The cheap reason is `exactOptionalPropertyTypes` (a direct build is nineteen conditional spreads); the
+  load-bearing one is that dedupe, the 20-term cap and the `0`-floor carve-out all live in `parseSearchQuery`, so compiling
+  the **raw** form would preview a string the server would never store — which is exactly the divergence §7.27's shim exists
+  to prevent, reintroduced one layer up. Checked, not assumed: a throwaway script drove the composed app and asserted the
+  panel's local `compileSearchQuery(toQuery(f))` is **byte-identical** to the `compiled.query` a `POST /x/searches` of the
+  same value returns, that `url` matches `searchUrl` exactly, and that a `GET /x/searches` item is byte-identical to the
+  `GET /x/searches/:id` body (D208a — Load really is one function). **Generalize: sharing the compiler is only half of
+  §7.27; a preview that skips the storage-boundary normalizer still drifts.**
+- **OU.3 — a `scope:'server'` GROUP is the cheap one, and the registry now has a worked example.** Every prior
+  multi-knob group mirrored at least one knob, so §7.24's "a mirrored knob is SEVEN edits" reads like the price of a
+  knob. It is the price of *mirroring*. `outliers` is six knobs for **three** edits total (`registry.ts` group array +
+  `GROUP_LABELS`, `registry.test.ts`'s key list, `docs/settings-tab.md`'s counts + row) — `shared/serverSettings.ts`,
+  `SERVER_DEFAULTS`, `readServerConfig` and `serverSettings.test.ts` are untouched, **and no extension build is owed**.
+  The test asserts `every(d => d.scope === 'server')` so the property is pinned rather than incidental. **The deciding
+  question is D181d's, not a preference: does the PAGE act on this number?** If the panel only ever receives the
+  number's effect (here, resolved into `GET /x/searches/defaults`), mirroring it is dead weight that still costs seven.
+- **OU.3 — the mirrored-list assertion in `registry.test.ts` does NOT move for a server-only group.** The `current
+  state` line calls `registry.test.ts` "twice" (the group's key list *and* the exact mirrored list). Only the first
+  fired here. Worth knowing before hunting for a second edit that does not exist — and worth re-reading the mirrored
+  assertion anyway, because a knob accidentally typed `scope:'mirrored'` fails there rather than in the group test,
+  which is the failure you want.
+- **OU.4 — biome accepts `const { sort: _sort, ...rest }` for the omit-a-key idiom**, which matters because the
+  alternatives are all blocked here: `delete rest.sort` trips biome's `performance/noDelete`, and `rest.sort =
+  undefined` trips tsconfig's `exactOptionalPropertyTypes`. Checked empirically, not assumed.
+- **OU.5 — a `204` from the background transport is already handled** (`background.ts:203` returns `{ok:true, data:undefined}`
+  before the `res.json()`), so a `DELETE` through `api.*.remove` needs no special casing. Checked because `api.searches.remove`
+  is typed `Promise<unknown>` and a `.json()` on an empty body would have thrown at runtime only.
+- **OU.6 — `set(patch)` now clears `seedNote` as well as `copied`, so a seed sets its note AFTER calling `set`.** React
+  batches the two updates and the later write wins; reversing the order silently swallows the note. Worth knowing before
+  adding a fourth seed.
+- **OU.6 — the tab's mount now makes FOUR $0 reads** (`searches.defaults`, `searches.list`, `channels.list`,
+  `voice.targets`), the last two in one `Promise.allSettled` so either failing degrades to a muted line instead of taking
+  the tab down. **The capture count needs no fifth:** `GET /x/searches` already carries `capture` (D208a), so OU.7's footer
+  is a render off state OU.5 already fetches.

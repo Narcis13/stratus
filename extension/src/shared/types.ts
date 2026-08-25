@@ -737,6 +737,11 @@ export interface ScrapedAuthor {
 export interface ScrapeBody {
   tweet: ScrapedTweet;
   author?: ScrapedAuthor;
+  /** The x.com pathname the Save was clicked on (OU.7). Provenance only: the
+   *  SERVER decides what it means (`/search` → `outlier_search`, anything else
+   *  → `extension_scrape`), so the page never names its own source, and a save
+   *  that cannot report a path still saves. */
+  sourcePath?: string;
 }
 
 // Full profile-header capture (PUT /x/voice/authors/:handle). All optional —

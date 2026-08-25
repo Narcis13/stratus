@@ -1295,7 +1295,15 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
     warnErr('[stratus] hover-card scrape failed', err);
   }
 
-  const body: ScrapeBody = author ? { tweet, author } : { tweet };
+  // Provenance for the swipe file (OU.7): report WHERE this was saved and let
+  // the server decide what it means. Read here off the document's own location
+  // rather than in `background.ts` off `sender.tab?.url` — the way RA.2's
+  // sightings do — because a scrape POSTs immediately from the very document
+  // that owns this article, so there is no in-flight navigation window to lose
+  // the path to, and the generic `ApiRequest` transport stays path-agnostic
+  // (§7.25). No import: the compiler stays out of the content IIFE (§7.26).
+  const sourcePath = location.pathname;
+  const body: ScrapeBody = author ? { tweet, author, sourcePath } : { tweet, sourcePath };
   const request: ApiRequest = {
     type: 'stratus/api',
     method: 'POST',

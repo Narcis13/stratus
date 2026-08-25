@@ -4896,3 +4896,14 @@ button.chip[aria-pressed="true"] {
 .outlier-stepper button:hover:not(:disabled) {
   color: var(--text);
 }
+/* OU.7 — the capture footer. A quiet report card under the saved hunts: how
+   many tweets the swipe file actually gained from search results. It sits below
+   everything because it measures the tab rather than driving it. */
+.outlier-capture {
+  margin: 12px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}

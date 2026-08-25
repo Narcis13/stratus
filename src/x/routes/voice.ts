@@ -8,7 +8,7 @@
 // the numeric x_user_id is filled opportunistically when the page exposes it.
 //
 // Routes:
-//   POST   /voice/scrape              { tweet, author? }   save a tweet (+ stub/enrich its author)
+//   POST   /voice/scrape              { tweet, author?, sourcePath? }  save a tweet (+ its author)
 //   PUT    /voice/authors/:handle     { ...profile }       enrich author from their profile page
 //   GET    /voice/authors?retired=    list authors + tweet counts
 //   GET    /voice/targets                                  the 2–10x reply-target roster (§7.4)
@@ -47,6 +47,12 @@ import { parseChannelTags } from './channels.ts';
 const TWEET_ID_RE = /^\d{1,32}$/;
 // Twitter usernames: 1–15 chars, alphanumeric + underscore.
 const USERNAME_RE = /^[A-Za-z0-9_]{1,15}$/;
+// Swipe-file provenance (OU.7) — the vocabulary of `voice_tweets.source`. Note
+// `voice_authors.source` is a DIFFERENT vocabulary that happens to share a
+// spelling: there, 'extension_scrape' means "first seen from a tweet" and its
+// other value is 'profile_scrape'.
+const SOURCE_SCRAPE = 'extension_scrape';
+const SOURCE_OUTLIER = 'outlier_search';
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 
@@ -92,13 +98,18 @@ export function createVoiceRouter(): Hono {
         scrapedHtml: tweet.html,
         createdAt: tweet.createdAt ?? now,
         url: tweet.url,
-        source: 'extension_scrape',
+        source: scrapeSourceFor(body.sourcePath),
         savedAt: now,
       })
       .onConflictDoUpdate({
         target: voiceTweets.tweetId,
         // Re-save refreshes the captured text/html (the tweet may have been
         // edited) and stamps updatedAt; createdAt/savedAt stay put.
+        // `source` is deliberately NOT in this set-clause and must not be added
+        // to it: first save wins. The column answers "how did this get into the
+        // swipe file", which only the save that created the row can know — a
+        // tweet found through a hunt and later re-saved off the timeline keeps
+        // its `outlier_search` provenance, and vice versa.
         set: {
           text: tweet.text,
           scrapedHtml: tweet.html ?? sql`${voiceTweets.scrapedHtml}`,
@@ -711,6 +722,7 @@ async function fillAuthor(
 interface Body {
   tweet?: unknown;
   author?: unknown;
+  sourcePath?: unknown;
   retired?: unknown;
   tags?: unknown;
   addTags?: unknown;
@@ -762,6 +774,20 @@ async function readJson(req: Request): Promise<Body | null> {
   } catch {
     return null;
   }
+}
+
+/** Which capture surface a save came from. **The client reports the path and
+ *  the server decides the source** — so a new provenance value is a server edit
+ *  rather than a content-script release, and the page never gets to name its own
+ *  provenance. §7.35's degrading half: an absent, non-string or unusable path
+ *  costs the stamp, never the save. */
+export function scrapeSourceFor(sourcePath: unknown): typeof SOURCE_SCRAPE | typeof SOURCE_OUTLIER {
+  if (typeof sourcePath !== 'string') return SOURCE_SCRAPE;
+  // `location.pathname` carries no query, but a caller handing over a whole
+  // path+query has to read the same. Match the first SEGMENT, not a prefix:
+  // `/searchlight` is somebody's profile, not a results page.
+  const path = sourcePath.trim().split(/[?#]/)[0] ?? '';
+  return path === '/search' || path.startsWith('/search/') ? SOURCE_OUTLIER : SOURCE_SCRAPE;
 }
 
 function normalizeHandle(value: unknown): string | null {
