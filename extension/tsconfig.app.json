@@ -33,7 +33,8 @@
     "../src/shared/cannon.ts",
     "../src/shared/radarSweep.ts",
     "../src/shared/language.ts",
-    "../src/shared/replyMode.ts"
+    "../src/shared/replyMode.ts",
+    "../src/shared/searchQuery.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }

@@ -8,6 +8,14 @@ import type { PostFormat } from '../postFormat.ts';
 import type { SweepConfig } from '../radarSweep.ts';
 import type { TweetSignals } from '../replyBand.ts';
 import type { ReplyAngle, ReplyGoal, ReplyModeId } from '../replyMode.ts';
+import type {
+  CompileResult,
+  MediaFilter,
+  Problem,
+  RepliesFilter,
+  SearchQuery,
+  SearchSort,
+} from '../searchQuery.ts';
 
 export type PostStatus =
   | 'draft'
@@ -2783,4 +2791,82 @@ export interface GenerateItemsResponse {
   model: string;
   costUsd: number;
   requestId?: string;
+}
+
+// OU.5 — Outliers: the saved-hunt wire shapes over `/x/searches`.
+//
+// `SearchQuery` and the three types around it are RE-EXPORTED from the
+// `../searchQuery.ts` shim rather than declared here — the tab compiles the
+// live preview with that module, so a hand-mirrored copy of nineteen fields
+// would drift from the code doing the work (the HM.3 `HumanizerConfig` /
+// JD.6 `JudgeVerdict` precedent). Type-only, so nothing extra is bundled.
+export type { CompileResult, MediaFilter, Problem, RepliesFilter, SearchQuery, SearchSort };
+
+/** One saved hunt. `query` is a COMPLETE `SearchQuery` — the server merges the
+ *  `sort` column back into the stored JSON on every read (D207) — or `null`
+ *  when the row's `query` column was edited out of band, in which case the row
+ *  still lists so it can be seen and deleted. */
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: SearchQuery | null;
+  sort: SearchSort;
+  pinned: boolean;
+  /** null = never handed off (§7.11). */
+  lastRunAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The shape BOTH `GET /x/searches` items and `GET /x/searches/:id` return, so
+ *  Load is one function either way (D208a). `compiled`/`url` are null exactly
+ *  when `saved.query` is; `url` is additionally null when the compile has an
+ *  error (`searchUrl`'s refuse-before-run gate). */
+export interface SavedSearchItem {
+  saved: SavedSearch;
+  compiled: CompileResult | null;
+  url: string | null;
+}
+
+/** The capture footer's basis — a real COUNT(*) over `voice_tweets` stamped
+ *  `source = 'outlier_search'` in a server-side 30-day window. OU.7 renders it. */
+export interface SavedSearchCapture {
+  savedFromSearch: number;
+  days: number;
+}
+
+export interface SavedSearchesResponse {
+  searches: SavedSearchItem[];
+  capture: SavedSearchCapture;
+}
+
+export interface SavedSearchCreateBody {
+  name: string;
+  query: SearchQuery;
+  /** Redundant when `query.sort` is set — the query's own field moves the
+   *  column (D207) — and accepted for a caller that wants to be explicit. */
+  sort?: SearchSort;
+  pinned?: boolean;
+}
+
+export interface SavedSearchPatchBody {
+  name?: string;
+  query?: SearchQuery;
+  sort?: SearchSort;
+  pinned?: boolean;
+}
+
+/** `GET /x/searches/defaults` — the registry-backed starting spec. `problems`
+ *  may carry one `warn` about an `x.outliers.lang` outside the compiler's
+ *  allowlist (D208c); the tab shows it rather than swallowing it. */
+export interface SearchDefaultsResponse {
+  query: SearchQuery;
+  ladder: number[];
+  problems: Problem[];
+}
+
+/** `POST /x/searches/:id/run` — the best-effort `last_run_at` stamp. */
+export interface SearchRunResponse {
+  url: string;
+  lastRunAt: string;
 }

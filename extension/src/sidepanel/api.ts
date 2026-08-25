@@ -200,10 +200,18 @@ import {
   type RewriteBody,
   type RewriteResponse,
   type RewriteVariant,
+  type SavedSearch,
+  type SavedSearchCapture,
+  type SavedSearchCreateBody,
+  type SavedSearchItem,
+  type SavedSearchPatchBody,
+  type SavedSearchesResponse,
   type ScheduledPost,
   type ScheduledPostCreated,
   type ScheduledPostWithThread,
   type ScrapeBody,
+  type SearchDefaultsResponse,
+  type SearchRunResponse,
   type SettingEntry,
   type SettingsGroup,
   type SettingsPatchResult,
@@ -421,7 +429,15 @@ export type {
   ScheduledPost,
   ScheduledPostCreated,
   ScheduledPostWithThread,
+  SavedSearch,
+  SavedSearchCapture,
+  SavedSearchCreateBody,
+  SavedSearchItem,
+  SavedSearchPatchBody,
+  SavedSearchesResponse,
   ScrapeBody,
+  SearchDefaultsResponse,
+  SearchRunResponse,
   SettingEntry,
   SettingsGroup,
   SettingsPatchResult,
@@ -1463,6 +1479,53 @@ export const api = {
         `/x/reply-lists/${encodeURIComponent(id)}/generate`,
         { method: 'POST', body },
       );
+    },
+  },
+
+  // OU.5 — Outliers saved hunts. Every call here is $0: local SQL plus the
+  // dependency-free compiler, no xFetch and no askLLM on any path.
+  //
+  // There is deliberately NO `compile` method. `POST /x/searches/compile`
+  // exists for smoke/CLI callers that have no copy of the compiler; the panel
+  // imports the same module through `../searchQuery.ts` and recompiles locally
+  // on every keystroke, so the live preview costs zero network traffic and can
+  // never disagree with what a save would store (§7.27).
+  searches: {
+    list(s: Settings): Promise<SavedSearchesResponse> {
+      return request<SavedSearchesResponse>(s, '/x/searches');
+    },
+
+    // The registry-backed starting spec for a fresh form, plus the ladder rungs
+    // (OU.6's stepper) and any warn about the `x.outliers.lang` knob.
+    defaults(s: Settings): Promise<SearchDefaultsResponse> {
+      return request<SearchDefaultsResponse>(s, '/x/searches/defaults');
+    },
+
+    get(s: Settings, id: string): Promise<SavedSearchItem> {
+      return request<SavedSearchItem>(s, `/x/searches/${encodeURIComponent(id)}`);
+    },
+
+    create(s: Settings, body: SavedSearchCreateBody): Promise<SavedSearchItem> {
+      return request<SavedSearchItem>(s, '/x/searches', { method: 'POST', body });
+    },
+
+    patch(s: Settings, id: string, body: SavedSearchPatchBody): Promise<SavedSearchItem> {
+      return request<SavedSearchItem>(s, `/x/searches/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    },
+
+    remove(s: Settings, id: string): Promise<unknown> {
+      return request<unknown>(s, `/x/searches/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    },
+
+    // Stamps `last_run_at` and answers the URL. Fire-and-forget at the call
+    // site (§7.8): a failed stamp must never block the clipboard or the tab.
+    run(s: Settings, id: string): Promise<SearchRunResponse> {
+      return request<SearchRunResponse>(s, `/x/searches/${encodeURIComponent(id)}/run`, {
+        method: 'POST',
+      });
     },
   },
 };

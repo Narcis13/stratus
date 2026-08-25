@@ -4767,3 +4767,93 @@ button.chip[aria-pressed="true"] {
   color: var(--danger);
   font-size: 11px;
 }
+
+/* OU.5 — Outliers. The tab is a form plus one monospace string, so the only
+   real presentation decisions are: the compiled query has to read as CODE (it
+   is pasted verbatim into X), and a per-field problem has to be quieter than
+   the block .error/.warn boxes or eighteen fields become a wall of alarm. */
+.outlier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--ui-row-gap);
+}
+.outlier-floor input {
+  max-width: 110px;
+  font-variant-numeric: tabular-nums;
+}
+.outlier-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.outlier-problem {
+  display: block;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.outlier-problem-error {
+  color: var(--danger);
+}
+.outlier-problem-warn {
+  color: var(--warn);
+}
+/* The string the user is about to paste. Wraps rather than scrolls: a truncated
+   query is exactly the thing you cannot check by eye. */
+.outlier-preview {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--strat-font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: all;
+}
+.outlier-name {
+  flex: 1;
+  min-width: 120px;
+}
+.outlier-saved {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.outlier-saved-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.outlier-saved-row.loaded {
+  border-color: var(--accent);
+}
+.outlier-saved-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.outlier-saved-query {
+  font-family: var(--strat-font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: transparent;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -6,6 +6,7 @@ import { ComposerPanel } from './Composer.tsx';
 import { HarvestPanel } from './Harvest.tsx';
 import { IdeasPanel } from './Ideas.tsx';
 import { MePanel } from './Me.tsx';
+import { OutliersPanel } from './Outliers.tsx';
 import { PeoplePanel } from './People.tsx';
 import { PlaybookPanel } from './Playbook.tsx';
 import { RadarPanel } from './Radar.tsx';
@@ -29,6 +30,7 @@ type Tab =
   | 'studio'
   | 'harvest'
   | 'voice'
+  | 'outliers'
   | 'replies'
   | 'ideas'
   | 'playbook'
@@ -63,6 +65,9 @@ const TAB_GROUPS: { label: string; tabs: { id: Tab; label: string }[] }[] = [
     label: 'Library',
     tabs: [
       { id: 'voice', label: 'Voice' },
+      // OU.5 — an INTAKE surface for the library (find other people's outlier
+      // tweets deliberately), not part of the daily Operate loop.
+      { id: 'outliers', label: 'Outliers' },
       { id: 'replies', label: 'Replies' },
       { id: 'harvest', label: 'Harvest' },
     ],
@@ -231,6 +236,8 @@ export function App(): JSX.Element {
           <HarvestPanel settings={settings} />
         ) : activeTab === 'voice' ? (
           <VoicePanel settings={settings} onRemix={startRemix} onOpenPerson={openPerson} />
+        ) : activeTab === 'outliers' ? (
+          <OutliersPanel settings={settings} />
         ) : activeTab === 'replies' ? (
           <RepliesPanel
             key={`replies-${refreshKey}`}
