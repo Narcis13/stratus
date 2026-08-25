@@ -4857,3 +4857,42 @@ button.chip[aria-pressed="true"] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* OU.6 — seeds and the ladder stepper. A seed sits directly above or below the
+   field it fills, because the whole rule of this tab is that a prefill is a
+   one-click fill of an ordinary editable box, never a hidden filter — the user
+   has to see where it landed. */
+.outlier-seeds {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+.outlier-seed-note {
+  display: block;
+  line-height: 1.35;
+}
+.outlier-floor-input {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  max-width: 150px;
+}
+.outlier-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* Two half-height arrows next to the box rather than the browser's own spinner:
+   these do not step by 1, they walk FAVES_LADDER. */
+.outlier-stepper button {
+  flex: 1;
+  padding: 0 6px;
+  font-size: 8px;
+  line-height: 1;
+  border-radius: 4px;
+  color: var(--muted);
+}
+.outlier-stepper button:hover:not(:disabled) {
+  color: var(--text);
+}

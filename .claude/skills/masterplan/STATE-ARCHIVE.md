@@ -1319,3 +1319,63 @@ parents by D97.
   — a `copied` draft never reached anyone. Both halves are pinned by their own fixture. RA.4's composed
   drafts will therefore read `worked: true` the instant they are written, which is correct: the
   composing *is* the work.
+
+## Archived at OU.6 (2026-08-25) — the Wave-9 register entries whose readers have all shipped
+
+- **D198** (OU.2 — the re-opening changed hands). `plans/MASTERPLAN.md`'s D196 assigns the Wave-9 re-opening to
+  **OU.1**, but the wave table runs **OU.2 first** (order 9.1, the migration-alone slot) and the skill requires the
+  re-opening in the lane's **FIRST commit** — a ledger that is still closed has no row to tick. So OU.2 did it:
+  the eight ledger rows, the Wave-9 lock table, and D196's recount. **OU.1 no longer owes any of it.** D196's two
+  named staleness claims were both correct — migration head was `0030_famous_wrecker` (so this task owned `0031`,
+  and the plan's number was right for once) and the registry is **63 knobs / 33 mirrored**, not 61/31. **Generalize:
+  when a plan assigns the re-opening to a task that is not first in the wave order, the FIRST task to run does it —
+  the assignment is about the work, not about the task id.**
+- **D199** (OU.2, binds OU.4 — **do not "upgrade" the `query` column**). `saved_searches.query` is a plain
+  `text('query').notNull()`, **not** `text({ mode: 'json' }).$type<SearchQuery>()`, and the Design §2 line about
+  "the exact discipline `reply_lists.humanizer` uses with `parseHumanizerConfig`" refers to the **normalization**
+  discipline (normalize at the storage boundary), not to the column mode. Two reasons, and the second is the load-
+  bearing one: (a) Task 4's own How-text says the write path stores `JSON.stringify` of the normalized value and the
+  read path `JSON.parse`s it — string semantics throughout; (b) **drizzle parses a json column during result
+  mapping, inside `.all()`**, so a single row edited out of band (a sqlite CLI session, a restored backup) would
+  throw where no route code can catch it and take the **whole list** with it — which is exactly the degradation
+  Task 4 forbids ("a parse failure degrades that row to `compiled: null, url: null` rather than dropping it").
+  Bonus: it left OU.2 with **zero dependency on OU.1's not-yet-existing `SearchQuery` type**, which is why the two
+  tasks really are order-independent. Verified: `mode: 'json'` and plain text emit byte-identical SQL (`text`), so
+  this is reversible without a migration — but reversing it re-introduces the 500.
+- **D200** (OU.2, binds OU.4 — **the column default is not the product default**). `saved_searches.sort` defaults to
+  `'live'` (the plan's Design §2 sketch), while the product default is the `x.outliers.sort` registry knob, whose
+  default is **`top`** ("an outlier hunt wants best-performing, not newest"). The column default exists only so the
+  column can be `notNull` without every writer thinking about it. **OU.4 must resolve an omitted `sort` from the
+  registry via the bound `getSetting`, never let the column default stand in for it** — otherwise a POST without
+  `sort` silently saves `live` while `/x/searches/defaults` hands the form `top`, and the two disagree forever. The
+  schema comment says so at the column; this entry is the second copy because a comment is easy to skim past.
+- **D201** (OU.1, binds OU.3/OU.4/OU.5 — **an unrecognized `sort` DROPS, it does not fall back**). Task 1's How-text says `parseSearchQuery` should "coerce an unknown `sort`/`replies`/`media` to its default". That is right for two of the three and wrong for `sort`, because **`sort`'s default is the only one that lives outside this module** — it is the `x.outliers.sort` knob (`top`), and D200 already forbids letting the column default (`live`) stand in for it. Coercing an unknown `sort` to `'live'` here would have re-created that exact bug one layer up: a client sending `sort: 'newest'` would silently store `live` while `/x/searches/defaults` hands the form `top`. So `normSort` returns `undefined` for anything that is not `'live'`/`'top'`, and **absent and unrecognized mean the same thing to the caller: you decide.** `replies`/`media` DO coerce to `'any'` as written, because their default is in this module and `'any'` emits no clause. Pinned by a test. **OU.4 must still resolve an omitted `sort` from the registry** — nothing here does that for it.
+- **D202** (OU.1, binds OU.5's form — **`hasLinks` compiles BOTH arms; `noRetweets` compiles only one**). The plan's compile order names `filter:links` and `-filter:nativeretweets`, one arm each. Shipping `hasLinks` that way would leave `hasLinks: false` emitting nothing — a boolean field with an inert value, which is the same silent-feature failure §7.33 exists to prevent, and "plain-text posts only" is a real outlier hunt. So `true` → `filter:links`, `false` → `-filter:links`, absent → no clause. **The asymmetry with `noRetweets` is deliberate, not an oversight:** its name is already negative, a retweets-ONLY hunt is a different feature, and so `false` normalizes AWAY rather than being stored as dead weight (`parseSearchQuery` drops it). The enum lesson the plan states — two booleans could say "exclude" and "only" at once — does not apply to either, because a single boolean cannot contradict itself. **OU.5's form should render `hasLinks` as a three-state control (any / with / without), not a checkbox.**
+- **D204** (OU.3, binds nothing but corrects the plan — **`registry.ts` MAY import `src/shared/searchQuery.ts`**). Task 3's
+  How-text says "the registry does not validate membership in `SEARCH_LANGS` (a registry def cannot import a shared
+  module's constant without a cycle risk)". The first half stands and was followed — `x.outliers.lang` is a plain
+  `string` with `default: ''` and no membership check, because `''` is the shipped value and an `enum` has no blank
+  option, so OU.4's route is where an unknown code gets dropped with a `warn`. **The parenthesized reason is false.**
+  `src/shared/searchQuery.ts` has **zero imports** (OU.1's whole design), so no cycle is reachable, and `registry.ts`
+  already imports `../../shared/cannon.ts` and `../../shared/radarSweep.ts` two lines up — the same move. So the knob's
+  `description` **interpolates `SEARCH_LANGS.join(', ')`** rather than hardcoding sixteen codes, and a test asserts the
+  description contains the joined constant. **The point is not tidiness: the gear is the only place a user meets the
+  allowlist**, and a hardcoded list there would silently diverge the first time OU.4 or a later task adds a language.
+  **Generalize: a plan's "you can't import X" is a claim about the import graph — check it (`grep -c '^import' <file>`)
+  before designing around it.**
+- **D205** (OU.3, corrects STATE.md rather than the plan — **the docs counts were already current**). This file's
+  `next-up` and `current state` lines both said `docs/settings-tab.md`'s count strings were "stale again by SW.1's two
+  knobs" and that OU.3 owed them. They were **not stale**: the doc read **63 knobs / 15 groups / 33 mirrored** and
+  **Sweep 13 / "All thirteen are mirrored"**, which is exactly the post-SW.1 registry — SW.1 moved them when it landed.
+  What OU.3 actually owed was its own six (→ 69/16, mirrored unmoved at 33), the `### The fifteen groups` → **sixteen**
+  heading, and a new **Outliers** table row. **Generalize: a staleness note is a claim someone recorded, not a
+  measurement — recount, then edit.** OU.2 got this right about the registry (61→63) and this file then re-used the
+  same 61/31 sentence to make a *second*, wrong claim about a different file.
+- **D206** (OU.3, bookkeeping — **the code half arrived from a prior session; this task finished it**). OU.3's two code
+  files (`registry.ts` + `registry.test.ts`, 159 insertions) were already in the working tree, uncommitted and green,
+  when this session opened on a `/masterplan OU.4` request. Because OU.4 depends on OU.3, the skill's "verify deps, say
+  so and stop" fired; the user's call was to finish OU.3 as this session's one task rather than bundle it into OU.4's
+  commit. **The code was reviewed, not merely committed** — the recount, the D204 import check and the D205 docs
+  recount are all findings from that review. **Generalize: an uncommitted tree at Step 0 is a ledger disagreement, not
+  a head start.** A dirty tree that lands inside the NEXT task's commit erases a task from the ledger permanently, which
+  is exactly the record `/masterplan sync` exists to protect.
