@@ -12,6 +12,8 @@ Two tabs in this extension save tweets, and they're for different jobs:
 - **Harvest tab** (this one) — saves *many tweets at once* by scrolling an entire profile. Instead of picking individual tweets, you point it at a person's timeline and it sweeps everything it can reach, with all the engagement numbers attached.
 - **The 🧵 button on a thread's root tweet** — saves *one whole conversation*: the root and every top-level reply, with each reply's own numbers. Started from the page, read back in the **[Captured threads](#captured-threads-the-whole-conversation-in-one-click)** section below.
 
+The Harvest tab itself has two ways to run: the **auto harvest**, which scrolls the profile for you, and a **[manual sweep](#manual-sweep-you-scroll-it-collects)**, where *you* scroll and it keeps everything that goes past. Same rows either way.
+
 Use Harvest when you want the *whole picture* of an account: every recent post with its likes/views/replies, so you can study what works, or every one of *your own* replies so stratus can measure how they performed. Use the Voice tab when you just want to keep one specific tweet.
 
 "Harvest" here simply means **bulk-scrape** — grab a batch of tweets by reading the page.
@@ -41,6 +43,65 @@ One button under the detection line, and the only preset on this tab. It fills t
 Run it once or twice a day and the whole own-reply read layer fills in: the **[Playbook](./playbook-tab.md#my-replies--harvested)** tab's four *My replies — harvested* tables, and the harvested views-per-reply line on **[Today](./today-tab.md)**. Running it twice in one day is fine and doesn't double anything — repeated captures of the same reply are stored deliberately (that's how you get the view curve), and every reader counts each reply once, at its freshest numbers.
 
 The button is disabled until your handle is set in **Settings → Identity**, with the reason spelled out next to it. The server only ever sees your numeric account id, so without that setting it can't tell which harvested rows are yours — and it answers empty rather than guessing.
+
+---
+
+## Manual sweep (you scroll, it collects)
+
+The harvest above drives the page: it scrolls, it paces itself, and while it runs the tab belongs to it. That's the right trade for *"collect this account's last 800 posts"* and the wrong one for *"I'm reading this profile anyway — keep what I scroll past."* **Manual sweep** is the second one.
+
+Press **Start sweep** and nothing moves. You scroll the profile yourself, at whatever speed you read, and every post that goes by is captured and saved in the background. Same reader as the auto harvest — same metrics, same content-shape columns, same rows in the same table — just driven by your thumb instead of by the robot.
+
+### Starting one
+
+The button reads the **active browser tab**, not the handle box:
+
+- On `x.com/theirhandle` it offers **"Start sweep on @theirhandle's posts"**.
+- On `x.com/theirhandle/with_replies` it offers **"Start sweep on @theirhandle's replies"**.
+- Anywhere else — Media, Highlights, Following, a single tweet, the home feed — it stays disabled and tells you to open one of those two timelines. Those pages have no timeline to sweep (or, for Following, no metrics and no dates at all).
+
+The mode comes from the page for a reason: a sweep collects what is already in front of you, so a session that disagreed with the open tab would arm and then sit there collecting nothing.
+
+### The HUD on the page
+
+Once armed, a small card appears in the **bottom-left corner of x.com itself**, so you never have to look away from the timeline to know how it's going:
+
+```
+● Sweeping @alice                    ✕
+128  replies · back to 3 Aug
+saved 120 · 42m left
+```
+
+- the **big number** is what this sweep has collected;
+- **back to …** is the date of the oldest post it has reached — how far down the timeline you've got;
+- **saved** is how many of those rows the server has already accepted. It trails the counter by a few seconds by design (rows ship in batches), and showing both is what makes a failed upload visible instead of silent;
+- **✕** stops the sweep from the page. Whatever it collected is already saved.
+
+The card greys out and says **"Sweep paused — open @alice's posts to continue"** whenever you wander off the swept timeline (into a tweet, onto someone else's profile). It doesn't end the sweep — clicking into a conversation and coming back is normal reading. Scroll the profile again and it picks straight back up.
+
+If a radar sweep is also armed, its green pill sits directly underneath — the two share one dock in that corner rather than stacking on top of each other.
+
+### While it runs
+
+The panel mirrors the same numbers, and both the panel and the card offer a **Stop**. A sweep also stops by itself after **90 minutes** — it's a reading session, not a subscription — and stopping (any way) flushes whatever the last few screens captured before it lets go.
+
+You can keep using X normally: reply, like, open threads. The only thing the sweep asks is that you come back to the profile to keep collecting. The auto-harvest button is disabled while a sweep is armed, since the two would file the same screens twice.
+
+**Reloading the page mid-sweep is safe.** The sweep survives it, keeps the same run, and the counter carries on from where it was (a post that was on screen both before and after the reload gets captured twice — which is exactly the longitudinal recapture this table is built for).
+
+### What it does *not* do
+
+Three deliberate absences, each a promise the auto harvest can make and a hand-driven pass can't:
+
+- **No CSV.** Rows ship as they're captured, so there's no end-of-run moment that owns a complete file. Everything a sweep collects goes to stratus; nothing lands in Downloads.
+- **No "since last" bookmark.** That cursor means *"everything newer than this is already collected"* — only a run that actually scrolled the window can say it. A sweep skips whatever you skipped.
+- **No scope, row cap or view floor.** The scope of a sweep is what you looked at. Rows land under scope **all**, which is what they are.
+
+The rows are otherwise identical to harvested ones, so everything downstream — the Playbook's *My replies — harvested* tables, the view curves, the draft reconcile — reads them without knowing the difference. And like every other harvest, it costs **$0**: page reads plus a POST to your own service.
+
+### If it says "Rows aren't reaching stratus"
+
+The card turns red and the panel repeats the error code. Rows are **not** dropped: they stay queued in the page and retry every 15 seconds, so fixing the service (or the bearer token in Settings) and carrying on is enough. The one way to lose them is closing the tab while it's still failing.
 
 ---
 

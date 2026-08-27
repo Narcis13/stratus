@@ -24,7 +24,18 @@
 // composer. See the section near the variant chips.
 
 import { suggestChannels } from './channelSuggest.ts';
-import { captureThread, extractArticle, initHarvest, isHarvestActive } from './harvester.ts';
+import {
+  type HandSweepView,
+  captureThread,
+  extractArticle,
+  handSweepScan,
+  handSweepView,
+  initHandSweep,
+  initHarvest,
+  isHarvestActive,
+  onHandSweepChange,
+  stopHandSweep,
+} from './harvester.ts';
 import {
   SWEEP_STATE_KEY,
   type SweepCandidate,
@@ -54,6 +65,7 @@ import {
   isReciprocityPerson,
 } from './shared/glance.ts';
 import type { GlanceMap } from './shared/glance.ts';
+import { handSweepCountLabel, handSweepDateLabel, handSweepNoun } from './shared/handSweep.ts';
 import type { HarvestIngestRow } from './shared/harvest.ts';
 import type { ActiveLaunch, EarlyReply } from './shared/launch.ts';
 import type {
@@ -204,6 +216,19 @@ const THREAD_BTN_CLASS = 'stratus-thread-btn';
 const SWEEP_CHIP_CLASS = 'stratus-sweep-chip';
 const SWEEP_CHIP_DOT_CLASS = 'stratus-sweep-chip-dot';
 const SWEEP_CHIP_TEXT_CLASS = 'stratus-sweep-chip-text';
+// HS.1 — the bottom-left dock every persistent overlay lives in, so two of them
+// can never land on the same 16px of screen. Both residents are session
+// indicators: the radar's sweep chip and the hand sweep's HUD.
+const DOCK_CLASS = 'stratus-dock';
+const HUD_CLASS = 'stratus-harvest-hud';
+const HUD_HEAD_CLASS = 'stratus-harvest-hud-head';
+const HUD_DOT_CLASS = 'stratus-harvest-hud-dot';
+const HUD_TITLE_CLASS = 'stratus-harvest-hud-title';
+const HUD_STOP_CLASS = 'stratus-harvest-hud-stop';
+const HUD_COUNT_CLASS = 'stratus-harvest-hud-count';
+const HUD_NUM_CLASS = 'stratus-harvest-hud-num';
+const HUD_META_CLASS = 'stratus-harvest-hud-meta';
+const HUD_FOOT_CLASS = 'stratus-harvest-hud-foot';
 const STYLE_ID = 'stratus-save-style';
 const STATUS_PERSIST_MS = 2500;
 const REPLY_MASTER_STORAGE_KEY = 'replyMaster:lastDraft';
@@ -534,17 +559,32 @@ function injectStyles(): void {
       border-color: var(--stratus-danger);
       background: var(--stratus-danger-fill);
     }
-    /* RS.5 — the sweeping chip. Bottom-LEFT on purpose: x.com leaves that corner
-       free at every width, while bottom-right belongs to the compose FAB. Hot
-       tone because armed means "a thing is running" — the same reading the
-       panel's armed button takes from --strat-ok. Below the canned popover's
-       z-index so a popover opened over it still wins. */
-    .${SWEEP_CHIP_CLASS} {
-      all: unset;
+    /* HS.1 — the dock. Bottom-LEFT on purpose: x.com leaves that corner free at
+       every width, while bottom-right belongs to the compose FAB. Both session
+       indicators live in here rather than positioning themselves, so arming a
+       radar sweep and a hand sweep at once stacks them instead of printing one
+       on top of the other. Below the canned popover's z-index so a popover
+       opened over them still wins. */
+    .${DOCK_CLASS} {
       position: fixed;
       left: 16px;
       bottom: 16px;
       z-index: 2147482000;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      /* The dock is a layout box over X's timeline: it must never eat a click
+         that wasn't aimed at one of its residents. */
+      pointer-events: none;
+    }
+    .${DOCK_CLASS} > * { pointer-events: auto; }
+    /* RS.5 — the sweeping chip. Hot tone because armed means "a thing is
+       running" — the same reading the panel's armed button takes from
+       --strat-ok. */
+    .${SWEEP_CHIP_CLASS} {
+      all: unset;
+      order: 1;
       box-sizing: border-box;
       display: inline-flex;
       align-items: center;
@@ -582,7 +622,106 @@ function injectStyles(): void {
     }
     @media (prefers-reduced-motion: reduce) {
       .${SWEEP_CHIP_DOT_CLASS} { animation: none; }
+      .${HUD_DOT_CLASS} { animation: none; }
     }
+    /* HS.1 — the hand sweep HUD. A card rather than a chip because it carries a
+       number the reader is watching: it answers "how much have I collected and
+       how far back am I" without leaving the timeline. Sized and shaped like
+       one of X's own floating cards (16px radius, hairline border, the page's
+       own surface color) so it reads as part of the page furniture. */
+    .${HUD_CLASS} {
+      order: 2;
+      box-sizing: border-box;
+      width: 236px;
+      max-width: calc(100vw - 32px);
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 11px 12px 12px;
+      border-radius: 16px;
+      border: 1px solid var(--stratus-muted-line);
+      /* Overwritten inline with the page's own computed colors (X ships three
+         themes and exposes no stable surface variable); these are the fallback. */
+      background: Canvas;
+      color: CanvasText;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.2);
+      font: 400 13px/1.35 var(--stratus-font);
+    }
+    .${HUD_CLASS}[data-state="stopping"] { opacity: 0.6; }
+    .${HUD_HEAD_CLASS} {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .${HUD_DOT_CLASS} {
+      width: 7px;
+      height: 7px;
+      border-radius: 9999px;
+      flex: 0 0 auto;
+      background: var(--stratus-hot);
+      animation: stratus-sweep-pulse 1.8s ease-in-out infinite;
+    }
+    .${HUD_CLASS}[data-state="paused"] .${HUD_DOT_CLASS} {
+      background: var(--stratus-muted);
+      animation: none;
+    }
+    .${HUD_CLASS}[data-state="error"] .${HUD_DOT_CLASS} {
+      background: var(--stratus-danger);
+      animation: none;
+    }
+    .${HUD_TITLE_CLASS} {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+    .${HUD_STOP_CLASS} {
+      all: unset;
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      width: 22px;
+      height: 22px;
+      border-radius: 9999px;
+      color: var(--stratus-muted);
+      transition: color 120ms, background 120ms;
+    }
+    .${HUD_STOP_CLASS}:hover { color: var(--stratus-danger); background: var(--stratus-danger-fill); }
+    .${HUD_STOP_CLASS}:focus-visible { color: var(--stratus-danger); }
+    .${HUD_COUNT_CLASS} {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      min-width: 0;
+    }
+    .${HUD_NUM_CLASS} {
+      flex: 0 0 auto;
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
+    }
+    .${HUD_META_CLASS} {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      color: var(--stratus-muted);
+    }
+    .${HUD_FOOT_CLASS} {
+      font-size: 11px;
+      letter-spacing: 0.01em;
+      color: var(--stratus-muted);
+    }
+    .${HUD_CLASS}[data-state="error"] .${HUD_FOOT_CLASS} { color: var(--stratus-danger); }
     .${PERSON_CHIPS_CLASS} {
       display: inline-flex;
       align-items: center;
@@ -2504,7 +2643,7 @@ function buildSweepChip(): HTMLButtonElement {
     ev.stopPropagation();
     onSweepChipClick(chip);
   });
-  document.body.appendChild(chip);
+  dockEl().appendChild(chip);
   return chip;
 }
 
@@ -2564,6 +2703,157 @@ function onSweepChipClick(chip: HTMLButtonElement): void {
       chip.dataset.sig = '';
       syncSweepChip();
     });
+}
+
+// -------------------------------------------------- the hand sweep HUD (HS.1)
+//
+// While a hand sweep is armed, a card sits in the dock with the two numbers the
+// reader actually wants mid-scroll — how much this sweep has collected, and how
+// far back down the timeline it has reached — plus one ✕ that stops it. The
+// engine is in harvester.ts; this is only its face, repainted from
+// `handSweepView()` on every scan and on every engine event.
+//
+// Deliberately NOT: a Start control (arming needs the target page resolved, and
+// that is the panel's job), filters, or a row list. A sweep's whole contract is
+// "keep what I scroll past", so a HUD that offered choices would be describing
+// a different feature.
+
+function dockEl(): HTMLElement {
+  const existing = document.querySelector<HTMLElement>(`.${DOCK_CLASS}`);
+  if (existing) return existing;
+  const dock = document.createElement('div');
+  dock.className = DOCK_CLASS;
+  document.body.appendChild(dock);
+  return dock;
+}
+
+/** The expiry a timeout is currently pending for — one timer at a time, exactly
+ *  like the sweep chip's. */
+let hudTimerFor: string | null = null;
+let hudTimer: number | null = null;
+
+function clearHudTimer(): void {
+  if (hudTimer !== null) window.clearTimeout(hudTimer);
+  hudTimer = null;
+  hudTimerFor = null;
+}
+
+function buildHud(): HTMLElement {
+  const card = document.createElement('div');
+  card.className = HUD_CLASS;
+  card.setAttribute('role', 'status');
+  card.setAttribute('aria-live', 'polite');
+
+  const head = document.createElement('div');
+  head.className = HUD_HEAD_CLASS;
+  const dot = document.createElement('span');
+  dot.className = HUD_DOT_CLASS;
+  dot.setAttribute('aria-hidden', 'true');
+  const title = document.createElement('span');
+  title.className = HUD_TITLE_CLASS;
+  const stop = document.createElement('button');
+  stop.type = 'button';
+  stop.className = HUD_STOP_CLASS;
+  stop.title = 'Stop the sweep — what it collected is already saved';
+  stop.setAttribute('aria-label', 'Stop the sweep');
+  stop.appendChild(svgIcon(ICON_CLOSE, { size: 14 }));
+  stop.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    onHudStopClick(stop);
+  });
+  head.append(dot, title, stop);
+
+  const count = document.createElement('div');
+  count.className = HUD_COUNT_CLASS;
+  const num = document.createElement('span');
+  num.className = HUD_NUM_CLASS;
+  const meta = document.createElement('span');
+  meta.className = HUD_META_CLASS;
+  count.append(num, meta);
+
+  const foot = document.createElement('div');
+  foot.className = HUD_FOOT_CLASS;
+
+  card.append(head, count, foot);
+  applyPageSurface(card);
+  dockEl().appendChild(card);
+  return card;
+}
+
+function hudFootText(view: HandSweepView): string {
+  if (view.error) return `Not saving — ${view.error}. Retrying…`;
+  if (!view.onTarget) {
+    return `Open @${view.handle}’s ${view.mode === 'replies' ? 'replies' : 'posts'} to continue`;
+  }
+  // "saved" trails the count by up to one flush window by design; showing both
+  // is what makes a stuck upload visible instead of silent.
+  return `saved ${view.saved} · ${view.minutesLeft}m left`;
+}
+
+function syncHandSweepHud(): void {
+  const view = handSweepView();
+  const existing = document.querySelector<HTMLElement>(`.${HUD_CLASS}`);
+  if (!view) {
+    existing?.remove();
+    clearHudTimer();
+    return;
+  }
+
+  const card = existing ?? buildHud();
+  const state = view.error ? 'error' : view.onTarget ? 'live' : 'paused';
+  const oldest = handSweepDateLabel(view.oldest, Date.now());
+  const title = view.onTarget ? `Sweeping @${view.handle}` : 'Sweep paused';
+  const noun = handSweepNoun(view.rows, view.mode);
+  const meta = oldest ? `${noun} · back to ${oldest}` : noun;
+  const foot = hudFootText(view);
+  const sig = `${state}|${view.rows}|${title}|${meta}|${foot}`;
+
+  // The sig skip is the applyPersonChips discipline: this runs on every mutation
+  // burst and X emits hundreds per scroll tick.
+  if (card.dataset.sig !== sig) {
+    card.dataset.sig = sig;
+    card.dataset.state = state;
+    const titleEl = card.querySelector<HTMLElement>(`.${HUD_TITLE_CLASS}`);
+    if (titleEl) titleEl.textContent = title;
+    const numEl = card.querySelector<HTMLElement>(`.${HUD_NUM_CLASS}`);
+    if (numEl) numEl.textContent = String(view.rows);
+    const metaEl = card.querySelector<HTMLElement>(`.${HUD_META_CLASS}`);
+    if (metaEl) metaEl.textContent = meta;
+    const footEl = card.querySelector<HTMLElement>(`.${HUD_FOOT_CLASS}`);
+    if (footEl) footEl.textContent = foot;
+    card.setAttribute(
+      'aria-label',
+      `${title}. ${handSweepCountLabel(view.rows, view.mode)} collected. ${foot}`,
+    );
+  }
+
+  // One timeout armed at expiry so a sweep nobody is scrolling still ends (and
+  // drains) instead of waiting for a mutation burst that may never come. It does
+  // NOT own the truth — every reader resolves through handSweepActiveAt.
+  if (hudTimerFor !== view.expiresAt) {
+    clearHudTimer();
+    hudTimerFor = view.expiresAt;
+    hudTimer = window.setTimeout(
+      () => {
+        hudTimer = null;
+        hudTimerFor = null;
+        syncHandSweepHud();
+      },
+      Math.max(0, Date.parse(view.expiresAt) - Date.now()) + 250,
+    );
+  }
+}
+
+function onHudStopClick(btn: HTMLButtonElement): void {
+  const card = btn.closest<HTMLElement>(`.${HUD_CLASS}`);
+  if (card) card.dataset.state = 'stopping';
+  void stopHandSweep().catch(() => {
+    // The key survived, so this page is still sweeping. Say so (RS.4) rather
+    // than leaving a card that claims a stop which didn't happen.
+    if (card) card.dataset.sig = '';
+    syncHandSweepHud();
+  });
 }
 
 function looksLikeReplyBait(article: Element): boolean {
@@ -4134,6 +4424,8 @@ function scan(root: ParentNode): void {
   syncAuthorButton();
   syncRadarAddStates();
   syncSweepChip();
+  handSweepScan();
+  syncHandSweepHud();
   capturePassiveHoverCards();
   captureLaunchReplies();
   syncActiveTimesCapture();
@@ -4165,6 +4457,8 @@ function start(): void {
   initContextCollapsed();
   initMirroredConfig();
   initSweepState();
+  onHandSweepChange(syncHandSweepHud);
+  initHandSweep();
   initQueuedIds();
   initReplyFocus();
   scan(document);

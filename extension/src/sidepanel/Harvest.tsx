@@ -1,5 +1,16 @@
 import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
 import {
+  HAND_SWEEP_KEY,
+  HAND_SWEEP_STATS_KEY,
+  type HandSweepMode,
+  handSweepActiveAt,
+  handSweepCountLabel,
+  handSweepMinutesLeft,
+  handSweepTargetFor,
+  parseHandSweepStats,
+  startHandSweepSession,
+} from '../shared/handSweep.ts';
+import {
   DEFAULT_HARVEST_FORM,
   HARVEST_FORM_KEY,
   type HarvestEvent,
@@ -113,6 +124,15 @@ function startLabel(mode: HarvestMode, targetHandle: string | null): string {
   return mode === 'following' ? `Harvest @${targetHandle}'s following` : `Harvest @${targetHandle}`;
 }
 
+// HS.1 — what a hand sweep is, in the one line the empty state has room for.
+const SWEEP_BLURB =
+  'You scroll the profile yourself; every post that goes by is kept. No auto-scroll, no CSV — rows save to stratus as you read.';
+
+function sweepStartLabel(target: { handle: string; mode: HandSweepMode } | null): string {
+  if (!target) return 'Open a profile to sweep';
+  return `Start sweep on @${target.handle}’s ${target.mode === 'replies' ? 'replies' : 'posts'}`;
+}
+
 function detectionText(ctx: ActiveContext | null): string {
   if (!ctx?.onX) return 'The active tab isn’t X — a new X tab will open when you harvest.';
   if (ctx.onFollowing && ctx.handle) return `On @${ctx.handle}’s following list in the active tab.`;
@@ -124,6 +144,13 @@ function fmtDate(iso: string | null): string {
   if (!iso) return '?';
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? '?' : d.toLocaleString();
+}
+
+/** Day only — a sweep's "how far back did I get" is a date, not a timestamp. */
+function fmtDay(iso: string | null): string {
+  if (!iso) return '?';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? '?' : d.toLocaleDateString();
 }
 
 export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element {
@@ -241,6 +268,101 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
 
   const controllerRef = useRef<HarvestController | null>(null);
 
+  // ------------------------------------------------------ hand sweep (HS.1)
+  //
+  // The panel is the only writer of the ARM key and only a reader of the stats
+  // key — the content script owns the reverse (§7.24's single-writer rule,
+  // applied per key). Both are read raw and resolved on every render: a side
+  // panel that spent an hour backgrounded had its timers throttled, and a
+  // cached `sweeping` flag would keep claiming a sweep the page stopped
+  // honouring long ago.
+  const [sweepRaw, setSweepRaw] = useState<unknown>(null);
+  const [sweepStatsRaw, setSweepStatsRaw] = useState<unknown>(null);
+  const [sweepError, setSweepError] = useState<string | null>(null);
+  const [, setSweepTick] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    // A change landing before the initial read resolves wins — per key, or a
+    // stats write would suppress the arm read that hasn't come back yet.
+    let sawArm = false;
+    let sawStats = false;
+    void chrome.storage.local
+      .get([HAND_SWEEP_KEY, HAND_SWEEP_STATS_KEY])
+      .then((out) => {
+        if (!alive) return;
+        if (!sawArm) setSweepRaw(out[HAND_SWEEP_KEY] ?? null);
+        if (!sawStats) setSweepStatsRaw(out[HAND_SWEEP_STATS_KEY] ?? null);
+      })
+      .catch(() => {
+        // Not sweeping — the safe state, already loaded.
+      });
+
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: chrome.storage.AreaName,
+    ): void => {
+      if (area !== 'local') return;
+      const arm = changes[HAND_SWEEP_KEY];
+      if (arm) {
+        sawArm = true;
+        setSweepRaw(arm.newValue ?? null);
+      }
+      const stats = changes[HAND_SWEEP_STATS_KEY];
+      if (stats) {
+        sawStats = true;
+        setSweepStatsRaw(stats.newValue ?? null);
+      }
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, []);
+
+  const sweepSession = handSweepActiveAt(sweepRaw, Date.now());
+  const sweeping = sweepSession !== null;
+  const sweepStats = sweepSession
+    ? parseHandSweepStats(sweepStatsRaw, sweepSession.startedAt)
+    : null;
+
+  // The countdown, and only the countdown: one re-render a second while armed,
+  // torn down the moment the render above stops resolving a session.
+  useEffect(() => {
+    if (!sweeping) return;
+    const id = setInterval(() => setSweepTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [sweeping]);
+
+  // What the ACTIVE TAB can be swept as. The mode comes from the page, never
+  // from the mode tabs above: a sweep collects what is already on screen.
+  const sweepTarget = ctx?.url ? handSweepTargetFor(ctx.url) : null;
+
+  const startSweep = (): void => {
+    if (!sweepTarget) return;
+    const session = startHandSweepSession(sweepTarget.handle, sweepTarget.mode, Date.now());
+    setSweepError(null);
+    // Optimistic, like every other panel write; the onChanged listener confirms.
+    setSweepRaw(session);
+    setSweepStatsRaw(null);
+    void chrome.storage.local.set({ [HAND_SWEEP_KEY]: session }).catch(() => {
+      setSweepRaw(null);
+      setSweepError('Couldn’t start the sweep — nothing is being collected.');
+    });
+  };
+
+  const stopSweep = (): void => {
+    const prev = sweepRaw;
+    setSweepRaw(null);
+    void chrome.storage.local.remove(HAND_SWEEP_KEY).catch(() => {
+      // The key survived, so the page is still sweeping. Put the row back
+      // rather than leave it claiming a stop that didn't happen.
+      setSweepRaw(prev);
+      setSweepError('Sweep stop failed — it is still running. Press Stop again.');
+    });
+  };
+
   // Prefill the handle from page detection until the user types their own (once
   // they've typed a non-empty value, leave it alone).
   const refreshContext = useCallback(async () => {
@@ -357,6 +479,47 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
 
       <p className="status-line">{detection}</p>
 
+      {/* HS.1 — the sweep sits at the top because it is about the page that is
+          open RIGHT NOW, which is what the detection line above just said. */}
+      <Section title="Manual sweep">
+        {sweepSession ? (
+          <>
+            <p className="status-line">
+              Sweeping <strong>@{sweepSession.handle}</strong> ·{' '}
+              {sweepSession.mode === 'replies' ? 'replies' : 'posts'} — scroll the profile, rows
+              save as you go.
+            </p>
+            <p className="status-line">
+              <strong>{handSweepCountLabel(sweepStats?.rows ?? 0, sweepSession.mode)}</strong> ·
+              saved {sweepStats?.saved ?? 0}
+              {sweepStats?.oldest ? <> · back to {fmtDay(sweepStats.oldest)}</> : null} ·{' '}
+              {handSweepMinutesLeft(sweepSession, Date.now())}m left
+            </p>
+            {sweepStats?.error && (
+              <div className="warn">
+                Rows aren’t reaching stratus: <code>{sweepStats.error}</code>. They stay queued in
+                the page and retry — nothing is dropped unless you close the tab.
+              </div>
+            )}
+            <button type="button" className="danger" onClick={stopSweep}>
+              Stop sweep
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" disabled={sweepTarget === null || running} onClick={startSweep}>
+              {sweepStartLabel(sweepTarget)}
+            </button>
+            <p className="muted harvest-hint">
+              {sweepTarget === null
+                ? 'Open a profile’s Posts or Replies tab in the active browser tab, then start — Media, Highlights and Following can’t be swept.'
+                : SWEEP_BLURB}
+            </p>
+          </>
+        )}
+        {sweepError && <div className="error">{sweepError}</div>}
+      </Section>
+
       <div className="row">
         <button type="button" disabled={running || selfHandle === ''} onClick={applyMyReplies}>
           My replies (48h)
@@ -450,6 +613,13 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         </div>
       )}
 
+      {sweeping && (
+        <p className="muted harvest-hint">
+          A manual sweep is running — stop it first. An auto harvest takes over the tab's scroll,
+          and the two would file the same screens twice.
+        </p>
+      )}
+
       {following && followingHandle === null && (
         <div className="warn">
           Open your own <code>x.com/&lt;you&gt;/following</code> page in the active tab, then start
@@ -490,7 +660,7 @@ export function HarvestPanel({ settings }: { settings: Settings }): JSX.Element 
         <button
           type="button"
           className="primary"
-          disabled={targetHandle === null || noOutput}
+          disabled={targetHandle === null || noOutput || sweeping}
           onClick={() => void start()}
         >
           {startLabel(mode, targetHandle)}

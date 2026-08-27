@@ -14,6 +14,19 @@
 // stop test so an old pin can't end the run early).
 
 import {
+  HAND_SWEEP_BATCH_MAX,
+  HAND_SWEEP_FLUSH_MS,
+  HAND_SWEEP_KEY,
+  HAND_SWEEP_STATS_KEY,
+  type HandSweepMode,
+  type HandSweepSession,
+  type HandSweepStats,
+  handSweepActiveAt,
+  handSweepMinutesLeft,
+  pageInHandSweep,
+  parseHandSweepStats,
+} from './shared/handSweep.ts';
+import {
   type FollowingIngestRow,
   HARVEST_PORT,
   type HarvestCommand,
@@ -1263,5 +1276,388 @@ export function initHarvest(): void {
           }
         });
     });
+  });
+}
+
+// ------------------------------------------------------------ hand sweep (HS.1)
+//
+// The same harvest, driven by the user's own scrolling. `runHarvest` above owns
+// the page while it runs — it scrolls, it paces itself, and the tab is unusable
+// for the duration, which is the right trade for "collect @someone's last 800
+// posts" and the wrong one for "I'm reading this profile anyway, keep what I
+// scroll past". A hand sweep is armed from the panel (or stopped from the on-page
+// HUD), captures every screen the reader brings into view, and ships in the
+// background while they keep reading.
+//
+// Three things it deliberately does NOT do, each of them a property of the auto
+// harvest that a human-paced pass cannot honestly claim:
+//   * no CSV — rows ship as they are captured, so there is no end-of-run moment
+//     that owns a complete file. What reaches stratus is the whole output;
+//   * no `since-last` cursor advance — the cursor means "everything newer than
+//     this is already collected", which only a run that scrolled the window can
+//     say. A sweep skips whatever the reader skipped;
+//   * no scope, no max, no min-views — the scope of a sweep is what you looked
+//     at. The rows land under scope 'all', which is what they are.
+//
+// $0 by construction, like everything else in this file: DOM reads plus POSTs to
+// the local service. The row builders, the group pairing and the metrics parse
+// are `harvestPosts`/`harvestReplies` verbatim (§7.27 — one reader, not two), so
+// a swept row and a harvested row are the same row.
+
+// What the run rows are recorded under. A sweep has no date window; 'all' is the
+// scope the server already whitelists for "whatever the scroll reached".
+const HAND_SWEEP_SCOPE: HarvestScope = 'all';
+// After a failed flush, back off rather than retrying on the 4s cadence: the
+// usual cause is an unreachable service or a missing bearer, and neither is
+// fixed by asking again three times a minute.
+const HAND_SWEEP_RETRY_MS = 15_000;
+// The progress mirror is for the panel, and the panel repaints on it; a scroll
+// tick that adds four rows must not write four times.
+const HAND_STATS_MIN_MS = 1000;
+// Stop drains what the timer never got to. Ten batches is 2,000 rows — far past
+// any real sitting, and a bound rather than a `while (true)` over the network.
+const HAND_DRAIN_BATCHES = 10;
+// The capture pass reads EVERY article in the DOM (that is what makes a swept
+// row identical to a harvested one), and content.ts's scan runs on every
+// animation frame while a thumb is on the wheel. 400ms is far below the time it
+// takes to scroll one screen and far above one frame, so nothing is missed and
+// the timeline still scrolls at 60fps. A throttled burst leaves a trailing pass
+// armed, so the last screen before a stop is never the one that got skipped.
+const HAND_SCAN_MIN_MS = 400;
+
+type HandCtx =
+  | { mode: 'posts'; ctx: HarvestCtx<PostRow> }
+  | { mode: 'replies'; ctx: HarvestCtx<ReplyRow> };
+
+interface HandRun {
+  session: HandSweepSession;
+  ctx: HandCtx;
+  /** Tweet ids already accepted by the server — the pending set is the store
+   *  minus this, so a row is shipped once per sweep however often it is
+   *  re-rendered by the timeline's virtualization. */
+  sent: Set<string>;
+  rows: number;
+  saved: number;
+  oldest: string | null;
+  runId: string | null;
+  error: string | null;
+  onTarget: boolean;
+  stopped: boolean;
+  flushTimer: number | null;
+  inFlight: Promise<void> | null;
+  statsAt: number;
+}
+
+let handRun: HandRun | null = null;
+let handListener: (() => void) | null = null;
+let handScanAt = 0;
+let handScanTrailing: number | null = null;
+
+/** What the on-page HUD renders. Resolved, never cached: `handSweepView` is the
+ *  only reader that decides whether a sweep is still live. */
+export interface HandSweepView {
+  handle: string;
+  mode: HandSweepMode;
+  rows: number;
+  saved: number;
+  oldest: string | null;
+  /** False while the reader is off the swept timeline — a tweet detail page, a
+   *  different profile. The sweep goes quiet, it does not end. */
+  onTarget: boolean;
+  error: string | null;
+  minutesLeft: number;
+  /** The HUD arms one timeout on this so a sweep also ends on a page nobody is
+   *  scrolling; the expiry itself is still resolved on every read. */
+  expiresAt: string;
+}
+
+/** content.ts registers the HUD repaint here — one listener, set once at start. */
+export function onHandSweepChange(cb: () => void): void {
+  handListener = cb;
+}
+
+function announceHand(): void {
+  handListener?.();
+}
+
+export function handSweepView(): HandSweepView | null {
+  const run = handRun;
+  if (!run) return null;
+  const now = Date.now();
+  const live = handSweepActiveAt(run.session, now);
+  if (!live) {
+    // Expiry is resolved by whoever reads, exactly like the radar's sweep: the
+    // HUD's timer only causes this read, it never owns the answer.
+    void endHandRun();
+    return null;
+  }
+  return {
+    handle: run.session.handle,
+    mode: run.session.mode,
+    rows: run.rows,
+    saved: run.saved,
+    oldest: run.oldest,
+    onTarget: run.onTarget,
+    error: run.error,
+    minutesLeft: handSweepMinutesLeft(live, now),
+    expiresAt: live.expiresAt,
+  };
+}
+
+function handStore(run: HandRun): Record<string, PostRow> | Record<string, ReplyRow> {
+  return run.ctx.ctx.store;
+}
+
+function handPendingIds(run: HandRun): string[] {
+  return Object.keys(handStore(run)).filter((id) => !run.sent.has(id));
+}
+
+function handRowTimes(run: HandRun): string[] {
+  const times =
+    run.ctx.mode === 'posts'
+      ? Object.values(run.ctx.ctx.store).map((r) => r.time)
+      : Object.values(run.ctx.ctx.store).map((r) => r.r_time);
+  return times.filter((t): t is string => Boolean(t)).sort();
+}
+
+/** Widen the captured range rather than recompute it: after a reload the store
+ *  is empty but how far back the sweep reached is already known from the mirror.
+ *  ISO-8601 UTC strings, so a lexical compare IS the chronological one. */
+function noteHandRange(run: HandRun): void {
+  const first = handRowTimes(run)[0];
+  if (first && (run.oldest === null || first < run.oldest)) run.oldest = first;
+}
+
+function handRowsFor(run: HandRun, ids: string[]): HarvestIngestRow[] {
+  if (run.ctx.mode === 'posts') {
+    const batch: Record<string, PostRow> = {};
+    for (const id of ids) {
+      const row = run.ctx.ctx.store[id];
+      if (row) batch[id] = row;
+    }
+    return postsIngestRows(batch);
+  }
+  const batch: Record<string, ReplyRow> = {};
+  for (const id of ids) {
+    const row = run.ctx.ctx.store[id];
+    if (row) batch[id] = row;
+  }
+  return repliesIngestRows(run.session.handle, batch);
+}
+
+function writeHandStats(run: HandRun, force = false): void {
+  const now = Date.now();
+  if (!force && now - run.statsAt < HAND_STATS_MIN_MS) return;
+  run.statsAt = now;
+  const stats: HandSweepStats = {
+    startedAt: run.session.startedAt,
+    rows: run.rows,
+    saved: run.saved,
+    oldest: run.oldest,
+    runId: run.runId,
+    updatedAt: new Date(now).toISOString(),
+    error: run.error,
+  };
+  void chrome.storage.local.set({ [HAND_SWEEP_STATS_KEY]: stats }).catch(() => {
+    // The panel loses a repaint; the sweep itself is unaffected.
+  });
+}
+
+function scheduleHandFlush(run: HandRun, delayMs = HAND_SWEEP_FLUSH_MS): void {
+  if (run.stopped || run.flushTimer !== null) return;
+  run.flushTimer = window.setTimeout(() => {
+    run.flushTimer = null;
+    kickHandFlush(run);
+  }, delayMs);
+}
+
+function kickHandFlush(run: HandRun): void {
+  if (run.inFlight) return; // its own tail re-schedules
+  run.inFlight = flushHandRun(run).finally(() => {
+    run.inFlight = null;
+  });
+}
+
+async function flushHandRun(run: HandRun): Promise<void> {
+  const ids = handPendingIds(run).slice(0, HAND_SWEEP_BATCH_MAX);
+  if (ids.length === 0) return;
+  try {
+    // The run is created on the FIRST batch, not at Start: arming and reading
+    // nothing must not leave an empty run in the ledger.
+    if (run.runId === null) {
+      const created = await apiSend<{ id: string }>('POST', '/x/harvest/runs', {
+        handle: run.session.handle,
+        mode: run.session.mode,
+        scope: HAND_SWEEP_SCOPE,
+      });
+      run.runId = created.id;
+    }
+    const rows = handRowsFor(run, ids);
+    const res = await apiSend<{ inserted: number }>('POST', '/x/harvest/rows', {
+      runId: run.runId,
+      rows,
+    });
+    for (const id of ids) run.sent.add(id);
+    run.saved += res.inserted ?? rows.length;
+    run.error = null;
+  } catch (err) {
+    // Rows are NOT dropped here, and that is the difference from the passive tap
+    // (§ passive: a failed flush loses a point on a view curve, which nobody
+    // asked for). A sweep is an action the user took and is watching a counter
+    // for, so the batch stays pending and the next flush retries it.
+    run.error = err instanceof Error ? err.message : String(err);
+  } finally {
+    writeHandStats(run, true);
+    announceHand();
+    if (handPendingIds(run).length > 0) {
+      scheduleHandFlush(run, run.error === null ? HAND_SWEEP_FLUSH_MS : HAND_SWEEP_RETRY_MS);
+    }
+  }
+}
+
+/** One scan's worth of capture, called from content.ts's mutation scan — which
+ *  is to say: on every screen the reader scrolls into view, and nowhere else. */
+export function handSweepScan(): void {
+  const run = handRun;
+  if (!run) return;
+  if (handSweepActiveAt(run.session, Date.now()) === null) {
+    void endHandRun();
+    return;
+  }
+  // An auto harvest owns the page while it runs; two readers over the same
+  // screens would file the same tweets under two runs.
+  if (running) return;
+
+  const onTarget = pageInHandSweep(location.href, run.session);
+  if (onTarget !== run.onTarget) {
+    run.onTarget = onTarget;
+    announceHand();
+  }
+  if (!onTarget) return;
+
+  const now = Date.now();
+  const wait = HAND_SCAN_MIN_MS - (now - handScanAt);
+  if (wait > 0) {
+    if (handScanTrailing === null) {
+      handScanTrailing = window.setTimeout(() => {
+        handScanTrailing = null;
+        handSweepScan();
+      }, wait);
+    }
+    return;
+  }
+  handScanAt = now;
+
+  // Same reason as the auto harvest's per-sweep call: X swaps a tweet's text for
+  // a machine translation in place, and an unreverted one lands in the corpus as
+  // English, unmarked. Fire-and-forget — the click's own mutation brings us back
+  // here within a frame or two, well inside the flush window, and the store
+  // overwrites the row with the original before it ships.
+  void revealOriginals();
+
+  const added = run.ctx.mode === 'posts' ? harvestPosts(run.ctx.ctx) : harvestReplies(run.ctx.ctx);
+  if (added === 0) return;
+  run.rows += added;
+  noteHandRange(run);
+  writeHandStats(run);
+  scheduleHandFlush(run);
+  announceHand();
+}
+
+function armHandRun(session: HandSweepSession, seed: HandSweepStats | null): void {
+  // A re-arm over a live run (a second Start, a session swapped in another tab)
+  // hands the old one off to `endHandRun` first: its timers are cleared and its
+  // unshipped rows drained against the run they belong to, rather than leaking
+  // with the reference that owned them.
+  if (handRun) void endHandRun();
+
+  const base = {
+    profile: session.handle,
+    window: null,
+    oldestSeenMs: null,
+    minViews: undefined,
+  };
+  handRun = {
+    session,
+    ctx:
+      session.mode === 'replies'
+        ? { mode: 'replies', ctx: { ...base, store: {} } }
+        : { mode: 'posts', ctx: { ...base, store: {} } },
+    sent: new Set<string>(),
+    rows: seed?.rows ?? 0,
+    saved: seed?.saved ?? 0,
+    oldest: seed?.oldest ?? null,
+    runId: seed?.runId ?? null,
+    error: null,
+    onTarget: false,
+    stopped: false,
+    flushTimer: null,
+    inFlight: null,
+    statsAt: 0,
+  };
+  announceHand();
+  // Capture what is already on screen instead of waiting for the first scroll —
+  // pressing Start on a screenful of posts has to move the counter.
+  handScanAt = 0;
+  handSweepScan();
+}
+
+async function endHandRun(): Promise<void> {
+  const run = handRun;
+  if (!run) return;
+  handRun = null;
+  run.stopped = true;
+  if (run.flushTimer !== null) window.clearTimeout(run.flushTimer);
+  run.flushTimer = null;
+  if (handScanTrailing !== null) window.clearTimeout(handScanTrailing);
+  handScanTrailing = null;
+  announceHand();
+
+  // The counter runs up to one flush window ahead of the ledger by design, so a
+  // stop has to drain what the timer never got to.
+  if (run.inFlight) await run.inFlight.catch(() => undefined);
+  for (let i = 0; i < HAND_DRAIN_BATCHES && handPendingIds(run).length > 0; i++) {
+    await flushHandRun(run);
+    if (run.error !== null) break; // the service is down — retrying now won't fix it
+  }
+  writeHandStats(run, true);
+}
+
+/** Stop from the page (the HUD's ✕). Removing the arm is the whole stop: the
+ *  onChanged listener below ends the run in this tab and in every other one. */
+export async function stopHandSweep(): Promise<void> {
+  await chrome.storage.local.remove(HAND_SWEEP_KEY);
+}
+
+export function initHandSweep(): void {
+  void chrome.storage.local
+    .get([HAND_SWEEP_KEY, HAND_SWEEP_STATS_KEY])
+    .then((out) => {
+      const session = handSweepActiveAt(out[HAND_SWEEP_KEY], Date.now());
+      if (!session) return;
+      // Reloaded mid-sweep: the page's store is gone, the sweep is not. Seeding
+      // from the mirror keeps the counter climbing instead of restarting at zero
+      // and keeps the rows landing in the SAME harvest run. Tweets seen before
+      // the reload are captured again — harvest_rows is a longitudinal series,
+      // not a set, and a second row for one tweet is a second measurement.
+      armHandRun(session, parseHandSweepStats(out[HAND_SWEEP_STATS_KEY], session.startedAt));
+    })
+    .catch(() => {
+      /* not armed — the safe state */
+    });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    const change = changes[HAND_SWEEP_KEY];
+    if (!change) return;
+    const session = handSweepActiveAt(change.newValue, Date.now());
+    if (!session) {
+      void endHandRun();
+      return;
+    }
+    // Re-arming the same session (another tab's write echoing back) must not
+    // throw away this tab's store and re-ship everything in it.
+    if (handRun && handRun.session.startedAt === session.startedAt) return;
+    armHandRun(session, null);
   });
 }
