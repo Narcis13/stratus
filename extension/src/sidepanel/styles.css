@@ -1226,6 +1226,50 @@ button.danger:hover:not(:disabled) {
   margin-left: auto;
 }
 
+/* PP.1 — the paste pace clock, between the sweep valve and the humanize
+   toggle. Sticky against `.content`'s scrollport so it survives the scroll down
+   a worked queue: the gap it reports is only useful at the moment of the next
+   click, which is always further down the list than the top of the panel. An
+   opaque background is load-bearing — rows scroll UNDER it. */
+.radar-pace {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  padding: 3px 8px;
+  border: 1px solid var(--strat-border);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  font-size: var(--strat-text-xs);
+  color: var(--strat-muted);
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+.radar-pace-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex-shrink: 0;
+}
+/* Warn, not danger: nothing is broken and nothing is blocked — you are simply
+   early, and the number is counting down to when you are not. */
+.radar-pace-wait {
+  color: var(--strat-warn);
+  border-color: color-mix(in srgb, var(--strat-warn) 45%, transparent);
+  background: color-mix(in srgb, var(--strat-warn) 12%, transparent);
+}
+.radar-pace-clear {
+  color: var(--strat-ok);
+  border-color: color-mix(in srgb, var(--strat-ok) 40%, transparent);
+  background: color-mix(in srgb, var(--strat-ok) 10%, transparent);
+}
+/* Cold keeps the muted default: no copy in the last ten minutes is not a state
+   worth colouring. */
+
 /* HM.3 — the pick-time jitter toggle, directly under the Queue/Clicked strip.
    A label row rather than a button: it flips a server-owned project setting,
    and the odds sit next to it so the switch says what it buys. */
@@ -1468,6 +1512,12 @@ button.danger:hover:not(:disabled) {
   margin-top: 4px;
   font-size: 10px;
   color: var(--muted);
+}
+/* PP.1 — the same warning, on the pick itself. It replaces the "click →
+   copies" hint rather than sitting beside it: one line, and while the clock is
+   short the countdown is the more useful of the two. */
+.radar-reply-hint-wait {
+  color: var(--strat-warn);
 }
 
 /* CQ.6 — the roster block at the foot of the Cannon view. Collapsed by default

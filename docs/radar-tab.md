@@ -143,6 +143,30 @@ A **preset** is all thirteen filters saved under a name, so a hunt you have tune
 
 ---
 
+## The paste pace clock
+
+Right under the sweep row, in **all three views**, a small pill counts the seconds since you last clicked an angle:
+
+| You see | Tone | It means |
+|---|---|---|
+| `No recent copy — clear to paste` | muted | Nothing copied in the last 10 minutes. There is no gap to keep. |
+| `Copied 12s ago — wait 28s before pasting` | amber | You are inside the 40-second gap. Paste now and the two replies land closer together than a human types them. |
+| `Copied 1m 04s ago — clear to paste` | green | The gap is cleared. Go. |
+
+It exists for one failure mode: a queue of eight drafted replies is *very* easy to work in ninety seconds, and eight replies posted forty-five seconds apart in total is the single most machine-looking thing this whole tool can help you do. The clock makes the gap impossible not to notice.
+
+**It never blocks a click.** There is no disabled state, no confirm, no lockout — you are the one holding ⌘V, and a gate you can't override just teaches you to click through it. It reports, and that is all it does.
+
+Three details worth knowing:
+
+- **The clock starts on the click, not on the paste.** The paste happens on another tab, seconds later, and the panel never sees it. The gap you're pacing is the one between two clicks anyway.
+- **It's sticky.** The pill stays pinned to the top of the panel as you scroll down the queue, because the moment it matters is always further down the list than the top of the tab.
+- **And it repeats itself on the row.** While the clock is amber, the hint under every reply body reads `wait 28s — you copied one 12s ago` instead of `click → copies + opens the tweet` — the last thing you read before the click you're about to make. The `copied ✓` note still wins for its couple of seconds right after a pick.
+
+The stamp survives a panel close and a browser restart (it lives in the extension's local storage, like the sweep session), so reopening the panel doesn't hand you a fresh clock you haven't earned. 40 seconds is a deliberate round number, not a measured threshold — there is no knob for it.
+
+---
+
 ## Header actions
 
 - **Draft replies (N)** — makes **one** Grok call for every un-drafted tweet in the queue (**20 at a time by default**). Each post is resolved into its own room and receives that room's angle set: 2 or 3 variants in English, or one `extends` variant when the batch resolves to another language. The cost of that single call is shown right after, e.g. `12/12 drafted · $0.0431`. It drafts the *top* N of the queue — the ranking decides, nothing is graded — and **clears everything it didn't draft** (see below). In the **Cannon** view the same button drafts the cannon rows instead, and consumes only those.
@@ -326,7 +350,7 @@ Each row is `score · @handle · nN · scored Nd ago`, ranked score-desc with ne
 - A **"why" line**: `1.5k views · 8 replies · 22m · 70/min · bait` — the numbers the row was captured with. The age keeps ticking while the row sits in the queue, so a stale opportunity looks stale.
 - **Angle tabs** (once drafted) — the subset this room allows, drawn from `extends` · `contrarian` · `debate` · `observation` · `question`, each with that variant's **coach score** (hover the number for the worst two things about it — see **[Replies → the three variants](./replies-tab.md#generating-and-the-three-variants)**). Click a tab to read that version; nothing else happens. The room's first angle is the primary pick, and the score never reorders the tabs. **A non-English draft has one variant, so no tab strip renders at all** — not an empty one.
 - **A gloss line** under the reply body on a non-English draft: a literal, muted English rendering of what that reply actually says. It is never copied — clicking the body still yields only the reply itself.
-- **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet`, and flips to `copied ✓` for a moment after — or to `copied ✓ · jitter: prefix, typo:swap` / `copied ✓ · no jitter this time` when **Humanize picks** is on (below).
+- **The reply body** — the angle currently selected. **Clicking it does the whole handoff:** copies that exact text to your clipboard, opens the tweet in a new tab, and moves the row to **Clicked**. The hint under the text says `click → copies + opens the tweet` (or the pace countdown, above — `wait 28s — you copied one 12s ago`), and flips to `copied ✓` for a moment after — or to `copied ✓ · jitter: prefix, typo:swap` / `copied ✓ · no jitter this time` when **Humanize picks** is on (below).
 - A **channel tag picker** (once a reply exists) to file the tweet under one of your topic channels.
 
 The angle you click is the one recorded as what went out — so the Playbook's angle numbers reflect what you actually chose, not always the first variant.
@@ -393,7 +417,8 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 3. Click **Draft replies (N)** — one Grok call, cost shown afterwards. If the queue got long enough for **Curate & draft (N)** to appear, prefer it: it does step 2's culling for you and puts the drafting money on the tweets most likely to pay.
 4. For each **reply ready** row: check the room chip, read the available angle tabs, then click the body of the one you want. It's copied and the tweet opens.
 5. On X: paste, edit it into your own words if you like, hit Reply.
-6. The row is in **Clicked** now. When you're done, **Clear** the view.
+6. Back in the panel, glance at the **pace pill**. Amber means the next reply is too soon — read the next tweet properly while it counts down instead of clicking straight through the queue.
+7. The row is in **Clicked** now. When you're done, **Clear** the view.
 
 ---
 
@@ -427,6 +452,7 @@ Clicking a chip also marks that draft **posted** on the server (a human claim at
 
   Recalibrate the sweep defaults from that at **100+ swept rows**, never earlier and never by feel.
 - **`your circle` rows are the reciprocity lane's other half.** The Today tab counts how many of today's replies went to people who were already yours (*"N replies to your people"*); this is where those replies come from. A quiet post by an ally is worth more to you than a hot post by a stranger, and neither the band nor the reply gate will stop you any more.
+- **The pace pill is the cheapest anti-automation habit here.** Nothing else in the tool paces you: the queue is drafted in one call and every row is one click from the clipboard, so the whole surface is built to be worked fast. Forty seconds of reading the tweet you're about to reply to is also, usually, a better reply.
 - **Every handle is a link.** Before replying to someone you half-recognize, click through to their dossier and see the history first.
 - **What this tab costs.** Capturing, ranking and rendering the queue: **$0**. The whole Cannon view, the roster, its scores, **Rescore** and the `placed today` counter: **$0 too** — every one of those is SQL over tweets your own browsing already captured, and none of that code can reach the X API. The spend is the two drafting buttons: **Draft replies** (one Grok call per click, price shown after) and **Curate & draft** (a cheap scoring call *plus* that same drafting call — two prices, reported as one total). See **[Spend today](./today-tab.md)** on Today for the running meter.
 

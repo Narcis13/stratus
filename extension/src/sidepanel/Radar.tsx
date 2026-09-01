@@ -35,6 +35,12 @@ import type {
   RadarReplies,
 } from '../shared/messages.ts';
 import {
+  PASTE_PACE_KEY,
+  type PastePace,
+  pastePaceAt,
+  readLastPickAt,
+} from '../shared/pastePace.ts';
+import {
   CURATE_REQUEST_CAP,
   type CannonRow,
   RADAR_SIGHTINGS_KEY,
@@ -417,6 +423,16 @@ export function RadarSection({
   // pre-CQ.7 behaviour.
   const [cannonLanguages, setCannonLanguages] = useState<Map<string, string>>(new Map());
 
+  // PP.1 — the paste pace clock: how long since the last angle was copied, so
+  // ten replies don't go out eight seconds apart. Same discipline as the sweep
+  // countdown below — **the stored stamp is the truth and `Date.now()` is the
+  // clock, on every render** — because a backgrounded side panel gets its
+  // timers throttled and a gap owned by the tick would read short exactly when
+  // the human came back to paste. The tick only forces the repaint.
+  const [lastPickAt, setLastPickAt] = useState<number | null>(null);
+  const [, setPaceTick] = useState(0);
+  const pace = pastePaceAt(lastPickAt, Date.now());
+
   // RS.4 — the armed sweep, as the panel holds it. Three pieces of state and one
   // hard rule between them: **the stored value is the truth and `Date.now()` is
   // the clock, on every render**. The tick below only forces re-renders.
@@ -484,6 +500,50 @@ export function RadarSection({
     const id = setInterval(() => setSweepTick((n) => n + 1), 1000);
     return () => clearInterval(id);
   }, [sweeping]);
+
+  // PP.1 — the pace stamp, read the same way as the sweep session: an initial
+  // get plus an onChanged subscription, so a pick taken in one panel (or a
+  // panel reopened after a browser restart) doesn't restart the clock at zero.
+  // The panel is also the writer — a control, not the sightings buffer, so
+  // §7.24 doesn't apply (`radar:replyGoal` is the precedent).
+  useEffect(() => {
+    let alive = true;
+    let sawChange = false;
+    void chrome.storage.local
+      .get(PASTE_PACE_KEY)
+      .then((out) => {
+        if (!alive || sawChange) return;
+        setLastPickAt(readLastPickAt(out[PASTE_PACE_KEY]));
+      })
+      .catch(() => {
+        // No stamp readable — cold, which is what already rendered.
+      });
+
+    const onChanged = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      area: chrome.storage.AreaName,
+    ): void => {
+      if (area !== 'local') return;
+      const change = changes[PASTE_PACE_KEY];
+      if (!change) return;
+      sawChange = true;
+      setLastPickAt(readLastPickAt(change.newValue));
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      alive = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, []);
+
+  // One re-render a second while the clock is worth watching, and none once it
+  // goes cold — the stale window is what stops a panel left open all afternoon
+  // from ticking forever for a number nobody is reading.
+  useEffect(() => {
+    if (pace.tone === 'cold') return;
+    const id = setInterval(() => setPaceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [pace.tone]);
 
   // Watch for the transition into "not armed" and record whether we saw it. No
   // dep array on purpose: the flip can come from a storage change, a tick, or a
@@ -654,6 +714,16 @@ export function RadarSection({
   // and the moment it catches up; within one day the local figure can only ever
   // be ahead by picks whose paste hasn't landed yet.
   const onPicked = (): void => {
+    // PP.1 — the clock restarts on the CLICK, not on the paste: the paste lands
+    // seconds later on another tab and the panel never sees it, and the gap the
+    // human is pacing is the one between two of these clicks anyway. Optimistic
+    // like every other panel write; the onChanged listener confirms.
+    const at = Date.now();
+    setLastPickAt(at);
+    void chrome.storage.local.set({ [PASTE_PACE_KEY]: at }).catch(() => {
+      // The clock still runs for this panel — only its survival across a reopen
+      // is lost, and a pace clock is never worth failing a pick over.
+    });
     setPlaced((prev) => (prev ? { ...prev, placed: prev.placed + 1 } : prev));
     void fetchPlacedToday(settings).then((next) => {
       if (!next) return;
@@ -1148,6 +1218,19 @@ export function RadarSection({
         />
       </div>
 
+      {/* PP.1 — the pace clock. Sticky at the top of the scrollport and in ALL
+          THREE views, because the rule it enforces is global: it is the gap
+          between two pastes anywhere, and a counter you have to scroll back up
+          to read is a counter you stop reading by the third reply. It only ever
+          reports — clicking an angle inside the cooldown still works, the human
+          is the one holding the ⌘V. */}
+      <div className={`radar-pace radar-pace-${pace.tone}`} title={PACE_TITLE}>
+        <span className="radar-pace-dot" aria-hidden="true" />
+        <span className="radar-pace-label" aria-live="polite">
+          {pace.label}
+        </span>
+      </div>
+
       {/* HM.3 — opt-in jitter on the angle you click. Queue-only: it decorates
           the act of picking, and the Clicked view is a log of picks already made
           (a re-copy there still honors the flag, it just isn't where you set it). */}
@@ -1212,6 +1295,7 @@ export function RadarSection({
                   onOpenPerson={onOpenPerson}
                   humanizer={humanizer}
                   onPicked={onPicked}
+                  pace={pace}
                 />
               ))}
             </ul>
@@ -1251,6 +1335,7 @@ export function RadarSection({
                 onOpenPerson={onOpenPerson}
                 humanizer={humanizer}
                 onPicked={onPicked}
+                pace={pace}
               />
             )}
             {fresh.length > 0 && (
@@ -1261,6 +1346,7 @@ export function RadarSection({
                 onOpenPerson={onOpenPerson}
                 humanizer={humanizer}
                 onPicked={onPicked}
+                pace={pace}
               />
             )}
           </>
@@ -1280,6 +1366,7 @@ export function RadarSection({
               onOpenPerson={onOpenPerson}
               humanizer={humanizer}
               onPicked={onPicked}
+              pace={pace}
             />
           ))}
         </ul>
@@ -1295,6 +1382,7 @@ function RadarGroup({
   onOpenPerson,
   humanizer,
   onPicked,
+  pace,
 }: {
   label: string;
   rows: RadarSighting[];
@@ -1302,6 +1390,7 @@ function RadarGroup({
   onOpenPerson: (handle: string) => void;
   humanizer: HumanizerSettings | null;
   onPicked: () => void;
+  pace: PastePace;
 }): JSX.Element {
   return (
     <>
@@ -1315,6 +1404,7 @@ function RadarGroup({
             onOpenPerson={onOpenPerson}
             humanizer={humanizer}
             onPicked={onPicked}
+            pace={pace}
           />
         ))}
       </ul>
@@ -1328,6 +1418,7 @@ function RadarRow({
   onOpenPerson,
   humanizer,
   onPicked,
+  pace,
   cannon,
 }: {
   s: RadarSighting;
@@ -1336,6 +1427,9 @@ function RadarRow({
   humanizer: HumanizerSettings | null;
   /** CQ.5 — a pick is a placement in flight; the head's counter wants to know. */
   onPicked: () => void;
+  /** PP.1 — the paste clock as the section resolved it this second. Read only
+   *  for the hint under the pick: the row never blocks on it. */
+  pace: PastePace;
   /** CQ.5 — present only in the Cannon view. The numbers come from the queue
    *  that decided membership, never recomputed here: the row must not be able
    *  to print an age the 30-minute cutoff disagrees with. */
@@ -1492,8 +1586,18 @@ function RadarRow({
               draft readable. It picks a direction, never a language — and it
               sits on the TEXT, so the hint and the gloss below stay ltr. */}
           <span dir="auto">{picked.text}</span>
-          <span className="radar-reply-hint">
-            {pickNote ?? 'click → copies + opens the tweet'}
+          {/* PP.1 — the pace warning rides on the thing you are about to click,
+              not only on the strip at the top: by the third card the strip has
+              scrolled out of the way and this line is the last thing read
+              before the click. The just-picked note still wins for its couple
+              of seconds — that one says what the humanizer did to the text now
+              on the clipboard, and it expires on its own. */}
+          <span
+            className={`radar-reply-hint${
+              pickNote === null && pace.hint !== null ? ' radar-reply-hint-wait' : ''
+            }`}
+          >
+            {pickNote ?? pace.hint ?? 'click → copies + opens the tweet'}
             {angles.length === 1 && (
               <>
                 {' '}
@@ -1852,6 +1956,12 @@ function CannonRoster({
 // Longer than the old 1500 ms `copied ✓` flash: the note now carries a list of
 // jitters to read, and it is the only place the humanizer is ever visible.
 const PICK_NOTE_MS = 2500;
+
+// What the pace strip is for, spelled out once. It is a REPORT, not a gate —
+// the strip never disables a pick, and the tooltip says so, because a counter
+// that looks like a lock is a counter people start clicking through.
+const PACE_TITLE =
+  'Seconds since you last copied a reply. Pasting several within 40s of each other is the pattern that reads as automation — nothing here blocks a click, it just keeps the gap visible.';
 
 // RL.9's honesty pattern — the answer to "the humanizer does nothing". Three
 // distinct states, because "no jitter fired this time" and "the feature is off"
