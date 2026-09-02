@@ -19,14 +19,27 @@ owed the ledger re-opening and the `current state` recount, and both are below.*
 `voice_tweets`, `chrome.storage.local`), no task can reach `xFetch` or `askLLM`, and invariant #8 is
 untouched — nothing here adds a billed read back to get a count the DOM did not give us.
 
-**READ THIS BEFORE XR.2 OR XR.3 — the plan's oracle is not on this machine.** Every Bangermeter path in the
-Read-first lists (`/Users/narcisbrindusescu/Downloads/bangermeter-main/extension/weights.js`, `scoring.js`,
-`calibration/calibrate.js`, `LICENSE`) is **gone**, and XR.2 and XR.3 each name more of them than XR.1 did.
-XR.1 did not work around it: it went **one layer upstream to the real oracle** and transcribed X's own
-published source directly (`xai-org/x-algorithm` @ `7ba77684`, fetched with plain `curl` — the network is
-reachable from Bash in this repo, and `raw.githubusercontent.com` + the GitHub tree API both answer
-unauthenticated). Do the same rather than reconstructing from memory. See **D225** for what that changed and
-**the XR.1 gotchas** for the exact URLs and what each file holds.
+**READ THIS BEFORE XR.2 OR XR.3 — the Bangermeter source IS on this machine now (as of 2026-09-02), and it
+was NOT when XR.1 ran.** The user supplied the tree at **`/Users/narcisbrindusescu/Downloads/bangermeter-main/`**
+(unpacked 2026-09-02 05:36). All four Read-first paths the plan names now exist and were confirmed present:
+`extension/weights.js` (452 lines), `extension/scoring.js` (820 lines), `calibration/calibrate.js`
+(+ `calibration/feed-sample-2026-08-13.csv`, the 158-post Aug-13 sample XR.3 replaces), and `LICENSE`
+(**MIT, Copyright (c) 2026 Ryan Lenk** — as the plan says). It is a *download*, not a repo checkout and not
+tracked by anything here, so **verify it still exists before you rely on it** (`ls
+/Users/narcisbrindusescu/Downloads/bangermeter-main/extension/weights.js`) and re-read D225 if it has
+vanished again.
+
+**Which oracle for which number — this does not collapse into "just read Bangermeter now".** The *weight
+values and `ranking_scorer` arithmetic* already shipped in XR.1 off the layer **upstream** of Bangermeter —
+X's own published source (`xai-org/x-algorithm` @ `7ba77684`, plain `curl` from Bash; see the XR.1 gotchas for
+the URLs), which is **Apache-2.0, not MIT**, and `src/shared/xRanker.ts`'s header credits xAI accordingly
+(D225). Do not "correct" that attribution to MIT now that the MIT LICENSE file is readable — the header is a
+factual claim about what was read. What the local tree is genuinely the oracle **for** is everything
+Bangermeter added *on top* of X's source, which is exactly what XR.2 and XR.3 port: `baselineP`,
+`engagementShrinkage`, `contentModifiers` (reference only — Decision 1 keeps them as a provenance comment),
+`engagementScore`, `vqvEligible`, `contentScore`, and `calibration/calibrate.js`'s method. Those have no
+upstream to go to. **Where a file of ours ports that code, the MIT + Ryan Lenk notice the plan mandates is the
+correct notice** — read the code, cite what you read, per file.
 
 **The spine is the doctrine, not the UI** (plan Decision 3, §7.33/§7.34): XR.3 recalibrates the E baseline
 off our own passive harvest and XR.4 ships the quartile cell. **Do not re-order them behind XR.5–XR.7**
@@ -91,7 +104,7 @@ left is the pre-Wave-9 standing D-entries (D113/D171/D184/D195), which are alrea
 
 - **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `feat(ranker): port X's published For You weights + ranking_scorer arithmetic (XR.1)`, parent `52d0bd8` (`ranker`, the plan file). **Step 0 is one command:** `git log -1 --format='%h %s'`. Reconcile against this line, not against the whole log.
 - **current state of the repo (as of XR.1, 2026-09-02 — RECOUNTED off the running code, not carried forward; the previous line was stamped at OU.8 and five ad-hoc lanes had shipped past it):** suite **2695** across **135** files (2599/132 at OU.8 → 2627/134 by PP.1 → **+68 tests / +1 file here**); tables **44**; migrations through **`0031_sharp_screwball`** (32 journal entries, `0000`–`0031`) — **the journal is FREE from `0032`, which XR.7 owns and must still confirm off the journal rather than off this line**; registry **16 groups / 69 knobs, 33 mirrored** and **17 prompt keys** (recounted by importing `SETTINGS_REGISTRY` and `PROMPT_KEYS`, not by grepping); MCP **28 tools** (`src/mcp.test.ts:122` asserts it); smoke scripts **41**; extension `tsconfig.app.json` `include` **13 entries = 12 out-of-tree shims** (the first entry is the extension's own `src/**/*` — **count the shims, not the array**, and XR.5 takes them to 14); panel tabs **15**; whole-repo lint **0 errors**. The four multi-file moves a new task will hit, each with the assertions that make them fail loudly: **a mirrored knob is SEVEN edits** — `registry.ts` (group array; order decides mirrored position), `registry.test.ts` **twice** (the group's exact key list *and* the exact mirrored list), `docs/settings-tab.md`'s **three** count strings (prose, asserted by nothing) **plus its group table row**, and extension-side `ServerConfig` + `SERVER_DEFAULTS` + `readServerConfig`, pinned by `serverSettings.test.ts`'s exact `Object.keys` list AND its full-blob `toEqual` (the server half alone ships a knob that silently does nothing); a **`scope:'server'`** group is three of those seven and no extension build (the `outliers` group is the worked example). **A registry prompt key is FOUR** (`PROMPT_KEYS` + `PROMPT_SPECS`, the default exported from a **pure** module or the import cycles, `registry.test.ts`'s exact key list, and `docs/settings-tab.md`'s three prompt strings). **An MCP tool is SIX doc strings plus three asserted numbers**: `src/mcp.test.ts`'s exact **28**, `scripts/smoke-mcp.ts`'s expected-names list, and in `docs/s2-mcp-server.md` the prose total, the `## The tools` heading, the end-to-end verification line, the `### <tier> (N)` heading **of the tier you touched**, the intro's prose enumeration of the write tools, and the §"Security & cost invariants" write-ceiling row — plus the counts in codemap §3.3's `mcp.ts` row **and** §6. **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git status --porcelain src/db/migrations/` (**not `git diff --stat`** — the new `.sql` and its snapshot are UNTRACKED, so a diff shows only the `_journal.json` append and reads like the SQL never landed) plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0.
-- **next-up:** **XR.2** (`src/shared/xRankerSignals.ts` — `signalsToHeadPs`, `scoreDraftRanker` (C), `scoreMeasured` (E); **xhigh**; depends XR.1 ✓). It is the wave's substrate and the only thing gating both later lanes, so it runs alone. **Three things XR.1 hands it.** (a) The Bangermeter files its Read-first list names are **gone** — go upstream (D225, and the XR.1 gotcha with the URLs). (b) `MIN_VIDEO_DURATION_MS = 10_000` is **confirmed** off `param.rs` (`rust_home_mixer_min_video_duration_ms`), so XR.2 can declare it without re-fetching; XR.1 deliberately did not export it, because the plan puts it in XR.2's block and pre-stubbing surface is the thing this repo does not do. (c) `scoreHeads` already takes a `weights` override — that is how the mutual-follow reply weight reaches the sum, so XR.2 passes `replyWeightFor(ctx)` in rather than re-deriving it. Standing gate reminders: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); a pure `src/shared/` task owes **no** extension build and moves **no** docs count (the OU.1 precedent, paid again here); biome forbids non-null assertions (`x!`), a `let` assigned once and a backtick string with no interpolation, sorts import specifiers **case-sensitively** with `type` members ahead of value members of the same stem (`type XHeadName` before `X_HEADS`), and will reformat a >100-col call — run `bunx biome check --fix <files>` before the gate rather than hand-wrapping.
+- **next-up:** **XR.2** (`src/shared/xRankerSignals.ts` — `signalsToHeadPs`, `scoreDraftRanker` (C), `scoreMeasured` (E); **xhigh**; depends XR.1 ✓). It is the wave's substrate and the only thing gating both later lanes, so it runs alone. **Three things XR.1 hands it.** (a) The Bangermeter files its Read-first list names were gone when XR.1 ran, so XR.1 went upstream to X's published source (D225, and the XR.1 gotcha with the URLs) — **but the tree is back as of 2026-09-02 at `/Users/narcisbrindusescu/Downloads/bangermeter-main/`, so XR.2 can and should read `extension/weights.js` 328–420 and `extension/scoring.js` 516–600 / 693–790 directly**; see the READ-THIS block at the top for which oracle owns which number and which attribution goes with it. (b) `MIN_VIDEO_DURATION_MS = 10_000` is **confirmed** off `param.rs` (`rust_home_mixer_min_video_duration_ms`), so XR.2 can declare it without re-fetching; XR.1 deliberately did not export it, because the plan puts it in XR.2's block and pre-stubbing surface is the thing this repo does not do. (c) `scoreHeads` already takes a `weights` override — that is how the mutual-follow reply weight reaches the sum, so XR.2 passes `replyWeightFor(ctx)` in rather than re-deriving it. Standing gate reminders: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); a pure `src/shared/` task owes **no** extension build and moves **no** docs count (the OU.1 precedent, paid again here); biome forbids non-null assertions (`x!`), a `let` assigned once and a backtick string with no interpolation, sorts import specifiers **case-sensitively** with `type` members ahead of value members of the same stem (`type XHeadName` before `X_HEADS`), and will reformat a >100-col call — run `bunx biome check --fix <files>` before the gate rather than hand-wrapping.
 
 ## Ledger
 
@@ -231,7 +244,13 @@ true of the repo regardless of what you are building.
   the feature, not the source of these numbers. **Generalize: when a Read-first path is missing, the question
   is not "how do I proceed without it" but "what was that file a copy OF" — and if the answer is reachable,
   the plan's own fidelity argument obliges you to go there. Then fix the attribution to match what you read,
-  because a citation is a factual claim like any other.**
+  because a citation is a factual claim like any other.** **Postscript, 2026-09-02 (same day, after XR.1
+  shipped): the user supplied the missing tree at `/Users/narcisbrindusescu/Downloads/bangermeter-main/` and
+  all four paths now exist.** That does not undo any of the above — `xRanker.ts`'s Apache-2.0/xAI header still
+  describes what XR.1 actually read, and the upstream source is still the closer oracle for the weights. It
+  changes only XR.2/XR.3, whose Bangermeter-only material (`baselineP`, `engagementShrinkage`,
+  `engagementScore`, `vqvEligible`, `contentScore`, `calibrate.js`) is now readable at first hand and carries
+  the MIT/Ryan Lenk notice. See the READ-THIS block at the top of this file.
 - **D226** (XR.1 — **the plan's list of the five zeroed heads names the wrong head, and only reading the
   source catches it**). Task XR.1 says to ship *"the five explicitly-zeroed heads (`profile_click`, `dwell`,
   `quoted_vqv`, `cont_click_dwell_time`, `cont_active_secs_5m_residual_norm`)"*. **`dwell` is `0.05`, not
