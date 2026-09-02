@@ -135,39 +135,65 @@ export const X_BASELINE_P_PROVENANCE = 'bangermeter-estimate' as const;
 
 /** The E score's reference: what a typical post really does per view.
  *
- *  **PLACEHOLDER — not ours yet.** These are Bangermeter's per-post medians
- *  over 141 For You posts scraped from ONE logged-in timeline on 2026-08-13
- *  (`calibration/feed-sample-2026-08-13.csv`). They describe their feed, not
- *  ours, and their own note says engagement rate falls as reach rises
- *  (Spearman -0.37 against views in that sample), so a different account reads
- *  differently. §7.33: a ported number is validated against OUR corpus before
- *  it ships.
+ *  **OURS, measured (XR.3).** Per-post medians over 766 tweets from our own
+ *  passive Home-Timeline harvest (`harvest_rows` where `mode = 'timeline'`,
+ *  deduped at first sighting, `views > 0`), collected 2026-07-24..2026-08-17.
+ *  Rerun `bun run scripts/calibrate-ranker.ts` to re-derive; it refuses below
+ *  n=100 and prints what the swap does to the score distribution.
  *
- *  TODO(XR.3): replace with per-post medians measured off our own
- *  `harvest_rows` — same shape, `provenance: 'measured'`, stamped with `n`,
- *  the harvest mode and the date. `scripts/calibrate-ranker.ts` derives them
- *  and refuses below n=100. Until then `X_OBSERVED_RATES_PROVENANCE` reads
- *  `imported-unvalidated` and every E score is context about a feed that is
- *  not ours. */
+ *  These replaced Bangermeter's 141-post For You sample of 0.0123 / 0.00135 /
+ *  0.0007, which was low by 2.4x on favorites and **14.6x on replies**. Under
+ *  those, the median post in OUR feed scored 63 on a scale whose midpoint is 50
+ *  and 77% of the corpus read above average. Against these it reads 50 and 43%.
+ *  That gap is a real difference between two feeds, not a sampling artefact:
+ *  both samples are feed-time readings of the same maturity (theirs median 6h /
+ *  max 43h, ours median 3.1h / max 44.6h).
+ *
+ *  **Why `retweet` is 0 and that is not a missing measurement.** 66% of the
+ *  posts in our feed have no reposts at all, so zero IS the median. The head
+ *  becomes one-sided — at-reference for a post with none, above it for any post
+ *  with one — which is the honest shape of the thing. Nothing divides by it:
+ *  it is a shrinkage prior (`scoreMeasured`) and a baseline term
+ *  (`measuredBaselineRaw`), never a denominator.
+ *
+ *  **Limits, and they are ours rather than theirs.** One account, one niche —
+ *  a Home Timeline full of small founder accounts whose reply rates run an
+ *  order of magnitude above a general feed (median 297 views against their
+ *  6,600). The For You / Following split is NOT recorded by the passive
+ *  harvester, and their sample found Following running ~2x For You, so ours is
+ *  a blend of unknown proportions. These are **not** population constants for
+ *  X and must not be quoted as such — they are the reference that makes one of
+ *  our sightings comparable to another of our sightings.
+ *
+ *  Recalibration trigger: rerun when the corpus has roughly doubled, or after
+ *  any change in who the account follows — that changes the feed, which is the
+ *  whole population being measured. */
 export const X_OBSERVED_RATES: Readonly<Record<'favorite' | 'reply' | 'retweet', number>> = {
-  favorite: 0.0123,
-  reply: 0.00135,
-  retweet: 0.0007,
+  favorite: 0.029412,
+  reply: 0.019774,
+  retweet: 0,
 };
 
-export const X_OBSERVED_RATES_PROVENANCE = 'imported-unvalidated' as const;
+export const X_OBSERVED_RATES_PROVENANCE = 'measured' as const;
 
-/** Sample stamp for `X_OBSERVED_RATES`. XR.3 rewrites every field. */
+/** Sample stamp for `X_OBSERVED_RATES` — what was measured, and off what. */
 export const X_OBSERVED_RATES_SAMPLE = {
-  n: 141,
-  feed: 'forYou',
-  collected: '2026-08-13',
-  source: 'bangermeter calibration/feed-sample-2026-08-13.csv',
+  n: 766,
+  feed: 'home-timeline',
+  collected: '2026-07-24..2026-08-17',
+  source: "harvest_rows mode='timeline'",
 } as const;
 
 /** Empirical-Bayes pseudo-views for the E score:  p̂ = (count + K·p0)/(views + K).
  *  At K = 2000 a post with 200 views is pulled ~91% toward the feed median, so
- *  a single like on a small post cannot spike it. `provenance: 'estimate'`. */
+ *  a single like on a small post cannot spike it. `provenance: 'estimate'`.
+ *
+ *  **XR.3 measured what that costs us and it is the binding constraint on E.**
+ *  K was borrowed from a feed whose median post has 6,600 views (pulled 23%);
+ *  ours has 297 (pulled ~87%), so a typical sighting is nearly on the reference
+ *  before it is scored and E's p10..p90 spans only 32..54. The rates are right;
+ *  the smoother is too strong for this corpus. Not retuned here — that is a
+ *  measured recalibration, and XR.4's cell is what will justify one. */
 export const ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS = 2000;
 
 /** `rust_home_mixer_min_video_duration_ms` (xai-org/x-algorithm @ 7ba77684).

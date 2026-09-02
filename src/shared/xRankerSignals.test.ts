@@ -13,6 +13,7 @@ import {
   X_MODIFIERS,
   X_OBSERVED_RATES,
   X_OBSERVED_RATES_PROVENANCE,
+  X_OBSERVED_RATES_SAMPLE,
   positiveFloorRaw,
   rankerBand,
   resetRankerBaselineCache,
@@ -90,9 +91,10 @@ describe('the calibration anchor', () => {
     expect(rankerBand(RANKER_BAND_CUTS.strong - 1)).toBe('typical');
     expect(rankerBand(RANKER_BAND_CUTS.typical)).toBe('typical');
     expect(rankerBand(RANKER_BAND_CUTS.typical - 1)).toBe('below');
-    // Both borrowed numbers ship unvalidated against our corpus (§7.33).
+    // The cuts are still borrowed and still unvalidated (XR.4 owns the re-cut);
+    // the E-score reference stopped being borrowed at XR.3.
     expect(RANKER_BAND_CUTS_PROVENANCE).toBe('imported-unvalidated');
-    expect(X_OBSERVED_RATES_PROVENANCE).toBe('imported-unvalidated');
+    expect(X_OBSERVED_RATES_PROVENANCE).toBe('measured');
     expect(X_BASELINE_P_PROVENANCE).toBe('bangermeter-estimate');
   });
 
@@ -385,7 +387,11 @@ describe('E — the measured score', () => {
 
   test('shrinkage: a 1-like/10-view post scores below a 100-like/1000-view post', () => {
     const tiny = scoreMeasured({ likes: 1, replies: 0, reposts: 0, views: 10 });
-    const real = scoreMeasured({ likes: 100, replies: 5, reposts: 3, views: 1000 });
+    // Above the measured median on ALL THREE observable heads. XR.3 re-picked
+    // this fixture: it used to carry 5 replies, which was 3.7x above the
+    // imported reply reference and is 0.25x below the measured one, so the
+    // comparison was silently testing the reply head rather than shrinkage.
+    const real = scoreMeasured({ likes: 100, replies: 40, reposts: 3, views: 1000 });
     expect(tiny.available).toBe(true);
     expect(real.available).toBe(true);
     if (!tiny.available || !real.available) return;
@@ -449,5 +455,79 @@ describe('E — the measured score', () => {
 
   test('the shrinkage constant is the published pseudo-view count', () => {
     expect(ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS).toBe(2000);
+  });
+});
+
+describe('the E reference is ours, and stamped (XR.3)', () => {
+  test('provenance is measured or an honestly labeled import — never unvalidated', () => {
+    // The refusal rule made enforceable: `scripts/calibrate-ranker.ts` emits
+    // constants only above n=100, so claiming 'measured' with a small sample
+    // is the one failure this assertion exists to catch.
+    expect(['measured', 'imported-pending-calibration']).toContain(X_OBSERVED_RATES_PROVENANCE);
+    if (X_OBSERVED_RATES_PROVENANCE === 'measured') {
+      expect(X_OBSERVED_RATES_SAMPLE.n).toBeGreaterThanOrEqual(100);
+      expect(X_OBSERVED_RATES_SAMPLE.source.length).toBeGreaterThan(0);
+      expect(X_OBSERVED_RATES_SAMPLE.collected.length).toBeGreaterThan(0);
+      // The stamp has to say what to rerun, not just that something was run.
+      expect(X_OBSERVED_RATES_SAMPLE.source).toContain('harvest_rows');
+    }
+  });
+
+  test('the rates are probabilities, and retweet is legitimately zero', () => {
+    // The plan asked for all three in (0, 1). Measured, the retweet median is
+    // exactly 0 — 66% of the posts in our feed have no reposts, so zero is the
+    // honest central value rather than a missing measurement. The head goes
+    // one-sided (at-reference with none, above it with any) and nothing divides
+    // by it, so the assertion is [0, 1) with the two observed heads positive.
+    for (const rate of Object.values(X_OBSERVED_RATES)) {
+      expect(rate).toBeGreaterThanOrEqual(0);
+      expect(rate).toBeLessThan(1);
+    }
+    expect(X_OBSERVED_RATES.favorite).toBeGreaterThan(0);
+    expect(X_OBSERVED_RATES.reply).toBeGreaterThan(0);
+  });
+
+  test('a zero retweet reference still scores, and rewards a repost', () => {
+    // The failure this guards: a zero baseline term making `normalizeScore`
+    // divide by zero, or the head silently dropping out of the comparison.
+    const none = scoreMeasured({ likes: 30, replies: 20, reposts: 0, views: 1000 });
+    const few = scoreMeasured({ likes: 30, replies: 20, reposts: 5, views: 1000 });
+    const many = scoreMeasured({ likes: 30, replies: 20, reposts: 60, views: 1000 });
+    expect(none.available && few.available && many.available).toBe(true);
+    if (!none.available || !few.available || !many.available) return;
+    expect(Number.isFinite(none.score)).toBe(true);
+    // The head is live and directional in the RAW score at any repost count...
+    expect(few.raw).toBeGreaterThan(none.raw);
+    expect(many.raw).toBeGreaterThan(few.raw);
+    // ...but five reposts do not survive rounding, and sixty do. That is the
+    // shrinkage constant flattening the scale on a low-view corpus, not the
+    // zero reference: K=2000 against a 1000-view post keeps two thirds of the
+    // weight on the reference. Pinned so XR.4's re-cut sees it.
+    expect(few.score).toBe(none.score);
+    expect(many.score).toBeGreaterThan(none.score);
+  });
+
+  test('a below-median reply rate outweighs a large favorite surplus', () => {
+    // Exposed by XR.3's measured reference and worth pinning, because it looks
+    // wrong at a glance: `real` has 10x the like rate of `tiny` and still loses.
+    // Reply carries X's published 5.0 against favorite's 0.5, our measured feed
+    // median reply rate is 0.019774 (an engagement-bait timeline), and 5 replies
+    // on 1000 views is a quarter of it. Meanwhile shrinkage hands a 10-view post
+    // the median on every head for free — which is what `lowSample` is for.
+    const tiny = scoreMeasured({ likes: 1, replies: 0, reposts: 0, views: 10 });
+    const real = scoreMeasured({ likes: 100, replies: 5, reposts: 3, views: 1000 });
+    expect(tiny.available && real.available).toBe(true);
+    if (!tiny.available || !real.available) return;
+    expect(real.score).toBeLessThan(tiny.score);
+    expect(tiny.lowSample).toBe(true);
+  });
+
+  test('the two baselines stay two numbers (plan Decision 4)', () => {
+    // A measured median is the rate of a typical post INCLUDING whatever
+    // signals it carries; using it as the signal-free prior double-counts the
+    // average signal. A future "why do we have two of these" cleanup dies here.
+    expect(X_BASELINE_P.favorite).not.toBe(X_OBSERVED_RATES.favorite);
+    expect(X_BASELINE_P.reply).not.toBe(X_OBSERVED_RATES.reply);
+    expect(X_BASELINE_P_PROVENANCE).not.toBe(X_OBSERVED_RATES_PROVENANCE);
   });
 });
