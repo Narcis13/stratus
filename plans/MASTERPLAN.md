@@ -1,4 +1,4 @@
-# MASTERPLAN — unified execution order for the 19 feature plans
+# MASTERPLAN — unified execution order for the 20 feature plans
 
 > **Created:** 2026-07-17. Combines every plan in `plans/` into one dependency-correct
 > execution order with per-task reasoning levels and parallel lanes.
@@ -10,6 +10,9 @@
 > **Extended 2026-08-24:** Wave 9 (OU — the Outliers advanced-search query builder). This
 > re-opens the masterplan a second time, closed at RA.8 since 2026-08-18; the ledger and the
 > now twice-stale "current state" numbers are re-opened by OU.1 (see the Wave 9 rationale).
+> **Extended 2026-09-02:** Wave 10 (XR — the X ranker port). This re-opens the masterplan a
+> third time, closed at OU.8 / 157-of-157 since 2026-08-25; the ledger and the now thrice-stale
+> "current state" numbers are re-opened by XR.1 (see the Wave 10 rationale).
 > **Execution state lives in `.claude/skills/masterplan/STATE.md`** — this file is the
 > static plan; never mark progress here.
 > **Driven by the `/masterplan` skill** — one task per session, codemap-first, state
@@ -38,6 +41,7 @@
 | RC | `2026-07-28-radar-curated-drafting.md` | 5 | Radar curation: score the queue, dismiss the noise, draft the top N |
 | RA | `2026-08-17-radar-access.md` | 8 | Swept sightings mirrored to the server + MCP read/draft tools + the radar-analyst skill |
 | OU | `2026-08-03-search-query-builder.md` | 8 | Outliers: X advanced-search compiler, clipboard hand-off, saved hunts (revised 2026-08-24) |
+| XR | `2026-09-02-x-ranker-port.md` | 8 | X ranker port: published For You weights as a $0 C/E score + the falsification cell |
 
 Task IDs are `<code>.<n>` matching "Task n" in the source plan. **The source plan's task
 block is the implementation spec** — this file only fixes order, reasoning level, and
@@ -674,6 +678,114 @@ are each the rubric's second clause — a subtle mistake passes every test:
 
 ---
 
+## Wave 10 — The X ranker port: published For You weights as a second signal (XR)
+
+Rationale: one plan written 2026-09-02, and the wave that re-opens a masterplan closed at OU.8
+(157/157) since 2026-08-25. It answers a gap the coach cannot: `postCoach`'s 29 prose rules grade
+own goals, and its own header concedes writing quality is nearly uncorrelated with impressions. XR
+puts a second number beside it — **C**, computed from X's *published production* ranking weights
+(`xai-org/x-algorithm`, `home-mixer/params/param.rs`, synced 2026-08-12) with a direct port of
+`ranking_scorer.rs` arithmetic — and an **E** score, the same weights over a post's *measured*
+rates. Both ship as context, never advice, until the wave's own falsification cell says otherwise.
+
+**The whole wave is $0**, and structurally so: every read is over rows already stored
+(`harvest_rows`, `voice_tweets`, `chrome.storage.local`), no task can reach `xFetch` or `askLLM`,
+and invariant #8 is untouched — nothing here adds a billed read back to get a count the DOM did not
+give us. A missing view count is **unknown** (§7.11) and renders nothing.
+
+**The wave's spine is the doctrine, not the UI.** §7.33/§7.34 say a ported number is validated
+against OUR corpus before it ships and that the borrowed *method* is what needs validating — so
+XR.3 (recalibrate the E baseline off our own passive harvest) and XR.4 (the quartile cell that asks
+whether C or E separates our posts by median views) are **not** deferred behind the pills. The
+plan's Decision 3 is explicit that they come first; do not re-order them behind XR.5–XR.7 because
+the visible half is more satisfying to ship.
+
+**XR.1 owes the re-opening**, in its own commit: this file's legend, header note and this section
+are already here, so what remains is STATE.md — the eight ledger rows, the Wave 10 hot-file locks,
+and a **recount** of the `current state` line, stale for the third time (it was last recounted at
+OU.8 and five ad-hoc lanes have shipped outside the ledger since RA.8). Skip that recount and every
+later XR task inherits wrong counts and asserts against them.
+
+| Order | ID | Task | Depends | Reasoning |
+|---|---|---|---|---|
+| 10.1 | XR.1 | `src/shared/xRanker.ts` — 26 published weights, `ScoringWeights::new` sums, `offsetScore`, `diversityMultiplier` (**owes the re-opening**; MIT attribution in the header) | — | **xhigh** |
+| 10.2 | XR.2 | `src/shared/xRankerSignals.ts` — our estimator: `signalsToHeadPs`, `scoreDraftRanker` (C), `scoreMeasured` (E) | XR.1 | **xhigh** |
+| 10.3 | XR.3 | `scripts/calibrate-ranker.ts` + measured `X_OBSERVED_RATES` (per-post median, maturity cut, refuses below n=100) | XR.2 | **xhigh** |
+| 10.4 | XR.5 | Two shims (`include` **12 → 14**) + the Composer's **C** pill beside the coach pill | XR.2 (not XR.4) | high |
+| 10.5 | XR.4 | `buildRankerScoreEffectiveness` + `latestOwnPostRows` + `rankerScoreEffectiveness` on `/x/playbook` | XR.3 | high |
+| 10.6 | XR.6 | **E** chip on Radar sightings — scores the *target*, never the drafted reply | XR.5 | high |
+| 10.7 | XR.7 | Migration **`0032`** (5 nullable `voice_tweets` columns) + server-computed `ranker_e` on `scrapeSave` + on-page badge + the two `extractArticle` fixes (**runs alone**) | XR.5 | **xhigh** |
+| 10.8 | XR.8 | XR docs-sync + `$0 scripts/smoke-x-ranker.ts` + the browser pass | all | high |
+
+Parallelizable inside Wave 10: nothing until XR.2 lands — XR.1 → XR.2 is the wave's substrate and
+both write the two new `src/shared/` siblings. After XR.2 the wave splits into **two lanes** that
+share no file: a **measurement lane** (XR.3 → XR.4 — `src/shared/xRankerSignals.ts`, then
+`src/x/playbook.ts` + `src/x/routes/playbook.ts` + `scripts/`) and an **extension lane**
+(XR.5 → XR.6, then XR.7). Serial constraints: **`src/shared/xRankerSignals.ts` is the wave's hot
+file on the server side** — XR.2 writes it, XR.3 replaces `X_OBSERVED_RATES` inside it, and XR.5
+only imports it, so XR.3 and XR.5 must not both be open on it; the panel files serialize by
+ownership (`Composer.tsx` = XR.5, `Radar.tsx` = XR.6, `content.ts` + `harvester.ts` = XR.7 — one
+owner each, no overlap); **XR.7 runs alone as the migration task** (global rule 1) and must confirm
+`0032` off the journal rather than trust the plan text, even though STATE.md's last recount says the
+journal is free from `0032`; XR.8 closes after everything. XR.5 depends on XR.2, **not** XR.4 — the
+Composer needs the score, not the cell — so the pill can ship while the cell is still being cut.
+
+This wave bumps **no MCP count** (28 stays; there is no tool in it) and **no registry count** — a
+weight is a transcribed fact, and "add a settings knob for a weight" is explicitly out of scope, so
+the seven-edit mirrored-knob move and the six-string MCP move both stay untouched (confirm, don't
+assume). It bumps **no table count** either: `0032` adds columns to `voice_tweets`, it creates
+nothing. The counts it *does* bump are the migration head (`0031_sharp_screwball` → `0032`), the
+extension `include` shim count (**12 → 14** — two shims in one task, the first time this repo adds a
+pair), and the smoke-script count (41 → 42). Docs touched at XR.8: `docs/composer-tab.md`,
+`docs/radar-tab.md`, `docs/voice-tab.md`, `docs/PHASE-HISTORY.md`, `PLAN.md`, and **CLAUDE.md only
+if the baseline ships as `imported-pending-calibration`** — that is a guardrail (an un-recalibrated
+import), which is the one condition under which CLAUDE.md is edited at all.
+
+**Reasoning-level notes.** No task is **max** — nothing here touches the prompt-template surgery
+chain, the publisher, or any billed path. XR.4, XR.5, XR.6 and XR.8 are **high** by the rubric's
+first clause: XR.4 is `buildCoachScoreEffectiveness`'s twin with `OutcomeCell`/`cellOf`/`median`
+reused verbatim, XR.5 copies `extension/src/searchQuery.ts`'s bare shim and the existing coach pill,
+XR.6 copies the Radar row's chip taxonomy, XR.8 is a docs-sync. The three **xhigh** tasks are each
+the rubric's second clause — a mistake passes every test:
+
+- **XR.1** is single-file, pure and dependency-free, which normally reads *high*, and it is not, for
+  the same reason OU.1 wasn't: **the oracle is off-machine.** A test written by the session that
+  wrote the module proves self-consistency, not fidelity. One mis-transcribed weight, one head put
+  in `positive_sum` that `ScoringWeights::new` excludes (the `cont_*` heads and the mutual boost),
+  or an `offsetScore` that clamps instead of squashing, and every downstream number is quietly wrong
+  while looking plausible. Assert each of the 26 weights against its `param.rs` **parameter name**,
+  not just its value, and re-check the sums against the Rust source rather than against your port.
+- **XR.2** is the substrate every later task stands on, and its failure mode is the ranker's:
+  a head that is **unobservable** must be `null`, never `0` (§7.11) — a zero is a claim that the
+  head fired and did nothing, and it drags `combined` down for every post we simply didn't measure.
+  It is also where two rule vocabularies could fork: it reads `postCoach` check ids and `postFormat`
+  (Decision 1), and Bangermeter's `contentModifiers` survive **only as a provenance comment**.
+  Every modifier magnitude ships as a named constant with `provenance: 'estimate'` and its ≥100
+  recalibration trigger — the weights are authoritative, the modifiers are guesses, and the module
+  must make that legible to the next reader (Risk 3).
+- **XR.3** is xhigh for §7.34 exactly: **per-post median, never pooled** (pooled answers a different
+  question and a few viral rows own it), and the maturity cut clocks against the **newest post in
+  the sample**, not `Date.now()`, or the same corpus yields a different answer next week. Its
+  refusal rule is load-bearing — below n=100 it emits no constants and the imported set stays,
+  relabeled `imported-pending-calibration`. Shipping a fabricated median is the precise failure
+  §7.33 exists to prevent; shipping a labeled import is not.
+- **XR.7** is a migration (rubric: xhigh by category) *plus* a content-script touch under the IIFE
+  constraint (§7.26) *plus* two `extractArticle` fixes. Three separate silent-corruption modes live
+  here: defaulting a new column to `0` instead of `null` makes every pre-0032 row read as measured;
+  trusting a client-supplied `rankerE` puts a number in the DB the server cannot defend (§7.16 — the
+  client reports the OBSERVATION, the server decides the MEANING); and the `hasPhoto` quote-scoping
+  bug has been poisoning the Playbook's media cell all along, so its fixture test is the fix, not a
+  formality. Split into 7a (schema + migration + route + tests) and 7b (badge + the two fixes) if
+  the session strains — 7a's columns are simply unwritten until 7b ships.
+
+**One copy risk that is not a code risk** (Risk 6): two numbers in one Composer column is the
+intended design (Decision 2), and the only thing separating "the weights are authoritative" from
+"therefore C is authoritative" is the pill copy. If a browser check reads the two pills as one score
+with two renderings, fix the copy in XR.5 rather than shipping and hoping. Neither number may sort,
+gate, block or refuse anything (§7.23a).
+
+---
+
 ## Parallelism model (how many sessions at once)
 
 Practical ceiling: **2–3 concurrent sessions**, each owning a lane, coordinated through
@@ -700,6 +812,10 @@ STATE.md's hot-file locks:
 - **Wave 9:** OU.2 alone (migration), then 2 lanes — OU.1 (`src/shared/`) ∥ OU.3
   (`src/x/settings/`) — and a single lane from OU.4 on, because OU.5 → OU.6 → OU.7 all write
   `Outliers.tsx` (D195). OU.8 closes alone. Effective ceiling for this wave is **2**.
+- **Wave 10:** one lane through XR.1 → XR.2 (both write the two new `src/shared/` siblings),
+  then 2 lanes — measurement (XR.3 → XR.4) ∥ extension (XR.5 → XR.6, then XR.7) — which share no
+  file once `xRankerSignals.ts` is released by XR.3. XR.7 runs alone as the migration task; XR.8
+  closes alone. Effective ceiling for this wave is **2**.
 
 Rules: a lane claims its hot files in STATE.md before starting and releases on commit;
 migration tasks always run alone; when in doubt, serialize — a merge conflict in
