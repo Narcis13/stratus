@@ -26,6 +26,7 @@ import {
 import { OpenRouterApiError } from '../../openrouter/index.ts';
 import { type JudgeVerdictLabel, isJudgeVerdictLabel } from '../../shared/judge.ts';
 import { SWEEP, type SweepConfig } from '../../shared/radarSweep.ts';
+import type { DraftFeatures } from '../../shared/xRankerSignals.ts';
 import {
   accountSnapshots,
   cannonTargets,
@@ -57,6 +58,7 @@ import {
   type OwnReplyPerformance,
   type OwnReplyRow,
   type PillarRegisterRow,
+  type RankerPostRow,
   type ReplyOrigin,
   type RosterCoverage,
   type StructureRow,
@@ -73,6 +75,7 @@ import {
   buildModelEffectiveness,
   buildOwnReplyPerformance,
   buildPillarRegisterScorecard,
+  buildRankerScoreEffectiveness,
   buildRelationshipLift,
   buildRosterCoverage,
   buildStructureEffectiveness,
@@ -603,6 +606,74 @@ export async function latestOwnReplyRows(
   }));
 }
 
+/** The passive/own-profile harvest of MY OWN posts. §8: every `harvest_rows`
+ *  reader carries a `mode` filter or the corpora silently mix. */
+const OWN_POST_HARVEST_MODE = 'posts';
+
+/**
+ * My own harvested ORIGINALS, one row per tweet — the latest capture of each.
+ *
+ * **`harvest_rows`, never `metrics_snapshots`, and that is a decision rather
+ * than a convenience** (XR plan decision 6). Every other own-originals cell on
+ * this page reads `loadOriginalPostRows` → `latestOutcomes` → `metrics_snapshots`,
+ * which has been FROZEN since 2026-08-12 (invariant #8 deleted the billed daily
+ * pass) and which never carried reply or repost counts anyway. The E score needs
+ * likes + replies + reposts + views, which is exactly the `harvest_rows` column
+ * set and exactly what the $0 DOM harvest already stores. Do NOT widen
+ * `loadOriginalPostRows` to serve both — they are two populations measured by
+ * two instruments, and one loader would invite them to be compared.
+ *
+ * `max(captured_at)` with bare columns is SQLite's latest-row-per-group form,
+ * the same one `latestOwnReplyRows` uses and for the same reason: a published
+ * post's outcome is its FINAL count, not its first sighting. (The passive
+ * timeline funnel wants the opposite direction; see that loader's header.)
+ *
+ * No time window. Unlike the reply corpus this is the whole published history —
+ * the cell is asking whether a score predicts reach at all, and throwing away
+ * older posts would only shrink an already thin sample.
+ *
+ * $0: nothing on this path can reach xFetch.
+ */
+export async function latestOwnPostRows(selfHandle: string): Promise<RankerPostRow[]> {
+  const handle = normalizeSelfHandle(selfHandle);
+  if (handle === '') return [];
+  const rows = await db
+    .select({
+      capturedAt: sql<number>`max(${harvestRows.capturedAt})`,
+      text: harvestRows.text,
+      views: harvestRows.views,
+      likes: harvestRows.likes,
+      comments: harvestRows.comments,
+      reposts: harvestRows.reposts,
+      hasPhoto: harvestRows.hasPhoto,
+      hasVideo: harvestRows.hasVideo,
+      isQuote: harvestRows.isQuote,
+    })
+    .from(harvestRows)
+    .where(and(eq(harvestRows.mode, OWN_POST_HARVEST_MODE), eq(harvestRows.handle, handle)))
+    .groupBy(harvestRows.tweetId);
+
+  return rows.map((r) => {
+    // The shape columns are nullable because older extension builds didn't send
+    // them, and §7.11 says an unknown is absent rather than false — `scoreMeasured`
+    // and `scoreDraftRanker` both drop an absent feature instead of scoring it 0.
+    const feats: DraftFeatures = {};
+    if (r.hasPhoto !== null) feats.hasImage = r.hasPhoto;
+    if (r.hasVideo !== null) feats.hasVideo = r.hasVideo;
+    if (r.isQuote !== null) feats.isQuote = r.isQuote;
+    return {
+      text: r.text,
+      counts: { views: r.views, likes: r.likes, replies: r.comments, reposts: r.reposts },
+      feats,
+      // The metric columns are notNull with a 0 default, so a zero view count is
+      // "the DOM carried no number", not "nobody saw it" — the same `views > 0`
+      // reading `loadTimelineFunnel` and `calibrate-ranker.ts` take. Counting it
+      // as measured would put a fabricated zero in every median on the page.
+      outcome: r.views > 0 ? { views: r.views, profileVisits: null } : null,
+    };
+  });
+}
+
 /** The §2.2–§2.4 tables over my own harvested replies, plus RC.9's room /
  *  opening / contamination axes. Still two SELECTs, both $0 — the rows were
  *  scraped for free and the roster is nine local rows, one of which now also
@@ -823,6 +894,15 @@ playbook.get('/playbook', async (c) => {
     mediaEffectiveness: buildMediaEffectiveness(originals, minN),
     formatEffectiveness: buildFormatEffectiveness(originals, minN),
     coachScoreEffectiveness: buildCoachScoreEffectiveness(originals, minN, coachLexicon),
+    // XR.4's falsification cell. A DIFFERENT population from the four cells
+    // above (own harvested originals, not `posts_published` × `metrics_snapshots`)
+    // and deliberately so — see `latestOwnPostRows`. Same lexicon, because C
+    // reads the same coach checks the Composer's pill did.
+    rankerScoreEffectiveness: buildRankerScoreEffectiveness(
+      await latestOwnPostRows(configuredSelfHandle()),
+      minN,
+      coachLexicon,
+    ),
     judgeEffectiveness: buildJudgeEffectiveness(judgeRows, minN),
     ideaEffectiveness: buildIdeaEffectiveness(await loadIdeaRows(), minN),
     latencyEffectiveness: buildLatencyEffectiveness(toLatencyRows(replyRows), minN),

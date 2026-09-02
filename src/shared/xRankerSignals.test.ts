@@ -7,6 +7,7 @@ import {
   MIN_VIDEO_DURATION_MS,
   RANKER_BAND_CUTS,
   RANKER_BAND_CUTS_PROVENANCE,
+  RANKER_BAND_CUTS_SAMPLE,
   SIGNAL_FREE_SCORE,
   X_BASELINE_P,
   X_BASELINE_P_PROVENANCE,
@@ -15,7 +16,8 @@ import {
   X_OBSERVED_RATES_PROVENANCE,
   X_OBSERVED_RATES_SAMPLE,
   positiveFloorRaw,
-  rankerBand,
+  rankerDraftBand,
+  rankerMeasuredBand,
   resetRankerBaselineCache,
   scoreDraftRanker,
   scoreMeasured,
@@ -48,7 +50,12 @@ describe('the calibration anchor', () => {
     const r = scoreDraftRanker(SIGNAL_FREE);
     expect(r.modifiers).toEqual([]);
     expect(r.score).toBe(SIGNAL_FREE_SCORE);
-    expect(r.band).toBe('typical');
+    // XR.4: `below`, and that is the re-cut working rather than a regression —
+    // 50 is the signal-free reference, and our own published originals run a
+    // measured q1 of 56. A draft carrying nothing IS below what we typically
+    // ship; under the imported 40/65 it read `typical` and so did 68% of
+    // everything else.
+    expect(r.band).toBe('below');
     expect(r.netNegative).toBe(false);
     // `normalizeScore` puts the reference on 50 by construction, so this also
     // proves the score is measured against the signal-free baseline and not
@@ -86,22 +93,53 @@ describe('the calibration anchor', () => {
     expect(scoreHeads(headPs).raw).toBeCloseTo(before, 15);
   });
 
-  test('band cut points and their edges', () => {
-    expect(rankerBand(RANKER_BAND_CUTS.strong)).toBe('strong');
-    expect(rankerBand(RANKER_BAND_CUTS.strong - 1)).toBe('typical');
-    expect(rankerBand(RANKER_BAND_CUTS.typical)).toBe('typical');
-    expect(rankerBand(RANKER_BAND_CUTS.typical - 1)).toBe('below');
-    // The cuts are still borrowed and still unvalidated (XR.4 owns the re-cut);
-    // the E-score reference stopped being borrowed at XR.3.
-    expect(RANKER_BAND_CUTS_PROVENANCE).toBe('imported-unvalidated');
+  test('band cut points and their edges, on both scales', () => {
+    for (const [band, cuts] of [
+      [rankerDraftBand, RANKER_BAND_CUTS.draft],
+      [rankerMeasuredBand, RANKER_BAND_CUTS.measured],
+    ] as const) {
+      expect(band(cuts.strong)).toBe('strong');
+      expect(band(cuts.strong - 1)).toBe('typical');
+      expect(band(cuts.typical)).toBe('typical');
+      expect(band(cuts.typical - 1)).toBe('below');
+    }
+    // XR.4: the cuts stopped being borrowed. Every ranker constant that is not
+    // one of X's published facts now carries the provenance of how we got it.
+    expect(RANKER_BAND_CUTS_PROVENANCE).toBe('measured');
     expect(X_OBSERVED_RATES_PROVENANCE).toBe('measured');
     expect(X_BASELINE_P_PROVENANCE).toBe('bangermeter-estimate');
+  });
+
+  test('the two scales are cut SEPARATELY, and a score in the gap proves it', () => {
+    // The whole reason `rankerBand(score, scale)` does not exist: E's measured
+    // distribution sits an order of magnitude tighter around 50 than C's, so
+    // one number reads two different bands and nothing but the call site says
+    // which is meant. 60 is `typical` as a draft and `strong` as a measurement.
+    expect(rankerDraftBand(60)).toBe('typical');
+    expect(rankerMeasuredBand(60)).toBe('strong');
+    expect(RANKER_BAND_CUTS.draft).not.toEqual(RANKER_BAND_CUTS.measured);
+  });
+
+  test('each pair IS its corpus quartiles — the cuts are not free parameters', () => {
+    // The rule (not the numbers) is what must not drift: a cut point is the
+    // measured q1/q3 of the corpus that scale is applied to, so a band always
+    // means a quartile position. A future recalibration moves the sample stamp
+    // and the cuts together or it is a vibes edit.
+    expect(RANKER_BAND_CUTS.draft.typical).toBe(RANKER_BAND_CUTS_SAMPLE.draft.quartiles.q1);
+    expect(RANKER_BAND_CUTS.draft.strong).toBe(RANKER_BAND_CUTS_SAMPLE.draft.quartiles.q3);
+    expect(RANKER_BAND_CUTS.measured.typical).toBe(RANKER_BAND_CUTS_SAMPLE.measured.quartiles.q1);
+    expect(RANKER_BAND_CUTS.measured.strong).toBe(RANKER_BAND_CUTS_SAMPLE.measured.quartiles.q3);
+    for (const stamp of [RANKER_BAND_CUTS_SAMPLE.draft, RANKER_BAND_CUTS_SAMPLE.measured]) {
+      expect(stamp.n).toBeGreaterThanOrEqual(100);
+      expect(stamp.quartiles.q1).toBeLessThan(stamp.quartiles.median);
+      expect(stamp.quartiles.median).toBeLessThan(stamp.quartiles.q3);
+    }
   });
 
   test('the band is read off the ROUNDED score, so pill and word cannot disagree', () => {
     for (const text of [SIGNAL_FREE, NET_NEGATIVE, STRONG]) {
       const r = scoreDraftRanker(text);
-      expect(r.band).toBe(rankerBand(r.score));
+      expect(r.band).toBe(rankerDraftBand(r.score));
       expect(Number.isInteger(r.score)).toBe(true);
     }
   });
@@ -305,7 +343,7 @@ describe('the net-negative branch, end to end', () => {
     // The claim worth testing is the ORDERING.
     expect(bad.raw).toBeGreaterThan(0);
     expect(bad.raw).toBeLessThan(positiveFloorRaw());
-    expect(bad.score).toBeLessThan(RANKER_BAND_CUTS.typical);
+    expect(bad.score).toBeLessThan(RANKER_BAND_CUTS.draft.typical);
     expect(bad.band).toBe('below');
     for (const text of [SIGNAL_FREE, STRONG]) {
       expect(bad.raw).toBeLessThan(scoreDraftRanker(text).raw);

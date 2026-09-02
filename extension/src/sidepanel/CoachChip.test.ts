@@ -85,11 +85,12 @@ describe('ranker band tone', () => {
     }
   });
 
-  test('only `below` takes a tone while the cut points stay unvalidated (D230)', () => {
-    // `strong` is the MODAL band on our modifier set, not the exceptional one,
-    // so colouring it would sell a borrowed cut point as a verdict. XR.4's
-    // falsification cell owns the re-cut; until then the two upper bands are
-    // as quiet as the chip family's base.
+  test('only `below` takes a tone while the cut points stay UNVALIDATED (D230)', () => {
+    // XR.4 re-cut the bands off measured quartiles, which fixed the centring —
+    // and left this claim standing, because a colour is a verdict and the cell
+    // that would earn one (`rankerScoreEffectiveness`, "does a C quartile
+    // predict reach") still has no own-profile harvest rows to answer over.
+    // Centred is not the same as validated; the two upper bands stay quiet.
     expect(rankerBandChip('typical')).toBe(rankerBandChip('strong'));
     expect(rankerBandChip('strong')).toContain('chip-muted');
     expect(rankerBandChip('below')).toContain('chip-warn');

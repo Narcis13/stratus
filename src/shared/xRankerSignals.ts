@@ -188,12 +188,27 @@ export const X_OBSERVED_RATES_SAMPLE = {
  *  At K = 2000 a post with 200 views is pulled ~91% toward the feed median, so
  *  a single like on a small post cannot spike it. `provenance: 'estimate'`.
  *
- *  **XR.3 measured what that costs us and it is the binding constraint on E.**
- *  K was borrowed from a feed whose median post has 6,600 views (pulled 23%);
- *  ours has 297 (pulled ~87%), so a typical sighting is nearly on the reference
- *  before it is scored and E's p10..p90 spans only 32..54. The rates are right;
- *  the smoother is too strong for this corpus. Not retuned here — that is a
- *  measured recalibration, and XR.4's cell is what will justify one. */
+ *  **XR.3 called this the binding constraint on E; XR.4 measured it and it is
+ *  not, so the constant stays at 2000 on evidence rather than on inertia.**
+ *  The worry was real — K was borrowed from a feed whose median post has 6,600
+ *  views (pulled 23%) while ours has 297 (pulled ~87%), and E's p10..p90 spans
+ *  only 32..54. Two measurements over our 3,567 harvested sightings say the
+ *  smoother is not what to change:
+ *
+ *  1. **Method of moments over the passive-timeline corpus puts K near where it
+ *     already is.** Beta-binomial MoM on `favorite` gives K ~= 1066; on `reply`
+ *     and `retweet` the between-post variance comes out NEGATIVE, i.e. the
+ *     spread in observed rates is entirely explained by binomial noise off tiny
+ *     view counts, with no per-post signal left to recover. Even on `favorite`
+ *     only 2.4% of the rate variance is between-post. Lowering K would amplify
+ *     that noise, not the signal.
+ *  2. **The thing K was blamed for was the band cut.** At K=1066 only 0.2% of
+ *     sightings clear the old `strong` cut of 65; at K=500, 1.9%. Re-cutting the
+ *     bands off the measured quartiles fixed it outright (`RANKER_BAND_CUTS`).
+ *
+ *  E's narrow span is a property of a corpus whose median post has 297 views,
+ *  not of the smoother. Revisit only if the harvested corpus starts carrying
+ *  materially larger posts. */
 export const ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS = 2000;
 
 /** `rust_home_mixer_min_video_duration_ms` (xai-org/x-algorithm @ 7ba77684).
@@ -472,40 +487,77 @@ export const X_MODIFIERS: readonly RankerModifier[] = [
 
 export type RankerBand = 'below' | 'typical' | 'strong';
 
-/** Cut points from Bangermeter's `scoreLevel` (40 / 65), `provenance:
- *  'estimate'`, and checked rather than assumed: they were derived against
- *  their `50·sqrt(raw/baseline)` display scale, while ours is `xRanker`'s
- *  parameter-free `100·raw/(raw+baseline)`. In the band that matters the two
- *  agree closely — 65 is a ratio of 1.69 there against 1.86 here, 40 is 0.64
- *  against 0.67 — and they only diverge in the tails, where theirs pins at 100
- *  for anything at 4x baseline and ours never saturates.
+/** Cut points, **MEASURED off our own corpus at XR.4** (2026-09-02) and split
+ *  into one pair per scale, which is the finding rather than a formatting
+ *  choice: C and E are two different distributions, and the single imported
+ *  pair left one of them with a dead band at each end.
+ *
+ *  What the imported 40/65 actually did on our corpus, four independent
+ *  samples, all $0 reads over rows already stored:
+ *
+ *  | corpus                              |   n  | below | typical | strong |
+ *  |-------------------------------------|-----:|------:|--------:|-------:|
+ *  | C over own published originals      |  308 |  0.3% |   68.5% |  31.2% |
+ *  | E over Radar sightings              |  712 | 11.7% |   88.3% |   0.0% |
+ *  | E over own DOM-harvested sightings  | 3567 | 13.6% |   86.3% |   0.1% |
+ *  | E over the passive timeline sample  |  766 | 11.4% |   88.4% |   0.3% |
+ *
+ *  So `below` never fired on a draft and `strong` never fired on a sighting —
+ *  a three-valued instrument reading two values, one of them almost always.
+ *  D230 predicted half of that (it expected `strong` to be C's modal band; on
+ *  real posts rather than the suite's modifier-tripping fixtures it is 31%,
+ *  and the broken end is `below`). Both ends are now measured rather than
+ *  predicted.
+ *
+ *  **The rule, and it is the same rule on both scales: the cuts are the
+ *  measured q1 / q3 of the corpus the score is applied to.** A band therefore
+ *  means a QUARTILE POSITION — bottom quarter / middle half / top quarter of
+ *  what we actually see — which is one claim both scales can carry honestly
+ *  even though their numbers differ. Quantile convention is
+ *  `scripts/calibrate-ranker.ts`'s (sort ascending, index
+ *  `min(len-1, floor(p*len))`), so a rerun reproduces these exactly.
+ *
+ *  **Not a K problem, and that is worth recording because it was the standing
+ *  suspicion.** `ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS`'s caveat read "the smoother
+ *  is too strong for this corpus". Measured: dropping K to 1066 (the
+ *  method-of-moments estimate below) still puts only 0.2% of sightings over 65,
+ *  and even K=500 reaches 1.9%. The dead band was the cut, not the smoother —
+ *  see that constant's own note.
  *
  *  **Deliberately NOT `CoachBand`'s vocabulary.** C is a different scale
  *  answering a different question; sharing the words would invite the two
  *  pills to be read as one number.
  *
- *  **UNVALIDATED, and measurably off-centre today** — the same status
- *  `X_OBSERVED_RATES` carries, for the same reason (§7.34: it is the borrowed
- *  METHOD that needs validating, not only the borrowed number). 50 is where a
- *  draft with ZERO modifiers lands, and no real draft has zero modifiers:
- *  `X_MODIFIERS` keys twelve of its entries on `postCoach` checks PASSING, and
- *  an ordinary well-formed post passes several. Measured over the suite's
- *  fixtures, a competent post lands at 66-71 — so `strong` is the modal band,
- *  not the exceptional one. Their cut points were calibrated against their own
- *  modifier set, which is mostly penalties and rare enables; ours mostly
- *  rewards.
- *
- *  Left at 40/65 on purpose rather than nudged to fit: the reference a band
- *  should be centred on is a TYPICAL draft, and what a typical draft scores is
- *  a measurement nobody has taken yet. `SIGNAL_FREE_SCORE` and the suite's
- *  distribution fixture pin today's behaviour so a recalibration is a visible
- *  decision instead of a drift.
- *
- *  TODO(XR.4): re-cut off the measured quartiles once the falsification cell
- *  has n>=20 per side. Never by vibes (CLAUDE.md thresholds rule). */
-export const RANKER_BAND_CUTS = { strong: 65, typical: 40 } as const;
+ *  Recalibration trigger: rerun `bun run scripts/calibrate-ranker.ts` when
+ *  either corpus has roughly doubled. The `/x/playbook` cell
+ *  (`rankerScoreEffectiveness`, XR.4) is the separate question — whether either
+ *  band predicts REACH — and it needs own-profile harvest rows, which is a
+ *  different gate (n>=20 per side) and a different answer. */
+export const RANKER_BAND_CUTS = {
+  /** C, the prospective score over a draft's text. */
+  draft: { strong: 68, typical: 56 },
+  /** E, the retrospective score over a post's measured counts. */
+  measured: { strong: 51, typical: 46 },
+} as const;
 
-export const RANKER_BAND_CUTS_PROVENANCE = 'imported-unvalidated' as const;
+export const RANKER_BAND_CUTS_PROVENANCE = 'measured' as const;
+
+/** What each pair was cut from — the `X_OBSERVED_RATES_SAMPLE` discipline: a
+ *  measured constant carries its corpus, not just its value. */
+export const RANKER_BAND_CUTS_SAMPLE = {
+  draft: {
+    n: 308,
+    source: 'posts_published, is_reply=0',
+    collected: '2026-06-21..2026-09-02',
+    quartiles: { q1: 56, median: 61, q3: 68 },
+  },
+  measured: {
+    n: 3567,
+    source: "harvest_rows, mode != 'replies', latest capture per (mode, tweet_id)",
+    collected: '2026-07-04..2026-09-02',
+    quartiles: { q1: 46, median: 49, q3: 51 },
+  },
+} as const;
 
 export const RANKER_BAND_LABEL: Record<RankerBand, string> = {
   below: 'below typical',
@@ -516,9 +568,21 @@ export const RANKER_BAND_LABEL: Record<RankerBand, string> = {
 export const RANKER_DISCLAIMER =
   "Context, not advice — X's published weights over estimated probabilities, not a reach prediction.";
 
-export function rankerBand(score: number): RankerBand {
-  if (score >= RANKER_BAND_CUTS.strong) return 'strong';
-  if (score >= RANKER_BAND_CUTS.typical) return 'typical';
+/** Two functions rather than `rankerBand(score, scale)`, for the reason
+ *  `latestOwnReplyRows`'s header gives about `min`/`max` capture direction: a
+ *  flag is exactly how someone later passes the wrong one, and here the wrong
+ *  one is silent — an E score of 61 reads `typical` on its own cuts and
+ *  `strong` on the draft cuts, with nothing to catch it. There is nothing to
+ *  pass. */
+export function rankerDraftBand(score: number): RankerBand {
+  if (score >= RANKER_BAND_CUTS.draft.strong) return 'strong';
+  if (score >= RANKER_BAND_CUTS.draft.typical) return 'typical';
+  return 'below';
+}
+
+export function rankerMeasuredBand(score: number): RankerBand {
+  if (score >= RANKER_BAND_CUTS.measured.strong) return 'strong';
+  if (score >= RANKER_BAND_CUTS.measured.typical) return 'typical';
   return 'below';
 }
 
@@ -749,7 +813,7 @@ export function scoreDraftRanker(
     score,
     // Band off the ROUNDED score, so the number on the pill and the word beside
     // it can never disagree at a cut point.
-    band: rankerBand(score),
+    band: rankerDraftBand(score),
     raw,
     combined: scored.combined,
     netNegative: scored.combined < 0,
@@ -864,7 +928,9 @@ export function scoreMeasured(
   return {
     available: true,
     score,
-    band: rankerBand(score),
+    // The MEASURED cuts, never the draft ones: E's distribution sits an order
+    // of magnitude tighter around 50 than C's (RANKER_BAND_CUTS_SAMPLE).
+    band: rankerMeasuredBand(score),
     raw: scored.raw,
     baselineRaw,
     contributions: scored.contributions,

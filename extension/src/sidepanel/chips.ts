@@ -123,14 +123,19 @@ export function authorChip(state: 'enriched' | 'tweet-only' | 'retired'): string
  *  in CoachChip.tsx because the surfaces it colours (the score pill, the fix
  *  rows) are deliberately not chips.
  *
- *  Only one band takes a tone today. `RANKER_BAND_CUTS` is
- *  `imported-unvalidated` and measurably off-centre on our modifier set —
- *  `strong` is the MODAL band, not the exceptional one (D230) — so painting it
- *  `ok` would sell a borrowed cut point as a verdict. `typical` and `strong`
- *  stay quiet until XR.4's falsification cell re-cuts them; `below` warns for
- *  the same reason a `queued` follow does, because it is the one band asking
- *  the writer to look. Nothing here goes red: the chip family has no danger
- *  tone, which is the correct ceiling for an advisory number (§7.23a). */
+ *  Only one band takes a tone, and XR.4 deliberately did NOT change that when
+ *  it re-cut the bands. Two different things were wrong with 40/65 and only one
+ *  of them is now fixed. The CENTRING was: the cuts are measured quartiles of
+ *  our own published originals, so `strong` means top-quarter instead of
+ *  reading on 31% of real posts while `below` read on 0.3%. The VALIDITY is not:
+ *  `/x/playbook`'s `rankerScoreEffectiveness` — the cell built to ask whether a
+ *  C quartile predicts reach — still has no own-profile harvest rows to answer
+ *  over. A colour is a verdict, and a quartile position is not yet evidence of
+ *  one, so `typical` and `strong` stay on the base's own tone until that cell
+ *  reports a spread. `below` warns for the same reason a `queued` follow does,
+ *  because it is the one band asking the writer to look. Nothing here goes red:
+ *  the chip family has no danger tone, which is the correct ceiling for an
+ *  advisory number (§7.23a). */
 export function rankerBandChip(band: RankerBand): string {
   switch (band) {
     case 'below':

@@ -20,6 +20,12 @@ import {
   detectReplyMode,
   resolveModeId,
 } from '../shared/replyMode.ts';
+import {
+  type DraftFeatures,
+  type MeasuredCounts,
+  scoreDraftRanker,
+  scoreMeasured,
+} from '../shared/xRankerSignals.ts';
 
 /** Default per-cell minimum sample before a stat is allowed to claim anything.
  *  §7.19's ≥100-measured discipline, scaled to per-cell granularity. */
@@ -1104,6 +1110,174 @@ export function buildJudgeEffectiveness(
     approvedProfileVisitsSpread: approvedGated
       ? ratio(approvedCell.medianProfileVisits, rejectedCell.medianProfileVisits)
       : null,
+  };
+}
+
+// ------------------ 15b. does the RANKER score predict anything? (XR.4)
+
+/** One own original as the $0 DOM harvest saw it — the E score's whole input
+ *  plus the text the C score reads.
+ *
+ *  `counts` and `outcome` are derived from the SAME harvest row by the loader
+ *  and must stay that way: `outcome.views` is `counts.views`, and letting two
+ *  call sites build them separately is how the denominator of the score and the
+ *  denominator of the outcome quietly become different numbers. */
+export interface RankerPostRow {
+  text: string;
+  counts: MeasuredCounts;
+  /** What the DOM recorded about the post's shape. Absent fields are unknown,
+   *  never false (§7.11) — `has_photo` is null on rows written by an extension
+   *  build that predates the column. */
+  feats?: DraftFeatures;
+  outcome: MeasuredOutcome | null;
+}
+
+export interface RankerScoreCell extends OutcomeCell {
+  /** 1..4, worst→best. NOT the array index: a quartile that caught no rows is
+   *  omitted rather than rendered empty, so the numbers can skip. */
+  quartile: number;
+  /** The score range this quartile actually covered on THIS sample — the cut
+   *  points are recomputed per call, so without it a reader has no way to know
+   *  what "top quartile" meant on the corpus in front of them. */
+  range: { lo: number; hi: number };
+  medianScore: number | null;
+}
+
+export interface RankerScoreEffectiveness {
+  /** Quartiles of the **E** score (measured counts), worst→best. */
+  cells: RankerScoreCell[];
+  /** Quartiles of the **C** score (text alone) over the same rows. */
+  contentCells: RankerScoreCell[];
+  totalPosted: number;
+  totalMeasured: number;
+  /** Rows E could actually be computed for. A post the harvest caught with no
+   *  view count has no rate and therefore no E — it is not a zero. */
+  totalScoredE: number;
+  spread: number | null;
+  spreadQuartiles: { high: number; low: number } | null;
+  contentSpread: number | null;
+  contentSpreadQuartiles: { high: number; low: number } | null;
+}
+
+/** `calibrate-ranker.ts`'s quantile, deliberately the same one: sort ascending,
+ *  index `min(len-1, floor(p*len))`. Two definitions of "the 25th percentile"
+ *  in one feature is how a re-cut stops reproducing. */
+function quantile(sorted: number[], p: number): number {
+  return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))] as number;
+}
+
+interface ScoredRow {
+  score: number;
+  outcome: MeasuredOutcome | null;
+}
+
+/** Cut points come from the sample itself, so the cells are quartiles of THIS
+ *  corpus rather than of a remembered one. Ties are kept together — two
+ *  identical drafts must never land in different cells — which is why an empty
+ *  quartile is possible and is omitted instead of rendered as a zero row. */
+function quartileCells(scored: ScoredRow[], minN: number): RankerScoreCell[] {
+  if (scored.length === 0) return [];
+  const sorted = scored.map((s) => s.score).sort((a, b) => a - b);
+  const c25 = quantile(sorted, 0.25);
+  const c50 = quantile(sorted, 0.5);
+  const c75 = quantile(sorted, 0.75);
+  const buckets = new Map<number, ScoredRow[]>();
+  for (const row of scored) {
+    const q = row.score < c25 ? 1 : row.score < c50 ? 2 : row.score < c75 ? 3 : 4;
+    const list = buckets.get(q) ?? [];
+    list.push(row);
+    buckets.set(q, list);
+  }
+  return [1, 2, 3, 4].flatMap((quartile) => {
+    const rows = buckets.get(quartile);
+    if (rows === undefined) return [];
+    const scores = rows.map((r) => r.score);
+    return [
+      {
+        quartile,
+        range: {
+          lo: scores.reduce((a, b) => Math.min(a, b), scores[0] as number),
+          hi: scores.reduce((a, b) => Math.max(a, b), scores[0] as number),
+        },
+        medianScore: median(scores),
+        ...cellOf(
+          rows.map((r) => r.outcome),
+          minN,
+        ),
+      },
+    ];
+  });
+}
+
+/** Highest ÷ lowest GATED quartile, naming which two — `buildCoachScoreEffectiveness`'s
+ *  `spreadBands` discipline, copied on purpose. On a corpus this size the
+ *  comparison is rarely q4-vs-q1, and a ratio whose endpoints are unnamed is a
+ *  number nobody can check. */
+function quartileSpread(cells: RankerScoreCell[]): {
+  spread: number | null;
+  pair: { high: number; low: number } | null;
+} {
+  const gated = cells.filter((c) => c.sufficient);
+  const low = gated[0];
+  const high = gated[gated.length - 1];
+  if (low === undefined || high === undefined || low.quartile === high.quartile) {
+    return { spread: null, pair: null };
+  }
+  return {
+    spread: ratio(high.medianViews, low.medianViews),
+    pair: { high: high.quartile, low: low.quartile },
+  };
+}
+
+/** **The XR wave's falsification test** (plan decision 3, non-optional and not
+ *  last): does either ranker score separate our own posts by median views?
+ *
+ *  **Two cells, and only one of them is evidence.** `contentCells` (C) is the
+ *  question worth asking — it is computed from the text alone, before the post
+ *  exists, so "high C ⇒ high views" would be a real finding. `cells` (E) is a
+ *  SANITY CHECK and is partly circular by construction: views is E's own
+ *  denominator, and engagement rate falls as reach rises, so E is mildly
+ *  *anti*-correlated with views before any content effect is in play. Read a
+ *  strong E spread as "the arithmetic is wired up", never as "the ranker
+ *  predicts reach".
+ *
+ *  Population is own harvested ORIGINALS (`latestOwnPostRows`), never
+ *  `metrics_snapshots` — see that loader's header for why.
+ *
+ *  `lexicon` must be the ACTIVE niche lexicon, for exactly the reason
+ *  `buildCoachScoreEffectiveness` states: C reads `postCoach` check results, two
+ *  of which move with the lexicon, so grading without it measures a score the
+ *  Composer never showed. */
+export function buildRankerScoreEffectiveness(
+  rows: RankerPostRow[],
+  minN = DEFAULT_MIN_CELL_N,
+  lexicon?: CoachLexicon,
+): RankerScoreEffectiveness {
+  const measured: ScoredRow[] = [];
+  const content: ScoredRow[] = [];
+  for (const r of rows) {
+    const feats = r.feats ?? {};
+    const e = scoreMeasured(r.counts, feats);
+    if (e.available) measured.push({ score: e.score, outcome: r.outcome });
+    content.push({
+      score: scoreDraftRanker(r.text, feats, lexicon ? { lexicon } : undefined).score,
+      outcome: r.outcome,
+    });
+  }
+  const cells = quartileCells(measured, minN);
+  const contentCells = quartileCells(content, minN);
+  const e = quartileSpread(cells);
+  const c = quartileSpread(contentCells);
+  return {
+    cells,
+    contentCells,
+    totalPosted: rows.length,
+    totalMeasured: rows.filter((r) => r.outcome !== null).length,
+    totalScoredE: measured.length,
+    spread: e.spread,
+    spreadQuartiles: e.pair,
+    contentSpread: c.spread,
+    contentSpreadQuartiles: c.pair,
   };
 }
 

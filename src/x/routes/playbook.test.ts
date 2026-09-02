@@ -30,6 +30,7 @@ import { buildPostDraftInput } from '../posts/prompt.ts';
 import { buildBatchGrokInput, buildGrokInput } from '../replies/prompt.ts';
 import { getSetting, resetSettings, setSettings } from '../settings/registry.ts';
 import {
+  latestOwnPostRows,
   loadIdeaRows,
   loadJudgeRows,
   loadOriginalPostRows,
@@ -890,6 +891,119 @@ describe('loadTimelineFunnel (HV.5)', () => {
 // wins per read. Demonstrated on the funnel because its population is entirely
 // this block's own rows (the HV.5 block above deleted its own in afterAll), so
 // a 12-sample cell is buildable without moving any other suite's medians. Last
+
+// XR.4 — the falsification cell's loader. `harvest_rows`, never
+// `metrics_snapshots`: the population is the $0 DOM harvest of my own profile,
+// which is the only place likes + replies + reposts + views exist together.
+describe('latestOwnPostRows (XR.4)', () => {
+  const RUN_ID = 'd0000000-0000-4000-8000-0000000000f4';
+  const ME = 'xr4_me';
+
+  const row = (o: {
+    tweetId: string;
+    handle?: string;
+    mode?: string;
+    text?: string;
+    views?: number;
+    likes?: number;
+    comments?: number;
+    reposts?: number;
+    hasPhoto?: boolean | null;
+    capturedAt: Date;
+  }) => ({
+    runId: RUN_ID,
+    tweetId: o.tweetId,
+    handle: o.handle ?? ME,
+    mode: o.mode ?? 'posts',
+    text: o.text ?? 'I cut our deploy from 14 minutes to 90 seconds.',
+    views: o.views ?? 1000,
+    likes: o.likes ?? 10,
+    comments: o.comments ?? 2,
+    reposts: o.reposts ?? 1,
+    hasPhoto: o.hasPhoto === undefined ? null : o.hasPhoto,
+    capturedAt: o.capturedAt,
+  });
+
+  beforeAll(async () => {
+    await db
+      .insert(harvestRuns)
+      .values({ id: RUN_ID, handle: ME, mode: 'posts', scope: 'own' })
+      .onConflictDoNothing();
+    await db.insert(harvestRows).values([
+      // Two captures of one tweet — the LATEST wins (a published post's outcome
+      // is its final count, not its first sighting).
+      row({ tweetId: 'xr4_a', views: 100, likes: 1, capturedAt: at(600) }),
+      row({ tweetId: 'xr4_a', views: 4000, likes: 40, hasPhoto: true, capturedAt: at(60) }),
+      row({ tweetId: 'xr4_b', views: 2000, capturedAt: at(120) }),
+      // The DOM carried no view number: stored as 0 by the notNull default, and
+      // that is an unknown, not a zero.
+      row({ tweetId: 'xr4_c', views: 0, capturedAt: at(120) }),
+      // Wrong corpora: my replies, the passive timeline, someone else's profile.
+      row({ tweetId: 'xr4_reply', mode: 'replies', capturedAt: at(120) }),
+      row({ tweetId: 'xr4_tl', mode: 'timeline', capturedAt: at(120) }),
+      row({ tweetId: 'xr4_other', handle: 'someone_else', capturedAt: at(120) }),
+    ]);
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(eq(harvestRows.runId, RUN_ID));
+    await db.delete(harvestRuns).where(eq(harvestRuns.id, RUN_ID));
+  });
+
+  test('one row per tweet, latest capture wins', async () => {
+    const rows = await latestOwnPostRows(ME);
+    expect(rows.length).toBe(3);
+    const a = rows.find((r) => r.counts.views === 4000);
+    expect(a).toBeDefined();
+    expect(a?.counts).toMatchObject({ likes: 40, replies: 2, reposts: 1 });
+    // §7.11: the shape columns are absent when the DOM did not record them.
+    expect(a?.feats).toMatchObject({ hasImage: true });
+    expect(rows.find((r) => r.counts.views === 2000)?.feats).toEqual({});
+  });
+
+  test('a zero view count is an unknown outcome, not a measured zero', async () => {
+    const rows = await latestOwnPostRows(ME);
+    const blind = rows.find((r) => r.counts.views === 0);
+    expect(blind).toBeDefined();
+    expect(blind?.outcome).toBeNull();
+    expect(rows.filter((r) => r.outcome !== null).length).toBe(2);
+  });
+
+  test('excludes replies, the passive timeline, and other handles', async () => {
+    const rows = await latestOwnPostRows(ME);
+    expect(rows.length).toBe(3);
+    expect(await latestOwnPostRows('someone_else')).toHaveLength(1);
+  });
+
+  test('the @ and the case are normalized, and an unset handle answers empty', async () => {
+    expect(await latestOwnPostRows(`@${ME.toUpperCase()}`)).toHaveLength(3);
+    expect(await latestOwnPostRows('')).toEqual([]);
+    expect(await latestOwnPostRows('   ')).toEqual([]);
+    expect(await latestOwnPostRows(null as unknown as string)).toEqual([]);
+  });
+
+  test('/x/playbook carries rankerScoreEffectiveness, gated and shaped', async () => {
+    setSettings({ 'x.identity.selfHandle': ME });
+    try {
+      const res = await app.request('/x/playbook?minN=1');
+      expect(res.status).toBe(200);
+      // biome-ignore lint/suspicious/noExplicitAny: the test walks the payload
+      const body = (await res.json()) as any;
+      const cell = body.rankerScoreEffectiveness;
+      expect(cell.totalPosted).toBe(3);
+      expect(cell.totalMeasured).toBe(2);
+      expect(cell.totalScoredE).toBe(2);
+      expect(cell.contentCells.length).toBeGreaterThan(0);
+      // Two measured rows over at most four quartiles cannot make a spread pair
+      // wide enough to be interesting, but the field must exist and be honest.
+      expect(cell).toHaveProperty('spread');
+      expect(cell).toHaveProperty('contentSpread');
+    } finally {
+      resetSettings({ keys: ['x.identity.selfHandle'] });
+    }
+  });
+});
+
 // in the file for the same reason the HV.5 block is.
 describe('x.gates.minCellN is the default playbook gate', () => {
   const RUN_ID = 'd0000000-0000-4000-8000-0000000000f3';

@@ -6,7 +6,7 @@
 > History: `.claude/skills/masterplan/STATE-ARCHIVE.md` (frozen, grep-only — closed-lane deviations, gotchas, priors, ledger rows).
 > Debt: `.claude/skills/masterplan/VERIFY-DEBT.md` (**unpaid**, not history — browser-verify + CA.2. Read it when you have Chrome open; skip it otherwise).
 
-## WAVE 10 IS OPEN — XR, the X ranker port. **161 / 165.**
+## WAVE 10 IS OPEN — XR, the X ranker port. **162 / 165.**
 
 `plans/2026-09-02-x-ranker-port.md` (XR.1–XR.8) re-opens the masterplan a **third** time, closed at OU.8 /
 157-of-157 since 2026-08-25. It puts a second number beside the Composer's coach pill — **C**, computed from
@@ -24,11 +24,6 @@ tracked by nothing, so `ls` it before relying on it and go upstream per D225 if 
 attributions, and neither is a mistake** (D228): `xRanker.ts` = Apache-2.0/xAI (the published weights, read
 off `xai-org/x-algorithm`), `xRankerSignals.ts` = MIT/Ryan Lenk (the priors, shrinkage and head-split, which
 have no upstream). Do not "correct" either to match the other.
-
-**The spine is the doctrine, not the UI** (plan Decision 3, §7.33/§7.34): XR.3 recalibrated the E baseline off
-our own harvest and **XR.4 ships the quartile cell. Do not re-order it behind XR.5–XR.7** because the visible
-half is more satisfying to ship — and XR.4 now owns two re-cuts, not one (D230 + D232's K finding).
-
 
 **Wave 9 (OU — Outliers) closed at OU.8 on 2026-08-25**, taking 149/149 to 157; its whole register, gotchas,
 ledger rows and lock table are in `STATE-ARCHIVE.md` under *"Archived at OU.8"* (grep by task id, D-number or
@@ -69,22 +64,25 @@ what stopped binding two waves ago; *"it still binds an open task"* is a reason 
 19 KB; a CLOSED lane's lock row and pointer lines are weight, not state; never fix a breach by deleting what
 an open task needs — if a pass slips, pay it as a standalone housekeeping commit (`55c6d19`/`c9c8ade`).
 **Every addition from here is a TRADE.** XR.1 alone added ~14 KB (a wave re-opening is the most expensive
-entry type there is); XR.3 paid by distilling the standing D-entries; **XR.5 paid by deleting the DUPLICATED
-D223/D224 (each was in the register twice, ~2.1 KB) and compressing this paragraph.** Cheapest reduction
+entry type there is); XR.3 paid by distilling the standing D-entries; XR.5 paid by deleting the duplicated
+D223/D224. **XR.4 added three D-entries and paid ~5 KB for them: D226/D227/D229/D233 folded into ONE
+facts-only entry (they were four payments of one lesson), D230 and D232's K half reduced to pointers now that
+they are discharged, and D225/D231/D234/D235 compressed to what still binds an open task.** Cheapest reduction
 left: the XR.1/XR.2 gotchas, once the wave closes.
 
-- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `feat(composer): ranker C score beside the coach pill (XR.5)`, parent `916d758` (XR.3). **Step 0 is one command:** `git log -1 --format='%h %s'`. Reconcile against this line, not against the whole log.
-- **current state of the repo (recounted at XR.1, 2026-09-02, moved per task since — RECOUNTED off the running code, not carried forward; the previous line was stamped at OU.8 and five ad-hoc lanes had shipped past it):** suite **2754** across **136** files (2695/135 at XR.1 → 2731/136 at XR.2 → 2736 at XR.3 → **+18 tests, no new file, at XR.5**); tables **44**; migrations through **`0031_sharp_screwball`** (32 journal entries, `0000`–`0031`) — **the journal is FREE from `0032`, which XR.7 owns and must still confirm off the journal rather than off this line**; registry **16 groups / 69 knobs, 33 mirrored** and **17 prompt keys** (recounted by importing `SETTINGS_REGISTRY` and `PROMPT_KEYS`, not by grepping); MCP **28 tools** (`src/mcp.test.ts:122` asserts it); smoke scripts **41** (a `calibrate-*` script is NOT one — XR.8 still owns 42); extension `tsconfig.app.json` `include` **15 entries = 14 out-of-tree shims** (the first entry is the extension's own `src/**/*` — **count the shims, not the array**; XR.5 took them 12 → 14 and nothing left is owed a shim); panel tabs **15**; whole-repo lint **0 errors**. The four multi-file moves a new task will hit — **none of them is owed by any remaining XR task except the migration**, so the full step lists live in `STATE-ARCHIVE.md` (grep `registry.ts`, `PROMPT_KEYS`, `mcp.test.ts`) and only the sizes and the silent-failure modes stay here. **A mirrored settings knob is SEVEN edits** (`registry.ts`, `registry.test.ts` **twice**, `docs/settings-tab.md`'s three count strings **plus** its group-table row, and extension-side `ServerConfig`/`SERVER_DEFAULTS`/`readServerConfig`) — **the server half alone ships a knob that silently does nothing**; a `scope:'server'` group is three of the seven and no extension build. **A registry prompt key is FOUR** (the default must be exported from a **pure** module or the imports cycle). **An MCP tool is SIX doc strings plus three asserted numbers** (`src/mcp.test.ts`'s exact 28, `scripts/smoke-mcp.ts`'s name list, and five places in `docs/s2-mcp-server.md` + codemap §3.3/§6). **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git status --porcelain src/db/migrations/` (**not `git diff --stat`** — the new `.sql` and its snapshot are UNTRACKED, so a diff shows only the `_journal.json` append and reads like the SQL never landed) plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0.
-- **next-up:** the extension lane advanced; **XR.4 (measurement) ∥ XR.6 (extension) share no file** — run either, or both in parallel sessions.
-  **XR.4** (`buildRankerScoreEffectiveness` + `latestOwnPostRows` + one `/x/playbook` field; **high**; deps XR.3 ✓) is the doctrine half and must not be deferred behind the pills (plan Decision 3). It is the ONLY task that may re-cut a borrowed number, and it now owns **two**: `RANKER_BAND_CUTS` 40/65 (D230) and the K=2000 shrinkage finding (D232) — both are recorded with the evidence, neither moves by vibes. Its population is own harvested ORIGINALS (`harvest_rows mode='posts'`, ~2,434 tweets on prod), never `metrics_snapshots` (frozen since 2026-08-12, and it carries no reply/repost counts). **Reuse `buildCoachScoreEffectiveness`'s `OutcomeCell`/`cellOf`/`median`/`ratio`/`DEFAULT_MIN_CELL_N`; add none of it.**
-  **XR.6** (E chip on Radar sightings; **high**; deps XR.5 ✓) is next in the extension lane and now has its shims. It scores the **sighting**, never the drafted reply (plan Decision 9), and is **not** OON-rescored (D231 — a measured count already embeds whatever suppression happened; rescoring double-counts it). Copy XR.5's three settled calls rather than re-deriving them: the tone comes from **`chips.ts`**, not `CoachChip.tsx`, and borrows no coach colour class (D235); an unobservable input stays **absent, never 0/false** (§7.11); and anything the arithmetic cannot say — a zero that never arrives — is said as a **word** (D229). **XR.7** (migration `0032`, runs alone) is also unblocked by XR.5.
-  Standing gate reminders: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); a pure `src/shared/` task owes **no** extension build and moves **no** docs count (OU.1, paid three times now) — **XR.6/XR.7 owe the build**; biome forbids non-null assertions, a `let` assigned once and a backtick string with no interpolation, sorts import specifiers **case-sensitively** with `type` members ahead of value members of the same stem, and will reformat a >100-col call — run `bunx biome check --fix <files>` before the gate.
+- **last-commit:** **identity is the SUBJECT LINE — no sha is recorded (D97).** HEAD should read `feat(playbook): does the ranker score predict our views? gated quartile cell (XR.4)`, parent `3147c2f` (XR.5). **Step 0 is one command:** `git log -1 --format='%h %s'`. Reconcile against this line, not against the whole log.
+- **current state of the repo (recounted at XR.1, 2026-09-02, moved per task since — RECOUNTED off the running code, not carried forward; the previous line was stamped at OU.8 and five ad-hoc lanes had shipped past it):** suite **2771** across **136** files (2695/135 at XR.1 → 2731/136 at XR.2 → 2736 at XR.3 → 2754 at XR.5 → **+17 tests, no new file, at XR.4**); tables **44**; migrations through **`0031_sharp_screwball`** (32 journal entries, `0000`–`0031`) — **the journal is FREE from `0032`, which XR.7 owns and must still confirm off the journal rather than off this line**; registry **16 groups / 69 knobs, 33 mirrored** and **17 prompt keys** (recounted by importing `SETTINGS_REGISTRY` and `PROMPT_KEYS`, not by grepping); MCP **28 tools** (`src/mcp.test.ts:122` asserts it); smoke scripts **41** (a `calibrate-*` script is NOT one — XR.8 still owns 42); extension `tsconfig.app.json` `include` **15 entries = 14 out-of-tree shims** (the first entry is the extension's own `src/**/*` — **count the shims, not the array**; XR.5 took them 12 → 14 and nothing left is owed a shim); panel tabs **15**; whole-repo lint **0 errors**. The four multi-file moves a new task will hit — **none of them is owed by any remaining XR task except the migration**, so the full step lists live in `STATE-ARCHIVE.md` (grep `registry.ts`, `PROMPT_KEYS`, `mcp.test.ts`) and only the sizes and the silent-failure modes stay here. **A mirrored settings knob is SEVEN edits** (`registry.ts`, `registry.test.ts` **twice**, `docs/settings-tab.md`'s three count strings **plus** its group-table row, and extension-side `ServerConfig`/`SERVER_DEFAULTS`/`readServerConfig`) — **the server half alone ships a knob that silently does nothing**; a `scope:'server'` group is three of the seven and no extension build. **A registry prompt key is FOUR** (the default must be exported from a **pure** module or the imports cycle). **An MCP tool is SIX doc strings plus three asserted numbers** (`src/mcp.test.ts`'s exact 28, `scripts/smoke-mcp.ts`'s name list, and five places in `docs/s2-mcp-server.md` + codemap §3.3/§6). **A migration** never runs in two parallel sessions, ignores any number quoted in plan text, and is inspected for dropped seed INSERTs by `git status --porcelain src/db/migrations/` (**not `git diff --stat`** — the new `.sql` and its snapshot are UNTRACKED, so a diff shows only the `_journal.json` append and reads like the SQL never landed) plus a fresh `:memory:` boot counting `content_pillars` (3) — never by grepping for `INSERT INTO`, which `0000`'s `INSERT OR IGNORE` spellings make return 0.
+- **next-up:** **XR.6 ∥ XR.7 are the only open implementation tasks and they share no file** — but XR.7 is the migration task and **runs alone**, so in practice: XR.6 now, XR.7 alone, XR.8 last.
+  **XR.6** (E chip on Radar sightings; **high**; deps XR.5 ✓). Scores the **sighting**, never the drafted reply (plan Decision 9), and is **not** OON-rescored (D231). Copy XR.5's settled calls rather than re-deriving: tone comes from **`chips.ts`**, borrowing no coach colour class (D235); an unobservable input stays **absent, never 0/false** (§7.11); anything the arithmetic cannot say is said as a **word** (D229). **Two things XR.4 changed under it:** the band function it must call is now **`rankerMeasuredBand`**, not `rankerBand` (which no longer exists — two functions, no flag, D236), and `strong` is now REACHABLE on real sightings (0.0% → ~17% on the 712 stored `radar_sightings`), which is the whole reason the chip is worth rendering. `radar_sightings` carries `views`/`likes`/`replies` and **no reposts column** — that head goes absent, not zero.
+  **XR.7** (migration `0032`, 5 nullable `voice_tweets` columns + server-computed `ranker_e` + on-page badge; **xhigh, RUNS ALONE**; deps XR.5 ✓). Journal still free from `0032` — confirm off the journal, never off this line. Its inline proof is `grep -c 'rust_home_mixer_favorite_weight' extension/dist/content.js`, `0` today, `1` after.
+  **XR.8** closes: docs-sync (`docs/composer-tab.md`, `docs/radar-tab.md`, `docs/playbook-tab.md`, `docs/PHASE-HISTORY.md`) + `$0 scripts/smoke-x-ranker.ts` (smoke 41 → 42) + the browser pass. **`rankerScoreEffectiveness` is its consumer** and on prod that cell reads `totalPosted: 0` — the smoke must say so honestly rather than reading empty as broken (D238).
+  Standing gate reminders: `bun run test` (bare `bun test` targets the file DB and `inspect.test.ts` fails 2/2); a pure `src/shared/` task owes **no** extension build and moves **no** docs count (OU.1) — **XR.6/XR.7 owe the build**; biome forbids non-null assertions, a `let` assigned once and a backtick string with no interpolation, sorts import specifiers **case-sensitively** with `type` members ahead of value members of the same stem, and will reformat a >100-col call — run `bunx biome check --fix <files>` before the gate.
 
 ## Ledger
 
 Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date) · `[s]` skipped (reason in deviations).
 
-**Waves 0–9 are CLOSED — 157/157; Wave 10 is OPEN at 4/8, so the masterplan stands at 161/165.** Per-task entries (shas, parents, dates, notes) for the closed waves live in
+**Waves 0–9 are CLOSED — 157/157; Wave 10 is OPEN at 5/8, so the masterplan stands at 162/165.** Per-task entries (shas, parents, dates, notes) for the closed waves live in
 `STATE-ARCHIVE.md` — Waves 0–4 at UI.11, Wave 5 at GT.9, Wave 6 at JD.8, Wave 7 at RC.5, Wave 8 at RA.8,
 **Wave 9 at OU.8**. Grep by task id.
 
@@ -99,35 +97,36 @@ Status: `[ ]` todo · `[~]` in progress (lane claimed) · `[x]` done (sha + date
 - **Wave 8 — Radar access from a Claude Code session (8/8 ✓)**: RA.1–RA.8, plan `plans/2026-08-17-radar-access.md`, opened by `d968fe9`. **$0 lane.** Took migration `0029_blushing_expediter` (`radar_sightings`). Closed by `docs(radar): RA.8 radar-access docs-sync + $0 smoke-radar-access.ts`, parent `c02ff88`, 2026-08-18.
 - **Wave 9 — Outliers: X advanced-search compiler, clipboard hand-off, saved hunts (8/8 ✓)**: OU.1–OU.8, plan `plans/2026-08-03-search-query-builder.md`, registered by `4ebceb3`, ledger re-opened by OU.2. **$0 lane — no `xFetch`, no `askLLM`, no image call on any path, by decision rather than by luck.** Took migration `0031_sharp_screwball` (`saved_searches`). Closed by `docs(outliers): OU docs-sync + $0 smoke-outliers.ts (OU.8)`, parent `47b5f56`, 2026-08-25 — **which closes the masterplan at 157/157.**
 
-- **Wave 10 — XR: the X ranker port (4/8)**, plan `plans/2026-09-02-x-ranker-port.md`, registered by `52d0bd8`, ledger re-opened by **XR.1**. **$0 lane by construction** — no `xFetch`, no `askLLM`, no image call on any path; every read is over rows already stored. Owns migration **`0032`** at XR.7 (the journal is free from it today). Order is the MASTERPLAN table's, which is NOT numeric — `XR.5` runs before `XR.4`.
+- **Wave 10 — XR: the X ranker port (5/8)**, plan `plans/2026-09-02-x-ranker-port.md`, registered by `52d0bd8`, ledger re-opened by **XR.1**. **$0 lane by construction** — no `xFetch`, no `askLLM`, no image call on any path; every read is over rows already stored. Owns migration **`0032`** at XR.7 (the journal is free from it today). Order is the MASTERPLAN table's, which is NOT numeric — `XR.5` runs before `XR.4`.
   - `[x]` **XR.1** — `src/shared/xRanker.ts`: 26 published weights + `ScoringWeights::new` sums + `offsetScore`/`scoreHeads`/`replyWeightFor`/`oonApplies`/`diversityMultiplier`/`normalizeScore`. 2 files, both new, **no consumer yet**. `feat(ranker): port X's published For You weights + ranking_scorer arithmetic (XR.1)`, parent `52d0bd8`, 2026-09-02. Suite 2627 → **2695** / 134 → **135**. Deps: none.
   - `[x]` **XR.2** — `src/shared/xRankerSignals.ts`: `X_BASELINE_P` (20 priors) + `X_OBSERVED_RATES` (placeholder) + **`X_MODIFIERS` (23)** + `signalsToHeadPs` / `scoreDraftRanker` (C) / `scoreMeasured` (E). 2 files, both new, **still no consumer**. `feat(ranker): map postCoach/postFormat signals onto ranker heads (XR.2)`, parent `88af95b`, 2026-09-02. Suite 2695 → **2731** / 135 → **136**. Deps: XR.1 ✓.
   - `[x]` **XR.3** — `scripts/calibrate-ranker.ts` (NEW, **not a smoke**) + measured `X_OBSERVED_RATES` — favorite `0.029412`, reply `0.019774`, retweet **`0`**, n=766 over `harvest_rows mode='timeline'` 2026-07-24..2026-08-17. **The plan's 48h maturity cut was falsified and ships as a diagnostic (D232); retweet 0 is the honest median (D233); a broken XR.2 test was the finding (D234).** `feat(ranker): calibrate the E-score baseline against our own harvest corpus (XR.3)`, parent `1156ff1`, 2026-09-02. Suite 2731 → **2736** / 136 unmoved. Deps: XR.2 ✓.
   - `[x]` **XR.5** — the two shims (`include` **12 → 14** shims / 15 entries) + the Composer's **C** pill: `chips.ts::rankerBandChip`, `composerLogic.ts::rankerDraftFeatures`/`rankerPillLabel`/`rankerPillTitle`, two memos + one `.coach-head` span + one `<small>` in `Composer.tsx`, one non-colour `.ranker-pill` rule. **The tone map moved to `chips.ts` and borrows NO coach colour class (D235); only `below` is coloured; the tooltip calls 50 signal-free, not typical.** `feat(composer): ranker C score beside the coach pill (XR.5)`, parent `916d758`, 2026-09-02. Suite 2736 → **2754** / 136 unmoved. Deps: XR.2 ✓.
-  - `[ ]` **XR.4** — `buildRankerScoreEffectiveness` + `latestOwnPostRows` + `rankerScoreEffectiveness` on `/x/playbook`. Deps: XR.3 ✓. **Eligible now**, and it owns BOTH re-cuts (D230, D232).
+  - `[x]` **XR.4** — `buildRankerScoreEffectiveness` (playbook §15b: quartile cells cut from the sample, ties kept together, `spread` naming its gated pair, `contentCells` = the same rows scored prospectively) + `latestOwnPostRows` (`harvest_rows mode='posts'`, never the frozen `metrics_snapshots`) + `rankerScoreEffectiveness` on `/x/playbook`. **Both re-cuts paid, with evidence, and the answers were not the expected ones: `RANKER_BAND_CUTS` splits into two MEASURED pairs (D236) and K stays at 2000 (D237).** On prod the cell reads `totalPosted: 0` (D238). `feat(playbook): does the ranker score predict our views? gated quartile cell (XR.4)`, parent `3147c2f`, 2026-09-02. Suite 2754 → **2771** / 136 unmoved. Deps: XR.3 ✓.
   - `[ ]` **XR.6** — **E** chip on Radar sightings (scores the *target*, never the drafted reply). Deps: XR.5.
   - `[ ]` **XR.7** — migration **`0032`** (5 nullable `voice_tweets` columns) + server-computed `ranker_e` on `scrapeSave` + on-page badge + the two `extractArticle` fixes. **xhigh, RUNS ALONE.** Deps: XR.5.
   - `[ ]` **XR.8** — XR docs-sync + `$0 scripts/smoke-x-ranker.ts` (smoke 41 → 42) + the browser pass. Deps: all.
 
 ## Hot-file locks
 
-**Nothing is held right now** — XR.3 released `src/shared/xRankerSignals.ts` on commit, and **XR.4
-(measurement) and XR.5 (extension) are both eligible and share no file**, so two sessions can run. The
-Wave-10 ownership map, which is what actually serializes this lane:
+**Nothing is held right now.** XR.4 released `src/x/playbook.ts`, `src/x/routes/playbook.ts`,
+`src/shared/xRankerSignals.ts` and `scripts/calibrate-ranker.ts` on commit. **`xRankerSignals.ts` is now
+CLOSED to edits for the rest of the wave** — its last unmeasured constant was the band cuts and XR.4 spent
+them; XR.6/XR.7 import it and nothing more. The Wave-10 ownership map:
 
 | File | Owner | Note |
 |---|---|---|
 | `src/shared/xRanker.ts` | **XR.1 (released)** | XR.2 only *imports* it. Do not re-open it to add an estimate — that is XR.2's file, and the split is the whole point. |
-| `src/shared/xRankerSignals.ts` | **XR.3 (released)**; XR.5/XR.6/XR.7 only import | **The wave's hot file on the server side, and it is FREE.** XR.4 is the only remaining task allowed to edit it, for `RANKER_BAND_CUTS` (D230) — and it may not touch `X_OBSERVED_RATES`, which is now measured. |
+| `src/shared/xRankerSignals.ts` | **XR.4 (released, and CLOSED)**; XR.6/XR.7 only import | Every constant in it is now measured and stamped. `rankerBand` no longer exists — call **`rankerDraftBand`** or **`rankerMeasuredBand`** (D236). |
+| `src/x/playbook.ts` + `src/x/routes/playbook.ts` | **XR.4 (released)** | |
 | `extension/src/sidepanel/Composer.tsx` | **XR.5 (released)** | one owner each, no overlap. XR.5 also released `chips.ts`, `composerLogic.ts`, `CoachChip.test.ts`, `styles.css` and `tsconfig.app.json` — **`include` is finished at 14 shims; no remaining XR task adds one.** |
 | `extension/src/sidepanel/Radar.tsx` | XR.6 | **Eligible now** (deps XR.5 ✓). |
 | `extension/src/content.ts` + `harvester.ts` | XR.7 | **Eligible now** (deps XR.5 ✓), but it is the migration task — **runs alone**. |
-| `src/x/playbook.ts` + `src/x/routes/playbook.ts` | XR.4 | |
-| `scripts/calibrate-ranker.ts` | **XR.3 (released)** | Rerunnable and read-only. XR.8's smoke may call it; nothing else owns it. |
+| `scripts/calibrate-ranker.ts` | **XR.4 (released)** | Rerunnable, read-only, $0. Now derives BOTH the E-score rates and the band cut points. XR.8's smoke may call it; nothing else owns it. |
 | migrations journal (`0032`) | **XR.7, alone** | global rule 1 |
 
-Two lanes that share no file: **measurement** (XR.4) ∥ **extension** (XR.6, then XR.7 alone). Ceiling is 2
-concurrent sessions. Two standing rules bind regardless:
+The measurement lane is CLOSED. What remains is one serial extension lane — **XR.6, then XR.7 alone, then
+XR.8** — so the concurrency ceiling for the rest of the wave is **1**. Two standing rules bind regardless:
 
 - **Never run two migration-generating tasks in parallel sessions** (journal conflicts). Ignore any hardcoded
   migration number in plan text — *a plan quoting one is quoting the day it was written* — always
@@ -198,131 +197,117 @@ true of the repo regardless of what you are building.
   item vs detail read identity (D208a), one `JSON.stringify` apart. **Generalize: a plan's Tests list is a
   floor. The two cheapest additions are usually the route nothing in production calls and the "these two shapes
   are identical" promise some other task was allowed to rely on.**
-- **D225** (XR.1 — **the plan's oracle was missing, so the task went one layer UPSTREAM instead of
-  reconstructing it, and the attribution changed to match what was actually read**). XR.1's Read-first list
-  named four Bangermeter files and **none existed at the time** (the tree came back later — D228). Three
-  responses were available: reconstruct 26 weights from memory (fabrication with a green suite — the exact
-  failure §7.33 exists to prevent), stop and ask, or **find a better oracle**. The third was cheap: X
-  publishes the source Bangermeter itself ported, `curl` reaches it unauthenticated, and it is one layer
-  *closer* than the plan asked for. Every constant and branch in `xRanker.ts` was read off `xai-org/x-algorithm`
-  @ `7ba77684` (the upstream map is in the gotchas). **The consequence the plan could not anticipate: that
-  repo is Apache-2.0, not MIT.** Shipping the plan's mandated Bangermeter MIT notice would have credited a
-  port nobody on the task read — a false provenance claim in the one file whose entire value is provenance —
-  so the header carries the **Apache-2.0 attribution to xAI** with commit + retrieval date, plus a
-  Bangermeter credit saying truthfully what it is: the prior art that inspired the feature, not the source of
-  these numbers. **Generalize: when a Read-first path is missing, the question is not "how do I proceed
-  without it" but "what was that file a copy OF" — and if the answer is reachable, the plan's own fidelity
-  argument obliges you to go there. Then fix the attribution to match what you read; a citation is a factual
-  claim like any other.** **Superseded in part by D228.**
-- **D226** (XR.1 — **the plan's list of the five zeroed heads names the wrong head, and only reading the
-  source catches it**). Task XR.1 says to ship *"the five explicitly-zeroed heads (`profile_click`, `dwell`,
-  `quoted_vqv`, `cont_click_dwell_time`, `cont_active_secs_5m_residual_norm`)"*. **`dwell` is `0.05`, not
-  zero** (`rust_home_mixer_dwell_weight`); the fifth zeroed head is **`vqv`** (`rust_home_mixer_vqv_weight`,
-  0.0, additionally gated by `MinVideoDurationMs`). The likely origin is that `BidirectionalFollowDwellWeight
-  **Boost**` IS 0.0 — a neighbouring parameter with `dwell` in its name. Shipped as the source has it, with a
-  test asserting the zeroed set by name so the pair can never drift again. **This is the D195(b) rule in a new
-  place: a number in a plan is a claim about the world dated the day it was written, and the plan is not the
-  oracle even when it is confidently specific.**
-- **D227** (XR.1 — **a stated bound that is very slightly wrong is worse than no bound, because a test will
-  encode it**). The plan's done-when asks that `offsetScore` squash any net-negative sum into `[0, 0.000894)`.
-  The true supremum is `negative_sum / total_sum × NEGATIVE_SCORES_OFFSET` = `367.22 / 410.56 × 0.001` =
-  **`0.000894437`**, so a real score can legally sit *above* the plan's ceiling and a literal transcription of
-  the done-when would have shipped a flaky assertion. The suite derives the ceiling from `X_WEIGHT_SUMS`
-  instead of hardcoding it (so a future weight edit moves the bound with the weights) and pins the derived
-  value at `0.000894437`. Two exact facts worth having beside it, both asserted: `offsetScore(0.4) === 0.401`
-  **exactly** in f64, and `offsetScore(-negative_sum) === 0` **exactly** — the deepest legal negative lands on
-  zero, and anything past it goes under, which is what "squash, never clamp" buys.
-- **D228** (XR.2 — **the missing oracle came back mid-lane, and the right response was a SECOND attribution,
-  not an amended one**). The Bangermeter tree D225 recorded as absent was supplied by the user hours after
-  XR.1 shipped. Tempting move: "correct" `xRanker.ts`'s Apache-2.0/xAI header to the MIT notice the plan
-  originally mandated. Wrong — that header is a factual claim about what XR.1 read, and XR.1 read X's own
-  repository. What actually changed is XR.2's material: `baselineP`, `observedRates`, the empirical-Bayes
-  shrinkage, `engagementScore`, `vqvEligible` and the always-on/enable-only head split have **no upstream to
-  go to**, so they were read at first hand and `xRankerSignals.ts` carries the MIT/Ryan Lenk notice with the
-  permission paragraph inline. **Generalize: attribution is per-FILE and per-READ, not per-feature. When a
-  source reappears, the question is "what did THIS file's author actually open", never "what does the project
-  now have on disk".**
-- **D229** (XR.2 — **the plan's last test asserts something the ported arithmetic cannot do, and writing it
-  would have encoded a clamp we deliberately did not build**). Task XR.2's tests ask that an all-negative post
-  "goes net-negative and **normalizes to `0`**". It cannot: `offsetScore` SQUASHES rather than clamps
-  (`xRanker.ts` trap 3), so the deepest legal negative lands in `(0, 0.000894437)` — above zero — and both
-  normalizers map that to a small positive number (~7 on ours, ~14 on Bangermeter's sqrt scale). A literal
-  transcription would have shipped either a permanently red test or, worse, a `Math.max(x,0)` added to make it
-  pass, which throws away the ordering the squash exists to preserve. The suite asserts the claim that is
-  actually true and actually useful — `raw < offsetScore(0)`, i.e. **below every positive post**, plus two
-  net-negatives keeping their order — and `RankerDraftResult` grows a **`netNegative` flag** so XR.5's pill can
-  say the words instead of waiting for a zero. **Generalize: when a plan's assertion contradicts the module's
-  own documented trap, the trap wins and the test becomes an ORDERING claim.** (D226/D227's rule, third
-  payment: trust a plan's structure further than its literals.)
-- **D230** (XR.2 — **a borrowed cut point is a borrowed number, and §7.34 applies to it too**). Bangermeter's
-  40/65 `scoreLevel` cuts were kept as the plan says — and they are **measurably off-centre on our modifier
-  set**. 50 is where a draft with ZERO modifiers lands, but 18 of our 23 modifiers key on `postCoach` checks
-  and twelve fire on a **pass**, so an ordinary competent post trips three to seven of them and reads 66–71:
-  `strong` is the modal band, not the exceptional one. Theirs behaves because their table is mostly penalties
-  and rare enables. Both available fixes were vibes recalibrations (nudge the cuts, or shave the factors until
-  the distribution looks nice), which CLAUDE.md forbids. Shipped as-is with
-  `RANKER_BAND_CUTS_PROVENANCE = 'imported-unvalidated'` + a TODO naming **XR.4**, exactly as
-  `X_OBSERVED_RATES` is marked, plus a fixture pinning today's distribution so the re-cut is a visible
-  decision. **XR.5 must not present the band as a verdict; XR.4 owns the re-cut at n>=20.**
+- **D225** (XR.1 — **when a Read-first path is missing, ask what that file was a copy OF**). The plan's four
+  Bangermeter files did not exist at the time. Reconstructing 26 weights from memory would have been
+  fabrication with a green suite; instead XR.1 went one layer upstream to `xai-org/x-algorithm`, which `curl`
+  reaches unauthenticated and which Bangermeter itself ported. **Consequence the plan could not anticipate:
+  that repo is Apache-2.0, not MIT**, so `xRanker.ts`'s header credits xAI with commit + retrieval date and
+  credits Bangermeter truthfully as the prior art that inspired the feature. **A citation is a factual claim
+  like any other — fix it to match what you actually read.** Extended by D228.
+- **D226 / D227 / D229 / D233** (XR.1–XR.3, **distilled at XR.4 — four payments of one lesson, kept for the
+  facts rather than the narrative**). The lesson: **trust a plan's STRUCTURE further than its literals; a
+  number in a plan is a claim dated the day it was written, and where the lane's own earlier tasks have since
+  MEASURED what a literal asserts, the measurement wins and the test becomes the claim that is actually
+  true.** The facts still worth having. **(D226)** the plan's zeroed-head list names `dwell`, which is
+  **0.05**; the fifth zeroed head is **`vqv`** — the suite asserts the zeroed set BY NAME. **(D227)**
+  `offsetScore`'s true supremum for a net-negative sum is **`0.000894437`**, not the plan's `0.000894`; the
+  suite DERIVES it from `X_WEIGHT_SUMS`, and pins `offsetScore(0.4) === 0.401` and
+  `offsetScore(-negative_sum) === 0` exactly. **(D229)** `offsetScore` SQUASHES rather than clamps, so an
+  all-negative post lands in `(0, 0.000894437)` and never on 0 — the plan's "normalizes to 0" would have
+  encoded a `Math.max(x,0)` that destroys the ordering the squash exists to preserve; the assertion is an
+  ORDERING claim, and `RankerDraftResult.netNegative` lets a surface say the words instead of waiting for a
+  zero that cannot arrive. **(D233)** the measured retweet median is exactly **0** (66% of our feed posts have
+  none) — a value, not a gap: the head goes one-sided and nothing divides by it. D234/D235/D236 are the same
+  lesson's later payments.
+- **D228** (XR.2 — **attribution is per-FILE and per-READ, not per-feature**). The Bangermeter tree D225
+  recorded as absent was supplied hours after XR.1 shipped. The tempting move — "correct" `xRanker.ts`'s
+  Apache-2.0/xAI header to the plan's mandated MIT notice — is wrong: that header is a factual claim about
+  what XR.1 read, and XR.1 read X's own repository. XR.2's material (`baselineP`, `observedRates`, the
+  shrinkage, the head split) has no upstream, was read at first hand, and so `xRankerSignals.ts` carries the
+  MIT/Ryan Lenk notice. **Two files, two attributions, and neither is a mistake. When a source reappears, ask
+  what THIS file's author actually opened, never what the project now has on disk.** Binds XR.8's docs-sync.
+- **D230** (XR.2 — a borrowed CUT POINT is a borrowed number, §7.34) — **DISCHARGED at XR.4; see D236.** What
+  it got right: 40/65 was off-centre on our modifier set, and neither available fix (nudge the cuts, shave the
+  factors) was allowed, because both were vibes. What it got wrong, and only measurement catches it: it
+  predicted `strong` would be the modal band. On 308 real own originals `strong` is 31% and **`below` is
+  0.3%** — the dead end was the LOWER cut.
 - **D231** (XR.2 — **a retrospective score must not re-apply a factor the measurement already contains**).
-  Bangermeter's `engagementScore` runs the OON 0.75 rescore over measured counts; ours does not, for their own
-  stated reason — they exclude the community-note factor because "a post's actual counts already embed
-  whatever suppression occurred", which is true of OON identically. Rescoring would double-count it and make
-  two sightings incomparable on a viewer assumption. The reply WEIGHT still varies by mutual-follow (a question
-  about the viewer's ranker, not the post's history) while the baseline stays pinned at the base weight, which
-  is what makes a mutual scoring above it a finding. **Binds XR.6:** the E chip scores the target and is not
-  rescored; any OON caveat there is about a reply's For-You eligibility (plan Decision 9), not the number.
-
+  Bangermeter runs the OON 0.75 rescore over measured counts; ours does not, for their own stated reason about
+  community notes — a post's actual counts already embed whatever suppression happened, so rescoring
+  double-counts it and makes two sightings incomparable on a viewer assumption. The reply WEIGHT still varies
+  by mutual-follow (a question about the viewer's ranker, not the post's history) while the baseline stays
+  pinned at the base weight, which is what makes a mutual scoring above it a finding. **Binds XR.6:** the E
+  chip scores the target and is not rescored; any OON caveat there is about a reply's For-You eligibility
+  (plan Decision 9), not about the number.
 - **D232** (XR.3 — **the plan's maturity cut is unsatisfiable, and you catch that by running a borrowed filter
-  against the corpus it was borrowed FROM**). XR.3 asks to drop rows within 48h of the sample's newest post
-  ("a young post reads ~1.4x high"). Measured: **zero of our 766 passive-timeline rows are 48h old at capture**
-  (median 3.1h, max 44.6h — a Home Timeline shows recent posts, so the corpus *structurally* cannot hold a
-  settled reading) and **zero of Bangermeter's own 141-post reference sample are either** (median 6h, max 43h,
-  off its `ageMin` column, which `calibrate.js` never filters on). The cut empties the corpus it came from — it
-  is the plan author's addition, not the ported method. Clocked the plan's way it is a *collection-recency*
-  filter and moves the medians <8%. Ships as a **reported diagnostic**: the reference must be sampled like the
-  thing it scores (every post E scores is a feed-time DOM reading too), a settled-only reference would read
-  every fresh sighting as above-baseline, and rerun stability already comes from clocking against `captured_at`,
-  frozen per row. **Generalize: check a borrowed filter against the SOURCE corpus first. A filter that removes
-  nothing is worse than no filter — the next reader believes it fired.**
-- **D233** (XR.3 — **the measured retweet median is exactly 0, and that is a value, not a gap**). 66% of our
-  feed posts have no reposts, so zero IS the per-post median. Shipped as `0`: the head goes one-sided
-  (at-reference with none, above it with any), which is the honest shape, and nothing divides by it — it is a
-  shrinkage prior and a baseline term, never a denominator. **Diverges from the plan's test literal "all three
-  rates in `(0, 1)`"**, which a correct measurement fails; the suite asserts `[0, 1)` with favorite/reply
-  strictly positive, plus a test that a zero reference still scores and still rewards a repost. (D226/D227/D229
-  again: trust a plan's structure over its literals.)
-- **D234** (XR.3 — **the new reference broke an XR.2 test, and the break WAS the finding**). *"shrinkage: a
-  1-like/10-view post scores below a 100-like/1000-view post"* went red: its `real` fixture carried **5
-  replies**, 3.7x ABOVE the imported reply reference (0.00135) and 0.25x BELOW the measured one (0.019774).
-  Reply carries X's published **5.0** against favorite's **0.5**, so a below-median reply rate outweighs a 10x
-  like surplus and the tiny post — handed the median on every head by shrinkage — wins. **Fixture re-picked
-  (40 replies, above the median on all three heads) rather than the assertion loosened, and the old fixture
-  kept as its own test of what it exposed.** **Generalize: a test that reddens when a constant is measured was
-  testing the constant, not the claim in its name — re-pick the fixture, keep the old one as the finding.**
+  against the corpus it was borrowed FROM**). XR.3 asks to drop rows within 48h of the sample's newest post.
+  Measured: **zero of our 766 passive-timeline rows are 48h old at capture** (median 3.1h, max 44.6h — a Home
+  Timeline shows recent posts, so the corpus *structurally* cannot hold a settled reading) and **zero of
+  Bangermeter's own 141-post reference sample are either** (median 6h, max 43h, off its `ageMin` column, which
+  `calibrate.js` never filters on). The cut empties the corpus it came from. It ships as a reported
+  diagnostic: the reference must be sampled like the thing it scores, and rerun stability already comes from
+  clocking against `captured_at`, frozen per row. **Generalize: check a borrowed filter against the SOURCE
+  corpus first. A filter that removes nothing is worse than no filter — the next reader believes it fired.**
+  Its second half — "K=2000 is the binding constraint on E" — was measured at XR.4 and is **false** (D237).
+- **D234** (XR.3 — **the new reference broke an XR.2 test, and the break WAS the finding**). *"a 1-like/10-view
+  post scores below a 100-like/1000-view post"* went red because its fixture carried 5 replies — 3.7x above the
+  imported reply reference and 0.25x below the measured one — and reply carries X's published 5.0 against
+  favorite's 0.5. **Fixture re-picked rather than the assertion loosened, and the old fixture kept as its own
+  test of what it exposed. Generalize: a test that reddens when a constant is measured was testing the
+  constant, not the claim in its name.**
 - **D235** (XR.5 — **the plan put a second engine's band into the coach's colour vocabulary, and the file the
   wave itself had already written says why that is wrong**). Task XR.5's Edit list adds `RANKER_BAND_TONE` to
-  `CoachChip.tsx`, mapping all three ranker bands into `COACH_TONE`'s class set. Three facts postdating the
-  plan say otherwise. **(a)** `xRankerSignals.ts`'s own header (XR.2): *"Deliberately NOT `CoachBand`'s
-  vocabulary … sharing the words would invite the two pills to be read as one number"* — and a shared colour
-  ramp invites it harder than shared words. **(b)** UI.14 is explicit that a chip vocabulary maps onto a tone
-  in `chips.ts`; `CoachChip.tsx` holds the coach's map because the surfaces it colours are deliberately *not*
-  chips, and the C pill **is** one. **(c) `COACH_TONE` has no neutral** — fix/nudge/pass is a pass-fail ramp,
-  and D230 binds XR.5 not to present an `imported-unvalidated` cut point as a verdict. So `rankerBandChip`
-  lives in `chips.ts`, returns `.chip` + a `chip-*` tone, and **only `below` is coloured** (`chip-warn`, the
-  "asking you to look" tone a `queued` follow takes); `typical`/`strong` are `chip-muted` — the base's own
-  colour — until XR.4 re-cuts them. **The chip family has no danger tone at all**, which is the right ceiling
-  for an advisory number (§7.23a): C cannot shout by construction. `CoachChip.test.ts` keeps the test and
-  inverts the claim — the two vocabularies share **no** class, asserted both directions.
-  **Two smaller literals fell the same way.** The dictated tooltip says *"50 is a typical post"*; D230
-  measured that false (50 is the SIGNAL-FREE draft, a competent one reads 59–71), and it is the one sentence
-  that would make the whole pill misread — it ships as *"50 is a draft carrying no signals at all"*, with a
-  test pinning the new wording **and the absence of the old**. And `rankerDraftFeatures` leaves
-  `hasVideo`/`videoSeconds`/`isMutualFollow` **absent, not `false`** (§7.11): the Composer has no video
-  affordance, so `false` would be a measurement nobody took, and `signalsToHeadPs` drops an absent head
-  rather than scoring it zero. **Generalize (fifth payment after D226/D227/D229/D233): a plan's literals are
-  dated the day it was written; where the lane's own earlier tasks have since MEASURED what a literal
-  asserts, the measurement wins and the test becomes the claim that is actually true.**
+  `CoachChip.tsx`. Three facts postdating the plan say otherwise: `xRankerSignals.ts`'s own header refuses
+  `CoachBand`'s vocabulary because sharing the words invites the two pills to be read as one number (and a
+  shared colour ramp invites it harder); UI.14 is explicit that a chip vocabulary maps onto a tone in
+  **`chips.ts`**, and the C pill IS a chip; and `COACH_TONE` has no neutral. So `rankerBandChip` lives in
+  `chips.ts`, returns `.chip` + a `chip-*` tone, and **only `below` is coloured** (`chip-warn`) while
+  `typical`/`strong` stay `chip-muted` — **still true after XR.4's re-cut, and the reason is now sharper:
+  centred is not validated** (`rankerScoreEffectiveness` still has no rows). `CoachChip.test.ts` asserts the
+  two vocabularies share **no** class, both directions. Second half, and it binds XR.6/XR.7: an unobservable
+  input stays **absent, not `false`** (§7.11) — the Composer has no video affordance, so a `false` would be a
+  measurement nobody took, and `signalsToHeadPs` drops an absent head rather than scoring it zero.
+- **D236** (XR.4 — **the re-cut D230 handed over, and the measurement found a different defect than the one
+  it was sent to fix**). `RANKER_BAND_CUTS` 40/65 was checked against four independent $0 samples of our own
+  corpus, as below/typical/strong: C over 308 own published originals **0.3 / 68.5 / 31.2**, E over 712
+  `radar_sightings` 11.7 / 88.3 / **0.0**, E over 3,567 harvested sightings 13.6 / 86.3 / **0.1**, E over the
+  766-post timeline reference 11.4 / 88.4 / 0.3. **A dead band at each end, at OPPOSITE ends — a three-valued
+  instrument reading two values.** D230 predicted only half of that. The defect underneath is
+  structural: `rankerBand` was ONE function over TWO distributions (C q1/q3 = 56/68, E q1/q3 = 46/51), so no
+  single pair can centre both — moving the cuts to fit C would have made E almost entirely `below`, which is
+  worse than leaving it. Shipped: two measured pairs (`draft {typical 56, strong 68}`, `measured {typical 46,
+  strong 51}`), each **the q1/q3 of the corpus its scale is applied to**, so a band means a QUARTILE POSITION
+  and the RULE (not the numbers) is what the suite pins against `RANKER_BAND_CUTS_SAMPLE`; provenance
+  `'measured'`; and `rankerBand` becomes `rankerDraftBand`/`rankerMeasuredBand` — **two functions, never
+  `rankerBand(score, scale)`**, which is `latestOwnReplyRows`'s own no-flag rule (a wrong flag here is silent:
+  61 reads `typical` on one scale and `strong` on the other). `scripts/calibrate-ranker.ts` grew the
+  derivation, and re-emits both pairs exactly against a scratch DB seeded from prod. **Generalize: check a
+  borrowed threshold at BOTH ends, and ask whether one threshold is quietly serving two distributions. A band
+  that fires on ~0% or ~100% of a real corpus is a dead instrument that reads as a working one.**
+- **D237** (XR.4 — **the standing suspicion was measured and it was wrong, which is a result and not a
+  non-event**). `ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS` carried XR.3's note that K=2000 "is too strong for this
+  corpus" and was "the binding constraint on E". Two measurements say otherwise: beta-binomial
+  method-of-moments over the timeline corpus puts K near **1066** on `favorite` and returns **negative**
+  between-post variance on `reply` and `retweet` (their whole observed spread is binomial noise off small
+  view counts — only 2.4% of `favorite`'s variance is between-post), and at K=1066 only **0.2%** of sightings
+  clear the old cut of 65, at K=500 only 1.9%. **Lowering K would amplify noise, and could not have fixed the
+  dead band anyway — that was the cut (D236).** K stays at 2000 on evidence rather than on inertia, and the
+  constant's comment now carries the numbers. **Generalize: when a recorded suspicion names a constant, the
+  cheap first move is to compute what the corpus says that constant should be — the answer may close the
+  question instead of licensing the change.**
+- **D238** (XR.4 — **the falsification cell is correct and its population is EMPTY, and those are two separate
+  facts**). The plan's population is own harvested originals (`harvest_rows mode='posts'`, `handle =
+  selfHandle`). On prod that is **zero rows**: `13_narcissus` has never run a `posts`-mode harvest on its own
+  profile, and the 2,537 tweets under that mode are 19 OTHER people's profiles — this file's earlier "~2,434
+  tweets on prod" hint was that count misread. Widening to `metrics_snapshots` is forbidden (Decision 6, and
+  it carries no reply/repost counts) and a proxy would be invented data, so the cell ships over the right
+  population and **reports the empty reading**: `totalPosted: 0` with every spread `null` is a correct answer
+  to "does the score predict our views", and the corpus is one own-profile harvest away. Proven correct
+  against a scratch DB by pointing `selfHandle` at a real 481-post profile harvest — **C spread 1.71x** (q4
+  3,256 median views vs q1 1,905, both gated) and **E spread 0.50x**, E backwards exactly as the cell's own
+  header says it must be, because views is E's denominator. **Generalize: an instrument reading zero is not
+  the same as a broken one, and the way to tell them apart is to run it against a corpus that is not yours.**
+
 
 ## Gotchas log
 
@@ -477,6 +462,20 @@ feature.
   so wherever the number is quoted.
 - **XR.3 — the script is $0 and safe to rerun; on a dev box it prints `0 tweets` and exits cleanly.** That is
   the honest empty path, not a failure.
+- **XR.4 — the scratch-DB recipe, extended, and it is now the way to test a PLAYBOOK route without prod.**
+  Dump prod with `POST /x/data/query` (`json_group_array(json_object(...))` in ONE cell beats the 500-row cap),
+  `SQLITE_PATH=<scratch> bun run scripts/migrate.ts`, insert with raw `bun:sqlite` — **`posts_published` has
+  no `id` column** (`tweet_id` is the PK) and `source` is notNull, and `harvest_rows.run_id` is a notNull FK so
+  the runs go first. Then run the REAL deliverable: `scripts/calibrate-ranker.ts` re-emitted both band pairs
+  exactly, and the composed app (`const { app } = await import('src/app.ts')` — **not** a default export) served
+  `/x/playbook` over 481 real harvested posts by pointing `x.identity.selfHandle` at a handle that is actually
+  in the table. **Pointing the self-handle setting at someone else's harvested profile is the cheapest way to
+  exercise an own-corpus cell that has no own corpus yet** — it proves the SQL, the gate and the wiring without
+  fabricating a row.
+- **XR.4 — the C distribution is robust to the two things you would expect to move it**, which is why the band
+  cuts are safe to freeze: over 308 own published originals the quartiles come out 56/61/68 with the active
+  niche lexicon, without it, and with or without the recorded `has_media` flag. The calibration deliberately
+  runs WITHOUT the lexicon — a constant that changes when the niche is re-pinned is not a constant.
 
 - **XR.5 — the extension `include` array is FINISHED at 14 shims, and the count that matters is still not the
   array length** (15 entries, 14 shims — `src/**/*` is the first). No remaining XR task adds one: XR.6 and
@@ -493,10 +492,6 @@ feature.
   all. No attach-image affordance exists (no API media upload — out of scope), so a Studio visual pinned to
   the row is the whole evidence a post ships with an image; it is `null` on every unsaved draft, which is
   correct — an image that does not exist yet is not a feature of the draft (D235's §7.11 half).
-- **XR.5 — real prose reads `typical`, not `strong`, so D230's distribution number is fixture-flavoured.**
-  Measured on three realistic drafts the pill reads `C 61 · typical` (competent), 59 (engagement-bait), 63
-  (thread + image) — against D230's predicted 66–71, which was measured over `postCoach` fixtures **chosen to
-  trip modifiers**. **XR.4's re-cut must sample real drafts / harvested originals, not the suite's fixtures.**
 
 ## Planning-error log
 

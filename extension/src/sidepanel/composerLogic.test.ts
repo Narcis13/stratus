@@ -445,15 +445,21 @@ describe('rankerPillTitle', () => {
   });
 
   test('50 is described as SIGNAL-FREE, never as typical (D230)', () => {
-    // The band cuts put a competent draft at 66-71, so "50 is a typical post"
-    // would be the one sentence that makes the whole pill misread.
+    // 50 is the signal-free reference and our own published originals run a
+    // measured median of 61, so "50 is a typical post" would be the one
+    // sentence that makes the whole pill misread.
     const title = rankerPillTitle(scoreDraftRanker('a draft'));
     expect(title).toContain('50 is a draft carrying no signals at all');
     expect(title).not.toContain('50 is a typical');
   });
 
-  test('the borrowed cut points are declared unvalidated while they are', () => {
-    expect(rankerPillTitle(scoreDraftRanker('a draft'))).toContain('imported and unvalidated');
+  test('the band line says where a draft SITS, not what it earns (XR.4)', () => {
+    // XR.4 re-cut the bands off measured quartiles, so the old "imported and
+    // unvalidated" line became false copy. What replaced it draws the line that
+    // is still real: the cuts describe WHERE a draft sits, not what it earns.
+    const title = rankerPillTitle(scoreDraftRanker('a draft'));
+    expect(title).toContain('quartiles of my own published posts');
+    expect(title).not.toContain('imported and unvalidated');
   });
 
   test('the disclaimer is the engine export, never a retyped copy', () => {

@@ -2,6 +2,11 @@
 //
 //   bun run scripts/calibrate-ranker.ts        # $0, read-only, rerunnable
 //
+// It now derives TWO things, in one $0 pass over the same tables: the E-score
+// reference (`X_OBSERVED_RATES`, XR.3) and the band cut points
+// (`RANKER_BAND_CUTS`, XR.4). Both sections print what they measured, what is
+// currently shipped, and a paste block.
+//
 // `X_OBSERVED_RATES` in `src/shared/xRankerSignals.ts` is what the retrospective
 // **E** score normalizes against: what a typical post really does per view. It
 // shipped in XR.2 as Bangermeter's 141-post sample of *their* For You feed. This
@@ -68,16 +73,18 @@
 // honest placeholder, so the script refuses to emit constants and says so. It
 // prints `n` either way.
 
-import { eq, sql } from 'drizzle-orm';
+import { eq, ne, sql } from 'drizzle-orm';
 import { db } from '../src/db/client.ts';
 import { normalizeScore, scoreHeads } from '../src/shared/xRanker.ts';
 import {
   ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS,
+  RANKER_BAND_CUTS,
   X_OBSERVED_RATES,
   X_OBSERVED_RATES_SAMPLE,
+  scoreDraftRanker,
   scoreMeasured,
 } from '../src/shared/xRankerSignals.ts';
-import { harvestRows } from '../src/x/db/schema.ts';
+import { harvestRows, postsPublished } from '../src/x/db/schema.ts';
 
 /** The passive Home-Timeline harvest. `mode` is the only thing separating it
  *  from the user's hand-run harvests — `routes/playbook.ts` carries the same
@@ -318,15 +325,19 @@ async function main(): Promise<void> {
       ` (${pct(shippedScores, (n) => n > 50)} above 50); measured reads ${q(measuredScores, 0.5)}` +
       ` (${pct(measuredScores, (n) => n > 50)}).`,
   );
-  // Not a licence to retune K here — that is a measured recalibration (plan
-  // Decision 5, CLAUDE.md's thresholds rule), and this run is what will
-  // eventually justify one. Naming the number now is what makes it visible.
+  // XR.3 read this narrow spread as a shrinkage problem. XR.4 measured it and
+  // it is not: beta-binomial method-of-moments over this corpus puts K near
+  // 1066 on `favorite` and finds NO between-post signal at all on `reply` or
+  // `retweet` (the observed spread is entirely binomial noise off small view
+  // counts), and even K=500 leaves only 1.9% of sightings above the old cut of
+  // 65. What was broken was the band, and the section below re-cuts it. K stays
+  // at 2000 on evidence rather than on inertia.
   for (const line of [
     `  spread   : p10..p90 spans ${q(measuredScores, 0.1)}..${q(measuredScores, 0.9)}. Our median post has ${medViews} views`,
     `             against K=${ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS} pseudo-views, so a typical reading is pulled ~${pull}% onto the`,
-    '             reference before it is scored. E separates our feed weakly, and that is',
-    '             the shrinkage constant, not the rates. XR.4 owns the re-cut; K moves',
-    '             only on a measured recalibration.',
+    '             reference before it is scored. E separates our feed weakly — which is the',
+    '             corpus (297 median views), not the smoother, and not the rates. The band',
+    '             cut points below are what makes that narrow spread readable.',
   ]) {
     console.log(line);
   }
@@ -359,5 +370,119 @@ async function main(): Promise<void> {
   console.log('} as const;');
 }
 
+// ------------------------------------------------------- the band cut points
+//
+// XR.4. `RANKER_BAND_CUTS` arrived from Bangermeter's `scoreLevel` at 40/65 and
+// §7.34 says a borrowed cut point gets validated against our corpus like any
+// other borrowed number. Measured, it had a DEAD BAND at each end: `below`
+// caught 0.3% of our own published originals and `strong` caught 0.0% of our
+// harvested sightings — a three-valued instrument reading two values.
+//
+// The rule this section applies, on both scales: **a cut point is the measured
+// q1/q3 of the corpus that scale is applied to**, so a band always means a
+// quartile position — bottom quarter / middle half / top quarter of what we
+// actually see. Two corpora, because C and E are two distributions:
+//
+//   C (draft)    — `posts_published` originals. What the Composer's pill grades
+//                  is a draft of mine, so the reference is a post of mine.
+//   E (measured) — `harvest_rows` minus the own-reply corpus, deduped at FIRST
+//                  sighting. What E scores is a post seen on a page, which is
+//                  exactly how these rows were read.
+//
+// The C pass runs WITHOUT the active niche lexicon on purpose. Two coach checks
+// move with it, and a constant that changes when the niche is re-pinned is not
+// a constant. Measured, it does not matter — the quartiles come out identical
+// either way — which is the reason it is safe to leave out rather than a reason
+// it was left out.
+
+/** Everything the DOM harvest sees on a PAGE. The own-reply corpus is excluded:
+ *  a reply's counts are dominated by its parent's reach and E is never shown on
+ *  one (plan Decision 9). */
+const SIGHTING_MODES_EXCLUDED = 'replies';
+
+function quartilesOf(scores: readonly number[]): { q1: number; median: number; q3: number } {
+  return { q1: q(scores, 0.25), median: q(scores, 0.5), q3: q(scores, 0.75) };
+}
+
+function bandShare(scores: readonly number[], typical: number, strong: number): string {
+  const share = (keep: (n: number) => boolean): string => pct(scores, keep);
+  return (
+    `below ${share((n) => n < typical)}   ` +
+    `typical ${share((n) => n >= typical && n < strong)}   ` +
+    `strong ${share((n) => n >= strong)}`
+  );
+}
+
+async function bands(): Promise<void> {
+  const originals = await db
+    .select({ text: postsPublished.text, postedAt: postsPublished.postedAt })
+    .from(postsPublished)
+    .where(eq(postsPublished.isReply, false));
+
+  // First sighting per tweet WITHIN a mode — the same reading E is asked for on
+  // a live page, and the same dedup direction the rates above use.
+  const sightings = await db
+    .select({
+      capturedAt: sql<number>`min(${harvestRows.capturedAt})`,
+      views: harvestRows.views,
+      likes: harvestRows.likes,
+      comments: harvestRows.comments,
+      reposts: harvestRows.reposts,
+    })
+    .from(harvestRows)
+    .where(ne(harvestRows.mode, SIGHTING_MODES_EXCLUDED))
+    .groupBy(harvestRows.mode, harvestRows.tweetId);
+
+  const cScores = originals.map((r) => scoreDraftRanker(r.text).score);
+  const eRows = sightings.filter((r) => r.views > 0);
+  const eScores = eRows
+    .map((r) =>
+      scoreMeasured({ views: r.views, likes: r.likes, replies: r.comments, reposts: r.reposts }),
+    )
+    .flatMap((m) => (m.available ? [m.score] : []));
+
+  console.log('\n\nband cut points — the same rule on both scales: measured q1 / q3');
+  console.log(`  C corpus   : posts_published, is_reply=0 — ${cScores.length} own originals`);
+  console.log(
+    `  E corpus   : harvest_rows, mode != '${SIGHTING_MODES_EXCLUDED}', first sighting per tweet — ` +
+      `${eScores.length} scorable of ${sightings.length}`,
+  );
+
+  for (const [label, scores, shipped] of [
+    ['C (draft)', cScores, RANKER_BAND_CUTS.draft],
+    ['E (measured)', eScores, RANKER_BAND_CUTS.measured],
+  ] as const) {
+    if (scores.length === 0) {
+      console.log(`\n  ${label}: no rows on this DB — nothing to cut.`);
+      continue;
+    }
+    const cut = quartilesOf(scores);
+    console.log(
+      `\n  ${label}  n=${scores.length}  q1 ${cut.q1}   median ${cut.median}   q3 ${cut.q3}`,
+    );
+    console.log(
+      `    at the shipped ${shipped.typical}/${shipped.strong}: ${bandShare(scores, shipped.typical, shipped.strong)}`,
+    );
+    console.log(`    at the measured ${cut.q1}/${cut.q3}: ${bandShare(scores, cut.q1, cut.q3)}`);
+    if (scores.length < MIN_SAMPLE) {
+      console.log(`    REFUSING to emit: n < ${MIN_SAMPLE}; the quartiles are noise at this size.`);
+      continue;
+    }
+    console.log(
+      `    paste: ${label.startsWith('C') ? 'draft' : 'measured'}: { strong: ${cut.q3}, typical: ${cut.q1} },`,
+    );
+  }
+
+  const captured = sightings.map((r) => Number(r.capturedAt));
+  const posted = originals.map((r) => r.postedAt.getTime());
+  if (captured.length > 0 && posted.length > 0) {
+    console.log(
+      `\n  sample stamps: draft ${isoDay(Math.min(...posted))}..${isoDay(Math.max(...posted))}   ` +
+        `measured ${isoDay(Math.min(...captured))}..${isoDay(Math.max(...captured))}`,
+    );
+  }
+}
+
 await main();
+await bands();
 process.exit(0);

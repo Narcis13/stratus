@@ -13,6 +13,8 @@ import {
   type OriginalPostRow,
   type OwnReplyRosterEntry,
   type OwnReplyRow,
+  type RankerPostRow,
+  type RankerScoreCell,
   type TimelineBucket,
   type TimelineSeenRow,
   authorSizeBucket,
@@ -28,6 +30,7 @@ import {
   buildModelEffectiveness,
   buildOwnReplyPerformance,
   buildPillarRegisterScorecard,
+  buildRankerScoreEffectiveness,
   buildRelationshipLift,
   buildRosterCoverage,
   buildStructureEffectiveness,
@@ -503,6 +506,167 @@ describe('buildCoachScoreEffectiveness (SC.5)', () => {
 function round(n: number): number {
   return Math.round(n * 100) / 100;
 }
+
+describe('buildRankerScoreEffectiveness (XR.4)', () => {
+  /** Eight own originals whose E scores fan out across the range: same views,
+   *  engagement counts climbing, so the quartiles are driven by the score and
+   *  not by the sample order. Views are the OUTCOME too (the loader derives both
+   *  from one harvest row), which is exactly the circularity the cell's header
+   *  warns about — the fixture makes it visible rather than hiding it. */
+  const row = (o: {
+    text?: string;
+    views: number;
+    likes?: number;
+    replies?: number;
+    reposts?: number;
+    measured?: boolean;
+  }): RankerPostRow => ({
+    text: o.text ?? FIXTURE.hedge,
+    counts: {
+      views: o.views,
+      likes: o.likes ?? 0,
+      replies: o.replies ?? 0,
+      reposts: o.reposts ?? 0,
+    },
+    outcome: o.measured === false ? null : { views: o.views, profileVisits: null },
+  });
+
+  const rows: RankerPostRow[] = [
+    row({ views: 1000, likes: 0, replies: 0 }),
+    row({ views: 1100, likes: 2, replies: 0 }),
+    row({ views: 1200, likes: 10, replies: 1 }),
+    row({ views: 1300, likes: 20, replies: 3 }),
+    row({ views: 1400, likes: 40, replies: 8 }),
+    row({ views: 1500, likes: 80, replies: 16 }),
+    row({ views: 1600, likes: 160, replies: 32 }),
+    row({ views: 1700, likes: 320, replies: 64 }),
+  ];
+
+  test('quartiles partition every scorable row, worst→best, with their ranges', () => {
+    const r = buildRankerScoreEffectiveness(rows, 1);
+    expect(r.totalPosted).toBe(8);
+    expect(r.totalMeasured).toBe(8);
+    expect(r.totalScoredE).toBe(8);
+    expect(r.cells.reduce((a, c) => a + c.posted, 0)).toBe(8);
+    expect(r.contentCells.reduce((a, c) => a + c.posted, 0)).toBe(8);
+    // Worst→best, ascending quartile numbers, and each cell's observed range
+    // sits at or above the one before it.
+    const qs = r.cells.map((c) => c.quartile);
+    expect(qs).toEqual([...qs].sort((a, b) => a - b));
+    for (let i = 1; i < r.cells.length; i++) {
+      const prev = r.cells[i - 1] as (typeof r.cells)[number];
+      const cur = r.cells[i] as (typeof r.cells)[number];
+      expect(cur.range.lo).toBeGreaterThanOrEqual(prev.range.hi);
+      expect(cur.range.lo).toBeLessThanOrEqual(cur.range.hi);
+    }
+  });
+
+  test('a below-gate cell still reports its median but contributes no spread', () => {
+    // The tie-preserving split lands 1/3/2/2 here, so a gate of 4 clears
+    // nothing while every cell still has a real median behind it.
+    const r = buildRankerScoreEffectiveness(rows, 4);
+    expect(r.cells.every((c) => c.sufficient === false)).toBe(true);
+    expect(r.cells.every((c) => c.medianViews !== null)).toBe(true);
+    expect(r.spread).toBeNull();
+    expect(r.spreadQuartiles).toBeNull();
+  });
+
+  test('spread needs TWO gated quartiles and names which two', () => {
+    const r = buildRankerScoreEffectiveness(rows, 2);
+    const gated = r.cells.filter((c) => c.sufficient);
+    expect(gated.length).toBeGreaterThanOrEqual(2);
+    expect(r.spreadQuartiles).not.toBeNull();
+    const pair = r.spreadQuartiles as { high: number; low: number };
+    expect(pair.high).toBeGreaterThan(pair.low);
+    expect(pair.low).toBe((gated[0] as RankerScoreCell).quartile);
+    expect(pair.high).toBe((gated[gated.length - 1] as RankerScoreCell).quartile);
+    const hi = (gated[gated.length - 1] as RankerScoreCell).medianViews as number;
+    const lo = (gated[0] as RankerScoreCell).medianViews as number;
+    expect(r.spread).toBeCloseTo(hi / lo, 2);
+  });
+
+  test('one gated quartile is not a spread', () => {
+    // Seven rows at one score + one outlier: the tie keeps the seven together,
+    // so only that cell can clear a gate of 3.
+    const flat: RankerPostRow[] = [
+      ...Array.from({ length: 7 }, () => row({ views: 1000, likes: 10, replies: 1 })),
+      row({ views: 9000, likes: 900, replies: 300 }),
+    ];
+    const r = buildRankerScoreEffectiveness(flat, 3);
+    expect(r.cells.filter((c) => c.sufficient).length).toBe(1);
+    expect(r.spread).toBeNull();
+    expect(r.spreadQuartiles).toBeNull();
+  });
+
+  test('fewer than four distinct scores emits fewer cells, never empty ones', () => {
+    const same: RankerPostRow[] = Array.from({ length: 6 }, () =>
+      row({ views: 1000, likes: 10, replies: 1 }),
+    );
+    const r = buildRankerScoreEffectiveness(same, 1);
+    expect(r.cells.length).toBe(1);
+    expect(r.cells[0]).toMatchObject({ quartile: 4, posted: 6 });
+    expect(r.cells.every((c) => c.posted > 0)).toBe(true);
+    expect(r.spread).toBeNull();
+  });
+
+  test('an unmeasured corpus reports zero measured and no spread on either scale', () => {
+    const unmeasured = rows.map((r) => ({ ...r, outcome: null }));
+    const r = buildRankerScoreEffectiveness(unmeasured, 1);
+    expect(r.totalPosted).toBe(8);
+    expect(r.totalMeasured).toBe(0);
+    // E is still computable — the counts are there, only the outcome is missing.
+    expect(r.totalScoredE).toBe(8);
+    expect(r.cells.every((c) => c.n === 0 && c.medianViews === null)).toBe(true);
+    expect(r.spread).toBeNull();
+    expect(r.contentSpread).toBeNull();
+    expect(r.spreadQuartiles).toBeNull();
+    expect(r.contentSpreadQuartiles).toBeNull();
+  });
+
+  test('a post with no view count has no E, and that is not a zero', () => {
+    const r = buildRankerScoreEffectiveness([...rows, row({ views: 0, measured: false })], 1);
+    expect(r.totalPosted).toBe(9);
+    expect(r.totalScoredE).toBe(8);
+    // C reads text alone, so the unscorable row still lands in a content cell.
+    expect(r.contentCells.reduce((a, c) => a + c.posted, 0)).toBe(9);
+    expect(r.cells.reduce((a, c) => a + c.posted, 0)).toBe(8);
+  });
+
+  test('C and E are cut SEPARATELY over the same rows (they answer different questions)', () => {
+    // Same eight rows, one text: C is constant and collapses to a single cell
+    // while E fans out. The cell reports both and never averages them.
+    const r = buildRankerScoreEffectiveness(rows, 1);
+    expect(r.contentCells.length).toBe(1);
+    expect(r.cells.length).toBeGreaterThan(1);
+    expect(r.contentSpread).toBeNull();
+  });
+
+  test('the empty corpus is an empty answer, not a throw', () => {
+    const r = buildRankerScoreEffectiveness([], 20);
+    expect(r).toMatchObject({
+      cells: [],
+      contentCells: [],
+      totalPosted: 0,
+      totalMeasured: 0,
+      totalScoredE: 0,
+      spread: null,
+      contentSpread: null,
+    });
+  });
+
+  test('the lexicon reaches the C score, as it does the coach cell', () => {
+    // Same argument as `buildCoachScoreEffectiveness`: C reads `postCoach`
+    // checks, two of which move with the active lexicon, so a cell graded
+    // without it measures a score the Composer never showed.
+    const text = 'We shipped the unsexy-problems checklist and the drafts stopped rotting.';
+    const withLex = buildRankerScoreEffectiveness([row({ text, views: 900, likes: 9 })], 1, {
+      specificTerms: ['unsexy-problems'],
+      tribeTerms: ['drafts'],
+    });
+    const without = buildRankerScoreEffectiveness([row({ text, views: 900, likes: 9 })], 1);
+    expect(withLex.contentCells[0]?.medianScore).not.toBe(without.contentCells[0]?.medianScore);
+  });
+});
 
 describe('buildJudgeEffectiveness (JD.7)', () => {
   const rows: JudgeRow[] = [

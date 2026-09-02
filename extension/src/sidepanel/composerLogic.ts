@@ -400,8 +400,16 @@ export function rankerPillLabel(r: RankerDraftResult): string {
 const RANKER_TOOLTIP_MODIFIERS = 3;
 
 /** The C pill's tooltip. Says what the number is, what it is measured against,
- *  which of our signals moved it, and — until XR.4's cell re-cuts them — that
- *  the band's cut points are borrowed and unvalidated (D230).
+ *  which of our signals moved it, and what the band word does and does not
+ *  claim.
+ *
+ *  **The closing line changed at XR.4 and the distinction it now draws is the
+ *  point.** The cuts are no longer imported: they are the measured quartiles of
+ *  my own published originals, so the word says WHERE this draft sits among
+ *  them. What is still unmeasured is whether sitting there predicts anything
+ *  about reach — `/x/playbook`'s `rankerScoreEffectiveness` is the cell that
+ *  asks, and it has no own-profile harvest rows yet. Centred is not validated,
+ *  and the tooltip must not let the two be read as one.
  *
  *  "50" is the SIGNAL-FREE draft, not the typical one: twelve modifiers fire on
  *  a `postCoach` check PASSING, so an ordinary competent post lands well above
@@ -427,7 +435,9 @@ export function rankerPillTitle(r: RankerDraftResult): string {
   }
   if (up.length > 0) lines.push(`Up: ${up.join(' · ')}`);
   if (down.length > 0) lines.push(`Down: ${down.join(' · ')}`);
-  lines.push('Band cut points are imported and unvalidated — context, not a verdict.');
+  lines.push(
+    'Bands are quartiles of my own published posts — where this draft sits among them, not what it will earn.',
+  );
   lines.push(RANKER_DISCLAIMER);
   return lines.join('\n');
 }
