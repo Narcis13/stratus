@@ -8,7 +8,7 @@
 // the numeric x_user_id is filled opportunistically when the page exposes it.
 //
 // Routes:
-//   POST   /voice/scrape              { tweet, author?, sourcePath? }  save a tweet (+ its author)
+//   POST   /voice/scrape              { tweet, author?, sourcePath?, metrics? }  save a tweet (+ its author)
 //   PUT    /voice/authors/:handle     { ...profile }       enrich author from their profile page
 //   GET    /voice/authors?retired=    list authors + tweet counts
 //   GET    /voice/targets                                  the 2–10x reply-target roster (§7.4)
@@ -33,6 +33,7 @@ import {
 } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
+import { type MeasuredCounts, scoreMeasured } from '../../shared/xRankerSignals.ts';
 import {
   accountSnapshots,
   replyDrafts,
@@ -78,6 +79,23 @@ export function createVoiceRouter(): Hono {
     // A malformed author block is non-fatal — we still have the tweet's own
     // handle + display name to anchor the row.
 
+    // XR.7 — the counts the card showed, and the ranker's reading of them.
+    // **The client reports the observation, the server decides the meaning**
+    // (§7.16, the `sourcePath` rule one field over): a `rankerE` in the body is
+    // ignored, because it is a number this service would then have to defend
+    // without being able to re-derive it. Same degrading half as the author
+    // block — a malformed or absent `metrics` costs the reading, never the save.
+    const metrics = body.metrics === undefined ? null : parseScrapedMetrics(body.metrics);
+    // No `DraftFeatures`: the only one `scoreMeasured` reads is the
+    // mutual-follow reply boost, and a swipe-file tweet is somebody else's post
+    // with no follow edge we have measured (D240). Every row is scored on the
+    // base reply weight — the same weight the E baseline is pinned at (D231) —
+    // so two saved tweets compare.
+    const measured = metrics ? scoreMeasured(metrics) : null;
+    const scoreColumns = metrics
+      ? { ...metrics, rankerE: measured?.available === true ? measured.score : null }
+      : null;
+
     const now = new Date();
 
     await fillAuthor(tweet.handle, {
@@ -100,6 +118,7 @@ export function createVoiceRouter(): Hono {
         url: tweet.url,
         source: scrapeSourceFor(body.sourcePath),
         savedAt: now,
+        ...(scoreColumns ?? {}),
       })
       .onConflictDoUpdate({
         target: voiceTweets.tweetId,
@@ -115,6 +134,13 @@ export function createVoiceRouter(): Hono {
           scrapedHtml: tweet.html ?? sql`${voiceTweets.scrapedHtml}`,
           url: tweet.url ?? sql`${voiceTweets.url}`,
           updatedAt: now,
+          // The five score columns are ONE observation and move together, or
+          // not at all: a re-save that read the card refreshes all five (the
+          // counts have moved since), and a re-save from an older build that
+          // reports none leaves the stored reading alone rather than blanking
+          // it. Refreshing the counts while keeping an older `ranker_e` would
+          // leave a row whose score is not the score of its own columns.
+          ...(scoreColumns ?? {}),
         },
       })
       .returning();
@@ -723,6 +749,7 @@ interface Body {
   tweet?: unknown;
   author?: unknown;
   sourcePath?: unknown;
+  metrics?: unknown;
   retired?: unknown;
   tags?: unknown;
   addTags?: unknown;
@@ -835,6 +862,29 @@ export function parseScrapedTweet(value: unknown): ScrapedTweet | null {
   const url = optString(v.url);
 
   return { tweetId, handle, displayName, text, html, createdAt, url };
+}
+
+/** The engagement counts a scrape saw on the card (XR.7).
+ *
+ *  Every field is independently optional and **absent stays absent** (§7.11):
+ *  X renders no number at all for a zero metric, and a locale gap can cost a
+ *  reading the DOM did make, so a missing field is unknown rather than 0. A
+ *  block that carried nothing usable is not an observation and returns `null`,
+ *  which leaves all five columns alone.
+ *
+ *  Note what this deliberately does NOT read: a `rankerE` on the wire. The
+ *  score is the server's (§7.16) and `scrapeSave` computes it from whatever
+ *  survives this parse. */
+export function parseScrapedMetrics(value: unknown): MeasuredCounts | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const v = value as Record<string, unknown>;
+  const counts: MeasuredCounts = {
+    views: optCount(v.views),
+    likes: optCount(v.likes),
+    replies: optCount(v.replies),
+    reposts: optCount(v.reposts),
+  };
+  return Object.values(counts).some((n) => n !== null) ? counts : null;
 }
 
 export function parseScrapedAuthor(value: unknown): ScrapedAuthor | null {

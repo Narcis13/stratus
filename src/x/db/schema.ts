@@ -329,6 +329,22 @@ export const voiceTweets = sqliteTable(
     templateExtractedAt: integer('template_extracted_at', { mode: 'timestamp_ms' }),
     // Channel slugs (C8) — a saved tweet can live in several topic rooms.
     tags: text('tags', { mode: 'json' }).$type<string[]>(),
+    // XR.7 — what the card showed at the moment the Save was clicked, kept so a
+    // hunted tweet carries the numbers it was hunted for. **Nullable = unknown**
+    // (§7.11): every row saved before migration 0032, and every save from an
+    // older extension build, reads as unmeasured rather than as a post that did
+    // nothing. Never default one of these to 0.
+    views: integer('views'),
+    likes: integer('likes'),
+    replies: integer('replies'),
+    reposts: integer('reposts'),
+    // E — `scoreMeasured` over the four counts above, computed SERVER-side
+    // (§7.16: the client reports the observation, the server decides what it
+    // means). Null whenever there was no view count to rate against, because a
+    // 0 here would read as "the ranker scored this at rock bottom" rather than
+    // "we never saw a denominator". The five columns move as ONE observation:
+    // `ranker_e` is always the score of the counts stored beside it.
+    rankerE: real('ranker_e'),
   },
   (t) => [index('voice_tweets_author_created_idx').on(t.authorHandle, t.createdAt)],
 );

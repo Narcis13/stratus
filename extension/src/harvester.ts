@@ -45,7 +45,12 @@ import {
   profileHandleFromUrl,
 } from './shared/harvest.ts';
 import type { ApiRequest, ApiResponse } from './shared/messages.ts';
-import { parseMetricsAria, reportUnparsed } from './shared/metricsAria.ts';
+import {
+  type MetricKey,
+  parseMetricsAria,
+  readMetricCounts,
+  reportUnparsed,
+} from './shared/metricsAria.ts';
 import {
   MAX_THREAD_REPLIES,
   type ThreadCaptureResult,
@@ -167,13 +172,26 @@ function profileHandle(): string | null {
   return profileHandleFromUrl(location.href)?.toLowerCase() ?? null;
 }
 
-function parseMetrics(aria: string | null): MetricSet {
-  // aria like: "19 replies, 4 reposts, 38 likes, 2 bookmarks, 845 views" — in
-  // an English UI. The locale-hardened parser (§9.3) covers the rest; a label
-  // with numbers nothing matched is reported loudly (zeros would silently
-  // pollute the calibration data).
+/** XR.7 — the label first, X's own testids for whatever it left at zero.
+ *
+ *  aria reads like "19 replies, 4 reposts, 38 likes, 2 bookmarks, 845 views" —
+ *  in an English UI. The locale-hardened parser (§9.3) covers the locales we
+ *  know about; past them the whole label reads as zeros, and a zero is
+ *  indistinguishable from a quiet post. `readMetricCounts` closes that with the
+ *  testids, which do not change per locale.
+ *
+ *  **Only a metric the label left at zero is queried, and only a positive
+ *  finding fills it** — so this can never overwrite a parsed reading, and on a
+ *  label that parsed cleanly it costs at most the queries for the metrics X
+ *  genuinely rendered no number for. */
+function parseMetrics(art: Element, aria: string | null): MetricSet {
   const m = parseMetricsAria(aria);
-  if (m.unparsed && aria) reportUnparsed('harvester', aria);
+  const missing = (['replies', 'reposts', 'likes', 'bookmarks', 'views'] as const).filter(
+    (k: MetricKey) => m[k] === 0,
+  );
+  const found = missing.length > 0 ? readMetricCounts(art, missing) : {};
+  for (const [key, n] of Object.entries(found) as [MetricKey, number][]) m[key] = n;
+  if (m.unparsed && aria) reportUnparsed('harvester', aria, Object.keys(found).length > 0);
   return {
     comments: m.replies,
     reposts: m.reposts,
@@ -181,6 +199,36 @@ function parseMetrics(aria: string | null): MetricSet {
     bookmarks: m.bookmarks,
     views: m.views,
   };
+}
+
+/** Does this media node belong to the tweet being read, or to a tweet it QUOTES?
+ *
+ *  X renders a quoted tweet as a nested card — a `div[role="link"]` carrying its
+ *  own `tweetText` — and `art.querySelector` reaches straight into it. So a
+ *  text-only quote of a photo post recorded `hasPhoto: true` and silently
+ *  poisoned the Playbook's media cell: the format question is "did the author
+ *  attach an image", and the answer was somebody else's image.
+ *
+ *  The predicate is "contains its OWN tweetText", not "is a role=link": a link
+ *  preview card is also a `role="link"` and its thumbnail genuinely is part of
+ *  this tweet's rendering.
+ *
+ *  **Deliberately a different rule from `shared/tweetKind.ts::readHasMedia`,
+ *  which counts a quoted photo on purpose.** That reader answers "does this cell
+ *  show an image" for the sweep's media gate, where it does. Two questions about
+ *  the same DOM, and the disagreement is the correct state. */
+const QUOTE_CARD_SELECTOR = 'div[role="link"]';
+
+function isOwnMediaNode(art: Element, node: Element): boolean {
+  const card = node.closest(QUOTE_CARD_SELECTOR);
+  // `closest` can walk above the article; a card that is not inside it cannot be
+  // a quote card of it.
+  if (!card || !art.contains(card)) return true;
+  return card.querySelector('[data-testid="tweetText"]') === null;
+}
+
+function hasOwnMedia(art: Element, selector: string): boolean {
+  return Array.from(art.querySelectorAll(selector)).some((node) => isOwnMediaNode(art, node));
 }
 
 function idFrom(art: Element): { handle: string; id: string; url: string } | null {
@@ -217,9 +265,9 @@ export function extractArticle(art: Element): Extracted {
     timeMs: Number.isNaN(ms) ? null : ms,
     pinned,
     isRepost,
-    metrics: parseMetrics(grp ? grp.getAttribute('aria-label') : ''),
-    hasPhoto: art.querySelector('[data-testid="tweetPhoto"]') !== null,
-    hasVideo: art.querySelector('video, [data-testid="videoPlayer"]') !== null,
+    metrics: parseMetrics(art, grp ? grp.getAttribute('aria-label') : ''),
+    hasPhoto: hasOwnMedia(art, '[data-testid="tweetPhoto"]'),
+    hasVideo: hasOwnMedia(art, 'video, [data-testid="videoPlayer"]'),
     // A quoted tweet renders as a nested tweetText inside a role="link" card.
     isQuote: art.querySelector('div[role="link"] [data-testid="tweetText"]') !== null,
     // Counted on the raw innerText, before line breaks collapse to spaces.

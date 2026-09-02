@@ -118,12 +118,20 @@ import type {
   ReplyVariant,
   ScrapeBody,
   ScrapedAuthor,
+  ScrapedMetrics,
   ScrapedTweet,
   TopComment,
   UseReplyResponse,
 } from './shared/types.ts';
 import { isReplyVariants, variantChipPreview } from './shared/variantChips.ts';
 import { readVerified } from './shared/verified.ts';
+import { X_HEADS } from './xRanker.ts';
+import {
+  RANKER_BAND_LABEL,
+  RANKER_DISCLAIMER,
+  type RankerMeasuredResult,
+  scoreMeasured,
+} from './xRankerSignals.ts';
 
 // ------------------------------------------------- orphaned content script
 //
@@ -184,7 +192,12 @@ const ACT_CLASS = 'stratus-act';
 const ACT_LABEL_CLASS = 'stratus-act-lbl';
 const ACT_CARET_CLASS = 'stratus-act-caret';
 // Fixed left-to-right order regardless of which scan pass injected which button.
-const ACT_ORDER = { save: 1, radar: 2, reply: 3, canned: 4, thread: 5 } as const;
+// The ranker badge leads: it is a READING rather than a control, so it sits
+// against X's own metric icons on the other side of the hairline and the four
+// buttons stay one uninterrupted run.
+const ACT_ORDER = { ranker: 0, save: 1, radar: 2, reply: 3, canned: 4, thread: 5 } as const;
+// XR.7 — the E reading beside the Save button.
+const RANKER_BADGE_CLASS = 'stratus-ranker-badge';
 const CHAN_CHIP_CLASS = 'stratus-chan-chip';
 const CHAN_WRAP_CLASS = 'stratus-chan-chips';
 const PERSON_CHIPS_CLASS = 'stratus-person-chips';
@@ -519,6 +532,38 @@ function injectStyles(): void {
     .${ACT_CLASS}[data-state="failed"] {
       color: var(--stratus-danger);
       background: var(--stratus-danger-fill);
+    }
+    /* XR.7 - the ranker's E reading. Not a button and styled so it cannot be
+       mistaken for one: no hover state, no pointer, the cursor stays default.
+       Sized to the 30px cluster rhythm and kept to four glyphs, because UI.18's
+       whole reason is that X's action row has no slack - the band word and the
+       arithmetic live in the tooltip. */
+    .${RANKER_BADGE_CLASS} {
+      display: inline-flex;
+      align-items: center;
+      box-sizing: border-box;
+      height: 30px;
+      padding: 0 7px;
+      font: 600 11px/1 var(--stratus-font);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+      cursor: default;
+      border-radius: 999px;
+      color: var(--stratus-muted);
+      border: 1px solid var(--stratus-muted-line);
+      background: var(--stratus-muted-fill);
+    }
+    /* The rule above outranks the user-agent [hidden] rule, so hiding has to be
+       said here or a badge with nothing to report renders as an empty pill. */
+    .${RANKER_BADGE_CLASS}[hidden] { display: none; }
+    /* Only the below band is coloured (D235): typical and strong are the middle
+       and top of a distribution nothing has yet shown to predict reach, so a
+       green "strong" would be a claim the Playbook cell has not made. */
+    .${RANKER_BADGE_CLASS}[data-band="below"] {
+      color: var(--stratus-warm-text);
+      border-color: var(--stratus-warm-line);
+      background: var(--stratus-warm-fill);
     }
     /* Profile-page "save author" keeps its labelled-pill shape — it sits in a
        header with room to spare, not in the action row's flex crush. */
@@ -1387,6 +1432,102 @@ async function offerChannelChips(btn: HTMLButtonElement, tweet: ScrapedTweet): P
   setTimeout(() => wrap.remove(), CHANNEL_CHIPS_PERSIST_MS);
 }
 
+// -------------------------------------------------------------- ranker badge
+
+/** What this tweet's card is showing, in the shape `scoreMeasured` reads.
+ *
+ *  Straight off `extractArticle` — the ONE DOM reader (HV.2) — rather than a
+ *  second parse of the same action row. Its `metrics.comments` is X's reply
+ *  count under the harvester's older spelling.
+ *
+ *  A count of 0 is passed through as 0 and is a real reading: X renders no
+ *  number at all for a zero metric, which is exactly what the label parses as.
+ *  The unreadable case is all four at zero, and `metricsForSave` is where that
+ *  is refused rather than sent as a measurement (§7.11). */
+function articleCounts(article: Element): {
+  views: number;
+  likes: number;
+  replies: number;
+  reposts: number;
+} {
+  const m = extractArticle(article).metrics;
+  return { views: m.views, likes: m.likes, replies: m.comments, reposts: m.reposts };
+}
+
+/** The badge's tooltip. Copy comes from the module's own exports rather than
+ *  being retyped here (XR.5's rule), and `scoreMeasured`'s `note` is quoted
+ *  verbatim because on THIS surface it is true: the action row carries all
+ *  three observable heads, which is what made XR.6 derive its own head line
+ *  instead — a Radar sighting has no repost count and the sentence would have
+ *  named one. */
+function rankerBadgeTitle(r: Extract<RankerMeasuredResult, { available: true }>): string {
+  const heads = r.contributions.map((c) => X_HEADS[c.head].label).join(' + ');
+  return [
+    `Ranker E ${r.score} · ${RANKER_BAND_LABEL[r.band]}`,
+    `X's published For You weights over what this post has actually done: ${heads} against ${r.views.toLocaleString()} views. 50 is a post doing our feed's median rates.`,
+    r.note,
+    'The band is a quartile of the posts we have harvested — where this one sits among them, not what it will go on to earn.',
+    RANKER_DISCLAIMER,
+  ].join('\n');
+}
+
+/** The E reading beside the Save button, so a hunt can be judged before it is
+ *  saved (plan Decision 7 — the swipe file's own tab has no result list to
+ *  badge, because the results live on x.com).
+ *
+ *  **Not a second injection pass over the timeline** (out of scope): one span
+ *  inside the action cluster the Save button already owns, attached from the
+ *  same one-shot `attachButton` call, with no breakdown panel and no expander.
+ *
+ *  Created empty and hidden — the number is `syncRankerBadges`' to write, for
+ *  `syncRadarAddStates`' reason. X recycles action rows as it virtualises the
+ *  timeline, so a score stamped once at attach time would eventually be
+ *  somebody else's post's score; and unlike the Save button, which re-resolves
+ *  its article at click time, a painted number is already wrong by the time
+ *  anyone could act on it. */
+function attachRankerBadge(actionRow: Element): void {
+  const badge = document.createElement('span');
+  badge.className = RANKER_BADGE_CLASS;
+  badge.style.order = String(ACT_ORDER.ranker);
+  badge.hidden = true;
+  actionCluster(actionRow).appendChild(badge);
+}
+
+/** Re-derive every badge from the article it is currently sitting in.
+ *
+ *  Keyed on the tweet id, not on the counts: a recycled row must repaint, and a
+ *  tweet whose view count ticked up mid-scroll must NOT — a number that moves on
+ *  every mutation burst reads as noise, and the save takes its own fresh reading
+ *  at click time anyway.
+ *
+ *  A tweet with no view count leaves the badge hidden rather than showing
+ *  `E 0`: that would claim the ranker rated the post at the floor, when what
+ *  happened is that we never saw a denominator (§7.11). */
+function syncRankerBadges(): void {
+  for (const badge of document.querySelectorAll<HTMLElement>(`.${RANKER_BADGE_CLASS}`)) {
+    const article = badge.closest('article[data-testid="tweet"]');
+    const tweetId = article ? (findPermalink(article)?.tweetId ?? '') : '';
+    if (badge.dataset.sig === tweetId) continue; // unchanged — skip the DOM work
+    badge.dataset.sig = tweetId;
+
+    const r: RankerMeasuredResult =
+      article && tweetId
+        ? scoreMeasured(articleCounts(article))
+        : { available: false, reason: 'no article' };
+    if (!r.available) {
+      badge.hidden = true;
+      continue;
+    }
+    badge.hidden = false;
+    badge.dataset.band = r.band;
+    badge.textContent = `E ${r.score}`;
+    badge.title = rankerBadgeTitle(r);
+    // The face is four glyphs on a scale nothing else on the page explains, so
+    // the accessible name carries the band word the tooltip opens with.
+    badge.setAttribute('aria-label', `Ranker E ${r.score}, ${RANKER_BAND_LABEL[r.band]}`);
+  }
+}
+
 // --------------------------------------------------------------- save tweet
 
 function setState(
@@ -1402,6 +1543,23 @@ function scheduleReset(btn: HTMLButtonElement, label: string): void {
   setTimeout(() => {
     if (btn.isConnected) setState(btn, 'idle', label);
   }, STATUS_PERSIST_MS);
+}
+
+/** The counts to save with, or null when we did not manage to read any.
+ *
+ *  **Four zeros is the unreadable case, not a dead post** — a promoted row
+ *  carries no metrics label at all, and so does a locale the stems and the
+ *  testids both miss. Sending them would write a measurement nobody took into
+ *  four columns whose whole contract is that null means unknown (§7.11); the
+ *  save still lands, simply unscored.
+ *
+ *  Anything above zero means the card was read, so the reading goes as-is —
+ *  including a `views: 0` alongside it, which the server stores with a null
+ *  `ranker_e` rather than rating against a denominator it does not have. */
+function metricsForSave(article: Element): ScrapedMetrics | null {
+  const c = articleCounts(article);
+  if (c.views === 0 && c.likes === 0 && c.replies === 0 && c.reposts === 0) return null;
+  return c;
 }
 
 async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
@@ -1442,7 +1600,17 @@ async function onSaveClick(btn: HTMLButtonElement): Promise<void> {
   // the path to, and the generic `ApiRequest` transport stays path-agnostic
   // (§7.25). No import: the compiler stays out of the content IIFE (§7.26).
   const sourcePath = location.pathname;
-  const body: ScrapeBody = author ? { tweet, author, sourcePath } : { tweet, sourcePath };
+  // XR.7 — read fresh at click time for the same reason the tweet itself is:
+  // X recycles rows, and the numbers on this one belong to whatever it holds
+  // now. Counts only; the SERVER runs `scoreMeasured` and stamps `ranker_e`
+  // (§7.16), so a page can never name its own ranker reading.
+  const metrics = metricsForSave(article);
+  const body: ScrapeBody = {
+    tweet,
+    ...(author ? { author } : {}),
+    ...(metrics ? { metrics } : {}),
+    sourcePath,
+  };
   const request: ApiRequest = {
     type: 'stratus/api',
     method: 'POST',
@@ -1494,6 +1662,7 @@ function attachButton(article: Element): void {
   });
 
   actionCluster(actionRow).appendChild(btn);
+  attachRankerBadge(actionRow);
   handled.add(actionRow);
 }
 
@@ -4423,6 +4592,7 @@ function scan(root: ParentNode): void {
   syncVariantChips(focusedId);
   syncAuthorButton();
   syncRadarAddStates();
+  syncRankerBadges();
   syncSweepChip();
   handSweepScan();
   syncHandSweepHud();

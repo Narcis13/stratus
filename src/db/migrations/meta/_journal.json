@@ -225,6 +225,13 @@
       "when": 1787600778492,
       "tag": "0031_sharp_screwball",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1788364925152,
+      "tag": "0032_ordinary_iron_lad",
+      "breakpoints": true
     }
   ]
 }

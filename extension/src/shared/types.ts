@@ -734,9 +734,27 @@ export interface ScrapedAuthor {
   xUserId: string | null;
 }
 
+/** What the tweet's card showed when the Save was clicked (XR.7).
+ *
+ *  Every field is independently optional and an absent one means **unknown**,
+ *  never 0 (§7.11) — X renders no number for a zero metric, and a locale the
+ *  aria stems miss costs a reading that was there. The body carries no score:
+ *  the server runs `scoreMeasured` over these and stamps `voice_tweets.ranker_e`
+ *  itself (§7.16), so a page can never name its own ranker reading. */
+export interface ScrapedMetrics {
+  views?: number | null;
+  likes?: number | null;
+  replies?: number | null;
+  reposts?: number | null;
+}
+
 export interface ScrapeBody {
   tweet: ScrapedTweet;
   author?: ScrapedAuthor;
+  /** Read fresh at click time, and sent only when the card actually yielded a
+   *  number — four zeros from an unreadable row would be a measurement nobody
+   *  took. */
+  metrics?: ScrapedMetrics;
   /** The x.com pathname the Save was clicked on (OU.7). Provenance only: the
    *  SERVER decides what it means (`/search` → `outlier_search`, anything else
    *  → `extension_scrape`), so the page never names its own source, and a save
