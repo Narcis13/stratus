@@ -117,6 +117,31 @@ Two more things it deliberately doesn't do:
 - **It says nothing at all for prose.** *Substance*, *One-liner* and *Other* mean "no shape recognised" — the same three the cooldown skips — and a reach band for "unclassified" would be a number attached to nothing, so the line is simply absent. It isn't waiting for data there; there is no axis.
 - **It never blocks anything**, and nothing sorts by it. It is history, not a target — a shape that historically does well is not a reason to write one you don't mean.
 
+### The ranker score (C)
+
+Beside the coach's number, in the same head row, sits a second small pill:
+
+> C 67 · typical
+
+It is a different question, not a second opinion on the same one. The coach grades the *prose* — hedges, an em-dash, a URL that would cost you $0.20, a 15th line X will hide behind "show more". **C is X's own arithmetic run over your draft's shape.** stratus carries a transcription of the 26 published weights the For You ranker actually scores with (`xai-org/x-algorithm`, the production `param.rs`, synced August 2026): a predicted reply is worth 5.0 against a like's 0.5, a report is −234, a link open is +0.2. From what the coach already found in your text, stratus estimates how likely each of those behaviours is, multiplies by X's weights, and maps the sum onto 0–100.
+
+Two things it is honest about, and both are on the tooltip:
+
+- **50 is a draft carrying no signals at all** — not a typical post. Twelve of the modifiers fire when a coach check *passes*, so an ordinary competent draft lands well above 50, and a real draft has never scored one.
+- **The band word is a quartile position, not a forecast.** `below typical` / `typical` / `strong shape` are cut at 56 and 68 — the measured quartiles of 308 of your own published originals. It says where this draft sits among the ones you've already sent, not what it will earn. Only `below typical` takes a colour; the other two stay muted on purpose, because whether sitting there predicts anything about reach is still an open question (below).
+
+Hover the pill for the number, the band, the top three signals pushing it up, the top three pushing it down, and the line that closes it: *"Context, not advice — X's published weights over estimated probabilities, not a reach prediction."*
+
+The rest, briefly:
+
+- **It costs nothing and never leaves the panel.** It reads the same debounced string the coach graded and the same result object the coach pill renders — two readings of one evaluation, never two evaluations of one draft. No request, no spend, on any keystroke.
+- **In thread mode it grades segment 1**, like the coach.
+- **Nothing sorts, gates, blocks or refuses on it.** Save works the same at C 20 as at C 90.
+- **A draft can go net-negative** — predicted mutes, blocks and reports outweighing everything it earns. The pill then reads `net-negative` and the number sits near 7 rather than 0: X's arithmetic squashes those into a sliver below every positive post rather than clamping them, so negatives keep their order relative to each other.
+- **A link in the text does not hurt C.** X pays +0.2 for a link open, which is a *reach* fact. The $0.20 the coach warns about is an API *billing* fact. Both are true at once, and conflating them is the mistake this bullet exists to prevent.
+
+**Does C actually predict anything?** That has its own answer, and today the answer is *not enough data to say*. `GET /x/playbook` returns a `rankerScoreEffectiveness` cell that cuts your own harvested originals into quartiles by C — and by **E**, the same weights applied backwards over a post's measured rates — and compares each quartile's median views. It is deliberately not rendered as a table anywhere: until it says something, there is nothing to render. `bun run scripts/smoke-x-ranker.ts` prints it with one verdict line. Right now it reads zero rows, because its population is the $0 DOM harvest of your *own* profile and that harvest hasn't been run yet.
+
 ### Scheduling controls
 
 The scheduling controls live under a **Schedule** heading, with a small **⚙** on that heading — see "Tuning the cadence from the Composer" below. All times are shown and entered in *your* local time zone.

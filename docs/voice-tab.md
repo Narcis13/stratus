@@ -23,6 +23,8 @@ You don't add tweets from inside the side panel. You add them **while browsing X
 
 - **"Save to stratus"** — stratus adds this button to the action row (the row with reply/repost/like) under every tweet on X. Click it and stratus reads that tweet straight off the page: its text, plus the exact formatting and emoji (so your saved copy looks like the original). It also tries, best-effort, to grab the author's hover card (bio, follower counts) at the same time. If the hover card doesn't appear, the tweet is still saved with just the author's handle and name — you can enrich the author later. The button shows **Saving…**, then **Saved** (or **Saved + author** if it also captured the author). After a save you may see a few small channel-tag chips appear next to the button — a quick way to file the tweet under a topic (see [Channel tags](#channel-tags) below).
 
+- **An E reading, before you save.** Leading that same cluster — first, right against X's own metric icons — sits a small badge: `E 47`. It is the ranker's retrospective score for that post: X's 26 published For You weights run over what the post has actually done, its likes, replies and reposts against its views (the same number the Radar queue shows as its **E** chip, and the backwards-facing twin of the Composer's **C** pill — see [Composer → the ranker score](./composer-tab.md#the-ranker-score-c)). It lets a hunt be judged on the page instead of afterwards. Hover it for the band word, the heads it used, the view count it rated against, and the *context, not advice* disclaimer. It shows **nothing at all** when the card carries no view count — `E 0` would read as "the ranker rated this at rock bottom" rather than "we never saw a denominator". It is a reading, not a control: clicking it does nothing, and it never gates the save. It repaints as you scroll, so a recycled row never keeps the score of the post that used to be there.
+
 - **"Save author to stratus"** — on someone's profile page (`x.com/<handle>`), stratus adds this button to the profile header. It captures the full header — display name, bio, follower and following counts, pinned tweet — and stores it as an **enriched** author. Enriching an author is also what feeds the **Targets** roster (explained in [Common workflows](#common-workflows)).
 
 Both buttons read the page only. No paid API call, no metrics polling, no cost.
@@ -37,6 +39,16 @@ Waiting for good tweets to cross your timeline is the slow way to fill a swipe f
 - `extension_scrape` — anywhere else (timeline, profile, a single tweet's page).
 
 First save wins, deliberately: a tweet you found through a hunt and later re-save off your timeline keeps its `outlier_search` stamp, and vice versa. The column answers *how did this get into the library*, which is something only the first save can know. The Outliers tab reads that column back as its own report card — a count of how many tweets your hunts actually put in here over the last 30 days — so a hunt that produces nothing worth saving shows up as a number rather than as a feeling.
+
+### What a save keeps besides the words
+
+A save also stores the four numbers the card was showing at the moment you clicked — **views, likes, replies, reposts** — and the **E score** computed from them. That is what makes a hunted tweet re-readable months later: *2,400 views / 31 likes* is the difference between a shape that worked and a shape you happened to like. Nothing in the panel renders them yet; they are stored so the swipe file stops being a pile of text with no denominator.
+
+Three rules about those five values, all deliberate:
+
+- **They are one observation and they move together.** A re-save that could read the card refreshes all five; a re-save that couldn't leaves all five alone. There is no state where the counts are fresh and the score is stale — the stored E is always the score of the four numbers stored beside it.
+- **Blank means unknown, never zero.** Every tweet saved before this shipped, and every save from an older extension build, reads as *unmeasured* rather than as a post that did nothing. E is blank rather than 0 whenever there was no view count to rate against.
+- **The page reports, stratus scores.** The extension sends the counts; the server computes E itself and ignores a score sent from the page — that would be a number the server could not re-derive or defend.
 
 ---
 
