@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ActiveTimesGrid } from '../shared/activeTimes.ts';
 import type { BestTimeCell } from '../shared/types.ts';
+import { RANKER_BAND_LABEL, RANKER_DISCLAIMER, scoreDraftRanker } from '../xRankerSignals.ts';
 import {
   ANCHORS_3,
   ANCHORS_4,
@@ -13,6 +14,9 @@ import {
   findScheduleGaps,
   jitterMinutes,
   pickAnchors,
+  rankerDraftFeatures,
+  rankerPillLabel,
+  rankerPillTitle,
   slotHint,
   splitIntoThread,
   suggestBestSlotDate,
@@ -362,5 +366,112 @@ describe('splitIntoThread', () => {
   test('hard-splits a single oversized token', () => {
     const segs = splitIntoThread('x'.repeat(50), 20);
     expect(segs).toEqual(['x'.repeat(20), 'x'.repeat(20), 'x'.repeat(10)]);
+  });
+});
+
+// ------------------------------------------------------------- ranker  XR.5
+
+describe('rankerDraftFeatures', () => {
+  test('a Studio visual on the row is an attached image', () => {
+    const f = rankerDraftFeatures({ text: 'ship it', hasMediaNote: true, isThreadStarter: false });
+    expect(f.hasImage).toBe(true);
+  });
+
+  test('no visual on the row is no image', () => {
+    const f = rankerDraftFeatures({ text: 'ship it', hasMediaNote: false, isThreadStarter: false });
+    expect(f.hasImage).toBe(false);
+  });
+
+  test('thread mode makes the graded segment a thread starter', () => {
+    const f = rankerDraftFeatures({ text: 'part one', hasMediaNote: false, isThreadStarter: true });
+    expect(f.isThreadStarter).toBe(true);
+  });
+
+  test('a bare URL in the draft is an external link', () => {
+    const f = rankerDraftFeatures({
+      text: 'the writeup is here https://example.com/x',
+      hasMediaNote: false,
+      isThreadStarter: false,
+    });
+    expect(f.hasExternalLink).toBe(true);
+  });
+
+  test('a bare domain is not — the same URL_RE the cost preview bills on', () => {
+    const f = rankerDraftFeatures({
+      text: 'go to example.com',
+      hasMediaNote: false,
+      isThreadStarter: false,
+    });
+    expect(f.hasExternalLink).toBe(false);
+  });
+
+  test('what the Composer cannot observe stays ABSENT, never false (§7.11)', () => {
+    // A `hasVideo: false` would be a measurement nobody took: the Composer has
+    // no video affordance at all. `signalsToHeadPs` drops an absent head
+    // instead of scoring it zero, which is the whole point.
+    const f = rankerDraftFeatures({ text: 'x', hasMediaNote: false, isThreadStarter: false });
+    expect('hasVideo' in f).toBe(false);
+    expect('videoSeconds' in f).toBe(false);
+    expect('isMutualFollow' in f).toBe(false);
+  });
+
+  test('the Composer never grades a reply or a quote through this pill', () => {
+    const f = rankerDraftFeatures({ text: 'x', hasMediaNote: false, isThreadStarter: false });
+    expect(f.isReply).toBe(false);
+    expect(f.isQuote).toBe(false);
+  });
+});
+
+describe('rankerPillLabel', () => {
+  test('an ordinary draft prints its band label', () => {
+    const r = scoreDraftRanker('I shipped the parser in 3 days. Here is what broke first.');
+    expect(r.netNegative).toBe(false);
+    expect(rankerPillLabel(r)).toBe(RANKER_BAND_LABEL[r.band]);
+  });
+
+  test('a net-negative draft says the WORD rather than waiting for a zero (D229)', () => {
+    // `offsetScore` squashes rather than clamps, so the deepest legal negative
+    // still scores a small positive — a pill watching for 0 would never fire.
+    const r = { ...scoreDraftRanker('x'), netNegative: true };
+    expect(rankerPillLabel(r)).toBe('net-negative');
+    expect(r.score).toBeGreaterThan(0);
+  });
+});
+
+describe('rankerPillTitle', () => {
+  test('the head is the number and the same word the pill prints', () => {
+    const r = scoreDraftRanker('I shipped the parser in 3 days. Here is what broke first.');
+    expect(rankerPillTitle(r).split('\n')[0]).toBe(`C ${r.score} · ${rankerPillLabel(r)}`);
+  });
+
+  test('50 is described as SIGNAL-FREE, never as typical (D230)', () => {
+    // The band cuts put a competent draft at 66-71, so "50 is a typical post"
+    // would be the one sentence that makes the whole pill misread.
+    const title = rankerPillTitle(scoreDraftRanker('a draft'));
+    expect(title).toContain('50 is a draft carrying no signals at all');
+    expect(title).not.toContain('50 is a typical');
+  });
+
+  test('the borrowed cut points are declared unvalidated while they are', () => {
+    expect(rankerPillTitle(scoreDraftRanker('a draft'))).toContain('imported and unvalidated');
+  });
+
+  test('the disclaimer is the engine export, never a retyped copy', () => {
+    expect(rankerPillTitle(scoreDraftRanker('a draft'))).toEndWith(RANKER_DISCLAIMER);
+  });
+
+  test('a net-negative draft explains where it sits instead of showing a 0', () => {
+    const title = rankerPillTitle({ ...scoreDraftRanker('a draft'), netNegative: true });
+    expect(title).toContain('below every positive draft');
+  });
+
+  test('names at most three modifiers per direction', () => {
+    const r = scoreDraftRanker(
+      'I rebuilt the harvester in 3 days and it broke twice. Here is the part nobody tells you: the DOM lies.',
+    );
+    const title = rankerPillTitle(r);
+    const up = title.split('\n').find((l) => l.startsWith('Up: '));
+    expect(r.modifiers.filter((m) => m.direction === 'up').length).toBeGreaterThan(0);
+    expect(up?.slice(4).split(' · ').length ?? 0).toBeLessThanOrEqual(3);
   });
 });

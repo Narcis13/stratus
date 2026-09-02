@@ -14,6 +14,7 @@ import type {
   ReachFit,
   RemixSeed,
 } from '../shared/types.ts';
+import { scoreDraftRanker } from '../xRankerSignals.ts';
 import { COACH_BAND_TONE, COACH_TONE } from './CoachChip.tsx';
 import { JudgePanel } from './JudgePanel.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
@@ -28,12 +29,16 @@ import {
   type UpdateBody,
   api,
 } from './api.ts';
+import { rankerBandChip } from './chips.ts';
 import { useCoachLexicon } from './coachLexicon.ts';
 import {
   CADENCE_SETTING_KEYS,
   audiencePeakHours,
   bestTimeCellScore,
   estimatePostCostUsd,
+  rankerDraftFeatures,
+  rankerPillLabel,
+  rankerPillTitle,
   slotHint,
   splitIntoThread,
   suggestBestSlotDate,
@@ -839,6 +844,25 @@ export function ComposerPanel({
   // round-trip, nothing stored (SC decision 2 — score and format are recomputed
   // from text everywhere, never stamped).
   const coach = useMemo(() => scoreDraft(coachInput, { lexicon }), [coachInput, lexicon]);
+  // XR.5 — C, the second number. Same debounced string and the SAME `coach`
+  // result the pill above renders: passing the evaluation in (rather than
+  // letting `scoreDraftRanker` re-run the coach) is what stops the two pills
+  // from grading two evaluations of one draft. Local and free like the coach —
+  // no fetch per keystroke, nothing stored (SC decision 2; the score is
+  // recomputed from text everywhere, never stamped).
+  const rankerFeats = useMemo(
+    () =>
+      rankerDraftFeatures({
+        text: coachInput,
+        hasMediaNote: original?.mediaNote != null,
+        isThreadStarter: !isSinglePost,
+      }),
+    [coachInput, original?.mediaNote, isSinglePost],
+  );
+  const ranker = useMemo(
+    () => scoreDraftRanker(coachInput, rankerFeats, { coach }),
+    [coachInput, rankerFeats, coach],
+  );
   const coachFixes = coach.checks.filter((c) => c.status === 'fix');
   const coachNudges = coach.checks.filter((c) => c.status === 'nudge');
   const coachPasses = coach.checks.filter((c) => c.status === 'pass');
@@ -1126,6 +1150,16 @@ export function ComposerPanel({
               /100 · {COACH_BAND_LABEL[coach.band]}
               {!isSinglePost && ' · segment 1'}
             </span>
+            {/* XR.5 — C rides in the coach head rather than in a box of its
+                own: it is a thing said ABOUT the same text, and a second box
+                would read as a second verdict to clear. Advisory end to end —
+                nothing sorts, gates or disables on it (§7.23a). */}
+            <span
+              className={`${rankerBandChip(ranker.band)} ranker-pill`}
+              title={rankerPillTitle(ranker)}
+            >
+              C {ranker.score} · {rankerPillLabel(ranker)}
+            </span>
           </div>
           {/* SC.6 — the one row here that is about your WEEK rather than this
               draft, so it sits above the per-check rows. Amber only at the
@@ -1155,6 +1189,13 @@ export function ComposerPanel({
             </details>
           )}
           <small className="muted">{COACH_DISCLAIMER}</small>
+          {/* Two numbers, two questions — said once, here, so neither pill has
+              to carry the distinction alone (plan Decision 2). */}
+          <small className="muted">
+            The coach catches own goals in the prose; C reads what X's published For You weights are
+            predisposed to predict from the shape. Different questions — they are not meant to
+            agree.
+          </small>
         </div>
       )}
 

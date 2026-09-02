@@ -1641,3 +1641,44 @@ notes is to **grep `STATE-ARCHIVE.md` by filename** before touching a file that 
   `dist/sidepanel.js`, 0 each in `dist/content.js`**, plus **`outlier_search` == 0 in BOTH** — the provenance
   vocabulary is the server's, and the extension never names it. If a later task finds that string anywhere in the
   bundle, something has moved the decision to the client (§7.16).
+
+---
+
+## Archived at XR.5 — the long form of STATE.md's size-discipline paragraph
+
+Distilled in STATE.md on 2026-09-02 to buy room for D235 + the XR.5 gotchas. Verbatim as it stood:
+
+> **Size discipline (added 2026-07-23 at 339 KB; paid fifteen times since — read this before a new wave
+> re-grows the file).** STATE.md must stay loadable in a **single `Read`**, and the limit that bites is the
+> tool's **token** cap (~25k), not the 256 KB byte cap. **The budget is measured: at 61.7 KB a single `Read`
+> came back TRUNCATED at 25,023 tokens, so the ratio is ≈405 tokens/KB and the ceiling is ≈61.5 KB. Aim at
+> 60 KB and leave the last 1.5 KB unspent.** Measure BYTES with `wc -c`, not `.length` — this file is full of
+> multibyte `—`/`≥`/`✓` and a character count reads ~1.5 KB under the truth. **Five lessons, each of which cost
+> real sessions:** (1) *the breach is never one big entry, it is six good ones that each looked affordable* —
+> Wave 6 went 48 KB → 156 KB in fifteen tasks; (2) *a closing pass archives the lane in front of it and misses
+> the weight behind it* — UI.17 left Wave 5's ledger rows and every session until GT.9 paid for them, so **also
+> ask what stopped binding two waves ago**; (3) *"it still binds an open task" is a reason to DISTIL, not to
+> keep 19 KB*; (4) **an ORDINARY task breaches it too, so `wc -c` between entries, not only before the commit**;
+> (5) **when a lane CLOSES, its hot-file lock row and its pointer lines are weight, not state.** Never "fix" a
+> breach by deleting something an open task needs; if a pass slips, pay it as a standalone housekeeping commit
+> (the `55c6d19`/`c9c8ade` precedent). **XR.1 alone added ~14 KB** (a wave re-opening is the most expensive entry
+> type there is) and **XR.3 arrived at 60.4 KB with nothing left to spend and still landed at 60.1** — it paid
+> for three D-entries and three gotchas by distilling the standing D-entries (D113/D171/D184/D195), collapsing
+> D222 into the gotcha that already stated it, compressing four over-long Wave-3/Wave-9 gotchas, and moving the
+> `current state` multi-file-move step lists to the archive (which already held them — checked, not assumed).
+
+XR.5's own trade, for the record: it deleted the **duplicated** D223/D224 pair (each entry appeared twice in
+STATE.md's register, ~2.1 KB of pure duplication — the shorter first copies were kept, and they already carry
+both generalizations) and compressed the paragraph above.
+
+
+### Archived at XR.5 — XR.1's source-transcription method (verbatim)
+
+- **XR.1 — the network is reachable from Bash, which changes what "the oracle is off-machine" costs.** Plain
+  `curl` to `raw.githubusercontent.com` returns 200 from this shell, and
+  `api.github.com/repos/<org>/<repo>/git/trees/main?recursive=1` answers unauthenticated — how
+  `ranking_scorer.rs` was located without cloning. **`api.github.com/search/code` does NOT work unauthenticated
+  (401)**, so finding a constant means fetching candidates and grepping locally. **Prefer `curl` + `grep` over
+  `WebFetch` for source transcription:** `WebFetch` answers through a small summarizing model, and its first
+  pass silently reformatted the `param!` macro into a tidy markdown table — fine for orientation, **not**
+  something to transcribe 26 weights from.

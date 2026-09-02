@@ -2174,6 +2174,15 @@ button.danger:hover:not(:disabled) {
   font-size: var(--strat-text-lg);
   font-weight: 600;
 }
+/* XR.5 — the ranker's C pill, sitting in the coach head. It IS a `.chip`
+   (UI.14: one shape, and its tone comes from `chips.ts::rankerBandChip`); the
+   only override is the family's lowercase transform, because `C` is the
+   score's name, not a word, and `c 71` reads as a typo. No colour here. */
+.ranker-pill {
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+  align-self: center;
+}
 .coach-rows {
   list-style: none;
   margin: 0;

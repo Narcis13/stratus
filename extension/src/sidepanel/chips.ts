@@ -12,6 +12,7 @@
 // masterplan lane, so the tone stays where it already is and this module only
 // supplies the shared base class.
 
+import type { RankerBand } from '../xRankerSignals.ts';
 import type {
   DmStatus,
   FollowingStatus,
@@ -111,4 +112,32 @@ export function cannonTargetChip(state: 'scored' | 'below' | 'unscored'): string
  *  a saved tweet, and the retired flag that hides them from drafting. */
 export function authorChip(state: 'enriched' | 'tweet-only' | 'retired'): string {
   return chip(state === 'enriched' ? 'ok' : 'muted');
+}
+
+/** XR.5 — the ranker's C band. Deliberately NOT the coach's tone classes and
+ *  not `CoachBand`'s words: C is a different scale answering a different
+ *  question, and two engines sharing one colour ramp is how a reader starts
+ *  averaging them into a single verdict (plan Decision 2). It lands here
+ *  rather than beside `COACH_TONE` for the reason UI.14 exists — a chip
+ *  vocabulary maps its values onto a tone in this file; the coach's map lives
+ *  in CoachChip.tsx because the surfaces it colours (the score pill, the fix
+ *  rows) are deliberately not chips.
+ *
+ *  Only one band takes a tone today. `RANKER_BAND_CUTS` is
+ *  `imported-unvalidated` and measurably off-centre on our modifier set —
+ *  `strong` is the MODAL band, not the exceptional one (D230) — so painting it
+ *  `ok` would sell a borrowed cut point as a verdict. `typical` and `strong`
+ *  stay quiet until XR.4's falsification cell re-cuts them; `below` warns for
+ *  the same reason a `queued` follow does, because it is the one band asking
+ *  the writer to look. Nothing here goes red: the chip family has no danger
+ *  tone, which is the correct ceiling for an advisory number (§7.23a). */
+export function rankerBandChip(band: RankerBand): string {
+  switch (band) {
+    case 'below':
+      return chip('warn');
+    case 'typical':
+      return chip('muted');
+    case 'strong':
+      return chip('muted');
+  }
 }

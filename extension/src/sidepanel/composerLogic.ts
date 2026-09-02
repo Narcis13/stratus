@@ -3,12 +3,19 @@
 //     the schedule doctrine) from the same anchor ladders the Today brief uses.
 //   - cost: live $ preview honouring the $0.20 URL surcharge invariant (#1).
 //   - split: turn a >280 blob into a clean thread at natural boundaries.
+//   - ranker: what the C pill reads off the draft, and the words it prints.
 // No React, no chrome, no Date.now() inside — `now`/`rand` are injected so the
 // logic stays deterministic in tests.
 
 import { type ActiveTimesGrid, audienceScoreFor } from '../shared/activeTimes.ts';
 import { SERVER_DEFAULTS } from '../shared/serverSettings.ts';
 import type { BestTimeCell } from '../shared/types.ts';
+import {
+  type DraftFeatures,
+  RANKER_BAND_LABEL,
+  RANKER_DISCLAIMER,
+  type RankerDraftResult,
+} from '../xRankerSignals.ts';
 import { addDays, isSameLocalDay, startOfLocalDay } from './datetime.ts';
 
 // Cadence anchors — 3/day and 4/day local hours. These are the module DEFAULTS;
@@ -344,4 +351,83 @@ export function splitIntoThread(text: string, limit = 280): string[] {
   }
   flush();
   return out;
+}
+
+// ------------------------------------------------------------- ranker  XR.5
+
+/** What the Composer actually knows about the draft's shape, in the vocabulary
+ *  `DraftFeatures` speaks. Split out of the component so the mapping is
+ *  testable: the pill is only as honest as this, and every field it cannot
+ *  observe is left ABSENT rather than false-y (§7.11 — an absent affordance is
+ *  unknown, and `signalsToHeadPs` drops the head instead of scoring it zero).
+ *
+ *  `hasVideo` is one of those: the Composer has no video affordance at all (no
+ *  API media upload — invariant list, out of scope), so claiming `false` would
+ *  be a measurement we never took. An image, by contrast, IS observable — a
+ *  Studio-made visual is pinned to the row as `mediaNote`, which is exactly the
+ *  "post manually with its image" state the panel already renders. */
+export function rankerDraftFeatures(state: {
+  /** The DEBOUNCED draft the coach graded — segment 1 in thread mode, so the
+   *  two pills read the same string (SC.3). */
+  text: string;
+  /** A Studio visual is attached to this row (`mediaNote`). */
+  hasMediaNote: boolean;
+  /** Thread mode or thread edit: `text` is the head segment. */
+  isThreadStarter: boolean;
+}): DraftFeatures {
+  return {
+    hasImage: state.hasMediaNote,
+    hasExternalLink: URL_RE.test(state.text),
+    isThreadStarter: state.isThreadStarter,
+    // The Composer drafts originals and threads. Replies are the Replies tab's
+    // engine and are graded there; quotes go through verifiedSelfQuote and
+    // never reach this form.
+    isReply: false,
+    isQuote: false,
+  };
+}
+
+/** The word beside the number. A net-negative draft scores ~7, never 0 —
+ *  `offsetScore` squashes rather than clamps (D229) — so the pill says the
+ *  words instead of waiting for a zero that cannot arrive. */
+export function rankerPillLabel(r: RankerDraftResult): string {
+  return r.netNegative ? 'net-negative' : RANKER_BAND_LABEL[r.band];
+}
+
+// How many modifiers the tooltip names per direction. Three, for the reason
+// the coach chip names two: it is read at a glance while typing, and the
+// modifier table is 23 entries long.
+const RANKER_TOOLTIP_MODIFIERS = 3;
+
+/** The C pill's tooltip. Says what the number is, what it is measured against,
+ *  which of our signals moved it, and — until XR.4's cell re-cuts them — that
+ *  the band's cut points are borrowed and unvalidated (D230).
+ *
+ *  "50" is the SIGNAL-FREE draft, not the typical one: twelve modifiers fire on
+ *  a `postCoach` check PASSING, so an ordinary competent post lands well above
+ *  it. Calling 50 "typical" here would be the one sentence that makes the whole
+ *  pill misread. The closing line is the engine's own export, never retyped,
+ *  so rewording it moves every surface at once. */
+export function rankerPillTitle(r: RankerDraftResult): string {
+  const named = (dir: 'up' | 'down'): string[] =>
+    r.modifiers
+      .filter((m) => m.direction === dir)
+      .slice(0, RANKER_TOOLTIP_MODIFIERS)
+      .map((m) => m.label);
+  const up = named('up');
+  const down = named('down');
+  const lines = [`C ${r.score} · ${rankerPillLabel(r)}`];
+  lines.push(
+    '50 is a draft carrying no signals at all — this is a relative read of the shape, not a reach forecast.',
+  );
+  if (r.netNegative) {
+    lines.push(
+      'The predicted negative signals outweigh everything this draft earns: it sits below every positive draft.',
+    );
+  }
+  if (up.length > 0) lines.push(`Up: ${up.join(' · ')}`);
+  if (down.length > 0) lines.push(`Down: ${down.join(' · ')}`);
+  lines.push('Band cut points are imported and unvalidated — context, not a verdict.');
+  lines.push(RANKER_DISCLAIMER);
+  return lines.join('\n');
 }

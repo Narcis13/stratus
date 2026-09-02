@@ -34,7 +34,9 @@
     "../src/shared/radarSweep.ts",
     "../src/shared/language.ts",
     "../src/shared/replyMode.ts",
-    "../src/shared/searchQuery.ts"
+    "../src/shared/searchQuery.ts",
+    "../src/shared/xRanker.ts",
+    "../src/shared/xRankerSignals.ts"
   ],
   "exclude": ["src/**/*.test.ts"]
 }
