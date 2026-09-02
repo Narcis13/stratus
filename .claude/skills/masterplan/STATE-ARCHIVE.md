@@ -1682,3 +1682,66 @@ both generalizations) and compressed the paragraph above.
   `WebFetch` for source transcription:** `WebFetch` answers through a small summarizing model, and its first
   pass silently reformatted the `param!` macro into a tidy markdown table — fine for orientation, **not**
   something to transcribe 26 weights from.
+
+## Archived at XR.6 — XR.1/XR.2 gotchas that stopped binding
+
+Moved out of STATE.md verbatim when `src/shared/xRanker.ts` and `src/shared/xRankerSignals.ts` were both closed to
+edits for the rest of Wave 10. None of them binds XR.7 or XR.8; every fact below is also encoded in the code
+it describes, with a test.
+
+- **XR.1 — the XR upstream map, kept because re-verifying against a newer X commit is a real future task.**
+  `xai-org/x-algorithm` @ `7ba77684` (main, 2026-09-01), Apache-2.0. `home-mixer/params/param.rs` — every
+  `param!(Name, f64, "rust_home_mixer_…", default)`, weights at ~285–480. `params/config.rs:40` —
+  `NEGATIVE_SCORES_OFFSET = 0.001`. `scorers/ranking_scorer.rs` — `ScoringWeights::from_params` (~105–130),
+  `compute_weighted_parts` (~400–460, **the 26-entry `terms` array IS the claim that there are 26 heads**),
+  `offset_score` (~472), `reply_weight_for` (~186), `diversity_multiplier` (~562), `oon_applies` (~679).
+  Confirmed gate defaults: `EnableMultiplicativePostUnexplored` **false**,
+  `EnableOonRescoreForInNetworkRepliesRetweets` **true**, `MinVideoDurationMs` **10_000**, `TopicOonWeightFactor`
+  0.5 (unported).
+- **XR.1 — `X_WEIGHT_SUMS` is COMPUTED from the members list, never written down.** `positive` is
+  `43.339999999999996`, not `43.34`; summing left-to-right in source order reproduces the Rust f64 exactly,
+  whereas a hand-typed literal would drift the moment a weight changes and would silently disagree with the
+  Rust in the last bits. Assert sums with `toBeCloseTo(…, 10)`, never `toBe`.
+- **XR.1 — a `const` with a numeric literal breaks a faithfully-ported `!= 0` guard.**
+  `BIDIRECTIONAL_FOLLOW_REPLY_BOOST` had to be annotated `: number` (not left to infer the literal type `15`),
+  or `tsc` rejects the source's own `boost !== 0` check as *"types '15' and '0' have no overlap"*. Any future
+  port of a feature-switch guard hits this; the annotation is the fix, and the reason belongs in a comment
+  (it is a switch X can turn off, not a constant a compiler should fold away).
+- **XR.2 — `postCoach` has a check id `profile_click` AND `xRanker` has a head named `profile_click`, and
+  they are unrelated.** The head is weighted **0.0**, so wiring the check to the same-named head would be a
+  silent no-op that looks correct in review. The `own_proof` modifier maps the check onto **`follow_author`
+  (4.0)** on purpose, and says so in its `why`. Check the head's weight before trusting a name match.
+- **XR.2 — a signal-free draft is a hard fixture to write, and that is itself the calibration finding.**
+  Twelve modifiers fire on a `postCoach` check PASSING, so almost any competent sentence trips three or more.
+  The suite's anchor (`SIGNAL_FREE`) is deliberately flat: no first-person, no digit, no contrast word,
+  nothing quotable, one line, ≤30 words, classified `one_liner`. A later task adding a modifier keyed on a
+  common pass **will break that test**, and the right response is to re-pick the fixture, not to loosen the
+  assertion — the exact-50 anchor is what proves `score` is measured against the signal-free baseline.
+
+### Also archived at XR.6 — D234, D237, and two closed-lane gotchas
+
+- **D234** (XR.3 — **the new reference broke an XR.2 test, and the break WAS the finding**). *"a 1-like/10-view
+  post scores below a 100-like/1000-view post"* went red because its fixture carried 5 replies — 3.7x above the
+  imported reply reference and 0.25x below the measured one — and reply carries X's published 5.0 against
+  favorite's 0.5. **Fixture re-picked rather than the assertion loosened, and the old fixture kept as its own
+  test of what it exposed. Generalize: a test that reddens when a constant is measured was testing the
+  constant, not the claim in its name.**
+- **D237** (XR.4 — **the standing suspicion was measured and it was wrong, which is a result and not a
+  non-event**). `ENGAGEMENT_SHRINKAGE_PSEUDO_VIEWS` carried XR.3's note that K=2000 "is too strong for this
+  corpus" and was "the binding constraint on E". Two measurements say otherwise: beta-binomial
+  method-of-moments over the timeline corpus puts K near **1066** on `favorite` and returns **negative**
+  between-post variance on `reply` and `retweet` (their whole observed spread is binomial noise off small
+  view counts — only 2.4% of `favorite`'s variance is between-post), and at K=1066 only **0.2%** of sightings
+  clear the old cut of 65, at K=500 only 1.9%. **Lowering K would amplify noise, and could not have fixed the
+  dead band anyway — that was the cut (D236).** K stays at 2000 on evidence rather than on inertia, and the
+  constant's comment now carries the numbers. **Generalize: when a recorded suspicion names a constant, the
+  cheap first move is to compute what the corpus says that constant should be — the answer may close the
+  question instead of licensing the change.**
+- **XR.4 — the C distribution is robust to the two things you would expect to move it**, which is why the band
+  cuts are safe to freeze: over 308 own published originals the quartiles come out 56/61/68 with the active
+  niche lexicon, without it, and with or without the recorded `has_media` flag. The calibration deliberately
+  runs WITHOUT the lexicon — a constant that changes when the niche is re-pinned is not a constant.
+- **XR.5 — the Composer's only honest image signal is `original.mediaNote`**, and there is no video one at
+  all. No attach-image affordance exists (no API media upload — out of scope), so a Studio visual pinned to
+  the row is the whole evidence a post ships with an image; it is `null` on every unsaved draft, which is
+  correct — an image that does not exist yet is not a feature of the draft (D235's §7.11 half).

@@ -16,7 +16,7 @@
 // tabs *in the card* (RD.2): clicking the one you want copies it, moves the row
 // to Clicked, and opens the tweet — paste, done.
 
-import { type JSX, useCallback, useEffect, useRef, useState } from 'react';
+import { type JSX, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type HumanizeResult, humanize, jitterOdds } from '../humanize.ts';
 import {
   SWEEP_STATE_KEY,
@@ -72,7 +72,8 @@ import { CoachChip } from './CoachChip.tsx';
 import { SettingsGear } from './SettingsGear.tsx';
 import { SweepPresets } from './SweepPresets.tsx';
 import { ApiError, type BatchReplyTweet, api } from './api.ts';
-import { cannonTargetChip } from './chips.ts';
+import { cannonTargetChip, rankerBandChip } from './chips.ts';
+import { rankerChipFace, rankerChipTitle, sightingRankerScore } from './radarLogic.ts';
 import { useServerSettings } from './serverSettingsHook.ts';
 import { type SettingsEditor, useSettingsEditor } from './settingsEditor.ts';
 import type { Settings } from './storage.ts';
@@ -1448,6 +1449,11 @@ function RadarRow({
   const [angleIdx, setAngleIdx] = useState(0);
   const angles = rowAngles(s);
   const picked = angles[angleIdx] ?? angles[0];
+  // XR.6 — E, the ranker's reading of THIS POST's measured counts. Computed at
+  // render time and never stored: a stamped score would go stale the moment the
+  // row is re-sighted with fresher numbers, and `mergeSightings` would need a
+  // merge rule for a value it can always re-derive (§7.24).
+  const ranker = useMemo(() => sightingRankerScore(s), [s]);
 
   // Taking an angle: copy it (a click is a user gesture → clipboard allowed),
   // move the row to Clicked, and promote the draft with the text that will
@@ -1499,6 +1505,20 @@ function RadarRow({
         <span className={`radar-band radar-band-${s.band}`} title={BAND_TITLE[s.band]}>
           {BAND_LABEL[s.band]}
         </span>
+        {/* XR.6 — the ranker's read of the post you would be replying to, beside
+            the other capture facts on the left. Everything past `.radar-author`
+            (flex: 1) describes the REPLY; this describes the tweet.
+            Rendered only when `scoreMeasured` says it has something: a row whose
+            views were never captured shows no chip rather than `E 0`, which
+            would read as "this post is dead" instead of "we didn't look". */}
+        {ranker.available && (
+          <span
+            className={`${rankerBandChip(ranker.band)} ranker-pill`}
+            title={rankerChipTitle(ranker)}
+          >
+            {rankerChipFace(ranker)}
+          </span>
+        )}
         <button
           type="button"
           className="radar-author person-link"
