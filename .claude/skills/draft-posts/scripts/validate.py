@@ -27,7 +27,8 @@ URL_BILLING = re.compile(r"(^|\s)https?://", re.I)
 URL_ANY = re.compile(r"https?://|(^|\s)www\.", re.I)
 HASHTAG = re.compile(r"(^|\s)#\w")
 STREAMS = {"X": "DILEMMA", "D": "CHALLENGE BOARD", "N": "NEWS PEG",
-           "A": "VERDICT", "F": "FACTION SPLIT", "K": "BAKE-OFF", "W": "WORD BUDGET"}
+           "A": "VERDICT", "F": "FACTION SPLIT", "K": "BAKE-OFF", "W": "WORD BUDGET",
+           "R": "REFERENDUM", "P": "RECEIPTS", "G": "GATE"}
 
 fails, warns = [], []
 def fail(m): fails.append(m)

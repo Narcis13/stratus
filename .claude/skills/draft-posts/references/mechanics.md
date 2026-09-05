@@ -98,6 +98,50 @@ Other rows: *"Name a better browser than Arc I'll wait."* 22,160 views / 219
 comments · challenge bucket n=7, avg 3,833, r:l 1.02 · milestone bucket n=25, avg
 1,509 (excluded, see §5).
 
+### @skpnky — n=203 unique originals, captured 2026-09-02 17:34Z and 2026-09-04 21:23Z; 286 replies 2026-09-04 21:36Z
+
+The account went 30 → ~1,200 followers between Aug 19 and Sep 4. Corpus avg 892
+views, 14.6 comments, r:l 0.86.
+
+| skeleton | n | avg views | avg comments | avg likes | reply:like | max views |
+|---|---|---|---|---|---|---|
+| **REFERENDUM** ("do you believe / do you think 'X'?") | **5** | 5,861 | **119.6** | 77.8 | **1.54** | 9,399 |
+| **FAD RECEIPTS** (live fad + "did anyone actually make money?") | **5** | 6,621 | 82.2 | 38.4 | **2.14** | 15,688 |
+| milestone / connect / link farm | 19 | 1,934 | 39.8 | 51.7 | 0.77 | 8,672 |
+| tier split ("$20 vs $200… we are not the same") | 3 | 2,225 | 31.3 | 30.7 | 1.02 | 4,867 |
+| every other question *(baseline)* | 73 | 399 | 6.1 | 9.4 | 0.65 | 3,071 |
+| statement | 98 | 420 | 5.1 | 9.8 | 0.52 | 4,641 |
+
+Receipts: *"do you believe “luck” actually exists?"* 38 chars, **202 comments** on
+127 likes · *"do you believe in “fake it until make it?"* 154 · *"do you think ugly
+design can actually kill a great product?"* 124 · *"do you think hard work “beats”
+talent?"* 75. Strip the luck post and the other four still average 99 comments
+(16× his baseline). Four of five are under 46 chars; none carry media.
+**Cross-validation is weak:** the only other referendum in the corpus is one
+@danielsmidstrup row at r:l 0.89, below his own baseline. Given 7 slots on
+2026-09-07 as a stated deviation; §10.1 of that document is the transfer test.
+
+The fad-receipts rows are all the outbid.lol clone wave (Aug 19–24): *"+100
+copycats… did anyone who built those clones actually made money?"* 15,688 views,
+128 comments on 69 likes. The mechanism is a live fad everyone touched plus a
+money ask that resolves to a number.
+
+**His replies are not content.** 286 rows over two days: 0.6 likes/reply, 42
+chars, 212 targets, top rows are *"lets go! happy to connect"* on other people's
+#connect posts. The follower curve is ~140 replies/day into connect threads; the
+post numbers are a separate machine. Only the second is borrowable.
+
+### @charlesordo — n=103, captured 2026-09-02 11:49Z
+
+The **prosecutor gate**: a title-denial statement aimed at the reader.
+*"Don't call yourself an entrepreneur if all you did was vibecoding an app."*
+33,236 views, 155 comments, 172 likes · *"I beg you, don't use hashtags"* 9,487 /
+144 / 152 · *"Stop calling it a startup. It's a side project until someone pays
+you."* 31,154 / 97 / **1,735** likes. Statement bucket overall r:l **0.36**
+(likes-heavy); the gates run ~0.9. Same contested-identity tripwire as the
+verdict, from the other side of the table. Used 2026-09-07 as stream G with a
+number-ask latch so each resolves to an integer rather than a tone fight.
+
 ### @sl1ma4 — captured 2026-08-18
 
 The **verdict** skeleton (confession → binary on a contested identity): 53,226
@@ -168,6 +212,22 @@ a bank statement, not a belief) · *"One of you is wasting a year. Which?"* (put
 stake on the table) · *"…and has it cost you yet?"* (bolts a war-story ask onto a
 binary; war stories are long and bring their teller's audience).
 
+### R · REFERENDUM — a repeated slogan in quotes, forced to a binary (on trial)
+Evidence: @skpnky n=5, 119.6 comments vs 6.1 baseline, r:l 1.54. Not yet
+cross-validated (n=1 elsewhere, below baseline). The post is the proverb plus
+"yes or no" / "one or the other" / "still true, or do you just repeat it?"; it
+must not argue. The seed asks the majority answer for the receipt (R11). Keep it
+in-niche: the slogans indie hackers repeat, never life-generic proverbs.
+
+### P · RECEIPTS — a live fad + a money ask that resolves to a number (on trial)
+Evidence: @skpnky n=5, r:l 2.14, max 15,688 views. A news peg whose ask is an
+integer: "what did it cost you", "did a paid bid bring one customer", "what's
+your verified-impressions number". Expires like N.
+
+### G · GATE — title-denial statement + number-ask latch (on trial)
+Evidence: @charlesordo gates ~0.9 r:l on a 0.36 statement baseline. The
+prosecutor form of the verdict. Without the number ask it goes likes-heavy.
+
 ### Retired / on the bench
 
 - **K · BAKE-OFF** — named options + escape slot ("Others", "None of them").
@@ -214,6 +274,11 @@ seed arguing for the other option?* If not, the dilemma is fake.
 and run **1.15** — four times better. Use $40k for a side project, $400k for a
 job, six hundred hours, ten paying customers. **The reader has to be able to
 picture actually being offered it.**
+
+**R11 · A referendum quotes a line the audience already repeats, and the seed
+asks for the receipt.** Evidence: @skpnky n=5, 119.6 comments vs 6.1 baseline
+(captured 2026-09-04). The post is proverb + binary and must not argue; the
+seed challenges the credibility of the majority answer with a number or a name.
 
 ---
 
