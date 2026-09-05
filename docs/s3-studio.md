@@ -214,6 +214,21 @@ The visual is meant to attach to a specific scheduled post, but the publisher ca
 
 ---
 
+## The hype reel (2026-09-05)
+
+A **🎬 Hype reel** button in the Studio header. It is not a template and it exports nothing — it's a **full-panel animation made to be screen-recorded**: one of my own posts, its real metrics counting up from zero, for a short MP4.
+
+- Data: **`GET /x/metrics/own-posts`** — my originals as the free DOM harvest last saw them (`harvest_rows`, `mode='posts'`, `handle = x.identity.selfHandle`), one row per tweet (**latest capture wins** — the final count, not the first sighting), newest post first. **Not `/x/metrics/posts`**, whose `metrics_snapshots` source has been frozen since 2026-08-12 (invariant #8) and never carried reply/repost counts. $0, one read per open, cached for replays.
+- The reel opens on **posts[0]** (my newest harvested post); `◀ ▶` walks the rest of the list.
+- Motion: `views` is the hero counter, then `likes · replies · reposts · bookmarks` land on a stagger, with a growing bar row and a closing engagement-rate line. Easing is `easeOutExpo`; counters are `Math.ceil`-rounded so they land **exactly** on the measured number.
+- **Chrome fades out while the counters run** and returns when the reel lands, so a capture of the side panel is already the clip. `Esc` closes, `Space`/`Enter` replays.
+- The stage follows the **brand kit** (bg/accent/font), not the panel theme — same rule the canvas plays by, so a clip matches the cards.
+- Honest gaps stay honest: a post with 0 views shows *"no view count on this capture"* rather than a fabricated 0% rate; a zero metric still gets its tile so the grid never reshuffles between posts.
+
+The count-up math lives in **`extension/src/studio/hype.ts`** — pure, clock-free, fixture-tested; the React shell (`sidepanel/studio/HypeReel.tsx`) owns only `requestAnimationFrame` and pixels.
+
+---
+
 ## Cost & security invariants
 
 | Guarantee | How |
@@ -232,6 +247,8 @@ The visual is meant to attach to a specific scheduled post, but the publisher ca
 - **`mascot.test.ts`** — pose layer lists, `mascot:false` byte-identity regression.
 - **`templates.test.ts`** — all ten templates' layer lists (snapshots), background+scrim ordering, `parseListItems`, code-card column math, celebration null-placeholders.
 - **`milestones.test.ts` / `codeTokens.test.ts` / `chartData.test.ts`** — the pure data helpers (ladder/`latestCrossed`, tokenizer, growth/heatmap normalization + the min-N gate).
+- **`hype.test.ts`** — the reel's count-up math: easing bounds/monotonicity, the stagger, land-exactly-on-target (incl. targets of 0 and 1), total duration, compact formatting, and the null engagement rate over zero views.
+- **`src/x/routes/metrics.test.ts`** — `/x/metrics/own-posts`: newest-first ordering, latest-capture-wins dedup, the `mode`/handle filters, `@Handle` normalization, `limit`, and the empty answer when no self handle is set.
 - **`brandKit.test.ts`** — lenient multi-preset + legacy-single parse round-trip.
 - **`src/x/routes/calendar.test.ts`** — `media_note` lifecycle + guards.
 - **`scripts/smoke-studio.ts`** — $0 asset-library round-trip incl. every S5 kind (`milestone/streak/code/thread/list/chart`) surviving the whitelist; `--live` fires one real AI generation.

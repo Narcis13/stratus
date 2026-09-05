@@ -137,6 +137,7 @@ import {
   type NichePatchBody,
   type NichePillarProposal,
   type NicheProposal,
+  type OwnPostsResponse,
   type OwnReplyCell,
   type OwnReplyContamination,
   type OwnReplyPerformance,
@@ -355,6 +356,8 @@ export type {
   MeResponse,
   Mention,
   MetricsAccountResponse,
+  OwnHarvestedPost,
+  OwnPostsResponse,
   Niche,
   NicheActive,
   NicheChannelProposal,
@@ -532,6 +535,14 @@ export const api = {
     // latest crossed rung client-side over it ($0, already-billed data).
     account(s: Settings): Promise<MetricsAccountResponse> {
       return request<MetricsAccountResponse>(s, '/x/metrics/account');
+    },
+
+    // The Studio's hype reel reads this: my own originals as the free DOM
+    // harvest last saw them, newest first. $0 — never `/x/metrics/posts`, whose
+    // snapshot source froze on 2026-08-12 and carries no reply/repost counts.
+    ownPosts(s: Settings, opts: { limit?: number } = {}): Promise<OwnPostsResponse> {
+      const qs = opts.limit === undefined ? '' : `?limit=${opts.limit}`;
+      return request<OwnPostsResponse>(s, `/x/metrics/own-posts${qs}`);
     },
   },
 

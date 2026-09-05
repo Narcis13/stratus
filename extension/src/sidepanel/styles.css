@@ -4966,3 +4966,167 @@ button.chip[aria-pressed="true"] {
   font-size: 11px;
   line-height: 1.4;
 }
+
+/* ============================================================================
+   The hype reel — the Studio's screen-recordable metrics animation. A fixed
+   full-panel stage, NOT themed by the panel tokens: like the Studio canvas and
+   the content-script overlays it follows the active brand kit (bg/accent/font
+   arrive as inline style), because the clip has to match the cards. Everything
+   here is layout and motion; color is the kit's job. */
+.hype-stage {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 16px 14px;
+  overflow: hidden;
+  /* Digits must not reflow as they count — a proportional font makes the whole
+     stage twitch on every frame, which is exactly what a recording shows. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+.hype-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+}
+.hype-handle {
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.hype-date {
+  opacity: 0.55;
+  font-size: 11px;
+}
+.hype-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  opacity: 0.82;
+  max-height: 5.9em;
+  overflow: hidden;
+}
+.hype-hero {
+  margin-top: auto;
+  text-align: center;
+}
+.hype-hero-value {
+  font-size: 62px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  transition: transform var(--strat-transition);
+}
+.hype-hero-label {
+  margin-top: 4px;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+/* The landing pop — the one moment of motion the eased counter can't express
+   on its own, and the frame the clip is really cut around. */
+.hype-landed .hype-cell-value,
+.hype-hero-value.hype-landed {
+  animation: hype-pop 420ms ease-out;
+}
+@keyframes hype-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.09);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.hype-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 44px;
+  margin: 12px 0 4px;
+}
+.hype-bar {
+  flex: 1;
+  border-radius: 2px 2px 0 0;
+}
+.hype-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.hype-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--strat-radius-lg);
+  /* Tinted from the ink color rather than a token, so the tile reads on a light
+     kit (Paper) and a near-black one (Neon) without a second palette. */
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.hype-cell-value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-block;
+}
+.hype-cell-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+.hype-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 10px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 500ms ease;
+}
+.hype-foot-in {
+  opacity: 0.7;
+}
+.hype-rate {
+  font-weight: 600;
+}
+.hype-mark {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+/* Chrome is hidden while the counters run so the capture is clean. Kept in the
+   layout (opacity, not display) so nothing reflows when it comes back. */
+.hype-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  transition: opacity 300ms ease;
+}
+.hype-controls-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+.hype-controls button {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  color: inherit;
+}
+.hype-controls button:disabled {
+  opacity: 0.35;
+}
+.hype-pos {
+  font-size: 11px;
+  opacity: 0.55;
+  min-width: 30px;
+  text-align: center;
+}

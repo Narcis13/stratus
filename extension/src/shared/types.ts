@@ -1443,6 +1443,30 @@ export interface MetricsAccountResponse {
   series: AccountSeriesPoint[];
 }
 
+// GET /x/metrics/own-posts — MY OWN originals as the $0 DOM harvest last saw
+// them, newest post first (latest capture per tweet). The live counterpart to
+// /x/metrics/posts, whose `metrics_snapshots` source is frozen and carries no
+// reply/repost counts. Dates arrive JSON-serialized (ISO strings).
+export interface OwnHarvestedPost {
+  tweetId: string;
+  text: string;
+  /** When I posted it — null when the harvested DOM carried no timestamp. */
+  tweetTime: string | null;
+  capturedAt: string;
+  views: number;
+  likes: number;
+  replies: number;
+  reposts: number;
+  bookmarks: number;
+}
+
+export interface OwnPostsResponse {
+  /** null when `x.identity.selfHandle` isn't set — then `posts` is empty. */
+  handle: string | null;
+  count: number;
+  posts: OwnHarvestedPost[];
+}
+
 // S0.4: one empty cadence anchor + its best-times score for today's weekday.
 // `sufficient` is n ≥ the advice gate; below it the UI renders "no data".
 export interface BriefGap {

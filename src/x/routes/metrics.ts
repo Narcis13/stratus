@@ -6,17 +6,19 @@
 // doesn't have to make a second call to render axes and "tracking stopped"
 // state.
 
-import { and, asc, desc, eq, gte, inArray, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db } from '../../db/client.ts';
 import {
   accountSnapshots,
+  harvestRows,
   metricsSnapshots,
   postsPublished,
   replyDrafts,
   scheduledPosts,
 } from '../db/schema.ts';
 import { getSetting } from '../settings/registry.ts';
+import { configuredSelfHandle } from './playbook.ts';
 
 const TWEET_ID_RE = /^\d{1,32}$/;
 
@@ -107,6 +109,58 @@ metrics.get('/metrics/replies', async (c) => {
 metrics.get('/metrics/posts', async (c) => {
   const posts = await listPerformance(false, clampLimit(c.req.query('limit')));
   return c.json({ count: posts.length, posts });
+});
+
+// The $0 DOM harvest's view of MY OWN originals, newest post first — the live
+// counterpart to `/metrics/posts`, which reads `metrics_snapshots` (frozen since
+// 2026-08-12, invariant #8, and never carried replies/reposts anyway). Same
+// population and same latest-capture-per-tweet reduction as
+// `latestOwnPostRows`; this one keeps the identity columns a UI needs (tweet id,
+// time) instead of the ranker's feature bag.
+//
+// `mode = 'posts'` is the §8 mode pin — without it the roster/timeline corpora
+// mix. $0: nothing on this path can reach xFetch.
+const OWN_POST_HARVEST_MODE = 'posts';
+
+metrics.get('/metrics/own-posts', async (c) => {
+  const handle = configuredSelfHandle();
+  if (handle === '') return c.json({ handle: null, count: 0, posts: [] });
+
+  const rows = await db
+    .select({
+      tweetId: harvestRows.tweetId,
+      text: harvestRows.text,
+      capturedAt: sql<number>`max(${harvestRows.capturedAt})`,
+      views: harvestRows.views,
+      likes: harvestRows.likes,
+      comments: harvestRows.comments,
+      reposts: harvestRows.reposts,
+      bookmarks: harvestRows.bookmarks,
+      tweetTime: harvestRows.tweetTime,
+    })
+    .from(harvestRows)
+    .where(and(eq(harvestRows.mode, OWN_POST_HARVEST_MODE), eq(harvestRows.handle, handle)))
+    .groupBy(harvestRows.tweetId);
+
+  // Newest post first, and a post whose DOM carried no time sorts last rather
+  // than being dropped — the caller wants a tweet to animate, not a denominator.
+  const limit = clampLimit(c.req.query('limit'));
+  const posts = rows
+    .map((r) => ({
+      tweetId: r.tweetId,
+      text: r.text,
+      tweetTime: r.tweetTime,
+      capturedAt: new Date(r.capturedAt),
+      views: r.views,
+      likes: r.likes,
+      replies: r.comments,
+      reposts: r.reposts,
+      bookmarks: r.bookmarks,
+    }))
+    .sort((a, b) => (b.tweetTime?.getTime() ?? -1) - (a.tweetTime?.getTime() ?? -1))
+    .slice(0, limit);
+
+  return c.json({ handle, count: posts.length, posts });
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;

@@ -7,8 +7,11 @@
 // bucketing/gate math itself is covered by the pure-function suites in
 // src/test.test.ts (buildBestTimes tzOffset, rankBestTimes, bestTimeScore).
 
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
+import { db } from '../../db/client.ts';
+import { harvestRows, harvestRuns } from '../db/schema.ts';
 import { resetSettings, setSettings } from '../settings/registry.ts';
 import { metrics } from './metrics.ts';
 
@@ -93,5 +96,138 @@ describe('GET /x/metrics/best-times (S0.4)', () => {
     } finally {
       resetSettings({ keys: ['x.gates.bestTimeMinN'] });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /x/metrics/own-posts — the Studio hype reel's data source. Unlike the
+// best-times route above, this one filters on `x.identity.selfHandle`, so it
+// can seed a handle nobody else in the shared DB uses and assert exact numbers.
+
+describe('GET /x/metrics/own-posts', () => {
+  const HANDLE = 'hypereeltester';
+  const runIds: string[] = [];
+
+  async function seed(
+    rows: Array<{
+      tweetId: string;
+      mode?: string;
+      handle?: string;
+      views?: number;
+      likes?: number;
+      comments?: number;
+      reposts?: number;
+      bookmarks?: number;
+      tweetTime?: Date | null;
+      capturedAt?: Date;
+      text?: string;
+    }>,
+  ): Promise<void> {
+    const [run] = await db
+      .insert(harvestRuns)
+      .values({ handle: HANDLE, mode: 'posts', scope: 'all' })
+      .returning({ id: harvestRuns.id });
+    if (!run) throw new Error('harvest_run_insert_failed');
+    runIds.push(run.id);
+    await db.insert(harvestRows).values(
+      rows.map((r) => ({
+        runId: run.id,
+        tweetId: r.tweetId,
+        handle: r.handle ?? HANDLE,
+        mode: r.mode ?? 'posts',
+        text: r.text ?? `own post ${r.tweetId}`,
+        views: r.views ?? 0,
+        likes: r.likes ?? 0,
+        comments: r.comments ?? 0,
+        reposts: r.reposts ?? 0,
+        bookmarks: r.bookmarks ?? 0,
+        tweetTime: r.tweetTime === undefined ? new Date(1_750_000_000_000) : r.tweetTime,
+        capturedAt: r.capturedAt ?? new Date(1_750_000_100_000),
+      })),
+    );
+  }
+
+  beforeAll(async () => {
+    await seed([
+      // Two captures of the same tweet — the LATEST one is the outcome.
+      { tweetId: 'own-a', views: 100, likes: 2, capturedAt: new Date(1_750_000_100_000) },
+      {
+        tweetId: 'own-a',
+        views: 4200,
+        likes: 61,
+        comments: 9,
+        reposts: 3,
+        bookmarks: 11,
+        capturedAt: new Date(1_750_900_000_000),
+      },
+      // Newer post — must sort first.
+      { tweetId: 'own-b', views: 900, tweetTime: new Date(1_759_000_000_000) },
+      // A reply of mine, and somebody else's post: neither belongs to this list.
+      { tweetId: 'own-c', mode: 'replies', views: 77 },
+      { tweetId: 'other-a', handle: 'someoneelse', views: 88 },
+    ]);
+  });
+
+  afterAll(async () => {
+    await db.delete(harvestRows).where(inArray(harvestRows.runId, runIds));
+    await db.delete(harvestRuns).where(inArray(harvestRuns.id, runIds));
+    resetSettings({ keys: ['x.identity.selfHandle'] });
+  });
+
+  interface OwnPostsBody {
+    handle: string | null;
+    count: number;
+    posts: Array<{
+      tweetId: string;
+      text: string;
+      tweetTime: string | null;
+      views: number;
+      likes: number;
+      replies: number;
+      reposts: number;
+      bookmarks: number;
+    }>;
+  }
+
+  async function fetchOwnPosts(qs = ''): Promise<OwnPostsBody> {
+    const res = await app.request(`/x/metrics/own-posts${qs}`);
+    expect(res.status).toBe(200);
+    return (await res.json()) as OwnPostsBody;
+  }
+
+  test('newest first, one row per tweet, latest capture wins', async () => {
+    setSettings({ 'x.identity.selfHandle': HANDLE });
+    const body = await fetchOwnPosts();
+
+    expect(body.handle).toBe(HANDLE);
+    expect(body.posts.map((p) => p.tweetId)).toEqual(['own-b', 'own-a']);
+
+    const a = body.posts.find((p) => p.tweetId === 'own-a');
+    // The 100-view first sighting is NOT the answer — the final count is.
+    expect(a).toMatchObject({ views: 4200, likes: 61, replies: 9, reposts: 3, bookmarks: 11 });
+  });
+
+  test('the mode pin and the handle filter both hold', async () => {
+    setSettings({ 'x.identity.selfHandle': HANDLE });
+    const ids = (await fetchOwnPosts()).posts.map((p) => p.tweetId);
+    expect(ids).not.toContain('own-c'); // my reply — mode 'replies'
+    expect(ids).not.toContain('other-a'); // someone else's post
+  });
+
+  test("a '@'-prefixed handle setting still matches the stored lowercase form", async () => {
+    setSettings({ 'x.identity.selfHandle': `@${HANDLE.toUpperCase()}` });
+    expect((await fetchOwnPosts()).count).toBe(2);
+  });
+
+  test('limit clamps the list', async () => {
+    setSettings({ 'x.identity.selfHandle': HANDLE });
+    const body = await fetchOwnPosts('?limit=1');
+    expect(body.posts.map((p) => p.tweetId)).toEqual(['own-b']);
+  });
+
+  test('no configured handle → empty, never somebody else’s corpus', async () => {
+    setSettings({ 'x.identity.selfHandle': '' });
+    const body = await fetchOwnPosts();
+    expect(body).toEqual({ handle: null, count: 0, posts: [] });
   });
 });

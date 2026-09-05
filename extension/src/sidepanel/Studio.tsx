@@ -37,8 +37,15 @@ import { type PatternKind, render } from '../studio/compose.ts';
 import { ensureStudioFonts } from '../studio/fonts.ts';
 import { latestCrossed } from '../studio/milestones.ts';
 import type { MilestoneCardData, StatCardData, StreakCardData } from '../studio/templates.ts';
-import { ApiError, type ContentPillar, type MediaAsset, api } from './api.ts';
+import {
+  ApiError,
+  type ContentPillar,
+  type MediaAsset,
+  type OwnHarvestedPost,
+  api,
+} from './api.ts';
 import type { Settings } from './storage.ts';
+import { HypeReel } from './studio/HypeReel.tsx';
 import { KitEditor } from './studio/KitEditor.tsx';
 import {
   BackgroundFields,
@@ -194,6 +201,13 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
   // S4: the asset library history rail.
   const [library, setLibrary] = useState<MediaAsset[]>([]);
   const [savingAsset, setSavingAsset] = useState(false);
+
+  // The hype reel (a $0 read of my own harvested originals + a DOM animation).
+  // Deliberately outside the render pipeline: it exports nothing, it's filmed.
+  const [reelPosts, setReelPosts] = useState<OwnHarvestedPost[] | null>(null);
+  const [reelIndex, setReelIndex] = useState(0);
+  const [reelOpen, setReelOpen] = useState(false);
+  const [reelLoading, setReelLoading] = useState(false);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
@@ -658,6 +672,35 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     }
   };
 
+  // One $0 read per open, then re-opened from cache — the harvest only moves
+  // when the extension sweeps, so re-fetching on every replay would buy nothing.
+  const openReel = async (): Promise<void> => {
+    setError(null);
+    if (reelPosts !== null && reelPosts.length > 0) {
+      setReelOpen(true);
+      return;
+    }
+    setReelLoading(true);
+    try {
+      const res = await api.metrics.ownPosts(settings, { limit: 30 });
+      setReelPosts(res.posts);
+      setReelIndex(0);
+      if (res.posts.length === 0) {
+        setError(
+          res.handle === null
+            ? 'Set your handle in Settings first — the reel reads your own harvested posts.'
+            : 'No harvested posts yet — sweep your own profile from the Harvest tab, then try again.',
+        );
+      } else {
+        setReelOpen(true);
+      }
+    } catch (e) {
+      setError(e instanceof ApiError ? `Reel data failed: ${e.message}` : 'Reel data failed');
+    } finally {
+      setReelLoading(false);
+    }
+  };
+
   const onPickPhoto = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
     e.target.value = '';
@@ -675,10 +718,30 @@ export function StudioPanel({ settings, seed, onClearSeed }: Props): JSX.Element
     <div className="panel">
       <div className="panel-header">
         <h2>Studio</h2>
-        <button type="button" onClick={() => setKitOpen((o) => !o)}>
-          {kitOpen ? 'Close brand kit' : 'Brand kit'}
-        </button>
+        <div className="row">
+          <button
+            type="button"
+            onClick={() => void openReel()}
+            disabled={reelLoading}
+            title="Animate your latest post's real metrics counting up — full panel, made for a screen recording"
+          >
+            {reelLoading ? 'Loading…' : '🎬 Hype reel'}
+          </button>
+          <button type="button" onClick={() => setKitOpen((o) => !o)}>
+            {kitOpen ? 'Close brand kit' : 'Brand kit'}
+          </button>
+        </div>
       </div>
+
+      {reelOpen && reelPosts !== null && (
+        <HypeReel
+          posts={reelPosts}
+          index={reelIndex}
+          kit={kit}
+          onIndex={setReelIndex}
+          onClose={() => setReelOpen(false)}
+        />
+      )}
 
       {kitOpen && (
         <KitEditor
