@@ -18,6 +18,11 @@ I'm a 51-year-old veteran dev, solopreneur, building in public, into programming
 
 ## Setup
 
+0. Keep the Mac awake for the run. This machine idle-sleeps after 1 minute and blanks the display after 10; a dark or sleeping display makes Chrome throttle the tab and the run dies mid-reply. Start a detached, time-bounded assertion (30 min covers a 20-reply run with notifications):
+   ```bash
+   nohup caffeinate -dis -t 1800 >/dev/null 2>&1 &
+   ```
+   Claude Code's own `caffeinate -i -t 300` is not enough: it lapses during long waits and never holds the display.
 1. Load the chrome tools in one `ToolSearch` call if not loaded: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__read_page,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__find,mcp__claude-in-chrome__get_page_text`
 2. `tabs_context_mcp` with `createIfEmpty: true`, navigate to `https://x.com/home`.
 3. Reload once so the feed is fresh, then select the requested **tab** in the row at the top of the home timeline (`find` the tab by its label; the row scrolls horizontally when many lists are pinned, so scroll it if the label isn't visible). Confirm the tab is highlighted before reading any card.
@@ -106,4 +111,4 @@ A reply-to-reply chain is the strongest conversation signal the ranker has, and 
 
 ## Wrap-up
 
-Close any tab you created. State which tab the run worked. Report a numbered list: author (and rough size / niche), post age when you replied, one line on what the post was about, the reply text posted, and whether the like landed. Then one line: how many replies landed under 15 minutes, how many likes landed, how many follow-ups from notifications. Note any strong posts you skipped because they were over an hour old, so the timing rule stays visible.
+Release the sleep assertion first: `pkill -f 'caffeinate -dis -t' || true` (the pattern does not match Claude Code's own `-i -t 300` instances). Close any tab you created. State which tab the run worked. Report a numbered list: author (and rough size / niche), post age when you replied, one line on what the post was about, the reply text posted, and whether the like landed. Then one line: how many replies landed under 15 minutes, how many likes landed, how many follow-ups from notifications. Note any strong posts you skipped because they were over an hour old, so the timing rule stays visible.

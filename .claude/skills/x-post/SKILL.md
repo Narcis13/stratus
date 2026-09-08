@@ -81,6 +81,16 @@ Read all three references at the start of every run. They are short.
 
 ## Step 0 — Setup and the novelty read
 
+0. Keep the Mac awake for the run. This machine idle-sleeps after 1 minute
+   and blanks the display after 10; Step 7 waits up to 5 minutes between
+   passes, which is exactly where a run dies. Start a detached, time-bounded
+   assertion (60 min covers research plus the full sit):
+   ```bash
+   nohup caffeinate -dis -t 3600 >/dev/null 2>&1 &
+   ```
+   Claude Code's own `caffeinate -i -t 300` is not enough: it lapses during
+   Monitor waits and never holds the display, and Chrome throttles a tab on
+   a dark screen.
 1. Load the Chrome tools in one `ToolSearch` call if not loaded:
    `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__read_page,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__find,mcp__claude-in-chrome__get_page_text`
 2. `tabs_context_mcp` with `createIfEmpty: true`, then open a **new tab** on
@@ -267,7 +277,9 @@ window.
 
 ## Step 8 — Wrap-up
 
-Close any tab you created. Report, in this order:
+Release the sleep assertion first: `pkill -f 'caffeinate -dis -t' || true`
+(the pattern does not match Claude Code's own `-i -t 300` instances). Close
+any tab you created. Report, in this order:
 
 1. **The wave.** What is hot, with 2–3 receipts (author, age, views/replies,
    gist). One line on why it is about to burst rather than already burst.
