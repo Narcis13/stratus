@@ -1,9 +1,14 @@
 ---
-description: Reply under N fresh (<1h, ideally <15m) uncrowded posts on x.com via Chrome — timing-first target picking, human voice, growth-aware
-argument-hint: <count>
+description: Reply under N fresh (<1h, ideally <15m) uncrowded posts on x.com via Chrome — timing-first target picking, human voice, growth-aware; like every post you reply to; optional feed tab (For You / Following / a pinned list)
+argument-hint: <count> [tab]
 ---
 
-Post `$ARGUMENTS` replies on x.com using Claude in Chrome. `$ARGUMENTS` is a bare number (e.g. `5`, `12`). Missing or not a number → default 5. Hard cap 20 per run: X's Original Content Rewards rules disqualify "content generated using automated tools to create engagement", and volume is the behavioural signature they police. Spread runs across the day rather than firing 40 at once.
+Post replies on x.com using Claude in Chrome. Parse `$ARGUMENTS` as `<count> [tab]`:
+
+- **count**: the first token that is a bare number (e.g. `5`, `12`). Missing or not a number → default 5. Hard cap 20 per run: X's Original Content Rewards rules disqualify "content generated using automated tools to create engagement", and volume is the behavioural signature they police. Spread runs across the day rather than firing 40 at once.
+- **tab** (optional): everything after the count, e.g. `Following`, `Big Boys`, `AI builders`. Case-insensitive, may contain spaces. It names a tab at the top of `https://x.com/home`: the built-in `For You` / `Following`, or any private list the user has pinned so it shows up as a home tab. Missing → `For You`.
+
+Examples: `/x-reply` → 5 replies on For You. `/x-reply 8 Following` → 8 on Following. `/x-reply 10 Big Boys` → 10 on the pinned list tab named "Big Boys".
 
 Running this command IS the user's authorization to post that many replies. Do not ask before each one. Do the work, report at the end.
 
@@ -15,7 +20,10 @@ I'm a 51-year-old veteran dev, solopreneur, building in public, into programming
 
 1. Load the chrome tools in one `ToolSearch` call if not loaded: `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__read_page,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp,mcp__claude-in-chrome__find,mcp__claude-in-chrome__get_page_text`
 2. `tabs_context_mcp` with `createIfEmpty: true`, navigate to `https://x.com/home`.
-3. Reload once so the feed is fresh, then work BOTH tabs: **For You** first (bigger accounts, algorithmic), then **Following** (chronological, so everything near the top is minutes old). If For You keeps serving hours-old posts after two scroll passes, spend the rest of the run on Following.
+3. Reload once so the feed is fresh, then select the requested **tab** in the row at the top of the home timeline (`find` the tab by its label; the row scrolls horizontally when many lists are pinned, so scroll it if the label isn't visible). Confirm the tab is highlighted before reading any card.
+   - **No tab given (For You):** work For You first (bigger accounts, algorithmic), then **Following** (chronological, so everything near the top is minutes old). If For You keeps serving hours-old posts after two scroll passes, spend the rest of the run on Following.
+   - **Tab given:** stay on that tab for the whole run. Do not drift to For You or Following to fill the count. A pinned list is chronological like Following, so scroll passes surface fresh posts fast; if it runs dry, stop and report the real count.
+   - **Tab not found** (no pinned list with that name): stop immediately, screenshot the tab row, and report which tabs are visible. Do not fall back silently to For You; the user chose that tab for a reason.
 
 ## Picking posts — timing is the whole game
 
@@ -51,7 +59,7 @@ Skip, do not reply to:
 
 Expand "Show more" before writing. Read the top 2–3 existing replies: if one already made your point, take a different angle or skip.
 
-Keep going until you've posted `$ARGUMENTS` replies or you've done several full scroll passes of both tabs with nothing fresh left. If you hit the wall, stop and report the real count. Never pad the count with a stale post.
+Keep going until you've posted `count` replies or you've done several full scroll passes of the tab(s) in play with nothing fresh left. If you hit the wall, stop and report the real count. Never pad the count with a stale post.
 
 ## Voice — the part that decides the profile tap
 
@@ -88,13 +96,14 @@ For each chosen post:
 5. Click into the reply field and type the reply per the voice rules.
 6. Screenshot to check the text landed intact, then click Reply.
 7. Confirm the "Your post was sent" toast before moving on.
+8. **Like the post you just replied to.** Back on the card (or in the post's own page if the modal dropped you there), click its heart icon and check it turned red / the count ticked up. If it was already liked (red heart), leave it, never un-like. A reply plus a like from the same account is one more signal to the author that a person, not a bot, showed up, and it costs nothing. If the heart click fails twice, skip it and note it in the report.
 
-Track author + post gist + reply text + post age at reply time as you go.
+Track author + post gist + reply text + post age at reply time + whether the like landed as you go.
 
 ## Close the loop (the 75× signal)
 
-A reply-to-reply chain is the strongest conversation signal the ranker has, and an author replying back is the single best thing a reply can earn. Before wrapping up, open `https://x.com/notifications` once, and for any reply to a reply you posted (this run or earlier today) that has a real question or pushback in it, answer it in the same voice, one line. Cap this at 5 extra replies; they don't count toward `$ARGUMENTS`. Skip anything that's just a like or an emoji.
+A reply-to-reply chain is the strongest conversation signal the ranker has, and an author replying back is the single best thing a reply can earn. Before wrapping up, open `https://x.com/notifications` once, and for any reply to a reply you posted (this run or earlier today) that has a real question or pushback in it, answer it in the same voice, one line. Cap this at 5 extra replies; they don't count toward `count`. Skip anything that's just a like or an emoji.
 
 ## Wrap-up
 
-Close any tab you created. Report a numbered list: author (and rough size / niche), post age when you replied, one line on what the post was about, the reply text posted. Then one line: how many replies landed under 15 minutes, how many follow-ups from notifications. Note any strong posts you skipped because they were over an hour old, so the timing rule stays visible.
+Close any tab you created. State which tab the run worked. Report a numbered list: author (and rough size / niche), post age when you replied, one line on what the post was about, the reply text posted, and whether the like landed. Then one line: how many replies landed under 15 minutes, how many likes landed, how many follow-ups from notifications. Note any strong posts you skipped because they were over an hour old, so the timing rule stays visible.
