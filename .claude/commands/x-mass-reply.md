@@ -1,5 +1,5 @@
 ---
-description: Mass-reply session on x.com via Chrome — 35–45 replies in ~30 min. Harvest a wave of fresh cards by script, cook every reply in one pass, fire each through X's web-intent composer (one round trip per reply). No likes, no per-post browsing, no screenshots. Optional tab / Latest search source, optional notifications loop.
+description: Mass-reply session on x.com via Chrome — 35–45 replies in ~40 min. Harvest a wave of fresh cards by script, cook every reply in one pass, fire each through X's web-intent composer (one round trip per reply). No likes, no per-post browsing, no screenshots. Optional tab / Latest search source, optional notifications loop.
 argument-hint: <count> [tab | q: <search terms>] [loop]
 ---
 
@@ -16,7 +16,7 @@ Examples: `/x-mass-reply` → 40 replies, rotating sources. `/x-mass-reply 36 Fo
 
 Running this command IS the authorization to post that many replies. Never ask before a reply. Do the work, report at the end.
 
-**Volume note.** `/x-reply` caps at 20 because X's Original Content Rewards rules name "content generated using automated tools to create engagement" and volume is the behavioural signature they police. This command runs at 35–45 by the operator's decision. The mitigations are structural and not optional: one reply per author per day, never faster than one reply per ~20 s, waves ~8 min apart, every reply written to the post it answers, and at most two runs a day, hours apart.
+**Volume note.** `/x-reply` caps at 20 because X's Original Content Rewards rules name "content generated using automated tools to create engagement" and volume is the behavioural signature they police. This command runs at 35–45 by the operator's decision. The mitigations are structural and not optional: one reply per author per day, a 20 s pause between replies (so never faster than one per ~30 s), waves ~10 min apart, every reply written to the post it answers, and at most two runs a day, hours apart.
 
 ## Who is replying
 
@@ -30,13 +30,13 @@ I'm a 51-year-old veteran dev, solopreneur, building in public, into programming
 2. **Cook** — every reply for the wave is written in one pass, gated by `.claude/scripts/x-mass-reply.py`, which also prints the ready-made intent URLs.
 3. **Fire** — batches of three replies per browser call, mechanical.
 
-**Waves of 15, not one batch of 45.** Timing is the whole game (table below): a post that is 10 min old at harvest is 40 min old by the time reply #40 fires if you harvest everything first. Harvest → cook → fire in ~8-minute waves keeps every reply inside its window, and each new wave sees the cards that arrived while the last one was firing. Fire order inside a wave is freshest first. For `count` 40 that is three waves (15 / 15 / 10).
+**Waves of 15, not one batch of 45.** Timing is the whole game (table below): a post that is 10 min old at harvest is 40 min old by the time reply #40 fires if you harvest everything first. Harvest → cook → fire in ~10-minute waves keeps every reply inside its window, and each new wave sees the cards that arrived while the last one was firing. Fire order inside a wave is freshest first. For `count` 40 that is three waves (15 / 15 / 10).
 
 ## Setup
 
 0. Keep the Mac awake (idle-sleep at 1 min, display blank at 10 min kills the run):
    ```bash
-   nohup caffeinate -dis -t 2700 >/dev/null 2>&1 &
+   nohup caffeinate -dis -t 3600 >/dev/null 2>&1 &
    ```
 1. Load the Chrome tools in one `ToolSearch` call if not loaded:
    `select:mcp__claude-in-chrome__tabs_context_mcp,mcp__claude-in-chrome__navigate,mcp__claude-in-chrome__javascript_tool,mcp__claude-in-chrome__browser_batch,mcp__claude-in-chrome__get_page_text,mcp__claude-in-chrome__computer,mcp__claude-in-chrome__tabs_create_mcp,mcp__claude-in-chrome__tabs_close_mcp`
@@ -135,13 +135,16 @@ Three replies per `browser_batch`, in table order:
 ```
 navigate {url: <url1>, tabId: TAB, force: true}
 javascript_tool {VERIFY}
-computer {action: "wait", duration: 8}
+computer {action: "wait", duration: 10}
+computer {action: "wait", duration: 10}
 navigate {url: <url2>, tabId: TAB, force: true}
 javascript_tool {VERIFY}
-computer {action: "wait", duration: 8}
+computer {action: "wait", duration: 10}
+computer {action: "wait", duration: 10}
 navigate {url: <url3>, tabId: TAB, force: true}
 javascript_tool {VERIFY}
 ```
+The pause between replies is 20 s, as two waits because a single `wait` caps at 10 s. Never shorten it; with the ~10 s the navigate and verify take, that is one reply every ~30 s, and it is the pacing the volume note promises.
 `force: true` is required: a composer left with text arms X's "Leave site?" prompt, which otherwise blocks the next navigate and kills the batch. Discarding it posts nothing.
 
 `VERIFY` is the same script for every reply; it reads the id and text back from the URL and the expected handle from the `#h=` fragment, so nothing is substituted per reply:
@@ -182,7 +185,7 @@ python3 .claude/scripts/x-mass-reply.py log <scratch>/wave-N.json <id>=sent <id>
 
 ### 4. Next wave
 
-Rotate the source (or stay, if one was given), re-run `skip`, harvest again. Following is chronological, so a re-harvest 8 minutes later is mostly new cards.
+Rotate the source (or stay, if one was given), re-run `skip`, harvest again. Following is chronological, so a re-harvest 10 minutes later is mostly new cards.
 
 ## Picking posts — timing is the whole game
 
