@@ -153,13 +153,13 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const norm=s=>(s||'').replace(/\s+/g,' ').trim();
 const q=new URLSearchParams(location.search); const id=q.get('in_reply_to')||''; const want=q.get('text')||'';
 const wantH=(location.hash.match(/h=([A-Za-z0-9_]+)/)||[])[1]||'';
-let ta=null; for(let i=0;i<25&&!ta;i++){ta=document.querySelector('[data-testid="tweetTextarea_0"]'); if(!ta) await sleep(300);}
+const layer=document.getElementById('layers')||document.body;
+let ta=null, parent=null;
+for(let i=0;i<25&&!(ta&&parent);i++){ta=document.querySelector('[data-testid="tweetTextarea_0"]'); parent=layer.querySelector('article[data-testid="tweet"]'); if(!(ta&&parent)) await sleep(400);}
 let out;
 if(!id||!want) out='bad-url';
 else if(!ta) out='no-composer';
 else {
-  const layer=document.getElementById('layers')||document.body;
-  const parent=layer.querySelector('article[data-testid="tweet"]');
   const gotH=((layer.innerText||'').match(/Replying to @([A-Za-z0-9_]+)/i)||[])[1]||'';
   const btn=document.querySelector('[data-testid="tweetButton"]');
   if(!parent||!gotH) out='not-a-reply';
@@ -174,6 +174,8 @@ else {
 id+' '+out
 ```
 It clicks Reply only when the overlay holds exactly the parent post, "Replying to @handle" matches the fragment, and the composer text equals the plan text. Every other path returns without clicking, so the only way a standalone post could go out is if all three lie at once.
+
+The wait loop polls for **both** the textarea and the parent-post article before giving up (fixed 2026-09-12: the textarea reliably renders before the parent-tweet embed does, so polling on the textarea alone produced false `not-a-reply` verdicts on a real run — 6 of 10 in one wave — even though nothing was actually wrong; re-checking the same URL with a longer wait showed the correct parent every time). If `not-a-reply` still fires after this ~10 s poll, it's a real failure, not a load race — log it and move on as before.
 
 Outcomes: `sent` (done), `clicked-unconfirmed` (treat as sent; the report flags it), `no-composer` (page didn't load; retry that one URL once, it is the only retryable outcome because nothing was clicked), `not-a-reply` / `wrong-parent` / `text-mismatch` / `button-disabled` / `error` / `bad-url` (log it, move on). **Never re-fire a URL after a click, whatever the confirmation said**; a double post is worse than a missed one. Two `error` in a row → X is throttling or the account is flagged: stop the run, log, report.
 
