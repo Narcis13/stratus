@@ -8,7 +8,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:tes
 import { eq } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { costEvents } from '../db/shared-schema.ts';
-import { OpenRouterApiError, askOpenRouter } from './client.ts';
+import { OpenRouterApiError, askOpenRouter, completionBudget } from './client.ts';
+import type { OpenRouterReasoningEffort } from './client.ts';
 
 const savedKey = process.env.OPENROUTER_API_KEY;
 const savedBudget = process.env.OPENROUTER_DAILY_BUDGET_USD;
@@ -124,7 +125,9 @@ describe('askOpenRouter — request mapping', () => {
       { role: 'system', content: 'be terse' },
       { role: 'user', content: 'hi' },
     ]);
-    expect(b.max_tokens).toBe(200);
+    // maxOutputTokens is the ANSWER budget; reasoning headroom rides on top
+    // (1024 at effort 'none' — reasoning is not opt-out on every model).
+    expect(b.max_tokens).toBe(200 + 1024);
     expect(b.temperature).toBe(0.7);
     // structured outputs via response_format, NOT xAI's text.format
     expect(b.response_format).toEqual({
@@ -147,6 +150,54 @@ describe('askOpenRouter — request mapping', () => {
     const call = calls[0];
     if (!call) throw new Error('no fetch call captured');
     expect(call.body.reasoning).toEqual({ effort: 'medium' });
+  });
+
+  // The bug this covers cost a paid 200 per click: OpenRouter counts reasoning
+  // tokens against `max_tokens` (xAI does not), so the reply path's 520 answer
+  // budget was spent entirely on thinking and the JSON came back truncated.
+  test('maxOutputTokens is the ANSWER budget — reasoning headroom scales with effort', async () => {
+    const cases: Array<[OpenRouterReasoningEffort | undefined, number]> = [
+      [undefined, 520 + 1024],
+      ['none', 520 + 1024],
+      ['low', 520 + 2048],
+      ['medium', 520 + 4096],
+      ['high', 8192], // 520 + 8192 clipped by the MAX_COMPLETION_TOKENS ceiling
+    ];
+    for (const [effort, expected] of cases) {
+      const { fetchImpl, calls } = recordingFetch(() => jsonResponse(OK_BODY));
+      await askOpenRouter({
+        prompt: 'hi',
+        maxOutputTokens: 520,
+        ...(effort !== undefined ? { reasoningEffort: effort } : {}),
+        fetchImpl,
+      });
+      const call = calls[0];
+      if (!call) throw new Error('no fetch call captured');
+      expect(call.body.max_tokens).toBe(expected);
+    }
+  });
+
+  test('completionBudget: ceiling never shrinks the caller’s own answer budget', () => {
+    // 8192 ceiling, so 'high' headroom is clipped…
+    expect(completionBudget(520, 'high')).toBe(8192);
+    // …but a batch asking for 9000 ANSWER tokens keeps all 9000.
+    expect(completionBudget(9000, 'medium')).toBe(9000);
+    expect(completionBudget(200, 'none')).toBe(1224);
+  });
+
+  test('finish_reason "length" warns — a truncated answer is a paid 200', async () => {
+    const truncated = {
+      ...OK_BODY,
+      choices: [{ message: { content: '{"variants":[{"te' }, finish_reason: 'length' }],
+    };
+    const { fetchImpl } = recordingFetch(() => jsonResponse(truncated));
+    const warnings = await captureConsole('warn', async () => {
+      const r = await askOpenRouter({ prompt: 'hi', maxOutputTokens: 520, fetchImpl });
+      // The text still comes back — the caller decides what a truncation means.
+      expect(r.text).toBe('{"variants":[{"te');
+    });
+    expect(warnings.some((w) => w.includes('TRUNCATED'))).toBe(true);
+    expect(warnings.some((w) => w.includes('max_tokens 1544'))).toBe(true);
   });
 
   test('no jsonSchema → no response_format; usage.include still always on', async () => {

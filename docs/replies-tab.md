@@ -147,6 +147,10 @@ Reply Master drafts; **you post.** stratus never sends a reply to X automaticall
 
 > **Marking posted matters.** It's the step that turns a draft into a *tracked* reply. And giving it the posted tweet's URL/id is what lets stratus later match your reply to its real performance numbers. It's optional — you can mark posted without it — but linking it is what makes measured outcomes appear.
 
+### The one-click hand-off
+
+**Copy & Mark posted** collapses steps 1 and 3 into a single click: the reply goes to your clipboard and the draft flips straight to *posted*, with no tweet-id field and no confirm. Use it in a mass-reply session, where stopping to paste a URL for every reply is the whole cost. You trade the posted tweet's id for the speed — which means no measured outcome for that reply — so use **Mark posted** instead whenever you want the id recorded. If the clipboard write fails, nothing is marked.
+
 ### Other actions
 
 - **Discard** — deletes the draft row entirely (with a confirm). Use it for drafts you'll never post.

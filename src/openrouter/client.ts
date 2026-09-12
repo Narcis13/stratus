@@ -34,6 +34,40 @@ const APP_TITLE = 'stratus';
 // blocks (one wallet, one user — /cost/today is the cap, like X_DAILY_BUDGET_USD).
 const DEFAULT_DAILY_BUDGET_USD = 1.0;
 
+// A reasoning model's thinking is billed AND counted as completion tokens on
+// OpenRouter's OpenAI-shaped API, so `max_tokens` bounds thinking + answer.
+// xAI's /v1/responses does not count reasoning against its cap — and that is the
+// assumption baked into every caller's `maxOutputTokens` (replyLlmDefaults' 520
+// is documented as "three variants of JSON measure ~225 output tokens", which is
+// true of the ANSWER only). Handing that number to OpenRouter verbatim spends
+// the whole budget on thinking and returns a truncated answer with
+// finish_reason 'length': a paid 200 that then fails the caller's JSON parse and
+// surfaces as a parse error, twice over once the specificity gate regenerates.
+// Measured on google/gemini-3.8-flash: max_tokens 520 at effort 'medium' → 496
+// reasoning tokens and ~9 tokens of answer.
+//
+// So `maxOutputTokens` keeps its cross-provider meaning (the ANSWER budget) and
+// the thinking gets this headroom on top. Slack costs nothing — output tokens
+// bill as used — while a truncation wastes the entire call; the same trade-off
+// the batch reply path makes with its computed cap.
+//
+// The headroom applies even when no effort was requested, because reasoning is
+// not opt-in on every model: gemini-3.8-flash still spent 415 tokens thinking
+// with the field omitted, and rejects `reasoning:{enabled:false}` outright with
+// "Reasoning is mandatory for this endpoint and cannot be disabled."
+const REASONING_HEADROOM_TOKENS: Record<OpenRouterReasoningEffort, number> = {
+  none: 1024,
+  low: 2048,
+  medium: 4096,
+  high: 8192,
+};
+// Headroom has to stop somewhere: `max_tokens` is charged against the model's
+// CONTEXT window, and an oversized one is a hard 400 on a small model
+// ("This endpoint's maximum context length is 16385 tokens. However, you
+// requested about 20005" — openai/gpt-3.5-turbo). 8192 is verified to pass on
+// that model plus a reply-sized prompt.
+const MAX_COMPLETION_TOKENS = 8192;
+
 export type OpenRouterRole = 'system' | 'user' | 'assistant';
 
 export interface OpenRouterMessage {
@@ -68,6 +102,9 @@ export interface AskOpenRouterOptions {
   /** Multi-turn conversation. Either `prompt` or `messages` is required. */
   messages?: OpenRouterMessage[];
   reasoningEffort?: OpenRouterReasoningEffort;
+  /** The ANSWER budget, same meaning as on the Grok path. Reasoning headroom is
+   *  added on top before it becomes OpenRouter's `max_tokens` — see
+   *  REASONING_HEADROOM_TOKENS for why that translation is load-bearing. */
   maxOutputTokens?: number;
   /** 0..2. Omit to use the provider default. */
   temperature?: number;
@@ -142,7 +179,9 @@ export async function askOpenRouter(opts: AskOpenRouterOptions): Promise<AskOpen
     usage: { include: true },
     provider: { require_parameters: true },
   };
-  if (opts.maxOutputTokens !== undefined) body.max_tokens = opts.maxOutputTokens;
+  if (opts.maxOutputTokens !== undefined) {
+    body.max_tokens = completionBudget(opts.maxOutputTokens, opts.reasoningEffort ?? 'none');
+  }
   if (opts.temperature !== undefined) body.temperature = opts.temperature;
   if (opts.jsonSchema) {
     body.response_format = {
@@ -198,6 +237,15 @@ export async function askOpenRouter(opts: AskOpenRouterOptions): Promise<AskOpen
         if (reportedCost === null && usage.totalTokens > 0) {
           console.warn(
             `openrouter: model '${model}' returned ${usage.totalTokens} tokens but no usage.cost — this call logged $0. OpenRouter reports cost when usage.include is set; check the provider.`,
+          );
+        }
+        // A truncated answer is a PAID 200 that fails the caller's parse, and
+        // without this line it reaches the user as a bare parse error with
+        // nothing in the log to point at the cap. Name it here, once, where the
+        // cap we sent is still in scope.
+        if (data.choices?.[0]?.finish_reason === 'length') {
+          console.warn(
+            `openrouter: model '${model}' hit the completion cap (max_tokens ${String(body.max_tokens ?? 'unset')}) after ${usage.outputTokens} output tokens — the answer is TRUNCATED and will likely fail a JSON parse. Raise the caller's maxOutputTokens; a reasoning model spends part of the budget thinking.`,
           );
         }
 
@@ -261,6 +309,15 @@ export async function askOpenRouter(opts: AskOpenRouterOptions): Promise<AskOpen
     }
   }
   throw lastErr ?? new Error('askOpenRouter: exhausted attempts');
+}
+
+/** Exported for the suite: the ANSWER budget → OpenRouter's `max_tokens`. */
+export function completionBudget(answerTokens: number, effort: OpenRouterReasoningEffort): number {
+  const withHeadroom = answerTokens + REASONING_HEADROOM_TOKENS[effort];
+  // The ceiling must never shrink the caller's own answer budget: the batch
+  // reply path can ask for 9000 answer tokens, and clamping THAT to 8192 would
+  // truncate the very thing the headroom exists to protect.
+  return Math.max(answerTokens, Math.min(withHeadroom, MAX_COMPLETION_TOKENS));
 }
 
 function buildInput(opts: AskOpenRouterOptions): OpenRouterMessage[] {

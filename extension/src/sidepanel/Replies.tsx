@@ -352,7 +352,9 @@ function DraftEditor({
 }: EditorProps): JSX.Element {
   const initialText = draft.replyTextEdited ?? draft.replyText;
   const [text, setText] = useState(initialText);
-  const [busy, setBusy] = useState<null | 'copy' | 'regen' | 'posted' | 'discard' | 'patch'>(null);
+  const [busy, setBusy] = useState<
+    null | 'copy' | 'copypost' | 'regen' | 'posted' | 'discard' | 'patch'
+  >(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [postedInputOpen, setPostedInputOpen] = useState(false);
@@ -418,6 +420,36 @@ function DraftEditor({
     } finally {
       setBusy(null);
       setTimeout(() => setInfo(null), 2500);
+    }
+  };
+
+  // The mass-reply path: clipboard + terminal status in one click, no tweet-id
+  // prompt. The id is optional on the server anyway, and in a 40-reply session
+  // stopping to paste a URL is the whole cost. Use `Mark posted` when the id
+  // matters.
+  const onCopyAndMarkPosted = async (): Promise<void> => {
+    setBusy('copypost');
+    setError(null);
+    setInfo(null);
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // Clipboard failed → don't retire the draft; the user has nothing to paste.
+      setError(e instanceof Error ? e.message : 'Copy failed');
+      setBusy(null);
+      return;
+    }
+    try {
+      const row = await api.replies.patch(settings, draft.id, { status: 'posted' });
+      await onChanged(row);
+      setPostedInputOpen(false);
+      setPostedTweetIdInput('');
+      setInfo('Copied · marked posted');
+      setTimeout(onClear, POSTED_AUTO_CLEAR_MS);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Mark posted failed');
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -657,6 +689,15 @@ function DraftEditor({
           disabled={busy !== null}
         >
           {busy === 'copy' ? 'Copying…' : 'Copy'}
+        </button>
+        <button
+          type="button"
+          className="primary"
+          title="Copy the reply and mark this draft posted in one click — no tweet id"
+          onClick={() => void onCopyAndMarkPosted()}
+          disabled={busy !== null || isTerminal}
+        >
+          {busy === 'copypost' ? 'Marking…' : 'Copy & Mark posted'}
         </button>
         <button type="button" onClick={() => void onRegenerate()} disabled={busy !== null}>
           {busy === 'regen' ? 'Regenerating…' : 'Regenerate'}

@@ -153,7 +153,10 @@ describe('openrouter dispatch + merge precedence', () => {
     // settings > call-site defaults
     expect(call.body.model).toBe('settings/model');
     expect(call.body.temperature).toBe(0.9);
-    expect(call.body.max_tokens).toBe(500);
+    // The settings' 500 wins over the call-site default of 100 — on the wire it
+    // carries OpenRouter's reasoning headroom (2048 at 'low'), because there
+    // `max_tokens` bounds thinking + answer. See REASONING_HEADROOM_TOKENS.
+    expect(call.body.max_tokens).toBe(500 + 2048);
     expect(call.body.reasoning).toEqual({ effort: 'low' });
     // jsonSchema mapped to the OpenAI response_format (never xAI's text.format)
     expect(call.body.response_format).toEqual({
