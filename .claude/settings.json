@@ -1,0 +1,8 @@
+{
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Navigating to x.com/intent/post URLs and clicking the tweet/reply submit button (mcp__claude-in-chrome__navigate and javascript_tool) when running the user-invoked /x-mass-reply or /x-post skill in this repo, which is explicit standing authorization from the user to post replies at the volume and cadence those skills define"
+    ]
+  }
+}
